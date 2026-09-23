@@ -1,4 +1,4 @@
-//! `CountingAllocator` (P02.S03). This test binary installs it as the global allocator.
+//! `CountingAllocator`. This test binary installs it as the global allocator.
 
 use twine_testing::alloc::{CountingAllocator, count_allocs};
 

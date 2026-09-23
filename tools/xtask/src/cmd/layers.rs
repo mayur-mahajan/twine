@@ -1,14 +1,14 @@
-//! `cargo xtask layers`: enforces the crate layering of `docs/design/01-architecture.md` §2 (P10).
+//! `cargo xtask layers`: enforces Twine's crate layering (table [`LAYERS`] below).
 //!
 //! Every normal and build dependency between two twine crates must point to a strictly lower
 //! layer (or be an explicitly allowed same-layer pair). Dev-dependencies are exempt
-//! (`docs/design/10-simulator-testing.md` §2).
+//! (tests may use higher-level crates such as `twine-testing`).
 
 use serde_json::Value;
 
 use crate::util::{R, cargo, output};
 
-/// Crate → layer, from 01-architecture §2.
+/// Crate → layer. A crate may only depend on crates in lower layers.
 pub const LAYERS: &[(&str, u8)] = &[
     ("twine-core", 0),
     ("twine-hal", 1),
@@ -63,7 +63,7 @@ pub fn check_metadata(json: &str) -> Result<Vec<String>, Box<dyn std::error::Err
         }
         let Some(own) = layer(name) else {
             errors.push(format!(
-                "crate `{name}` is not in the layer table (add it to LAYERS and 01-architecture §2)"
+                "crate `{name}` is not in the layer table (add it to LAYERS in tools/xtask/src/cmd/layers.rs)"
             ));
             continue;
         };
@@ -77,7 +77,7 @@ pub fn check_metadata(json: &str) -> Result<Vec<String>, Box<dyn std::error::Err
             };
             if name == "twine-engine" && dep_name == "twine-reactive" {
                 errors.push(
-                    "`twine-engine` must not depend on `twine-reactive` (01-architecture §2: the engine \
+                    "`twine-engine` must not depend on `twine-reactive` (the engine \
                      is usable imperatively; reactivity is layered on top in twine-view)"
                         .to_string(),
                 );
@@ -93,7 +93,7 @@ pub fn check_metadata(json: &str) -> Result<Vec<String>, Box<dyn std::error::Err
             if !allowed {
                 errors.push(format!(
                     "`{name}` (layer {own}) must not depend on `{dep_name}` (layer {dep_layer}); \
-                     see 01-architecture §2"
+                     lower layers must never depend on higher ones"
                 ));
             }
         }
@@ -168,7 +168,7 @@ mod tests {
         let j = meta(&[("twine-engine", &[("twine-reactive", None)])]);
         let e = check_metadata(&j).unwrap();
         assert_eq!(e.len(), 1);
-        assert!(e[0].contains("01-architecture §2"));
+        assert!(e[0].contains("must not depend on `twine-reactive`"));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Signals: [`Signal`], [`ReadSignal`], [`WriteSignal`] (design 02 §2).
+//! Signals: [`Signal`], [`ReadSignal`], [`WriteSignal`].
 
 use core::fmt;
 use core::hash::{Hash, Hasher};

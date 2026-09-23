@@ -1,38 +1,112 @@
 # Contributing to Twine
 
-Twine is built step by step from [`docs/plan/`](docs/plan/README.md). Coding agents and humans
-follow the same rules; agents additionally read [`CLAUDE.md`](CLAUDE.md).
+Thanks for helping build Twine! Twine runs on microcontrollers with a few hundred kilobytes of RAM
+and on battery power, so the rules below focus on keeping it small, fast, deterministic and
+well tested. Please read them before opening a pull request.
 
-## Workflow
+## Getting set up
 
-1. Pick the first unchecked step in [`docs/plan/PROGRESS.md`](docs/plan/PROGRESS.md).
-2. Read the step, every design section it references (`docs/design/`, normative for names and
-   signatures) and the code it builds on.
-3. Implement exactly the scope of the step. If the design and the step conflict, or a step is
-   impossible as written, make the smallest change that keeps the design intent, record it in
-   [`docs/plan/DEVIATIONS.md`](docs/plan/DEVIATIONS.md) and update the design doc in the same step.
+- **Rust**: the stable toolchain and the embedded targets are pinned in `rust-toolchain.toml`;
+  `rustup` installs them automatically the first time you build.
+- **Optional tools** (the checks that need them are skipped with a warning if missing):
+  - nightly toolchain with Miri: `rustup toolchain install nightly --component miri`
+  - coverage: `cargo install cargo-llvm-cov`
+  - ESP32-S3 firmware builds: [`espup`](https://github.com/esp-rs/espup)
+- **Simulator**: `cargo xtask sim <example>` opens a desktop window (pure Rust, no SDL needed).
+  Set `TWINE_SIM_HEADLESS=1` to run without a window and write PNG screenshots instead.
+- **Logs**: `RUST_LOG=twine=debug` (or e.g. `twine::refresh=trace`) in the simulator and tests.
 
-## Definition of Done (every step)
+## Before you open a pull request
 
-- `cargo xtask ci` passes (fmt, clippy `-D warnings`, tests, no_std builds, docs, todo-check, layers).
-- New public items are documented; new behaviour is covered by the tests listed in the step
-  (more are welcome).
-- The step's **Demo** runs (simulator example or test command) and shows what the step describes.
-- `docs/plan/PROGRESS.md`: tick the step, add the date and one line of notes (perf numbers if
-  measured), e.g. `- [x] P00.S02 — … — 2026-09-23 — note`.
-- No stubs: no `todo!()`, `unimplemented!()`, placeholder returns or ignored tests. Work a later
-  step will extend gets a `// NOTE(Pxx.Syy): <what comes later>` comment — the only allowed marker.
-- **Do not commit.** Agents never run git commands that change history (commit, push, tag,
-  rebase…) and never publish. The user reviews each step and commits it.
+Every PR must meet this **Definition of Done**:
+
+1. **`cargo xtask ci` passes.** It runs formatting, clippy with `-D warnings`, all tests,
+   `no_std` builds for every embedded target, rustdoc, the layering check, the work-marker check,
+   the generated-fonts check, a benchmark build, snapshot tests and Miri. Use
+   `cargo xtask ci --quick` while iterating.
+2. **Tests cover the change.** New behaviour has tests; bug fixes add a regression test named
+   `regression_<short_description>` that fails without the fix.
+3. **Public API is documented.** Every public item has rustdoc (the build denies missing docs).
+   Explain *what* and *why*, document panics and errors, and add a short example (doctest) for
+   types and functions a user will call directly.
+4. **Visual changes are reviewed.** If rendering output changes on purpose, regenerate snapshots
+   with `cargo xtask snapshots --update`, inspect the diff images, and attach before/after
+   screenshots to the PR. Never edit snapshot PNGs by hand.
+5. **Performance is considered.** For changes in rendering, layout, styles, input or the
+   reactive runtime, run `cargo xtask bench` and mention the impact in the PR. Regressions need
+   a justification.
+6. **Generated files are regenerated, not edited.** Built-in fonts come from
+   `assets/fonts/fonts.toml` via `cargo xtask fonts`; `cargo xtask fonts --check` fails when a
+   generated file is out of date. New asset files record their source URL, license and SHA-256
+   in the `SOURCES.md` of their folder.
+7. **Nothing is left half-done.** No `todo!()`, `unimplemented!()`, placeholder return values,
+   ignored tests or `TODO`/`FIXME` comments. Track follow-up work in an issue instead.
+8. **The simulator example still runs** if you touched anything visual or interactive
+   (`cargo xtask sim-smoke` runs every example headless).
 
 ## Hard rules
 
-- No floating point in render/engine/layout/style/text hot paths.
-- No `Arc`, `alloc::sync` or CAS atomics in `no_std` crates; use `Rc`, `portable-atomic`,
-  `critical-section`.
-- Widget setters are idempotent; no heap allocation while rendering in steady state.
-- Never panic on user input in release: log `warn!` and no-op.
-- Respect crate layering (`cargo xtask layers`) and the allowed dependency list
-  (`docs/design/01-architecture.md` §4).
-- Snapshot PNGs are regenerated only intentionally (`cargo xtask snapshots --update`) after
-  reviewing the diff images.
+These keep Twine usable on small, battery-powered devices. CI or review will reject violations.
+
+- **No work when idle.** When nothing is animating, pressed or scheduled, `update()` must report
+  idle and do no rendering. Don't add periodic polling; use deadlines and interrupts.
+- **Work proportional to change.** A property change invalidates only the affected area and
+  re-runs only dependent bindings.
+- **Idempotent setters.** Setting a property to its current value must not invalidate, relayout
+  or allocate.
+- **No heap allocation while rendering.** The render/flush path is allocation-free in steady
+  state; caches have fixed budgets and evict instead of growing.
+- **No floating point in hot paths.** Rendering, layout, styles, text rendering, vector
+  rasterization and the engine use integer/fixed-point math (`clippy::float_arithmetic` is denied
+  there). This keeps output identical on every platform and fast on MCUs without an FPU.
+- **`no_std` + `alloc` compatible.** Library crates must build for `thumbv6m-none-eabi`
+  (RP2040), which has no atomic compare-and-swap: don't use `Arc`, `alloc::sync` or CAS atomics;
+  use `Rc`, `portable-atomic` and `critical-section`.
+- **Never panic on user input.** Invalid ids or parameters are logged with `warn!` and ignored.
+  Use `debug_assert!` for internal invariants.
+- **Respect the crate layering.** A crate may only depend on crates in lower layers
+  (`cargo xtask layers`). In particular, `twine-engine` never depends on `twine-reactive`.
+- **Keep dependencies minimal.** Open an issue before adding a new external dependency. No_std
+  crates must use `default-features = false`, and new dependencies must build for all embedded
+  targets.
+
+## Code guidelines
+
+- **Idiomatic Rust**: edition 2024, `cargo fmt`, clippy pedantic (with the workspace allow-list).
+  Derive `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash` and `Default` where they make sense;
+  use `#[must_use]` on functions whose result should not be ignored.
+- **`unsafe`** only where there is no reasonable safe alternative. Every `unsafe` block needs a
+  `// SAFETY:` comment explaining why it is sound, and tests that run under Miri.
+- **Errors**: each crate has its own `Error` enum; fallible functions return `Result`.
+- **Units**: pixels are `i32`, opacity is `Opa`, angles are `Angle` (0.1°), time is
+  `Instant`/`Duration` (µs), scale factors are `Scale` (256 = 1.0). Rectangles are half-open.
+- **Logging**: use the `twine_core` log macros with a `twine::<area>` target (e.g.
+  `warn!(target: "twine::engine", "node {} not found", id)`) and only `{}` / `{:?}` placeholders
+  so messages work with both `log` and `defmt`. Levels: `error!` for recovered invariant
+  violations, `warn!` for invalid input, `info!` for lifecycle, `debug!` for per-frame summaries,
+  `trace!` for per-event detail.
+- **Modules** stay focused and reasonably small; unit tests live next to the code, integration
+  tests in `tests/`.
+
+## Testing
+
+- **Snapshot tests** compare rendered output pixel-by-pixel against PNGs in `tests/snapshots/`.
+  On mismatch the actual and diff images are written to `target/twine-snapshots/`.
+- **Harnesses** in `twine-testing`: `RenderHarness` (drawing primitives), `EngineHarness`
+  (widget tree without reactivity) and `TestUi` (full declarative UI with scripted input and a
+  mock clock). Use them only from integration tests (`tests/`), not from `#[cfg(test)]` modules.
+- **Property tests** (`proptest`) for math, geometry, layout invariants and parsers; decoders and
+  parsers must never panic on arbitrary input.
+- **Allocation and idle checks**: use `CountingAllocator` to assert that rendering doesn't
+  allocate, and assert that the UI is idle after an interaction finishes.
+- **Widgets** need tests for defaults, every setter's idempotency, events, keypad/encoder
+  navigation, and snapshots in each state (default, pressed, checked, disabled, focused) for the
+  light and dark themes.
+
+## Pull requests
+
+- Keep PRs focused: one feature or fix per PR, with a description of what changed and why.
+- Mention any change to public API, performance or memory use.
+- For hardware-specific changes, say which board and display you tested on.
+- By contributing you agree that your work is dual-licensed under MIT OR Apache-2.0, like the rest
+  of the project.

@@ -1,4 +1,4 @@
-//! P07.S08: memory per signal (design 03 §5: ≤ 96 bytes per `u32` signal incl. its `Rc`).
+//! Memory per signal (target: ≤ 96 bytes per `u32` signal incl. its `Rc`).
 //!
 //! `twine_testing::alloc::CountingAllocator` counts requested bytes (every `realloc` step
 //! included), which over-states the live footprint of growing vectors; this binary installs a

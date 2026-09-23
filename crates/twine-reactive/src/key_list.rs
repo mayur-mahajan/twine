@@ -1,7 +1,7 @@
 //! [`KeyList`]: a 16-byte set of node keys (3 inline, then a boxed `Vec`).
 //!
 //! Every reactive node carries its subscriber list, so its size dominates the per-signal memory
-//! budget (design 03 §5: ≤ 96 bytes per `u32` signal). `twine_core::SmallVec<_, 3>` is 24 bytes;
+//! budget (≤ 96 bytes per `u32` signal). `twine_core::SmallVec<_, 3>` is 24 bytes;
 //! this list is 16 and still stores the common case (≤ 3 subscribers) without a heap allocation.
 
 use alloc::boxed::Box;

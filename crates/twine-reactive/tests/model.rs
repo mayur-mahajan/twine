@@ -1,4 +1,4 @@
-//! P07.S08: model-based test of the reactive graph against a naive recompute-everything model.
+//! Model-based test of the reactive graph against a naive recompute-everything model.
 //!
 //! Random programs of up to 60 operations run over up to 8 signals, 8 memos (each the sum of a
 //! random subset of earlier signals/memos) and 8 initial effects (each recording the values it

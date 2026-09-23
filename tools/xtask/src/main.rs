@@ -1,7 +1,6 @@
 //! Build automation for the Twine workspace (`cargo xtask <command>`).
 //!
-//! Every check that CI runs is reachable from here; `cargo xtask ci` runs them all. See
-//! `docs/design/10-simulator-testing.md` §5 and `docs/plan/README.md`.
+//! Every check that CI runs is reachable from here; `cargo xtask ci` runs them all.
 
 mod cmd;
 mod util;
@@ -19,9 +18,10 @@ struct Cli {
 /// Available commands.
 #[derive(Debug, Subcommand)]
 enum Cmd {
-    /// Run everything CI runs (fmt, clippy, tests, todo-check, layers, nostd, docs, miri, snapshots, firmware).
+    /// Run everything CI runs (fmt, clippy, tests, todo-check, layers, fonts, nostd, docs, bench build, miri,
+    /// snapshots, firmware).
     Ci {
-        /// Skip the slow stages (nostd, doc, miri, firmware).
+        /// Skip the slow stages (nostd, doc, bench-build, miri, firmware).
         #[arg(long)]
         quick: bool,
         /// Run only the named stage(s) (repeatable), e.g. `--only clippy --only clippy-all-features`.
@@ -32,7 +32,7 @@ enum Cmd {
     Nostd,
     /// Fail on untracked work markers; only step-tagged NOTE markers are allowed.
     TodoCheck,
-    /// Verify crate layering against `docs/design/01-architecture.md` §2.
+    /// Verify crate layering (the layer table lives in `tools/xtask/src/cmd/layers.rs`).
     Layers,
     /// Run snapshot tests.
     Snapshots {
@@ -73,15 +73,34 @@ enum Cmd {
     },
     /// Per-crate line coverage with thresholds (needs cargo-llvm-cov).
     Coverage,
-    /// Run benchmarks.
+    /// Run the renderer benchmarks (criterion; `--iai`: instruction counts vs the baseline).
     Bench {
-        /// Save the results as the new baseline.
+        /// Run the iai-callgrind benches (Linux + valgrind) and compare with the baseline.
+        #[arg(long)]
+        iai: bool,
+        /// With `--iai`: save the results as the new baseline.
         #[arg(long)]
         save_baseline: bool,
     },
-    /// Regenerate the built-in fonts.
-    Fonts,
-    /// Regenerate `docs/plan/PROGRESS.md` from the phase files.
+    /// Regenerate the built-in fonts from `assets/fonts/fonts.toml`.
+    Fonts {
+        /// Only verify that the generated files are up to date.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Draw the sample images in `assets/images/` (the Twine logo, gallery samples).
+    GenAssets {
+        /// Only verify that the files are up to date.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Convert the images of `assets/images/images.toml` into `examples/src/assets/`.
+    Images {
+        /// Only verify that the generated files are up to date.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Regenerate the local progress checklist from the planning files (maintainers only; no-op without them).
     Progress,
 }
 
@@ -112,8 +131,10 @@ fn main() {
         Cmd::SimSmoke => cmd::sim::smoke(),
         Cmd::Firmware { board } => cmd::firmware::run(board.as_deref()),
         Cmd::Coverage => cmd::coverage::run(),
-        Cmd::Bench { save_baseline } => cmd::bench::run(save_baseline),
-        Cmd::Fonts => cmd::fonts::run(),
+        Cmd::Bench { iai, save_baseline } => cmd::bench::run(iai, save_baseline),
+        Cmd::Fonts { check } => cmd::fonts::run(check),
+        Cmd::GenAssets { check } => cmd::images::gen_assets(check),
+        Cmd::Images { check } => cmd::images::run(check),
         Cmd::Progress => cmd::progress::run(),
     };
     if let Err(e) = result {

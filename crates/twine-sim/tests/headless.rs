@@ -1,4 +1,4 @@
-//! Headless runs of `show_framebuffer` programs (P02.S09).
+//! Headless runs of `show_framebuffer` programs.
 
 use std::path::PathBuf;
 

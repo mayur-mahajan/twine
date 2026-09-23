@@ -1,5 +1,5 @@
 //! `cargo xtask miri [crate…]`: runs the tests of the given crates under Miri (nightly) to
-//! detect undefined behaviour (`docs/design/10-simulator-testing.md` §2).
+//! detect undefined behaviour.
 
 use std::process::Command;
 

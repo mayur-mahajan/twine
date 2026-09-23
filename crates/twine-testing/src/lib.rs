@@ -1,7 +1,7 @@
 //! # twine-testing
 //!
-//! Test utilities of the Twine GUI library (`docs/design/10-simulator-testing.md` §2). This is a
-//! std-only, layer-12 crate used as a **dev-dependency** from integration tests (`tests/*.rs`)
+//! Test utilities of the Twine GUI library. This is a std-only crate, at the top of the crate
+//! layering, used as a **dev-dependency** from integration tests (`tests/*.rs`)
 //! of the other crates — never from `#[cfg(test)]` unit tests, where a second copy of the crate
 //! under test would be compiled and types would not match.
 //!
@@ -18,8 +18,9 @@
 //! | [`init_test_logging`] | `env_logger` for tests |
 //!
 //! Harness tiers selected by features (so lower crates can test before higher crates exist):
-//! `render` (`RenderHarness`, Phase 03), `engine` (`EngineHarness`, Phase 09), `ui` (default,
-//! `TestUi`, Phase 15).
+//! `render` ([`RenderHarness`] over the renderer),`engine` (`EngineHarness` over a bare engine),
+//! `ui` (default, `TestUi` over the declarative UI). These harnesses are added as the
+//! corresponding crates are implemented.
 //!
 //! ```
 //! use twine_core::{Color, ColorFormat, Rect};
@@ -43,10 +44,14 @@ pub mod logging;
 pub mod memory_display;
 pub mod mock_input;
 pub mod png_io;
+#[cfg(feature = "render")]
+pub mod render_harness;
 pub mod snapshot;
 
 pub use clock::MockClock;
 pub use logging::init_test_logging;
 pub use memory_display::{FlushRecord, MemoryDisplay, MemoryDisplayError, leak_buffer};
 pub use mock_input::{MockButton, MockEncoder, MockKeypad, MockPointer};
+#[cfg(feature = "render")]
+pub use render_harness::RenderHarness;
 pub use snapshot::{SnapshotConfig, Tolerance, assert_rgb_snapshot};

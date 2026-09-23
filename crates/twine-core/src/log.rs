@@ -42,7 +42,7 @@
 //!
 //! Targets are `"twine::<area>"`; use exactly the strings in [`TARGETS`].
 
-/// The allowed log target strings (`docs/design/10-simulator-testing.md` §4).
+/// The allowed log target strings.
 pub const TARGETS: &[&str] = &[
     "twine::core",
     "twine::reactive",

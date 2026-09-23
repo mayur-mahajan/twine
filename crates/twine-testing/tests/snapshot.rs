@@ -1,4 +1,4 @@
-//! Snapshot comparison (P02.S04). Each test uses its own temporary snapshot directory; mismatch
+//! Snapshot comparison. Each test uses its own temporary snapshot directory; mismatch
 //! artefacts go to `target/twine-snapshots/twine-testing-selftest/` and are kept for inspection.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};

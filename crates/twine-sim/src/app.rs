@@ -121,7 +121,22 @@ impl Clock for SimClock {
     }
 }
 
-type DrawFn = Box<dyn FnMut(&mut [u8], ColorFormat, u32)>;
+type DrawFn = Box<dyn FnMut(&mut [u8], ColorFormat, &SimFrame)>;
+
+/// Per-frame information handed to [`SimApp::framebuffer_with_input`] programs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SimFrame {
+    /// Frame index (0 for the first frame).
+    pub index: u32,
+    /// Simulator time of the frame (wall time in a window, 16 ms per frame headless).
+    pub time: Instant,
+    /// Keys pressed since the previous frame.
+    pub keys: Vec<twine_hal::Key>,
+    /// The pointer state (`None` when the pointer device is disabled).
+    pub pointer: Option<twine_hal::PointerData>,
+    /// Where the pointer was released since the previous frame, if it was.
+    pub clicked: Option<twine_core::Point>,
+}
 
 #[derive(Debug)]
 struct Recording {
@@ -155,6 +170,8 @@ pub struct SimApp {
     output_dir: PathBuf,
     recording: Option<Recording>,
     shots: Vec<PathBuf>,
+    /// Whether frames drain the keypad queue into [`SimFrame::keys`] (input-aware runner).
+    frame_input: bool,
 }
 
 impl fmt::Debug for SimApp {
@@ -174,7 +191,21 @@ impl SimApp {
     /// The framebuffer keeps its content between frames. It is allocated once (leaked, like a
     /// `'static` MCU buffer).
     #[must_use]
-    pub fn framebuffer(cfg: SimConfig, draw: impl FnMut(&mut [u8], ColorFormat, u32) + 'static) -> Self {
+    pub fn framebuffer(cfg: SimConfig, mut draw: impl FnMut(&mut [u8], ColorFormat, u32) + 'static) -> Self {
+        let mut app =
+            Self::framebuffer_with_input(cfg, move |fb, format, frame| draw(fb, format, frame.index));
+        // Keys stay queued for `SimKeypad` readers.
+        app.frame_input = false;
+        app
+    }
+
+    /// Like [`framebuffer`](Self::framebuffer), but `draw` also receives the frame's input
+    /// ([`SimFrame`]: keys pressed and clicks since the previous frame, the pointer state).
+    #[must_use]
+    pub fn framebuffer_with_input(
+        cfg: SimConfig,
+        draw: impl FnMut(&mut [u8], ColorFormat, &SimFrame) + 'static,
+    ) -> Self {
         let display = SimDisplay::from_config(&cfg);
         let info = display.info();
         let len = info.bytes_per_row() * usize::from(info.height);
@@ -200,6 +231,7 @@ impl SimApp {
             output_dir,
             recording: None,
             shots: Vec::new(),
+            frame_input: true,
         }
     }
 
@@ -404,7 +436,21 @@ impl SimApp {
             return;
         };
         let format = self.display.info().format;
-        (self.draw)(buf.as_mut_slice(), format, self.frame);
+        let frame = {
+            let mut s = self.devices.state.borrow_mut();
+            SimFrame {
+                index: self.frame,
+                time: self.clock.now(),
+                keys: if self.frame_input {
+                    s.take_pressed_keys()
+                } else {
+                    Vec::new()
+                },
+                pointer: self.cfg.input.pointer.then(|| s.pointer()),
+                clicked: if self.frame_input { s.take_click() } else { None },
+            }
+        };
+        (self.draw)(buf.as_mut_slice(), format, &frame);
         self.frame = self.frame.wrapping_add(1);
         let area = self.display.info().area();
         if let Err(e) = self.display.begin_flush(area, buf) {

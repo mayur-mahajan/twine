@@ -12,7 +12,43 @@ workspace = true
 
 [features]
 default = []
+## std-only conveniences, including the font encoder helpers used by the font generator.
+std = ["twine-core/std", "twine-render/std"]
+## Log through the `log` crate.
+log = ["twine-core/log", "twine-render/log"]
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = ["dep:defmt", "twine-core/defmt", "twine-render/defmt"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
 twine-render = { path = "../twine-render" }
+bitflags = { version = "2", default-features = false }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+twine-text = { path = ".", features = ["std"] }
+twine-render = { path = "../twine-render", features = [
+    "color-rgb565",
+    "color-rgb565-swapped",
+    "color-rgb888",
+    "color-xrgb8888",
+    "color-argb8888",
+    "color-l8",
+    "color-i1",
+] }
+twine-assets = { path = "../twine-assets", features = ["all-fonts"] }
+twine-testing = { path = "../twine-testing", default-features = false, features = ["render"] }
+proptest = "1"
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+iai-callgrind = "0.16"
+
+[[bench]]
+name = "text"
+harness = false
+
+[[bench]]
+name = "text_iai"
+harness = false

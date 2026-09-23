@@ -4,7 +4,7 @@
 //! transforms, colors and pixel formats, opacity, time, generational arenas, a small inline
 //! vector, the dirty-rectangle set, errors, a deterministic RNG and the logging macros.
 //!
-//! `twine-core` is layer 0 (`docs/design/01-architecture.md` §2): every other Twine crate
+//! `twine-core` is the lowest layer: every other Twine crate
 //! builds on it and it depends on no other Twine crate. It is `no_std` + `alloc`, contains no
 //! `unsafe` and no floating-point arithmetic, so results are bit-identical on every target (P5,
 //! P6).

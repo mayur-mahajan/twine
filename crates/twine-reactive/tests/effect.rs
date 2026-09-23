@@ -1,4 +1,4 @@
-//! P07.S03: effects, dependency tracking and flushing.
+//! Effects, dependency tracking and flushing.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

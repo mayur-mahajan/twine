@@ -1,4 +1,4 @@
-//! P07.S02: signals.
+//! Signals.
 
 use std::rc::Rc;
 

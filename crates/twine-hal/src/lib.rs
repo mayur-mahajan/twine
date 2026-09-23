@@ -3,7 +3,7 @@
 //! The hardware abstraction of the Twine GUI library: the traits a display, input device or
 //! clock driver implements, and the plain data types exchanged with the engine.
 //!
-//! `twine-hal` is layer 1 (`docs/design/01-architecture.md` §2). It depends only on
+//! `twine-hal` sits directly above `twine-core` in the crate layering. It depends only on
 //! `twine-core`, is `no_std` and **allocation-free**, so drivers (`twine-drivers`, firmware
 //! crates) can implement it on any microcontroller. The engine (`twine-engine`), the desktop
 //! simulator (`twine-sim`) and the test harness (`twine-testing`) consume it.

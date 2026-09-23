@@ -1,4 +1,4 @@
-//! Access to the runtime of the current UI context (design 03 §2).
+//! Access to the runtime of the current UI context.
 //!
 //! - With the `std` feature the runtime is a `thread_local!`: every thread has its own,
 //!   independent runtime, so the implementation is sound without further contracts.
@@ -36,7 +36,7 @@ mod imp {
     /// `Sync`; this wrapper asserts `Sync` under the contract below.
     struct RuntimeSlot(Runtime);
 
-    // SAFETY: Soundness argument (design 03 §2). The runtime is only ever touched through
+    // SAFETY: Soundness argument. The runtime is only ever touched through
     // `with_runtime`, which refuses to run (panics) until `bind_to_current_context` has been
     // called. That function is `unsafe` and its caller guarantees that from then on every
     // `twine-reactive` API that reaches the runtime — all handle methods and the free

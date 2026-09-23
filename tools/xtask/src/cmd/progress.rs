@@ -138,6 +138,10 @@ pub fn render(phases: &[Phase], existing: &str) -> String {
 /// Runs the command: reads `docs/plan/phase-*.md`, rewrites `docs/plan/PROGRESS.md`.
 pub fn run() -> R {
     let dir = workspace_root().join("docs/plan");
+    if !dir.is_dir() {
+        println!("progress: no planning files in this checkout; nothing to do");
+        return Ok(());
+    }
     let mut files: Vec<_> = std::fs::read_dir(&dir)?
         .filter_map(Result::ok)
         .map(|e| e.path())

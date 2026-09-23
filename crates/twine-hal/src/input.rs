@@ -3,14 +3,13 @@
 //! Reading is always **non-blocking**: a driver caches its last sample (updated from an IRQ or
 //! when read) and [`InputDevice::read`] returns it. Drivers whose reading depends on time
 //! (debounced GPIO encoders, the monkey tester) take a [`Clock`](crate::Clock) at
-//! construction; the trait itself is time-free (`docs/design/09-platforms.md` §1).
+//! construction; the trait itself is time-free.
 
 use core::fmt;
 
 use twine_core::Point;
 
-/// The kind of an input device, which decides how the engine processes its data
-/// (`docs/design/04-engine.md` §6).
+/// The kind of an input device, which decides how the engine processes its data.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InputKind {
@@ -199,7 +198,7 @@ impl InputData {
     }
 }
 
-/// How the engine should schedule reads of a device (power, P1).
+/// How the engine should schedule reads of a device (power saving).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PollHint {

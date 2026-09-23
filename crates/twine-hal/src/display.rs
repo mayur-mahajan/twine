@@ -1,8 +1,8 @@
 //! Display traits and descriptions: [`DisplayDriver`], `AsyncDisplayDriver` (feature `async`),
 //! [`FramebufferDisplay`], [`DisplayInfo`], [`BufferSpec`].
 //!
-//! This module is the complete contract between the Twine engine and a display driver
-//! (`docs/design/06-rendering.md` §1.3). A driver author needs nothing else.
+//! This module is the complete contract between the Twine engine and a display driver. A driver
+//! author needs nothing else.
 //!
 //! # Which trait to implement
 //!
@@ -33,8 +33,7 @@ use crate::DrawBufferMem;
 
 /// How the simulator and the test harnesses should allocate draw buffers for a display.
 ///
-/// This is only a *request*; the engine's `BufferMode` holds the actual memory
-/// (`docs/design/06-rendering.md` §1.2).
+/// This is only a *request*; the engine's `BufferMode` holds the actual memory.
 ///
 /// ```
 /// use twine_core::ColorFormat;
@@ -279,7 +278,7 @@ pub trait DisplayDriver {
 ///
 /// The future returned by [`flush`](Self::flush) **MUST start the transfer on its first poll**
 /// (before returning `Pending`), so that `join(driver.flush(..), render_next_chunk)` overlaps the
-/// DMA transfer with rendering (`docs/design/06-rendering.md` §1.3).
+/// DMA transfer with rendering.
 #[cfg(feature = "async")]
 #[allow(async_fn_in_trait)]
 pub trait AsyncDisplayDriver {

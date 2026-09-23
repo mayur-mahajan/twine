@@ -1,4 +1,4 @@
-//! `MemoryDisplay` behaviour (P02.S03).
+//! `MemoryDisplay` behaviour.
 
 use twine_core::{Color, ColorFormat, Rect};
 use twine_hal::{DisplayDriver, DisplayInfo};

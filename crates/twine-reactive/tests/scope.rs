@@ -1,4 +1,4 @@
-//! P07.S05: scopes — nesting, disposal, cleanup, context.
+//! Scopes — nesting, disposal, cleanup, context.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

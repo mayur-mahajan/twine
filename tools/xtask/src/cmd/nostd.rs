@@ -47,6 +47,19 @@ pub const NOSTD_FEATURE_SETS: &[(&str, &str)] = &[
     ("twine-hal", "defmt"),
     ("twine-reactive", "log"),
     ("twine-reactive", "defmt"),
+    (
+        "twine-render",
+        "log,color-rgb565,color-rgb565-swapped,color-rgb888,color-xrgb8888,color-argb8888,color-l8,color-i1",
+    ),
+    ("twine-render", "defmt,color-rgb565"),
+    ("twine-text", "log"),
+    ("twine-text", "defmt"),
+    ("twine-assets", "all-fonts"),
+    (
+        "twine-image",
+        "log,img-qoi,img-png,img-jpeg,img-bmp,img-gif,img-lz4",
+    ),
+    ("twine-image", "defmt,img-qoi,img-lz4"),
 ];
 
 /// Runs all builds; fails on the first error or on a missing target.

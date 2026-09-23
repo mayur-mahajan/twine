@@ -1,7 +1,7 @@
 //! `cargo xtask snapshots [--update]`: runs the snapshot tests (all workspace tests).
 //!
 //! With `--update`, `TWINE_UPDATE_SNAPSHOTS=1` makes snapshot assertions rewrite the reference
-//! PNGs; review the diffs first (`docs/design/10-simulator-testing.md` §2).
+//! PNGs; review the diffs first.
 
 use std::path::{Path, PathBuf};
 

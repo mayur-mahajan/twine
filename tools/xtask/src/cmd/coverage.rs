@@ -1,5 +1,5 @@
 //! `cargo xtask coverage`: per-crate line coverage with minimum thresholds
-//! (`docs/design/10-simulator-testing.md` §2). Requires `cargo-llvm-cov`.
+//! Requires `cargo-llvm-cov`.
 
 use std::collections::BTreeMap;
 

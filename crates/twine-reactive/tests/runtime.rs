@@ -1,4 +1,4 @@
-//! P07.S01: runtime storage and global access.
+//! Runtime storage and global access.
 
 use twine_reactive::{create_root, debug_stats, reset};
 

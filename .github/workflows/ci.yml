@@ -1,11 +1,10 @@
-# Twine CI — mirrors `cargo xtask ci` (docs/design/10-simulator-testing.md §5).
+# Twine CI — mirrors `cargo xtask ci`.
 # The toolchain comes from rust-toolchain.toml (stable + embedded targets), so no toolchain
 # action is needed for the stable jobs.
 #
-# Jobs added by later steps (each of those steps must add its job here):
-#   bench             → P03.S10  (iai-callgrind instruction-count regression gate, Linux)
-#   firmware          → P17.S06  (rp2040, rp2350, stm32f411, stm32f429i-disco, esp32c3)
-#   firmware-esp32s3  → P17.S11  (esp-rs/xtensa-toolchain action)
+# Planned jobs (added together with firmware support):
+#   firmware          → added with firmware support (rp2040, rp2350, stm32f411, stm32f429i-disco, esp32c3)
+#   firmware-esp32s3  → added with ESP32-S3 support (esp-rs/xtensa-toolchain action)
 
 name: CI
 
@@ -83,6 +82,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask layers
 
+  fonts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask fonts --check
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask gen-assets --check
+      - run: cargo xtask images --check
+
   coverage:
     runs-on: ubuntu-latest
     steps:
@@ -102,3 +116,15 @@ jobs:
           components: miri, rust-src
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask miri
+
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Install valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: iai-callgrind-runner@0.16.1
+      - run: cargo xtask bench --iai

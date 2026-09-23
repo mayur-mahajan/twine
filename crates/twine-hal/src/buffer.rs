@@ -7,8 +7,7 @@
 //! be reused) while the DMA engine is still reading it — undefined behaviour that the borrow
 //! checker cannot see. Requiring `&'static mut [u8]` and **moving** the buffer into the driver
 //! for the duration of a flush (`DisplayDriver::begin_flush` takes it by value,
-//! `DisplayDriver::poll_flush` hands it back) makes this safe without any `unsafe` in user code
-//! (`docs/design/06-rendering.md` §1.2):
+//! `DisplayDriver::poll_flush` hands it back) makes this safe without any `unsafe` in user code:
 //!
 //! - the memory lives forever, so it can never be freed under the DMA;
 //! - while the driver owns the [`DrawBufferMem`], nobody else can write to it.

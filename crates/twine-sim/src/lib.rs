@@ -1,18 +1,18 @@
 //! # twine-sim
 //!
-//! The desktop simulator of the Twine GUI library (`docs/design/10-simulator-testing.md` §1):
+//! The desktop simulator of the Twine GUI library:
 //! a native window (winit 0.30 + softbuffer 0.4, pure Rust) showing an **emulated panel** — a
 //! framebuffer in the panel's native pixel format, optionally behind an emulated SPI bus — plus
 //! mouse/keyboard input as twine pointer, keypad and encoder devices, utility hotkeys, and a
 //! headless mode for scripted, deterministic runs in CI.
 //!
-//! `twine-sim` is a std-only, layer-12 crate. It depends on `twine-hal` for the driver traits
-//! (its [`SimDisplay`] is a real [`DisplayDriver`](twine_hal::DisplayDriver)) and, from later
-//! phases, on the engine and view crates for `run_engine` / `run`.
+//! `twine-sim` is a std-only crate at the top of the crate layering. It depends on `twine-hal` for the driver traits
+//! (its [`SimDisplay`] is a real [`DisplayDriver`](twine_hal::DisplayDriver)) and on the
+//! engine and view crates for the engine and declarative runners.
 //!
 //! | Item | Purpose |
 //! |------|---------|
-//! | [`show_framebuffer`] | draw raw frames (pre-engine phases); window or headless |
+//! | [`show_framebuffer`], [`show_framebuffer_with_input`] | draw raw frames without the engine (with per-frame input: [`SimFrame`]); window or headless |
 //! | [`run_headless_framebuffer`] | the same, headless, returning a [`HeadlessReport`] |
 //! | [`SimConfig`], [`Headless`] | configuration, environment overrides (`TWINE_SIM_*`) |
 //! | [`SimDisplay`] | emulated panel (formats, bus speed, `hw_rotation`) |
@@ -49,7 +49,7 @@ mod png_out;
 pub mod script;
 mod window;
 
-pub use app::{HEADLESS_FRAME, HeadlessReport, SimApp, SimClock, SimError};
+pub use app::{HEADLESS_FRAME, HeadlessReport, SimApp, SimClock, SimError, SimFrame};
 pub use config::{Headless, SimConfig, SimInputs, ThemeSlot};
 pub use display::{FlushStat, SimDisplay, SimDisplayError};
 pub use hotkeys::Hotkey;
@@ -72,10 +72,34 @@ pub fn init_logging() {
 /// ([`SimConfig::from_env`]) is applied first, so `TWINE_SIM_HEADLESS=1` runs any example
 /// headless. The process exits with code 0 when the window is closed or the headless run ends
 /// (3 on script errors, see [`SimApp::run`]).
-// NOTE(P03.S03): `show_framebuffer_with_input` with per-frame input; this becomes a wrapper.
-pub fn show_framebuffer(cfg: SimConfig, draw: impl FnMut(&mut [u8], ColorFormat, u32) + 'static) -> ! {
+pub fn show_framebuffer(cfg: SimConfig, mut draw: impl FnMut(&mut [u8], ColorFormat, u32) + 'static) -> ! {
+    show_framebuffer_with_input(cfg, move |fb, format, frame| draw(fb, format, frame.index))
+}
+
+/// Like [`show_framebuffer`], but `draw` also receives the frame's input ([`SimFrame`]: keys
+/// pressed and clicks since the previous frame, the pointer state).
+///
+/// This runner redraws **every** frame at [`SimConfig::fps_limit`]: it is a development tool
+/// for programs that draw without the engine. The engine runner only redraws what changed.
+///
+/// ```no_run
+/// use twine_hal::Key;
+/// use twine_sim::{SimConfig, show_framebuffer_with_input};
+///
+/// let mut level = 0u8;
+/// show_framebuffer_with_input(SimConfig::new(64, 64), move |fb, _format, frame| {
+///     if frame.keys.contains(&Key::Up) {
+///         level = level.saturating_add(16);
+///     }
+///     fb.fill(level);
+/// });
+/// ```
+pub fn show_framebuffer_with_input(
+    cfg: SimConfig,
+    draw: impl FnMut(&mut [u8], ColorFormat, &SimFrame) + 'static,
+) -> ! {
     init_logging();
-    SimApp::framebuffer(cfg.from_env(), draw).run()
+    SimApp::framebuffer_with_input(cfg.from_env(), draw).run()
 }
 
 /// Runs [`show_framebuffer`] headless (with `cfg.headless` or the defaults) and returns a

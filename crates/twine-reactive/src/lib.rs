@@ -1,11 +1,11 @@
 //! # twine-reactive
 //!
 //! Fine-grained, push-pull, glitch-free reactive signals for a single UI thread
-//! (`docs/design/03-reactive.md`). The declarative view layer (`twine-view`) builds on it: every
+//! The declarative view layer (`twine-view`) builds on it: every
 //! widget property bound to a signal is an [effect](Scope::effect) that writes that one
 //! property, so a signal change runs exactly the bindings that depend on it (P2).
 //!
-//! It is layer 1 (`docs/design/01-architecture.md` §2): `no_std` + `alloc`, depends only on
+//! It sits directly above `twine-core` in the layering: `no_std` + `alloc`, depends only on
 //! `twine-core`, `critical-section`, `portable-atomic` and `heapless`, and uses no `Arc` or CAS
 //! atomics (it builds for thumbv6m).
 //!
@@ -69,7 +69,7 @@
 //! only extra work is done). Computing a long chain for the first time still recurses once
 //! per memo through user code, so keep memo chains shallow on MCUs with small stacks.
 //!
-//! ## Effects and the view layer (design 03 §3.1)
+//! ## Effects and the view layer
 //!
 //! Effects receive a `&mut dyn Any` context ([`Scope::effect_with_cx`]). The view layer uses
 //! three entry points:

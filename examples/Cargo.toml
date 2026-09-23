@@ -15,7 +15,19 @@ workspace = true
 twine-core = { path = "../crates/twine-core", features = ["std", "log"] }
 twine-hal = { path = "../crates/twine-hal", features = ["log"] }
 twine-sim = { path = "../crates/twine-sim" }
+twine-render = { path = "../crates/twine-render", features = [
+    "log",
+    "color-rgb565",
+    "color-rgb565-swapped",
+    "color-rgb888",
+    "color-xrgb8888",
+    "color-argb8888",
+    "color-l8",
+    "color-i1",
+] }
 twine-reactive = { path = "../crates/twine-reactive", features = ["std", "log"] }
+twine-text = { path = "../crates/twine-text", features = ["std", "log"] }
+twine-assets = { path = "../crates/twine-assets", features = ["all-fonts"] }
 # Host implementation for `critical-section` (used by `twine_reactive::Channel`).
 critical-section = { version = "1", features = ["std"] }
 env_logger = "0.11"

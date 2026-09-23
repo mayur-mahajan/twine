@@ -1,5 +1,5 @@
 //! [`Channel`] and [`UiWaker`]: ISR/task-safe, allocation-free delivery of values into the
-//! reactive world (design 03 §4, 02 §2.1), plus the runtime hooks the `Ui` uses to drain them.
+//! reactive world, plus the runtime hooks the `Ui` uses to drain them.
 //!
 //! Neither type touches the reactive runtime: they only use `critical_section` and
 //! `portable_atomic` (load/store natively, read-modify-write through the critical-section
@@ -105,7 +105,7 @@ impl UiWaker {
 }
 
 /// A bounded, `const`-constructible, allocation-free queue from interrupts or other tasks to
-/// the UI (design 03 §4).
+/// the UI.
 ///
 /// [`try_send`](Channel::try_send) never blocks and wakes the UI; when the queue is full it
 /// returns the value and counts it as dropped. The UI side drains registered channels with

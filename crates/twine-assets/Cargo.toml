@@ -11,7 +11,37 @@ repository.workspace = true
 workspace = true
 
 [features]
-default = []
+default = ["montserrat-14"]
+## Every built-in font.
+all-fonts = ["montserrat-8", "montserrat-10", "montserrat-12", "montserrat-14", "montserrat-16", "montserrat-18", "montserrat-20", "montserrat-22", "montserrat-24", "montserrat-26", "montserrat-28", "montserrat-30", "montserrat-32", "montserrat-34", "montserrat-36", "montserrat-38", "montserrat-40", "montserrat-42", "montserrat-44", "montserrat-46", "montserrat-48", "montserrat-14-subpx", "unscii-8", "unscii-16"]
+montserrat-8 = []
+montserrat-10 = []
+montserrat-12 = []
+montserrat-14 = []
+montserrat-16 = []
+montserrat-18 = []
+montserrat-20 = []
+montserrat-22 = []
+montserrat-24 = []
+montserrat-26 = []
+montserrat-28 = []
+montserrat-30 = []
+montserrat-32 = []
+montserrat-34 = []
+montserrat-36 = []
+montserrat-38 = []
+montserrat-40 = []
+montserrat-42 = []
+montserrat-44 = []
+montserrat-46 = []
+montserrat-48 = []
+## Montserrat 14 with horizontal subpixel (RGB) glyphs.
+montserrat-14-subpx = []
+unscii-8 = []
+unscii-16 = []
 
 [dependencies]
 twine-text = { path = "../twine-text" }
+
+[dev-dependencies]
+twine-assets = { path = ".", features = ["all-fonts"] }

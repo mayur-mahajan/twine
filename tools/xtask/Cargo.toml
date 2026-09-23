@@ -14,3 +14,7 @@ workspace = true
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
+# `cargo xtask fonts`: reads assets/fonts/fonts.toml and runs the font generator in-process.
+toml = "0.9"
+serde = { version = "1", features = ["derive"] }
+twine-cli = { path = "../twine-cli" }

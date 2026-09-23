@@ -1,4 +1,5 @@
-//! Criterion benchmarks for every row of design 03 §5 (host). Results go to `docs/perf.md`.
+//! Criterion benchmarks of the runtime's performance targets (host): untracked read, set with one
+//! effect, a 10-memo chain, and scope create/dispose.
 //!
 //! Run with `cargo bench -p twine-reactive --bench reactive`.
 #![allow(missing_docs)] // the harness macros generate undocumented public items

@@ -1,4 +1,4 @@
-//! [`RectSet`]: the fixed-capacity dirty-area set (`docs/design/06-rendering.md` §1.1).
+//! [`RectSet`]: the fixed-capacity dirty-area set used by the refresh pipeline.
 
 use crate::geometry::Rect;
 

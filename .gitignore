@@ -5,3 +5,6 @@ firmware/*/Cargo.lock
 .DS_Store
 *.actual.png
 *.diff.png
+
+# Snapshot reference images (generated locally, not committed)
+crates/*/tests/snapshots/

@@ -1,0 +1,130 @@
+# Images converted by `cargo xtask images` into `examples/src/assets/` (the image gallery).
+# Inputs are drawn procedurally by `cargo xtask gen-assets` (see SOURCES.md).
+
+[[image]]
+name = "LOGO_L8"
+file = "logo_l8"
+input = "assets/images/twine_logo.png"
+format = "l8"
+
+[[image]]
+name = "LOGO_A1"
+file = "logo_a1"
+input = "assets/images/twine_logo.png"
+format = "a1"
+
+[[image]]
+name = "LOGO_A2"
+file = "logo_a2"
+input = "assets/images/twine_logo.png"
+format = "a2"
+
+[[image]]
+name = "LOGO_A4"
+file = "logo_a4"
+input = "assets/images/twine_logo.png"
+format = "a4"
+
+[[image]]
+name = "LOGO_A8"
+file = "logo_a8"
+input = "assets/images/twine_logo.png"
+format = "a8"
+
+[[image]]
+name = "LOGO_I1"
+file = "logo_i1"
+input = "assets/images/twine_logo.png"
+format = "i1"
+dither = true
+
+[[image]]
+name = "LOGO_I2"
+file = "logo_i2"
+input = "assets/images/twine_logo.png"
+format = "i2"
+dither = true
+
+[[image]]
+name = "LOGO_I4"
+file = "logo_i4"
+input = "assets/images/twine_logo.png"
+format = "i4"
+dither = true
+
+[[image]]
+name = "LOGO_I8"
+file = "logo_i8"
+input = "assets/images/twine_logo.png"
+format = "i8"
+dither = true
+
+[[image]]
+name = "LOGO_RGB565"
+file = "logo_rgb565"
+input = "assets/images/twine_logo.png"
+format = "rgb565"
+
+[[image]]
+name = "LOGO_RGB565_SWAPPED"
+file = "logo_rgb565_swapped"
+input = "assets/images/twine_logo.png"
+format = "rgb565-swapped"
+
+[[image]]
+name = "LOGO_RGB565A8"
+file = "logo_rgb565a8"
+input = "assets/images/twine_logo.png"
+format = "rgb565a8"
+
+[[image]]
+name = "LOGO_RGB888"
+file = "logo_rgb888"
+input = "assets/images/twine_logo.png"
+format = "rgb888"
+
+[[image]]
+name = "LOGO_ARGB8888"
+file = "logo_argb8888"
+input = "assets/images/twine_logo.png"
+format = "argb8888"
+
+[[image]]
+name = "LOGO_XRGB8888"
+file = "logo_xrgb8888"
+input = "assets/images/twine_logo.png"
+format = "xrgb8888"
+
+[[image]]
+name = "LOGO_ARGB8888_PREMULTIPLIED"
+file = "logo_argb8888_premultiplied"
+input = "assets/images/twine_logo.png"
+format = "argb8888-premultiplied"
+
+[[image]]
+name = "LOGO_RLE"
+file = "logo_rle"
+input = "assets/images/twine_logo.png"
+format = "rgb565a8"
+compress = "rle"
+
+[[image]]
+name = "LOGO_LZ4"
+file = "logo_lz4"
+input = "assets/images/twine_logo.png"
+format = "argb8888"
+compress = "lz4"
+
+[[image]]
+name = "PHOTO_RLE"
+file = "photo_rle"
+input = "assets/images/photo.png"
+format = "rgb565"
+compress = "rle"
+
+[[image]]
+name = "PHOTO_LZ4"
+file = "photo_lz4"
+input = "assets/images/photo.png"
+format = "rgb565"
+compress = "lz4"

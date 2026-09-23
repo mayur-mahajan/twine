@@ -1,5 +1,4 @@
-//! The reactive graph: node and scope storage and the push-pull coloring algorithm
-//! (design 03 §1, §3).
+//! The reactive graph: node and scope storage and the push-pull coloring algorithm.
 //!
 //! Every method takes `&Runtime` and borrows [`Inner`] only for short, user-code-free sections.
 //! **Rule R1**: no borrow of `inner` is held while a user closure (memo, effect, cleanup,
@@ -118,7 +117,7 @@ pub(crate) struct Counters {
     pub(crate) loop_cuts: u64,
 }
 
-/// All mutable runtime state (design 03 §1).
+/// All mutable runtime state.
 pub(crate) struct Inner {
     pub(crate) nodes: Arena<ReactiveNode>,
     pub(crate) scopes: Arena<ScopeData>,
@@ -131,7 +130,7 @@ pub(crate) struct Inner {
     pub(crate) pending: VecDeque<NodeKey>,
     pub(crate) running_flush: bool,
     pub(crate) flush_iterations_limit: u32,
-    /// Effects waiting for a non-`()` flush context (design 03 §3.1).
+    /// Effects waiting for a non-`()` flush context.
     pub(crate) deferred: Vec<NodeKey>,
     /// `on_message` registrations, sorted by `id`.
     pub(crate) channels: Vec<ChannelReg>,
@@ -249,7 +248,7 @@ impl Inner {
     }
 }
 
-/// The reactive runtime of one thread (design 03 §1).
+/// The reactive runtime of one thread.
 pub(crate) struct Runtime {
     pub(crate) inner: RefCell<Inner>,
 }
@@ -346,7 +345,7 @@ impl Runtime {
         self.inner.borrow().scopes.contains(s)
     }
 
-    /// Disposes scope `s` (design 03 §3.2). The caller wraps this in a batch.
+    /// Disposes scope `s`. The caller wraps this in a batch.
     pub(crate) fn dispose_scope(&self, s: ScopeKey) {
         if !self.scope_alive(s) {
             debug!(target: "twine::reactive", "dispose scope {:?}: already disposed", s);
@@ -524,7 +523,7 @@ impl Runtime {
 
     // ----- computations -------------------------------------------------------------------
 
-    /// Brings computation `k` up to date (design 03 §3). Effects that need to run are run
+    /// Brings computation `k` up to date. Effects that need to run are run
     /// with `ctx`; memos ignore it.
     pub(crate) fn update_if_necessary(&self, k: NodeKey, ctx: &mut dyn Any) {
         let (state, depth) = {
@@ -716,7 +715,7 @@ impl Runtime {
         }
     }
 
-    /// Runs pending effects with `ctx` until none are left (design 03 §3, §3.1).
+    /// Runs pending effects with `ctx` until none are left.
     pub(crate) fn flush(&self, ctx: &mut dyn Any) {
         {
             let mut inner = self.inner.borrow_mut();
@@ -794,7 +793,7 @@ impl Runtime {
         }
     }
 
-    /// Moves the running effect to `deferred` (design 03 §3.1). Returns `false` outside an
+    /// Moves the running effect to `deferred`. Returns `false` outside an
     /// effect.
     pub(crate) fn defer_current_effect(&self) -> bool {
         let mut inner = self.inner.borrow_mut();

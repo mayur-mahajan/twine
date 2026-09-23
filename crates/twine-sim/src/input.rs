@@ -27,6 +27,7 @@ pub struct SimInputState {
     last_key: Key,
     enc_diff: i32,
     enc_pressed: bool,
+    click: Option<Point>,
 }
 
 impl Default for SimInputState {
@@ -37,6 +38,7 @@ impl Default for SimInputState {
             last_key: Key::Enter,
             enc_diff: 0,
             enc_pressed: false,
+            click: None,
         }
     }
 }
@@ -68,8 +70,24 @@ impl SimInputState {
     pub fn pointer_release(&mut self) {
         if self.pointer.pressed {
             self.pointer.pressed = false;
+            self.click = Some(self.pointer.point);
             log::debug!(target: "twine::sim", "pointer released at {}", self.pointer.point);
         }
+    }
+
+    /// The position of the last pointer release since the previous call (a "click").
+    pub fn take_click(&mut self) -> Option<Point> {
+        self.click.take()
+    }
+
+    /// Drains the keypad queue, returning the keys pressed since the previous call (for
+    /// framebuffer runners, where no keypad device reads the queue).
+    pub fn take_pressed_keys(&mut self) -> Vec<Key> {
+        self.keys
+            .drain(..)
+            .filter(|(_, pressed)| *pressed)
+            .map(|(k, _)| k)
+            .collect()
     }
 
     /// The current pointer state.

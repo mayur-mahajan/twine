@@ -2,7 +2,7 @@
 //!
 //! The panel image is converted to `0x00RRGGBB` and scaled nearest-neighbour to the window.
 //! Presentation happens only when the panel changed; between frames the event loop sleeps with
-//! `ControlFlow::WaitUntil(next deadline)`, so an idle simulator uses no CPU (P1).
+//! `ControlFlow::WaitUntil(next deadline)`, so an idle simulator uses no CPU.
 
 use std::num::NonZeroU32;
 use std::rc::Rc;

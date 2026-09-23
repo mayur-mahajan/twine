@@ -1,5 +1,5 @@
-//! Instruction-count benchmarks (iai-callgrind, Linux + valgrind only) for the rows of design
-//! 03 §5. On other platforms this bench is an empty program.
+//! Instruction-count benchmarks (iai-callgrind, Linux + valgrind only) of the runtime's
+//! performance targets. On other platforms this bench is an empty program.
 //!
 //! Run with `cargo bench -p twine-reactive --bench reactive_iai` (needs `iai-callgrind-runner`
 //! of the same version on `PATH`).

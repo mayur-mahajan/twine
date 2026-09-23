@@ -13,8 +13,7 @@ workspace = true
 [features]
 default = ["ui"]
 ## `RenderHarness` over `twine-render`.
-# NOTE(P03.S03): adds the optional `twine-render`/`twine-text`/`twine-image` deps and `RenderHarness`.
-render = []
+render = ["dep:twine-render"]
 ## `EngineHarness` over a bare `Engine`.
 # NOTE(P09.S05): adds the optional engine/theme/assets deps and `EngineHarness`.
 engine = ["render"]
@@ -25,6 +24,16 @@ ui = ["engine"]
 [dependencies]
 twine-core = { path = "../twine-core", features = ["std", "log"] }
 twine-hal = { path = "../twine-hal", features = ["log"] }
+twine-render = { path = "../twine-render", optional = true, features = [
+    "log",
+    "color-rgb565",
+    "color-rgb565-swapped",
+    "color-rgb888",
+    "color-xrgb8888",
+    "color-argb8888",
+    "color-l8",
+    "color-i1",
+] }
 png = "0.17"
 log = "0.4"
 env_logger = "0.11"

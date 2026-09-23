@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "twine"
 path = "src/main.rs"
@@ -16,3 +19,20 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
+fontdue = "0.9"
+# GPOS kerning and `post` underline metrics (fontdue only reads the legacy `kern` table).
+ttf-parser = { version = "0.25", default-features = false, features = ["std", "opentype-layout"] }
+twine-text = { path = "../../crates/twine-text", features = ["std"] }
+# `twine image`: input decoding, the image model, RLE/LZ4 compression.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "qoi"] }
+twine-core = { path = "../../crates/twine-core", features = ["std"] }
+twine-image = { path = "../../crates/twine-image", features = ["std"] }
+lz4_flex = { version = "0.11", default-features = false, features = ["safe-encode", "std"] }
+
+[dev-dependencies]
+proptest = "1"
+# `twine image` round-trip tests render converted images.
+twine-image = { path = "../../crates/twine-image", features = ["std", "img-lz4"] }
+twine-render = { path = "../../crates/twine-render", features = ["color-argb8888"] }
+twine-testing = { path = "../../crates/twine-testing", default-features = false, features = ["render"] }

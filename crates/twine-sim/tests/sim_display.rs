@@ -1,4 +1,4 @@
-//! `SimDisplay` without a window (P02.S06).
+//! `SimDisplay` without a window.
 
 use std::time::{Duration, Instant};
 

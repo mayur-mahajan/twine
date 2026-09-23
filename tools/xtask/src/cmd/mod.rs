@@ -5,6 +5,7 @@ pub mod ci;
 pub mod coverage;
 pub mod firmware;
 pub mod fonts;
+pub mod images;
 pub mod layers;
 pub mod miri;
 pub mod nostd;

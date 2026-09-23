@@ -12,7 +12,45 @@ workspace = true
 
 [features]
 default = []
+## In-house QOI decoder (the default image codec of the `twine` facade).
+img-qoi = []
+## PNG decoder (in-house over `miniz_oxide`; every color type and bit depth, Adam7).
+img-png = ["dep:miniz_oxide"]
+## JPEG decoder (`zune-jpeg`; baseline and progressive).
+img-jpeg = ["dep:zune-jpeg", "dep:zune-core"]
+## In-house GIF decoder with animation (`GifPlayer`).
+img-gif = []
+## In-house BMP decoder (1–32 bpp, RLE4/RLE8, bit fields, alpha).
+img-bmp = []
+## LZ4-compressed images (`lz4_flex`, decompression only).
+img-lz4 = ["dep:lz4_flex"]
+## std-only conveniences (encoders used by tools and tests).
+std = ["twine-core/std", "twine-render/std"]
+## Log through the `log` crate.
+log = ["twine-core/log", "twine-render/log"]
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = ["dep:defmt", "twine-core/defmt", "twine-render/defmt"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
 twine-render = { path = "../twine-render" }
+thiserror = { version = "2", default-features = false }
+bitflags = { version = "2", default-features = false }
+heapless = { version = "0.8", default-features = false }
+defmt = { version = "1", optional = true }
+lz4_flex = { version = "0.11", default-features = false, features = ["safe-decode"], optional = true }
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"], optional = true }
+zune-jpeg = { version = "0.5", default-features = false, optional = true }
+zune-core = { version = "0.5", default-features = false, optional = true }
+
+[dev-dependencies]
+# Every codec for tests, doc-tests and benches.
+twine-image = { path = ".", features = ["std", "log", "img-qoi", "img-png", "img-jpeg", "img-gif", "img-bmp", "img-lz4"] }
+twine-render = { path = "../twine-render", features = ["color-rgb565", "color-argb8888"] }
+twine-testing = { path = "../twine-testing", default-features = false, features = ["render"] }
+proptest = "1"
+lz4_flex = { version = "0.11", default-features = false, features = ["safe-encode", "safe-decode", "std"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "qoi"] }
+png = "0.17"
+jpeg-encoder = "0.7"
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }

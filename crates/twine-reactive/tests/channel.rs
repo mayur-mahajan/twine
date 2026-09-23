@@ -1,4 +1,4 @@
-//! P07.S07: `Channel`, `UiWaker`, `Scope::on_message`.
+//! `Channel`, `UiWaker`, `Scope::on_message`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

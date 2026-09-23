@@ -1,12 +1,13 @@
 //! `cargo xtask ci [--quick]`: every check CI runs, in order, stopping at the first failure.
 //!
-//! A summary table is printed at the end. `--quick` skips `nostd`, `doc`, `miri` and `firmware`.
+//! A summary table is printed at the end. `--quick` skips `nostd`, `doc`, `bench-build`, `miri`
+//! and `firmware`.
 
 use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::cmd::{firmware, layers, miri, nostd, snapshots, todo};
+use crate::cmd::{firmware, fonts, images, layers, miri, nostd, snapshots, todo};
 use crate::util::{R, cargo, output, run as run_cmd, warn};
 
 /// `(crate, feature)` pairs left out of the all-features clippy pass because they cannot be
@@ -16,6 +17,9 @@ pub const CLIPPY_ALL_FEATURES_EXCLUDE: &[(&str, &str)] = &[
     ("twine-core", "defmt"),
     ("twine-hal", "defmt"),
     ("twine-reactive", "defmt"),
+    ("twine-render", "defmt"),
+    ("twine-text", "defmt"),
+    ("twine-image", "defmt"),
 ];
 
 /// Outcome of one stage.
@@ -112,6 +116,14 @@ fn layers_check() -> Result<Outcome, Box<dyn std::error::Error>> {
     ok(layers::run())
 }
 
+fn fonts_check() -> Result<Outcome, Box<dyn std::error::Error>> {
+    ok(fonts::run(true))
+}
+
+fn images_check() -> Result<Outcome, Box<dyn std::error::Error>> {
+    ok(images::gen_assets(true).and_then(|()| images::run(true)))
+}
+
 fn nostd_build() -> Result<Outcome, Box<dyn std::error::Error>> {
     ok(nostd::run())
 }
@@ -135,6 +147,11 @@ fn doc() -> Result<Outcome, Box<dyn std::error::Error>> {
     ])))
 }
 
+/// Compiles every benchmark without running it.
+fn bench_build() -> Result<Outcome, Box<dyn std::error::Error>> {
+    ok(run_cmd(cargo().args(["bench", "--workspace", "--no-run"])))
+}
+
 fn snapshot_check() -> Result<Outcome, Box<dyn std::error::Error>> {
     ok(snapshots::run(false))
 }
@@ -152,8 +169,11 @@ const STAGES: &[(&str, bool, StageFn)] = &[
     ("test-features", true, test_features),
     ("todo-check", true, todo_check),
     ("layers", true, layers_check),
+    ("fonts", true, fonts_check),
+    ("images", true, images_check),
     ("nostd", false, nostd_build),
     ("doc", false, doc),
+    ("bench-build", false, bench_build),
     ("miri", false, miri_check),
     ("snapshots", true, snapshot_check),
     ("firmware", false, firmware_build),

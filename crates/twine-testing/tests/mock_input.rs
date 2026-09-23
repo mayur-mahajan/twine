@@ -1,4 +1,4 @@
-//! Mock input devices (P02.S03).
+//! Mock input devices.
 
 use twine_core::Point;
 use twine_hal::{EncoderData, InputData, InputDevice, InputKind, Key, KeypadData, PointerData, PollHint};

@@ -1,4 +1,4 @@
-//! P07.S04: memos and push-pull coloring.
+//! Memos and push-pull coloring.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

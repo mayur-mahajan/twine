@@ -1,4 +1,4 @@
-//! Batching, untracked reads, flushing and deferred effects (design 03 §3, §3.1).
+//! Batching, untracked reads, flushing and deferred effects.
 
 use core::any::Any;
 
@@ -136,7 +136,7 @@ pub fn set_flush_iterations_limit(n: u32) {
 }
 
 /// Called from inside a running effect: re-queues it to run again at the next flush with a
-/// real (non-`()`) context (design 03 §3.1).
+/// real (non-`()`) context.
 ///
 /// View-layer bindings use this when they run without an engine context (e.g. after a `set`
 /// outside `Ui::update`). Outside an effect this logs a warning and does nothing.

@@ -1,4 +1,4 @@
-//! P07.S06: `batch`, `untrack`, deferred effects.
+//! `batch`, `untrack`, deferred effects.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

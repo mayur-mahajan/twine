@@ -64,7 +64,7 @@ impl Default for Headless {
     }
 }
 
-/// Configuration of the simulator (`docs/design/10-simulator-testing.md` §1).
+/// Configuration of the simulator.
 ///
 /// ```
 /// use twine_core::ColorFormat;
@@ -87,7 +87,7 @@ pub struct SimConfig {
     pub scale: u8,
     /// Emulated panel pixel format (default `Rgb565`).
     pub format: ColorFormat,
-    /// Draw buffer layout used by engine apps (from Phase 09).
+    /// Draw buffer layout used by engine apps.
     pub buffer_mode: BufferSpec,
     /// Emulated bus throughput in bits per second (`None` = instant flushes).
     pub bus_hz: Option<u32>,

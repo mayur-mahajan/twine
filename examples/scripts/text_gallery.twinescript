@@ -1,0 +1,36 @@
+# Headless tour of the text gallery (cargo xtask sim-smoke): one screenshot per page.
+# Inputs due at a frame apply before it is drawn and shots after, so each shot waits a frame.
+wait 20
+shot page1
+wait 16
+key Right
+wait 20
+shot page2
+wait 16
+key Right
+wait 20
+shot page3
+wait 16
+key Right
+wait 20
+shot page4
+wait 16
+key Right
+wait 20
+shot page5
+wait 16
+key Right
+wait 20
+shot page6
+wait 16
+key Right
+wait 20
+shot page7
+wait 16
+key Right
+wait 20
+shot page8
+wait 16
+key Right
+wait 20
+shot page9

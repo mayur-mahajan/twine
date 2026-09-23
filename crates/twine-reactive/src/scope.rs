@@ -1,5 +1,4 @@
-//! [`Scope`]: ownership of reactive nodes, nesting, disposal, cleanups and context
-//! (design 03 §3.2, 02 §2).
+//! [`Scope`]: ownership of reactive nodes, nesting, disposal, cleanups and context.
 
 use alloc::boxed::Box;
 use alloc::rc::Rc;

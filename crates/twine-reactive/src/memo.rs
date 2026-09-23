@@ -1,4 +1,4 @@
-//! [`Memo`]: lazily computed, cached, equality-checked derived values (design 03 §3).
+//! [`Memo`]: lazily computed, cached, equality-checked derived values.
 
 use core::fmt;
 use core::hash::{Hash, Hasher};
