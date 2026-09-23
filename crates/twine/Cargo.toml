@@ -1,0 +1,31 @@
+[package]
+name = "twine"
+description = "Twine: declarative, low-power GUI for embedded devices (facade crate)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+twine-core = { path = "../twine-core" }
+twine-hal = { path = "../twine-hal" }
+twine-reactive = { path = "../twine-reactive" }
+twine-anim = { path = "../twine-anim" }
+twine-render = { path = "../twine-render" }
+twine-text = { path = "../twine-text" }
+twine-image = { path = "../twine-image" }
+twine-style = { path = "../twine-style" }
+twine-layout = { path = "../twine-layout" }
+twine-engine = { path = "../twine-engine" }
+twine-theme = { path = "../twine-theme" }
+twine-widgets = { path = "../twine-widgets" }
+twine-widgets-ext = { path = "../twine-widgets-ext" }
+twine-view = { path = "../twine-view" }
+twine-assets = { path = "../twine-assets" }

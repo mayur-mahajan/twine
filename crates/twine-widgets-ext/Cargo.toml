@@ -1,0 +1,25 @@
+[package]
+name = "twine-widgets-ext"
+description = "Complex widgets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+twine-core = { path = "../twine-core" }
+twine-engine = { path = "../twine-engine" }
+twine-style = { path = "../twine-style" }
+twine-text = { path = "../twine-text" }
+twine-image = { path = "../twine-image" }
+twine-anim = { path = "../twine-anim" }
+twine-render = { path = "../twine-render" }
+twine-theme = { path = "../twine-theme" }
+twine-widgets = { path = "../twine-widgets" }

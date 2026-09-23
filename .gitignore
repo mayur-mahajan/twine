@@ -1,0 +1,7 @@
+/target
+**/target
+/docs
+firmware/*/Cargo.lock
+.DS_Store
+*.actual.png
+*.diff.png

@@ -1,0 +1,21 @@
+[package]
+name = "twine-extra"
+description = "Extras: QR code, barcode, file explorer, IME, monkey, snapshot, sysmon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+twine-core = { path = "../twine-core" }
+twine-view = { path = "../twine-view" }
+twine-engine = { path = "../twine-engine" }
+twine-widgets = { path = "../twine-widgets" }
+twine-fs = { path = "../twine-fs" }

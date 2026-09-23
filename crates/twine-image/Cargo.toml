@@ -1,0 +1,18 @@
+[package]
+name = "twine-image"
+description = "Image formats, decoders and caches"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+twine-core = { path = "../twine-core" }
+twine-render = { path = "../twine-render" }

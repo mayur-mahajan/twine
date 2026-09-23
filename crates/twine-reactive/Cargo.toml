@@ -1,0 +1,46 @@
+[package]
+name = "twine-reactive"
+description = "Fine-grained reactive signals runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+## Thread-local runtime (host, simulator, tests). Without it the runtime lives in a `static`
+## that must be bound to the UI context with `bind_to_current_context` (see crate docs).
+std = ["twine-core/std"]
+## Log through `defmt`.
+defmt = ["dep:defmt", "twine-core/defmt"]
+## Log through the `log` crate.
+log = ["twine-core/log"]
+
+[dependencies]
+twine-core = { path = "../twine-core" }
+critical-section = "1"
+portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }
+heapless = { version = "0.8", default-features = false }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+# Enables the thread-local runtime for every test, doc-test and bench of this crate.
+twine-reactive = { path = ".", features = ["std"] }
+critical-section = { version = "1", features = ["std"] }
+proptest = "1"
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+iai-callgrind = "0.16"
+
+[[bench]]
+name = "reactive"
+harness = false
+
+[[bench]]
+name = "reactive_iai"
+harness = false

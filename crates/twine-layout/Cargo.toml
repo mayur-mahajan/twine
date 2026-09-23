@@ -1,0 +1,18 @@
+[package]
+name = "twine-layout"
+description = "Sizing, alignment, flex and grid layout"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+twine-core = { path = "../twine-core" }
+twine-style = { path = "../twine-style" }

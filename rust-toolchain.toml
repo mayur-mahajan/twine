@@ -1,0 +1,9 @@
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy", "llvm-tools-preview", "rust-src"]
+targets = [
+    "thumbv6m-none-eabi",          # RP2040 (no atomic CAS)
+    "thumbv7em-none-eabihf",       # STM32F4/F7
+    "thumbv8m.main-none-eabihf",   # RP2350
+    "riscv32imc-unknown-none-elf", # ESP32-C3
+]

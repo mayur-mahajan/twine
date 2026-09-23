@@ -1,0 +1,30 @@
+[package]
+name = "twine-testing"
+description = "Test harnesses, snapshots and mocks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["ui"]
+## `RenderHarness` over `twine-render`.
+# NOTE(P03.S03): adds the optional `twine-render`/`twine-text`/`twine-image` deps and `RenderHarness`.
+render = []
+## `EngineHarness` over a bare `Engine`.
+# NOTE(P09.S05): adds the optional engine/theme/assets deps and `EngineHarness`.
+engine = ["render"]
+## `TestUi` over the declarative `Ui`.
+# NOTE(P15.S06): adds the optional reactive/view/widgets deps and `TestUi`.
+ui = ["engine"]
+
+[dependencies]
+twine-core = { path = "../twine-core", features = ["std", "log"] }
+twine-hal = { path = "../twine-hal", features = ["log"] }
+png = "0.17"
+log = "0.4"
+env_logger = "0.11"

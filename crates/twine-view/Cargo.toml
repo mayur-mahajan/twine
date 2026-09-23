@@ -1,0 +1,25 @@
+[package]
+name = "twine-view"
+description = "Declarative view layer and Ui runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+twine-core = { path = "../twine-core" }
+twine-hal = { path = "../twine-hal" }
+twine-reactive = { path = "../twine-reactive" }
+twine-anim = { path = "../twine-anim" }
+twine-style = { path = "../twine-style" }
+twine-engine = { path = "../twine-engine" }
+twine-theme = { path = "../twine-theme" }
+twine-widgets = { path = "../twine-widgets" }
+twine-widgets-ext = { path = "../twine-widgets-ext" }

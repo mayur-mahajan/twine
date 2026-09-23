@@ -1,0 +1,6 @@
+# Headless smoke script for the test pattern (cargo xtask sim-smoke).
+wait 200
+tap 100 100
+drag 10 10 200 150 300
+key Enter
+shot after_input

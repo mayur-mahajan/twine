@@ -1,0 +1,24 @@
+[package]
+name = "twine-hal"
+description = "Display, input and clock traits"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+## Async driver traits (`AsyncDisplayDriver`, `AsyncInputWait`).
+async = []
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = ["dep:defmt", "twine-core/defmt"]
+## Log through the `log` crate.
+log = ["twine-core/log"]
+
+[dependencies]
+twine-core = { path = "../twine-core" }
+defmt = { version = "1", optional = true }

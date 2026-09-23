@@ -1,0 +1,75 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/twine-core",
+    "crates/twine-hal",
+    "crates/twine-reactive",
+    "crates/twine-anim",
+    "crates/twine-render",
+    "crates/twine-text",
+    "crates/twine-image",
+    "crates/twine-vector",
+    "crates/twine-fs",
+    "crates/twine-style",
+    "crates/twine-layout",
+    "crates/twine-engine",
+    "crates/twine-theme",
+    "crates/twine-widgets",
+    "crates/twine-widgets-ext",
+    "crates/twine-view",
+    "crates/twine-assets",
+    "crates/twine-extra",
+    "crates/twine-lottie",
+    "crates/twine",
+    "crates/twine-drivers",
+    "crates/twine-embassy",
+    "crates/twine-accel-stm32",
+    "crates/twine-embedded-graphics",
+    "crates/twine-demos",
+    "crates/twine-sim",
+    "crates/twine-testing",
+    "tools/xtask",
+    "tools/twine-cli",
+    "examples",
+]
+exclude = ["firmware"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/OWNER/twine"
+
+[workspace.lints.rust]
+missing_docs = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+many_single_char_names = "allow"
+inline_always = "allow"
+struct_excessive_bools = "allow"
+
+[profile.dev]
+opt-level = 1          # renderer is too slow at opt-level 0 for the simulator
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+debug = 1
+lto = "thin"
+
+[profile.bench]
+debug = 1

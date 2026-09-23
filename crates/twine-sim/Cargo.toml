@@ -1,0 +1,25 @@
+[package]
+name = "twine-sim"
+description = "Desktop simulator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+twine-core = { path = "../twine-core", features = ["std", "log"] }
+twine-hal = { path = "../twine-hal", features = ["log"] }
+twine-view = { path = "../twine-view" }
+twine-engine = { path = "../twine-engine" }
+winit = "0.30"
+softbuffer = "0.4"
+png = "0.17"
+log = "0.4"
+env_logger = "0.11"

@@ -1,0 +1,19 @@
+[package]
+name = "twine-embassy"
+description = "Embassy async run loop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+twine-core = { path = "../twine-core" }
+twine-hal = { path = "../twine-hal" }
+twine-view = { path = "../twine-view" }

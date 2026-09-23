@@ -1,0 +1,21 @@
+[package]
+name = "twine-style"
+description = "Style properties, selectors and resolution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+twine-core = { path = "../twine-core" }
+twine-anim = { path = "../twine-anim" }
+twine-render = { path = "../twine-render" }
+twine-text = { path = "../twine-text" }
+twine-image = { path = "../twine-image" }

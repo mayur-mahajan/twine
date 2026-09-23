@@ -1,0 +1,21 @@
+[package]
+name = "twine-examples"
+description = "Simulator examples for Twine (one binary per example in src/bin)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+twine-core = { path = "../crates/twine-core", features = ["std", "log"] }
+twine-hal = { path = "../crates/twine-hal", features = ["log"] }
+twine-sim = { path = "../crates/twine-sim" }
+twine-reactive = { path = "../crates/twine-reactive", features = ["std", "log"] }
+# Host implementation for `critical-section` (used by `twine_reactive::Channel`).
+critical-section = { version = "1", features = ["std"] }
+env_logger = "0.11"

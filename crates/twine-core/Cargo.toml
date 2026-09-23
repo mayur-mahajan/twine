@@ -1,0 +1,28 @@
+[package]
+name = "twine-core"
+description = "Foundations: geometry, fixed-point math, colors, time, arenas, logging"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+## Enable std-only conveniences.
+std = []
+## Log through the `log` crate.
+log = ["dep:log"]
+## Log through `defmt` (wins over `log` when both are enabled).
+defmt = ["dep:defmt"]
+
+[dependencies]
+thiserror = { version = "2", default-features = false }
+log = { version = "0.4", default-features = false, optional = true }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+proptest = "1"

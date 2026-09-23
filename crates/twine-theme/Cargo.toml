@@ -1,0 +1,21 @@
+[package]
+name = "twine-theme"
+description = "Themes: default, simple, mono"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+twine-core = { path = "../twine-core" }
+twine-engine = { path = "../twine-engine" }
+twine-style = { path = "../twine-style" }
+twine-text = { path = "../twine-text" }
+twine-assets = { path = "../twine-assets" }

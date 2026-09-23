@@ -1,0 +1,18 @@
+[package]
+name = "twine-embedded-graphics"
+description = "embedded-graphics adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+
+[dependencies]
+twine-core = { path = "../twine-core" }
+twine-hal = { path = "../twine-hal" }

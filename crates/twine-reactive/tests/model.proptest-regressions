@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2040c368315ce7e7d0a953e1ec6175a60a2719b3e9b25797febc98e68d4cf7b3 # shrinks to p = Program { signals: [0], memo_deps: [[Index(0)]], effect_deps: [[Index(0)], [Index(0)], [Index(9223372036854775808)], [Index(0)], [Index(0)]], ops: [Batch([]), Batch([Set(Index(0), 1), ReadMemo(Index(0)), Set(Index(0), 0)])] }
