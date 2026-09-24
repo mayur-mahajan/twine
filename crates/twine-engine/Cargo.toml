@@ -12,6 +12,54 @@ workspace = true
 
 [features]
 default = []
+## std-only conveniences.
+std = [
+    "twine-core/std",
+    "twine-anim/std",
+    "twine-render/std",
+    "twine-text/std",
+    "twine-image/std",
+    "twine-style/std",
+    "twine-layout/std",
+]
+## Log through the `log` crate.
+log = [
+    "twine-core/log",
+    "twine-hal/log",
+    "twine-anim/log",
+    "twine-render/log",
+    "twine-text/log",
+    "twine-image/log",
+    "twine-style/log",
+    "twine-layout/log",
+]
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = [
+    "dep:defmt",
+    "twine-core/defmt",
+    "twine-hal/defmt",
+    "twine-anim/defmt",
+    "twine-render/defmt",
+    "twine-text/defmt",
+    "twine-image/defmt",
+    "twine-style/defmt",
+    "twine-layout/defmt",
+]
+## Expensive invariant checks (tree invariants after every mutation, style cache verification,
+## invalidation log, render hook). Enabled in tests.
+debug-checks = []
+## On-screen performance overlay (`Engine::set_perf_overlay`).
+perf-monitor = []
+## Keep `test_id`s on nodes in release builds (always on with `debug_assertions`).
+test-ids = []
+## Pixel formats the renderer is compiled for (forwarded to `twine-render`).
+color-rgb565 = ["twine-render/color-rgb565"]
+color-rgb565-swapped = ["twine-render/color-rgb565-swapped"]
+color-rgb888 = ["twine-render/color-rgb888"]
+color-xrgb8888 = ["twine-render/color-xrgb8888"]
+color-argb8888 = ["twine-render/color-argb8888"]
+color-l8 = ["twine-render/color-l8"]
+color-i1 = ["twine-render/color-i1"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
@@ -22,3 +70,25 @@ twine-text = { path = "../twine-text" }
 twine-image = { path = "../twine-image" }
 twine-style = { path = "../twine-style" }
 twine-layout = { path = "../twine-layout" }
+bitflags = { version = "2", default-features = false }
+heapless = { version = "0.8", default-features = false }
+thiserror = { version = "2", default-features = false }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+twine-engine = { path = ".", features = [
+    "std",
+    "debug-checks",
+    "perf-monitor",
+    "color-rgb565",
+    "color-rgb565-swapped",
+    "color-rgb888",
+    "color-xrgb8888",
+    "color-argb8888",
+    "color-l8",
+    "color-i1",
+] }
+twine-testing = { path = "../twine-testing", default-features = false, features = ["engine", "debug-checks"] }
+twine-assets = { path = "../twine-assets", features = ["montserrat-14"] }
+proptest = "1"
+log = "0.4"

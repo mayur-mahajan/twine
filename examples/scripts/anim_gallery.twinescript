@@ -1,0 +1,35 @@
+# Headless tour of anim_gallery (cargo xtask sim-smoke): the easing rows at fixed times, the
+# press transition, two screen load animations and pausing every animation.
+# Inputs due at a frame apply before it is drawn and shots after.
+wait 16
+shot start
+wait 734
+shot t750
+wait 750
+shot t1500
+# Press transition (color + scale, 250 ms).
+press 247 258
+wait 125
+shot pressing
+wait 200
+shot pressed
+release
+wait 300
+# `5` = MoveLeft (500 ms) to screen 2, `9` = FadeIn back to screen 1.
+key 5
+wait 250
+shot move_left_mid
+wait 400
+shot screen2
+key 9
+wait 250
+shot fade_in_mid
+wait 400
+# Space pauses every animation: two shots 500 ms apart are identical.
+text " "
+wait 100
+shot paused_a
+wait 500
+shot paused_b
+text " "
+wait 32

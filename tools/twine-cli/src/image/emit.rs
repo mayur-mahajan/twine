@@ -88,7 +88,7 @@ pub fn render(e: &Emit<'_>) -> String {
     );
     let _ = writeln!(
         s,
-        "/// `{}` ({}×{} {}).",
+        "/// `{}` ({}×{} `{}`).",
         e.name,
         e.header.w,
         e.header.h,

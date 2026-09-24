@@ -31,10 +31,10 @@ fn keypad_queue_sets_more_flag() {
                 pressed: true,
                 more: false
             }),
-            // Empty queue: last key, released.
+            // Empty queue: last key in its last state (still held).
             InputData::Keypad(KeypadData {
                 key: Key::Char('x'),
-                pressed: false,
+                pressed: true,
                 more: false
             }),
         ]

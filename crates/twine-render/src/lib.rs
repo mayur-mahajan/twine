@@ -46,9 +46,10 @@
 //! | image (opa, recolor, chroma key, tiling, clip radius, bitmap mask, rotation/scale) | [`Painter::image`], [`transformed_area`] | [`ImagePixels`], [`ImageDsc`] | `lv_draw_sw_image` |
 //! | raw blit (any affine transform) | [`Painter::blit`], [`Painter::blit_transformed`] | [`BlitDsc`] | `lv_draw_sw_image` (layers) |
 //! | glyph coverage (text) | [`Painter::glyph_a8`], [`Painter::glyph_lcd`] | [`SubpxOrder`] | `lv_draw_sw_letter` |
+//! | coverage rows (vector rasterizer output) | [`Painter::coverage_span`], [`Painter::coverage_span_mode`] | [`SpanSource`] | `lv_draw_sw_vector` (blend stage) |
 //! | masks | [`Painter::push_mask`], [`Painter::pop_mask`] | [`Mask`] | `lv_draw_sw_mask_*` |
 //! | layer (group opacity, blend mode, transform) | [`Painter::layer`] | [`LayerDsc`], [`LayerTransform`] | `lv_draw_layer` |
-//! | display rotation | [`rotate_buffer`], [`rotate_area`] | — | `lv_draw_sw_rotate` |
+//! | display rotation, mono conversion | [`rotate_buffer`], [`rotate_area`], [`convert_l8_to_i1`] | — | `lv_draw_sw_rotate` |
 //!
 //! Translucent **polylines** blend overlapping segment ends twice; draw them inside
 //! [`Painter::layer`] when that matters.
@@ -86,6 +87,7 @@
 //!         ..RectDsc::default()
 //!     },
 //! );
+//! drop(p); // the buffer is read after the painter (and any accelerator) is done
 //! // The center is blue, the corner pixel stays white (outside the rounded corner).
 //! let px = |x: usize, y: usize| u16::from_le_bytes([pixels[(y * 64 + x) * 2], pixels[(y * 64 + x) * 2 + 1]]);
 //! assert_eq!(px(32, 24), Color::BLUE.to_rgb565());
@@ -103,6 +105,7 @@ mod blend;
 mod buf;
 mod caches;
 mod circle;
+mod coverage;
 mod dispatch;
 mod error;
 mod glyph;
@@ -126,10 +129,11 @@ pub use blend::{BlendMode, Source, argb_raw, blend_span, mix_color};
 pub use buf::{DrawBuf, is_draw_format};
 pub use caches::{CacheStats, RenderCacheStats, RenderCaches, RenderConfig};
 pub use circle::{CircleCache, MAX_CACHED_RADIUS};
+pub use coverage::{PixelFn, SpanSource};
 pub use dispatch::is_format_enabled;
 pub use error::RenderError;
 pub use glyph::SubpxOrder;
-pub use gradient::{GradExtend, GradKind, GradStop, Gradient, GradientCache, MAX_STOPS};
+pub use gradient::{GradExtend, GradKind, GradStop, Gradient, GradientCache, MAX_STOPS, build_color_map};
 pub use image::read::read_row_argb;
 pub use image::{ImageDsc, transformed_area};
 pub use image_pixels::ImagePixels;
@@ -139,6 +143,6 @@ pub use mask::{LineSide, MAX_MASKS, Mask, MaskId, MaskResult, MaskStack};
 pub use painter::{ACCEL_MIN_PX, Painter};
 pub use polygon::{FillRule, MAX_POLYGON_POINTS, PolygonDsc, TriangleDsc};
 pub use rect::{BorderSide, RADIUS_CIRCLE, RectDsc};
-pub use rotate::{rotate_area, rotate_buffer};
+pub use rotate::{convert_l8_to_i1, rotate_area, rotate_buffer};
 pub use shadow::{ShadowCache, ShadowDsc, shadow_ext_size};
 pub use transform_blit::BlitDsc;

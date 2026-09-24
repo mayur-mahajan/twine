@@ -1,0 +1,48 @@
+pin rst 0
+delay_us 10
+pin rst 1
+delay_us 120000
+cmd EF
+data 03 80 02
+cmd CF
+data 00 C1 30
+cmd ED
+data 64 03 12 81
+cmd E8
+data 85 00 78
+cmd CB
+data 39 2C 00 34 02
+cmd F7
+data 20
+cmd EA
+data 00 00
+cmd C0
+data 23
+cmd C1
+data 10
+cmd C5
+data 3E 28
+cmd C7
+data 86
+cmd 37
+data 00 00
+cmd B1
+data 00 18
+cmd B6
+data 08 82 27
+cmd F2
+data 00
+cmd 26
+data 01
+cmd E0
+data 0F 31 2B 0C 0E 08 4E F1 37 07 10 03 0E 09 00
+cmd E1
+data 00 0E 14 03 11 07 31 C1 48 08 0F 0C 31 36 0F
+cmd 3A
+data 55
+cmd 36
+data 28
+cmd 20
+cmd 11
+delay_us 120000
+cmd 29

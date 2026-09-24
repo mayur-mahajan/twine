@@ -210,7 +210,10 @@ impl Painter<'_> {
                     let e = (x + chunk).min(area.x1);
                     let n = (e - x) as usize;
                     let mut span = core::mem::take(&mut sc.span);
-                    let ops = TexelOps { recolor: rc, chroma: None };
+                    let ops = TexelOps {
+                        recolor: rc,
+                        chroma: None,
+                    };
                     with_texel!(src, T => convert_row::<T>(src, (x - pos.x) as usize, iy, n, ops, &mut span));
                     self.blend_masked_span(y, x, e, Source::Argb(&span[..n * 4]), None, opa, blend_mode);
                     sc.span = span;
@@ -299,7 +302,11 @@ impl Painter<'_> {
                     with_texel!(src, T => sample_row::<T>(
                         src, sx0 + a * i, sy0 + b * i, a, b, k, dsc.antialias, ops, &mut sc.span
                     ));
-                    let cov = if masks.is_some() { Some(&mut sc.cov[..k]) } else { None };
+                    let cov = if masks.is_some() {
+                        Some(&mut sc.cov[..k])
+                    } else {
+                        None
+                    };
                     self.blend_masked_span(
                         y,
                         x,

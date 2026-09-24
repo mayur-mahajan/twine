@@ -80,12 +80,13 @@ mod imp {
 
 pub(crate) use imp::with_runtime;
 
-/// Binds the `no_std` runtime to the calling execution context (only without the `std`
-/// feature).
+/// Binds the runtime to the calling execution context.
 ///
-/// Without `std`, the runtime lives in a `static`; every function of this crate panics until
-/// this has been called. Call it once, early in the UI task (typically in `main` before
-/// building the `Ui`). Calling it again from the same context is harmless.
+/// Without the `std` feature the runtime lives in a `static`, and every function of this
+/// crate panics until this has been called. Call it once, early in the UI task (typically in
+/// `main` before building the `Ui`). Calling it again from the same context is harmless.
+/// With `std` every thread has its own runtime and this does nothing (it exists so that code
+/// written for both configurations compiles either way).
 ///
 /// # Safety
 ///
@@ -94,14 +95,14 @@ pub(crate) use imp::with_runtime;
 /// [`WriteSignal`](crate::WriteSignal), [`Memo`](crate::Memo), [`EffectId`](crate::EffectId)
 /// and the free functions ([`create_root`], [`batch`](crate::batch),
 /// [`untrack`](crate::untrack), [`flush_effects_with`](crate::flush_effects_with),
-/// [`drain_channels`](crate::drain_channels), …) — must only be called from the execution
-/// context that made this call: never from an interrupt handler, another core, or another
-/// thread/task that can preempt it. [`Channel`](crate::Channel) and
-/// [`UiWaker`](crate::UiWaker) are exempt: they never touch the runtime and may be used from
-/// any context.
-#[cfg(not(feature = "std"))]
+/// [`drain_channels`](crate::drain_channels), [`provide_ambient`](crate::provide_ambient), …)
+/// — must only be called from the execution context that made this call: never from an
+/// interrupt handler, another core, or another thread/task that can preempt it.
+/// [`Channel`](crate::Channel) and [`UiWaker`](crate::UiWaker) are exempt: they never touch
+/// the runtime and may be used from any context.
 #[allow(unsafe_code)]
 pub unsafe fn bind_to_current_context() {
+    #[cfg(not(feature = "std"))]
     imp::bind();
 }
 

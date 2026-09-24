@@ -30,9 +30,10 @@ members = [
     "crates/twine-testing",
     "tools/xtask",
     "tools/twine-cli",
+    "tools/twine-bench",
     "examples",
 ]
-exclude = ["firmware"]
+exclude = ["firmware", "fuzz"]
 
 [workspace.package]
 version = "0.1.0"

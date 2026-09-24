@@ -277,11 +277,13 @@ impl Scope {
             n
         });
         let scope = self.key();
+        let mut waker = None;
         let rejected = with_runtime(|rt| {
             let mut inner = rt.inner.borrow_mut();
             if !inner.scopes.contains(scope) {
                 return Some(drain);
             }
+            waker.clone_from(&inner.ui_waker);
             let id = inner.next_channel_id;
             inner.next_channel_id = id.wrapping_add(1);
             inner.channels.push(ChannelReg {
@@ -295,6 +297,8 @@ impl Scope {
         if let Some(d) = rejected {
             warn!(target: "twine::reactive", "on_message on disposed scope {:?}; ignored", scope);
             drop(d);
+        } else if let Some(w) = waker {
+            ch.waker().register(&w);
         }
     }
 }
@@ -361,7 +365,8 @@ pub fn drain_channels(max_per_channel: usize) -> usize {
 }
 
 /// Registers `w` in the [`UiWaker`] of every channel with an `on_message` registration, so a
-/// `try_send` on any of them wakes the UI task.
+/// `try_send` on any of them wakes the UI task. The runtime keeps `w` and also registers it in
+/// the channels of later `on_message` calls.
 ///
 /// ```
 /// use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
@@ -379,6 +384,8 @@ pub fn drain_channels(max_per_channel: usize) -> usize {
 /// assert_eq!(count.0.load(Ordering::SeqCst), 1);
 /// ```
 pub fn register_waker(w: &Waker) {
+    let old = with_runtime(|rt| rt.inner.borrow_mut().ui_waker.replace(w.clone()));
+    drop(old); // outside the borrow (R1: a waker's drop is foreign code)
     let mut i = 0;
     // The registration list is re-read each step: nothing is borrowed while `register` runs.
     while let Some(chan) = with_runtime(|rt| rt.inner.borrow().channels.get(i).map(|r| r.chan)) {

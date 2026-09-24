@@ -138,8 +138,10 @@ pub fn spinner_gif() -> Result<Vec<u8>> {
 /// Every generated asset: `(file name, bytes)`.
 pub fn all() -> Result<Vec<(&'static str, Vec<u8>)>> {
     let photo = photo();
+    let logo = logo();
     Ok(vec![
-        ("twine_logo.png", encode(&logo(), ImageFormat::Png)?),
+        ("twine_logo.png", encode(&logo, ImageFormat::Png)?),
+        ("twine_logo.qoi", encode(&logo, ImageFormat::Qoi)?),
         ("photo.png", encode(&photo, ImageFormat::Png)?),
         ("photo.qoi", encode(&photo, ImageFormat::Qoi)?),
         ("photo.bmp", encode(&photo, ImageFormat::Bmp)?),

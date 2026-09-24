@@ -432,7 +432,9 @@ impl Decoder for GifDecoder {
                 min_code,
                 data,
                 ..
-            } => draw_frame(bytes, &s, out, &mut lzw, ctrl, rect, palette, interlaced, min_code, data),
+            } => draw_frame(
+                bytes, &s, out, &mut lzw, ctrl, rect, palette, interlaced, min_code, data,
+            ),
             Block::End => return Err(Error::Decode("gif has no frames")),
         }
         log_decoded("gif", header, n);
@@ -488,8 +490,8 @@ fn draw_frame(
 /// assert_eq!(gif.pixels().row(0), &[255, 255, 255, 255]);
 /// ```
 #[derive(Clone, Debug)]
-pub struct GifPlayer {
-    bytes: &'static [u8],
+pub struct GifPlayer<'a> {
+    bytes: &'a [u8],
     screen: Screen,
     canvas: Vec<u8>,
     /// Backup for `Disposal::Previous` (empty when no frame needs it).
@@ -507,10 +509,10 @@ pub struct GifPlayer {
     next_index: usize,
 }
 
-impl GifPlayer {
+impl<'a> GifPlayer<'a> {
     /// Parses the GIF and allocates everything needed to play it. The canvas starts
     /// transparent; call [`advance`](Self::advance) to show the first frame.
-    pub fn new(bytes: &'static [u8]) -> Result<Self, Error> {
+    pub fn new(bytes: &'a [u8]) -> Result<Self, Error> {
         let screen = parse_screen(bytes)?;
         // Scan once: frame count, loop count, whether `previous` disposal is used.
         let (mut pos, mut frames, mut loops, mut needs_prev) = (screen.first_block, 0, None, false);

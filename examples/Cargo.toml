@@ -15,6 +15,7 @@ workspace = true
 twine-core = { path = "../crates/twine-core", features = ["std", "log"] }
 twine-hal = { path = "../crates/twine-hal", features = ["log"] }
 twine-sim = { path = "../crates/twine-sim" }
+twine-engine = { path = "../crates/twine-engine", features = ["std", "log", "perf-monitor"] }
 twine-render = { path = "../crates/twine-render", features = [
     "log",
     "color-rgb565",
@@ -26,8 +27,27 @@ twine-render = { path = "../crates/twine-render", features = [
     "color-i1",
 ] }
 twine-reactive = { path = "../crates/twine-reactive", features = ["std", "log"] }
+twine-style = { path = "../crates/twine-style", features = ["std", "log"] }
 twine-text = { path = "../crates/twine-text", features = ["std", "log"] }
 twine-assets = { path = "../crates/twine-assets", features = ["all-fonts"] }
+twine-theme = { path = "../crates/twine-theme", features = ["std", "log"] }
+twine-widgets = { path = "../crates/twine-widgets", features = ["std", "log"] }
+twine-image = { path = "../crates/twine-image", features = [
+    "std",
+    "log",
+    "img-qoi",
+    "img-png",
+    "img-jpeg",
+    "img-bmp",
+    "img-gif",
+    "img-lz4",
+] }
+twine = { path = "../crates/twine", features = ["std", "all-fonts"] }
+twine-view = { path = "../crates/twine-view", features = ["std", "log"] }
+twine-demos = { path = "../crates/twine-demos" }
 # Host implementation for `critical-section` (used by `twine_reactive::Channel`).
 critical-section = { version = "1", features = ["std"] }
 env_logger = "0.11"
+
+[dev-dependencies]
+twine-testing = { path = "../crates/twine-testing" }

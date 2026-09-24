@@ -3,7 +3,7 @@
 // Input SHA-256: a0a83e3bc12c7cf9163aa791b6a93ba93ae05637468615d09f4a2153bd8c04d5
 // twine-image: format=RGB565 w=64 h=64 stride=128 flags=0x00 compression=none stored=8192 size=8192
 
-/// `LOGO_RGB565` (64×64 RGB565).
+/// `LOGO_RGB565` (64×64 `RGB565`).
 pub static LOGO_RGB565: twine_image::Image = twine_image::Image::new_static(
     twine_image::ImageHeader {
         format: twine_image::ColorFormat::Rgb565,

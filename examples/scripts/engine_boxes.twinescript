@@ -1,0 +1,48 @@
+# Headless tour of engine_boxes (cargo xtask sim-smoke): initial frame, moves, overlays.
+# Inputs due at a frame apply before it is drawn and shots after, so each shot waits a frame.
+wait 32
+shot initial
+key Left
+wait 16
+key Left
+wait 16
+key Up
+wait 16
+key Up
+wait 32
+shot moved
+hotkey F2
+wait 16
+key Right
+wait 16
+shot refresh_debug
+hotkey F2
+hotkey F3
+wait 32
+shot bounds
+hotkey F3
+hotkey F4
+wait 1100
+shot perf_overlay
+hotkey F8
+hotkey F4
+# Time control: pause (the pulsing box freezes), single step, run again.
+hotkey F6
+wait 100
+shot paused
+hotkey F7
+wait 16
+hotkey F6
+# Screen load animations: slide to the second screen and back.
+key n
+wait 150
+shot screen_move
+wait 250
+shot second_screen
+key b
+wait 400
+shot back
+# Deleting the pulsing box stops the last animation: the engine goes idle.
+key x
+wait 64
+shot pulse_deleted

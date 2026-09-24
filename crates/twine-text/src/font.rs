@@ -2,6 +2,8 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use twine_render::ImagePixels;
+
 use crate::cache::GlyphCache;
 
 /// Subpixel rendering of a font's glyphs (LVGL `lv_font_subpx_t`).
@@ -37,7 +39,8 @@ pub struct GlyphInfo {
     pub ofs_x: i16,
     /// Vertical offset of the bitmap's bottom edge above the baseline.
     pub ofs_y: i16,
-    /// Bits per pixel of the stored bitmap (1, 2, 4 or 8).
+    /// Bits per pixel of the stored bitmap (1, 2, 4 or 8), or 0 for an image glyph drawn from
+    /// [`GlyphProvider::glyph_image`] (image fonts, LVGL `imgfont`).
     pub bpp: u8,
     /// Provider-specific glyph id (the glyph index for [`BitmapFont`](crate::BitmapFont)).
     pub id: u32,
@@ -59,7 +62,8 @@ impl GlyphInfo {
     }
 }
 
-/// Source of glyph metrics and coverage bitmaps (a bitmap font, later TTF or image fonts).
+/// Source of glyph metrics and coverage bitmaps: a [`BitmapFont`](crate::BitmapFont), a
+/// runtime TrueType font (feature `ttf`) or an [`ImageFontProvider`](crate::ImageFontProvider).
 ///
 /// Implementations are `Sync` because fonts are `static`s shared by the whole program.
 pub trait GlyphProvider: Sync {
@@ -99,6 +103,14 @@ pub trait GlyphProvider: Sync {
         }
         cache.put_glyph_scratch(buf);
         ok
+    }
+
+    /// The image of an image glyph (one whose [`GlyphInfo::bpp`] is 0), drawn instead of A8
+    /// coverage. `cp` and `next` are the arguments `glyph_info` was called with. The default
+    /// (coverage-only providers) returns `None`.
+    fn glyph_image(&self, cp: char, next: Option<char>) -> Option<&'static ImagePixels<'static>> {
+        let _ = (cp, next);
+        None
     }
 }
 

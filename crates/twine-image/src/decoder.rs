@@ -34,7 +34,13 @@ impl core::fmt::Debug for dyn Decoder {
 
 /// Clears `out` and reserves exactly `n` bytes (zero-filled).
 #[cfg_attr(
-    not(any(feature = "img-qoi", feature = "img-png", feature = "img-jpeg", feature = "img-bmp", feature = "img-gif")),
+    not(any(
+        feature = "img-qoi",
+        feature = "img-png",
+        feature = "img-jpeg",
+        feature = "img-bmp",
+        feature = "img-gif"
+    )),
     allow(dead_code)
 )]
 pub(crate) fn prepare_out(out: &mut Vec<u8>, n: usize) -> Result<(), Error> {
@@ -47,7 +53,13 @@ pub(crate) fn prepare_out(out: &mut Vec<u8>, n: usize) -> Result<(), Error> {
 
 /// The output header of a decoder: `Argb8888` with alpha, else `Xrgb8888`.
 #[cfg_attr(
-    not(any(feature = "img-qoi", feature = "img-png", feature = "img-jpeg", feature = "img-bmp", feature = "img-gif")),
+    not(any(
+        feature = "img-qoi",
+        feature = "img-png",
+        feature = "img-jpeg",
+        feature = "img-bmp",
+        feature = "img-gif"
+    )),
     allow(dead_code)
 )]
 pub(crate) fn out_header(w: u16, h: u16, alpha: bool) -> ImageHeader {
@@ -64,7 +76,13 @@ pub(crate) fn out_header(w: u16, h: u16, alpha: bool) -> ImageHeader {
 
 /// Logs a successful decode.
 #[cfg_attr(
-    not(any(feature = "img-qoi", feature = "img-png", feature = "img-jpeg", feature = "img-bmp", feature = "img-gif")),
+    not(any(
+        feature = "img-qoi",
+        feature = "img-png",
+        feature = "img-jpeg",
+        feature = "img-bmp",
+        feature = "img-gif"
+    )),
     allow(dead_code)
 )]
 pub(crate) fn log_decoded(name: &str, h: ImageHeader, len: usize) {
@@ -133,9 +151,7 @@ impl DecoderRegistry {
     /// The first decoder that recognises `bytes`, with the image header.
     #[must_use]
     pub fn probe(&self, bytes: &[u8]) -> Option<(&'static dyn Decoder, ImageHeader)> {
-        self.decoders
-            .iter()
-            .find_map(|d| d.probe(bytes).map(|h| (*d, h)))
+        self.decoders.iter().find_map(|d| d.probe(bytes).map(|h| (*d, h)))
     }
 
     /// Decodes `bytes` with the first decoder that recognises them; [`Error::InvalidHeader`]

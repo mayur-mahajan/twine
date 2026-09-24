@@ -70,12 +70,18 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
+#[cfg(feature = "arabic-shaping")]
+mod arabic;
+#[cfg(feature = "bidi")]
+mod bidi;
 mod bitmap_font;
 mod cache;
 mod decode;
+mod dir;
 mod draw;
 mod font;
 mod hit;
+mod imgfont;
 mod layout;
 pub mod symbols;
 #[cfg(test)]
@@ -83,14 +89,25 @@ mod test_font;
 
 #[cfg(feature = "std")]
 pub mod encode;
+#[cfg(feature = "ttf")]
+mod ttf;
 
+#[cfg(feature = "arabic-shaping")]
+pub use arabic::{AP_CHARS_MAP, ApChar, is_arabic_vowel, needs_shaping, shape, shape_into};
+#[cfg(feature = "bidi")]
+pub use bidi::{BidiLine, BidiRun, detect_base_dir, has_rtl, is_rtl_char, mirror, resolve_dir, visual_runs};
 pub use bitmap_font::{BitmapFont, BitmapFormat, Cmap, CmapKind, GlyphDsc, GlyphIdOfs, Kern, KernPairIds};
 pub use cache::{
     BLOCK_BYTES, CacheStats, DEFAULT_BUDGET, GlyphCache, GlyphKey, MAX_ENTRIES, MAX_GLYPH_BYTES, MAX_ROW,
+    WARN_CAP,
 };
+pub use dir::TextDir;
 pub use draw::{TextDrawFlags, TextDsc, draw_text};
 pub use font::{
     EMPTY_FONT, Font, GlyphInfo, GlyphProvider, MAX_FALLBACK_DEPTH, Subpx, has_placeholder, provider_key,
 };
 pub use hit::{DOTS, Ellipsis, LongMode, TextAlign, TextDecor};
+pub use imgfont::{ImageFontProvider, ImageGlyphLookup};
 pub use layout::{BREAK_CHARS, Line, LineIter, TextFlags, TextLayout, is_wide};
+#[cfg(feature = "ttf")]
+pub use ttf::{FontFileSource, TTF_MAX_PX, TtfError, TtfFont, TtfProvider};

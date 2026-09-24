@@ -13,7 +13,7 @@ workspace = true
 [features]
 default = ["montserrat-14"]
 ## Every built-in font.
-all-fonts = ["montserrat-8", "montserrat-10", "montserrat-12", "montserrat-14", "montserrat-16", "montserrat-18", "montserrat-20", "montserrat-22", "montserrat-24", "montserrat-26", "montserrat-28", "montserrat-30", "montserrat-32", "montserrat-34", "montserrat-36", "montserrat-38", "montserrat-40", "montserrat-42", "montserrat-44", "montserrat-46", "montserrat-48", "montserrat-14-subpx", "unscii-8", "unscii-16"]
+all-fonts = ["montserrat-8", "montserrat-10", "montserrat-12", "montserrat-14", "montserrat-16", "montserrat-18", "montserrat-20", "montserrat-22", "montserrat-24", "montserrat-26", "montserrat-28", "montserrat-30", "montserrat-32", "montserrat-34", "montserrat-36", "montserrat-38", "montserrat-40", "montserrat-42", "montserrat-44", "montserrat-46", "montserrat-48", "montserrat-14-subpx", "unscii-8", "unscii-16", "dejavu-16-persian-hebrew", "source-han-sans-sc-14-cjk", "source-han-sans-sc-16-cjk"]
 montserrat-8 = []
 montserrat-10 = []
 montserrat-12 = []
@@ -39,6 +39,12 @@ montserrat-48 = []
 montserrat-14-subpx = []
 unscii-8 = []
 unscii-16 = []
+## DejaVu Sans 16 px: ASCII, Hebrew, Arabic/Persian with presentation forms (~38 KB).
+dejavu-16-persian-hebrew = []
+## Source Han Sans 14 px: ASCII, CJK punctuation, kana and ~1 300 common CJK characters (~140 KB).
+source-han-sans-sc-14-cjk = []
+## Source Han Sans 16 px, same characters (~165 KB).
+source-han-sans-sc-16-cjk = []
 
 [dependencies]
 twine-text = { path = "../twine-text" }

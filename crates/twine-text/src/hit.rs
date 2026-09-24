@@ -33,8 +33,10 @@ pub enum TextAlign {
     Center,
     /// Right edge.
     Right,
-    /// By base direction; left for now.
-    // NOTE(P22.S06): Auto resolves by base dir
+    /// By base direction: right for right-to-left text, else left (see
+    /// [`TextAlign::resolve`]; [`draw_text`](crate::draw_text) resolves it with
+    /// [`TextDsc::base_dir`](crate::TextDsc::base_dir), layout functions that get no direction
+    /// treat it as left).
     Auto,
 }
 

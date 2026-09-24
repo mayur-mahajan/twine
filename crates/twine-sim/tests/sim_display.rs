@@ -70,6 +70,11 @@ fn bus_hz_delays_completion() {
         0,
         "pixels become visible only when the transfer completes"
     );
+    // A second transfer is queued behind the first (like a DMA driver's queue)…
+    let mut second = leak(2);
+    second.as_mut_slice().fill(0x11);
+    assert_eq!(d.begin_flush(Rect::from_xywh(511, 0, 1, 1), second), Ok(()));
+    // …a third is rejected.
     assert_eq!(
         d.begin_flush(Rect::from_xywh(0, 0, 1, 1), leak(2)),
         Err(SimDisplayError::Busy)
@@ -92,8 +97,21 @@ fn bus_hz_delays_completion() {
     );
     assert_eq!(back.len(), 1024);
     assert_eq!(d.panel()[0], 0xFF);
+    // The queued transfer completes after the first one.
+    let second = loop {
+        if let Some(b) = d.poll_flush() {
+            break b;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "queued flush never completed"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    assert_eq!(second.len(), 2);
+    assert_eq!(d.panel()[1022], 0x11);
     assert!(d.busy_until().is_none());
-    assert_eq!(d.flush_count(), 1);
+    assert_eq!(d.flush_count(), 2);
 }
 
 #[test]

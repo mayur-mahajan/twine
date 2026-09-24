@@ -61,16 +61,13 @@ fn writes_missing_snapshot_locally() {
 }
 
 #[test]
-#[should_panic(expected = "missing snapshot")]
-fn fails_on_missing_in_ci() {
+fn skips_missing_in_ci_without_writing() {
     let dir = TempDir::new("ci");
-    assert_rgb_snapshot(
-        &cfg(&dir, true, false),
-        "absent",
-        4,
-        3,
-        &image(),
-        Tolerance::EXACT,
+    let cfg = cfg(&dir, true, false);
+    assert_rgb_snapshot(&cfg, "absent", 4, 3, &image(), Tolerance::EXACT);
+    assert!(
+        !cfg.path("absent").exists(),
+        "CI must not create reference images"
     );
 }
 

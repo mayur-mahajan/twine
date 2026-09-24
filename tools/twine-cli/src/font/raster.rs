@@ -126,7 +126,7 @@ const FIR: [u32; 5] = [1, 2, 3, 2, 1];
 
 /// Resamples a coverage grid rasterized at **3×** size into a subpixel grid:
 /// - [`Subpx::Hor`]: rows are averaged in groups of 3 (whole pixels), columns stay subpixels
-///   and are filtered horizontally with [`FIR`]; `x0` and `w` are multiples of 3.
+///   and are filtered horizontally with LVGL's `[1, 2, 3, 2, 1] / 9` FIR filter; `x0` and `w` are multiples of 3.
 /// - [`Subpx::Ver`]: the transposed operation; `y0` and `h` are multiples of 3.
 ///
 /// fontdue cannot scale one axis only, so the glyph is rasterized at 3× size and the other

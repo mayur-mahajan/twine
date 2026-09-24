@@ -1,0 +1,15 @@
+# Add three items, move the last one up, delete the first one.
+wait 100
+tap 38 26
+wait 50
+tap 38 26
+wait 50
+tap 38 26
+wait 100
+shot added
+tap 249 150
+wait 100
+shot moved_up
+tap 292 71
+wait 100
+shot deleted

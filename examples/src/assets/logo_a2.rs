@@ -3,7 +3,7 @@
 // Input SHA-256: a0a83e3bc12c7cf9163aa791b6a93ba93ae05637468615d09f4a2153bd8c04d5
 // twine-image: format=A2 w=64 h=64 stride=16 flags=0x00 compression=none stored=1024 size=1024
 
-/// `LOGO_A2` (64×64 A2).
+/// `LOGO_A2` (64×64 `A2`).
 pub static LOGO_A2: twine_image::Image = twine_image::Image::new_static(
     twine_image::ImageHeader {
         format: twine_image::ColorFormat::A2,

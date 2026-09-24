@@ -1,11 +1,13 @@
 //! [`RenderConfig`] and [`RenderCaches`]: all scratch memory and caches of the renderer,
 //! allocated once with fixed budgets. Drawing never allocates; caches evict instead of growing.
 
+use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::any::Any;
 
 use crate::circle::CircleCache;
-use crate::gradient::GradientCache;
+use crate::gradient::{Gradient, GradientCache};
 use crate::shadow::ShadowCache;
 
 /// Budgets of the renderer's caches and scratch buffers.
@@ -88,6 +90,8 @@ pub struct RenderCaches {
     pub(crate) layer_buf: Vec<u8>,
     /// Debug counter: image rows copied with the same-format fast path.
     pub(crate) image_copy_rows: u32,
+    /// Scratch state of a higher-level drawing crate (see [`take_extension`](Self::take_extension)).
+    ext: Option<Box<dyn Any>>,
 }
 
 impl RenderCaches {
@@ -106,6 +110,7 @@ impl RenderCaches {
             gradient: GradientCache::new(cfg.gradient_cache_entries),
             layer_buf: vec![0; cfg.layer_buf_bytes as usize],
             image_copy_rows: 0,
+            ext: None,
         }
     }
 
@@ -132,6 +137,46 @@ impl RenderCaches {
             + self.shadow.bytes_reserved()
             + self.gradient.bytes_reserved()
             + self.config.layer_buf_bytes as usize
+    }
+
+    /// The cached 256-entry color map (packed `0xAARRGGBB`, see [`build_color_map`]) of
+    /// `g`'s stops, built on a miss (evicting the least recently used map). Counts in
+    /// [`stats().gradient`](Self::stats).
+    ///
+    /// [`build_color_map`]: crate::build_color_map
+    pub fn gradient_color_map(&mut self, g: &Gradient) -> &[u32] {
+        let i = self.gradient.lookup(g);
+        self.gradient.map(i)
+    }
+
+    /// Takes the extension scratch state of type `T` out of the caches, if it is stored there.
+    ///
+    /// Crates that draw through the [`Painter`](crate::Painter) but keep their own scratch
+    /// buffers (the vector rasterizer) park them here between draws, so repeated drawing reuses
+    /// the buffers without the caller having to pass them around. Taking and putting back moves
+    /// a box and never allocates. There is one slot: storing a different type replaces it.
+    ///
+    /// ```
+    /// use twine_render::RenderCaches;
+    /// let mut c = RenderCaches::default();
+    /// assert!(c.take_extension::<Vec<u8>>().is_none());
+    /// c.put_extension(Box::new(vec![1u8, 2]));
+    /// let v = c.take_extension::<Vec<u8>>().unwrap();
+    /// assert_eq!(*v, [1, 2]);
+    /// ```
+    pub fn take_extension<T: Any>(&mut self) -> Option<Box<T>> {
+        match self.ext.take() {
+            Some(b) if b.is::<T>() => b.downcast::<T>().ok(),
+            other => {
+                self.ext = other;
+                None
+            }
+        }
+    }
+
+    /// Stores extension scratch state (see [`take_extension`](Self::take_extension)).
+    pub fn put_extension<T: Any>(&mut self, v: Box<T>) {
+        self.ext = Some(v);
     }
 
     /// Hit/miss counters.

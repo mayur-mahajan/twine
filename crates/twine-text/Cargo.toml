@@ -18,15 +18,29 @@ std = ["twine-core/std", "twine-render/std"]
 log = ["twine-core/log", "twine-render/log"]
 ## Log through `defmt` and derive `defmt::Format` on public types.
 defmt = ["dep:defmt", "twine-core/defmt", "twine-render/defmt"]
+## Runtime TrueType/OpenType fonts (`TtfFont`, rasterized with `fontdue`; uses `f32`).
+ttf = ["dep:fontdue", "dep:ttf-parser", "dep:static_cell"]
+## Bidirectional text: visual reordering of mixed LTR/RTL lines (`unicode-bidi`).
+bidi = ["dep:unicode-bidi"]
+## Arabic/Persian contextual shaping into presentation forms.
+arabic-shaping = []
 
 [dependencies]
 twine-core = { path = "../twine-core" }
 twine-render = { path = "../twine-render" }
 bitflags = { version = "2", default-features = false }
 defmt = { version = "1", optional = true }
+fontdue = { version = "0.9", default-features = false, features = ["hashbrown"], optional = true }
+# `post` table underline metrics (fontdue's own parser dependency).
+ttf-parser = { version = "0.25", default-features = false, optional = true }
+static_cell = { version = "2", optional = true }
+unicode-bidi = { version = "0.3", default-features = false, features = ["hardcoded-data"], optional = true }
 
 [dev-dependencies]
-twine-text = { path = ".", features = ["std"] }
+twine-text = { path = ".", features = ["std", "ttf", "bidi", "arabic-shaping", "log"] }
+twine-fs = { path = "../twine-fs" }
+static_cell = "2"
+log = "0.4"
 twine-render = { path = "../twine-render", features = [
     "color-rgb565",
     "color-rgb565-swapped",

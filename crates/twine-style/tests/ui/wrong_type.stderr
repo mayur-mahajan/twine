@@ -1,0 +1,14 @@
+error[E0308]: mismatched types
+ --> tests/ui/wrong_type.rs:3:38
+  |
+3 | static S: Style = style! { bg_color: 5 };
+  |                   -------------------^--
+  |                   |                  |
+  |                   |                  expected `Color`, found integer
+  |                   arguments to this enum variant are incorrect
+  |
+note: tuple variant defined here
+ --> src/prop.rs
+  |
+  |     BgColor(bg_color): Color, val, [], StyleValue::Color(Color::WHITE);
+  |     ^^^^^^^

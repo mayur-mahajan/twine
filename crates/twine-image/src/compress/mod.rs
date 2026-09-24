@@ -6,8 +6,8 @@ mod rle;
 
 #[cfg(feature = "img-lz4")]
 pub use lz4::lz4_decompress;
-pub use rle::{rle_block_size, rle_decompress};
 pub use rle::rle_compress;
+pub use rle::{rle_block_size, rle_decompress};
 
 use crate::{Compression, Error, Image, ImageData, ImageFlags, ImageHeader};
 

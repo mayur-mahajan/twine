@@ -14,7 +14,7 @@ use crate::convert;
 /// `poll_flush` (see the [`DisplayDriver`] contract).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SimDisplayError {
-    /// A flush is still in flight (the emulated bus carries one transfer at a time).
+    /// Two flushes are already queued (the engine never has more than two draw buffers).
     Busy,
     /// The area is empty or not fully inside the panel.
     OutOfBounds(Rect),
@@ -30,7 +30,7 @@ pub enum SimDisplayError {
 impl fmt::Display for SimDisplayError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Busy => f.write_str("a flush is already in flight"),
+            Self::Busy => f.write_str("two flushes are already in flight"),
             Self::OutOfBounds(r) => write!(f, "flush area {r} is empty or outside the panel"),
             Self::BufferTooSmall { needed, got } => {
                 write!(f, "draw buffer too small: {got} bytes, area needs {needed}")
@@ -62,11 +62,15 @@ struct InFlight {
 /// The emulated panel: a framebuffer in the panel's native format, so byte-order and
 /// quantisation bugs are visible, with optional bus-speed emulation.
 ///
-/// - Rotation is emulated like MIPI `MADCTL`: [`DisplayInfo::hw_rotation`] is `true` and the panel
-///   stores pixels in logical orientation.
+/// - Rotation is emulated like MIPI `MADCTL` by default: [`DisplayInfo::hw_rotation`] is
+///   `true` and the panel stores pixels in logical orientation. With
+///   [`with_hw_rotation(false)`](Self::with_hw_rotation) the panel keeps its physical
+///   orientation (width and height swapped for 90°/270°) and the engine rotates in software.
 /// - Without `bus_hz` a flush completes immediately. With `bus_hz` it is "in flight" for
 ///   `bytes * 8 / bus_hz` seconds of wall-clock time: `poll_flush` returns `None` until then and
-///   the pixels become visible only when the transfer completes.
+///   the pixels become visible only when the transfer completes. Like a DMA driver with a
+///   queue, a second flush may be started while one is in flight; it is transferred after the
+///   first.
 ///
 /// ```
 /// use twine_core::{Color, ColorFormat, Rect, Rotation};
@@ -86,8 +90,11 @@ pub struct SimDisplay {
     panel: Vec<u8>,
     bus_hz: Option<u32>,
     mono: (Color, Color),
-    in_flight: Option<InFlight>,
+    in_flight: VecDeque<InFlight>,
     ready: VecDeque<DrawBufferMem>,
+    /// Physical panel size.
+    panel_w: u16,
+    panel_h: u16,
     dirty: Option<Rect>,
     last: Option<FlushStat>,
     flushes: u64,
@@ -114,20 +121,50 @@ impl SimDisplay {
             panel: vec![0; stride * usize::from(height)],
             bus_hz: None,
             mono: (Color::BLACK, Color::WHITE),
-            in_flight: None,
+            in_flight: VecDeque::new(),
             ready: VecDeque::new(),
+            panel_w: width,
+            panel_h: height,
             dirty: None,
             last: None,
             flushes: 0,
         }
     }
 
-    /// The panel of `cfg` (size, format, rotation, bus speed, mono colors).
+    /// The panel of `cfg` (size, format, rotation, hardware or software rotation, bus speed,
+    /// mono colors; flush areas aligned to 8 for `I1`, like page-based mono panels).
     #[must_use]
     pub fn from_config(cfg: &SimConfig) -> Self {
-        Self::new(cfg.width, cfg.height, cfg.format, cfg.rotation)
+        let mut d = Self::new(cfg.width, cfg.height, cfg.format, cfg.rotation)
+            .with_hw_rotation(cfg.hw_rotation)
             .with_bus_hz(cfg.bus_hz)
-            .with_mono_colors(cfg.mono_colors.0, cfg.mono_colors.1)
+            .with_mono_colors(cfg.mono_colors.0, cfg.mono_colors.1);
+        if d.info.format == ColorFormat::I1 {
+            d.info.align = 8;
+        }
+        d
+    }
+
+    /// `false`: the panel keeps its physical orientation and the engine rotates in software
+    /// (`DisplayInfo::hw_rotation == false`).
+    #[must_use]
+    pub fn with_hw_rotation(mut self, hw: bool) -> Self {
+        self.info.hw_rotation = hw;
+        let (w, h) = (self.info.width, self.info.height);
+        (self.panel_w, self.panel_h) = if !hw && self.info.rotation.swaps_axes() {
+            (h, w)
+        } else {
+            (w, h)
+        };
+        self.stride = self.info.format.stride(u32::from(self.panel_w)) as usize;
+        self.panel = vec![0; self.stride * usize::from(self.panel_h)];
+        self
+    }
+
+    /// The physical panel size (see [`with_hw_rotation`](Self::with_hw_rotation)).
+    #[must_use]
+    pub fn panel_size(&self) -> (u16, u16) {
+        (self.panel_w, self.panel_h)
     }
 
     /// Emulates a bus of `hz` bits per second (`None` or 0 = instant).
@@ -156,8 +193,8 @@ impl SimDisplay {
         convert::to_rgb888(
             &self.panel,
             self.info.format,
-            usize::from(self.info.width),
-            usize::from(self.info.height),
+            usize::from(self.panel_w),
+            usize::from(self.panel_h),
             self.stride,
             self.mono,
         )
@@ -168,8 +205,8 @@ impl SimDisplay {
         convert::to_xrgb(
             &self.panel,
             self.info.format,
-            usize::from(self.info.width),
-            usize::from(self.info.height),
+            usize::from(self.panel_w),
+            usize::from(self.panel_h),
             self.stride,
             self.mono,
             out,
@@ -181,10 +218,10 @@ impl SimDisplay {
         self.dirty.take()
     }
 
-    /// When the flush in flight completes (`None` when idle).
+    /// When the oldest flush in flight completes (`None` when idle).
     #[must_use]
     pub fn busy_until(&self) -> Option<StdInstant> {
-        self.in_flight.as_ref().map(|f| f.done_at)
+        self.in_flight.front().map(|f| f.done_at)
     }
 
     /// The most recently started flush.
@@ -200,14 +237,15 @@ impl SimDisplay {
     }
 
     fn validate(&self, area: Rect, len: usize) -> Result<usize, SimDisplayError> {
-        if area.is_empty() || !self.info.area().contains_rect(&area) {
+        let panel = Rect::new(0, 0, i32::from(self.panel_w), i32::from(self.panel_h));
+        if area.is_empty() || !panel.contains_rect(&area) {
             return Err(SimDisplayError::OutOfBounds(area));
         }
         let needed = self.info.format.stride(area.width() as u32) as usize * area.height() as usize;
         if len < needed {
             return Err(SimDisplayError::BufferTooSmall { needed, got: len });
         }
-        if self.in_flight.is_some() {
+        if self.in_flight.len() >= 2 {
             return Err(SimDisplayError::Busy);
         }
         Ok(needed)
@@ -276,16 +314,18 @@ impl DisplayDriver for SimDisplay {
         let transfer = self.bus_hz.map_or(StdDuration::ZERO, |hz| {
             StdDuration::from_nanos((bytes as u64 * 8).saturating_mul(1_000_000_000) / u64::from(hz))
         });
+        // A queued transfer starts when the previous one ends.
+        let start = self.in_flight.back().map_or(started, |p| p.done_at.max(started));
         let f = InFlight {
             buf,
             stat,
-            done_at: started + transfer,
+            done_at: start + transfer,
         };
-        if transfer.is_zero() {
+        if transfer.is_zero() && self.in_flight.is_empty() {
             let buf = self.complete(f);
             self.ready.push_back(buf);
         } else {
-            self.in_flight = Some(f);
+            self.in_flight.push_back(f);
         }
         Ok(())
     }
@@ -294,10 +334,10 @@ impl DisplayDriver for SimDisplay {
         if let Some(buf) = self.ready.pop_front() {
             return Some(buf);
         }
-        if self.in_flight.as_ref()?.done_at > StdInstant::now() {
+        if self.in_flight.front()?.done_at > StdInstant::now() {
             return None;
         }
-        let f = self.in_flight.take()?;
+        let f = self.in_flight.pop_front()?;
         Some(self.complete(f))
     }
 }

@@ -3,7 +3,7 @@
 // Input SHA-256: a0a83e3bc12c7cf9163aa791b6a93ba93ae05637468615d09f4a2153bd8c04d5
 // twine-image: format=ARGB8888 w=64 h=64 stride=256 flags=0x00 compression=none stored=16384 size=16384
 
-/// `LOGO_ARGB8888` (64×64 ARGB8888).
+/// `LOGO_ARGB8888` (64×64 `ARGB8888`).
 pub static LOGO_ARGB8888: twine_image::Image = twine_image::Image::new_static(
     twine_image::ImageHeader {
         format: twine_image::ColorFormat::Argb8888,

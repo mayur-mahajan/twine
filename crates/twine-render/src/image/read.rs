@@ -4,9 +4,7 @@
 //! (callers recolor them), `Rgb565A8` reads both planes, premultiplied pixels are
 //! un-premultiplied and `L8` becomes gray.
 
-use twine_core::color::{
-    Argb8888, PixelFormat, Rgb565, expand_alpha, unpack_bits,
-};
+use twine_core::color::{Argb8888, PixelFormat, Rgb565, expand_alpha, unpack_bits};
 use twine_core::{Color, ColorFormat, Opa};
 
 use crate::ImagePixels;
@@ -101,8 +99,8 @@ impl Texel for Rgb565A8Premul {
 /// Calls `$body` with `$T` bound to the texel reader of the image `$img`.
 macro_rules! with_texel {
     ($img:expr, $T:ident => $body:expr) => {{
-        use $crate::image::read::*;
         use twine_core::color as tc;
+        use $crate::image::read::*;
         match ($img.format, $img.is_premultiplied()) {
             (ColorFormat::Rgb565, _) => {
                 type $T = Px<tc::Rgb565>;

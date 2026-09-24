@@ -104,7 +104,9 @@ pub fn encode(format: ColorFormat) -> Encoded {
                 row[x * 2..x * 2 + 2].copy_from_slice(&col.to_rgb565().to_le_bytes());
                 alpha.push(c[3]);
             }
-            ColorFormat::Rgb565Swapped => row[x * 2..x * 2 + 2].copy_from_slice(&col.to_rgb565().to_be_bytes()),
+            ColorFormat::Rgb565Swapped => {
+                row[x * 2..x * 2 + 2].copy_from_slice(&col.to_rgb565().to_be_bytes());
+            }
             ColorFormat::Rgb888 => row[x * 3..x * 3 + 3].copy_from_slice(&[c[2], c[1], c[0]]),
             ColorFormat::Xrgb8888 => row[x * 4..x * 4 + 4].copy_from_slice(&[c[2], c[1], c[0], 0x55]),
             ColorFormat::Argb8888 => row[x * 4..x * 4 + 4].copy_from_slice(&[c[2], c[1], c[0], c[3]]),
@@ -117,7 +119,11 @@ pub fn encode(format: ColorFormat) -> Encoded {
     if format == ColorFormat::Rgb565A8 {
         data.extend_from_slice(&alpha);
     }
-    Encoded { format, data, palette }
+    Encoded {
+        format,
+        data,
+        palette,
+    }
 }
 
 /// Fills `area` with an 8-pixel gray checkerboard.
@@ -126,7 +132,11 @@ pub fn checker(p: &mut Painter<'_>, area: Rect) {
     for y in (area.y0..area.y1).step_by(8) {
         for x in (area.x0..area.x1).step_by(8) {
             if ((x - area.x0) / 8 + (y - area.y0) / 8) % 2 == 1 {
-                p.fill(Rect::new(x, y, (x + 8).min(area.x1), (y + 8).min(area.y1)), Color::hex(0x999999), Opa::COVER);
+                p.fill(
+                    Rect::new(x, y, (x + 8).min(area.x1), (y + 8).min(area.y1)),
+                    Color::hex(0x999999),
+                    Opa::COVER,
+                );
             }
         }
     }

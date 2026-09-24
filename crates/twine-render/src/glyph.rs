@@ -75,6 +75,7 @@ impl Painter<'_> {
     /// let buf = DrawBuf::new_packed(&mut px, ColorFormat::L8, Rect::from_xywh(0, 0, 4, 1)).unwrap();
     /// let mut p = Painter::new(buf, &mut caches);
     /// p.glyph_a8(Rect::from_xywh(1, 0, 2, 1), &[255, 128], 2, Color::WHITE, Opa::COVER);
+    /// drop(p); // the buffer is read after the painter (and any accelerator) is done
     /// assert_eq!(px, [0, 255, 128, 0]);
     /// ```
     pub fn glyph_a8(&mut self, area: Rect, alpha: &[u8], stride: usize, color: Color, opa: Opa) {
@@ -206,6 +207,7 @@ impl Painter<'_> {
 }
 
 #[cfg(test)]
+#[allow(clippy::drop_non_drop, clippy::semicolon_if_nothing_returned)] // tests end borrows explicitly
 mod tests {
     use super::*;
     use crate::{DrawBuf, RenderCaches};

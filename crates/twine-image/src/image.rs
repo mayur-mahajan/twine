@@ -268,6 +268,13 @@ impl ImageSource {
     }
 }
 
+impl From<&'static Image> for ImageSource {
+    /// A converted image in flash: `ImageSource::from(&GEAR)`.
+    fn from(img: &'static Image) -> Self {
+        ImageSource::Static(img)
+    }
+}
+
 impl fmt::Display for ImageSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

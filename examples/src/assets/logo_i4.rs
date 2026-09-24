@@ -3,7 +3,7 @@
 // Input SHA-256: a0a83e3bc12c7cf9163aa791b6a93ba93ae05637468615d09f4a2153bd8c04d5
 // twine-image: format=I4 w=64 h=64 stride=32 flags=0x00 compression=none stored=2112 size=2112
 
-/// `LOGO_I4` (64×64 I4).
+/// `LOGO_I4` (64×64 `I4`).
 pub static LOGO_I4: twine_image::Image = twine_image::Image::new_static(
     twine_image::ImageHeader {
         format: twine_image::ColorFormat::I4,

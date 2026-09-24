@@ -14,6 +14,8 @@ path = "src/lib.rs"
 [[bin]]
 name = "twine"
 path = "src/main.rs"
+# The binary shares its name with the `twine` facade crate; only the library is documented.
+doc = false
 
 [lints]
 workspace = true

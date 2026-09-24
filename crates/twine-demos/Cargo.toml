@@ -14,4 +14,9 @@ workspace = true
 default = []
 
 [dependencies]
-twine = { path = "../twine" }
+twine = { path = "../twine", default-features = false, features = ["montserrat-20"] }
+
+[dev-dependencies]
+twine = { path = "../twine", features = ["std"] }
+twine-testing = { path = "../twine-testing" }
+critical-section = { version = "1", features = ["std"] }

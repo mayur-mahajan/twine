@@ -1,0 +1,35 @@
+# Headless tour of grid_layout (cargo xtask sim-smoke): track and cell alignment, spans, templates.
+# Inputs due at a frame apply before it is drawn and shots after, so each shot waits a frame.
+wait 32
+shot initial
+key c
+key r
+wait 32
+shot tracks_centered
+wait 16
+key Next
+key h
+key x
+key x
+wait 32
+shot span_and_stretch
+wait 16
+key Next
+key Next
+key Next
+key v
+key y
+key y
+wait 32
+shot row_span
+wait 16
+key t
+wait 32
+shot fr_template
+wait 16
+key t
+key c
+key c
+key c
+wait 32
+shot content_space_evenly

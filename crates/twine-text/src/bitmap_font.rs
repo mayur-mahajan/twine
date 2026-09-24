@@ -373,7 +373,7 @@ impl GlyphProvider for BitmapFont {
             return false;
         }
         self.rows(info, cache, &mut |y, row| {
-            out[y * w..(y + 1) * w].copy_from_slice(row)
+            out[y * w..(y + 1) * w].copy_from_slice(row);
         })
     }
 

@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 use twine_render::ImagePixels;
 
 use crate::{
-    DecoderRegistry, Error, Image, ImageCache, ImageData, ImageFlags, ImageHeader, ImageHeaderCache, ImageSource,
-    SourceKey,
+    DecoderRegistry, Error, Image, ImageCache, ImageData, ImageFlags, ImageHeader, ImageHeaderCache,
+    ImageSource, SourceKey,
 };
 
 /// Reads whole files for [`ImageSource::File`] (implemented over the file system by the

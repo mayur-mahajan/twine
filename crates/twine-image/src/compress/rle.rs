@@ -62,15 +62,23 @@ pub fn rle_decompress(input: &[u8], output: &mut [u8], blk_size: usize) -> Resul
             output[wr..wr + bytes].copy_from_slice(src);
             wr += bytes;
         } else {
-            let blk = input.get(rd..rd + blk_size).ok_or(Error::Decode("rle truncated"))?;
+            let blk = input
+                .get(rd..rd + blk_size)
+                .ok_or(Error::Decode("rle truncated"))?;
             rd += blk_size;
-            for _ in 0..c {
+            // Whole blocks that fit, written in one pass.
+            let fit = usize::from(c).min((output.len() - wr) / blk_size);
+            let span = &mut output[wr..wr + fit * blk_size];
+            if blk_size == 1 {
+                span.fill(blk[0]);
+            } else {
+                span.chunks_exact_mut(blk_size)
+                    .for_each(|d| d.copy_from_slice(blk));
+            }
+            wr += fit * blk_size;
+            if fit < usize::from(c) {
                 let room = output.len() - wr;
-                if blk_size > room {
-                    return overflow(&blk[..room], &mut output[wr..], blk_size - room, blk_size, total);
-                }
-                output[wr..wr + blk_size].copy_from_slice(blk);
-                wr += blk_size;
+                return overflow(&blk[..room], &mut output[wr..], blk_size - room, blk_size, total);
             }
         }
     }

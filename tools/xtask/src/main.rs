@@ -18,8 +18,8 @@ struct Cli {
 /// Available commands.
 #[derive(Debug, Subcommand)]
 enum Cmd {
-    /// Run everything CI runs (fmt, clippy, tests, todo-check, layers, fonts, nostd, docs, bench build, miri,
-    /// snapshots, firmware).
+    /// Run everything CI runs (fmt, clippy, tests, todo-check, layers, fonts, images, style-props, nostd,
+    /// docs, bench build, miri, snapshots, firmware).
     Ci {
         /// Skip the slow stages (nostd, doc, bench-build, miri, firmware).
         #[arg(long)]
@@ -100,6 +100,21 @@ enum Cmd {
         #[arg(long)]
         check: bool,
     },
+    /// Write the style property table (`crates/twine-style/PROPERTIES.md`) from the property
+    /// metadata.
+    StyleProps {
+        /// Only verify that the file is up to date.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Run one fuzz target of `fuzz/` (needs cargo-fuzz and nightly).
+    Fuzz {
+        /// Target name, e.g. `fuzz_png`.
+        target: String,
+        /// Seconds to run.
+        #[arg(long, default_value_t = 60)]
+        time: u32,
+    },
     /// Regenerate the local progress checklist from the planning files (maintainers only; no-op without them).
     Progress,
 }
@@ -135,6 +150,8 @@ fn main() {
         Cmd::Fonts { check } => cmd::fonts::run(check),
         Cmd::GenAssets { check } => cmd::images::gen_assets(check),
         Cmd::Images { check } => cmd::images::run(check),
+        Cmd::StyleProps { check } => cmd::style_props::run(check),
+        Cmd::Fuzz { target, time } => cmd::fuzz::run(&target, time),
         Cmd::Progress => cmd::progress::run(),
     };
     if let Err(e) = result {

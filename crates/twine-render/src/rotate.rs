@@ -106,9 +106,66 @@ pub fn rotate_area(area: Rect, panel: Size, rotation: Rotation) -> Rect {
     area.rotate_in(rotation, panel.w, panel.h)
 }
 
+/// Converts a `w × h` block of 8-bit luminance (`src`, stride `w`) into packed 1-bit pixels
+/// (`dst`, MSB first, stride `⌈w / 8⌉`): a pixel is 1 (white) when its luminance is ≥ 128, the
+/// same threshold the renderer uses when blending into `I1` buffers. Padding bits of the last
+/// byte of a row are 0.
+///
+/// Mono panels get their chunks rendered in `L8` (so anti-aliasing and blending see real
+/// gray levels) and converted at the end of the chunk.
+///
+/// ```
+/// use twine_render::convert_l8_to_i1;
+/// let src = [255, 0, 200, 127, 128, 0, 0, 0, 9, 255];
+/// let mut dst = [0u8; 2];
+/// convert_l8_to_i1(&src, &mut dst, 10, 1).unwrap();
+/// assert_eq!(dst, [0b1010_1000, 0b0100_0000]);
+/// ```
+pub fn convert_l8_to_i1(src: &[u8], dst: &mut [u8], w: usize, h: usize) -> Result<(), RenderError> {
+    if w == 0 || h == 0 {
+        return Ok(());
+    }
+    let dst_stride = w.div_ceil(8);
+    if src.len() < w * h {
+        return Err(RenderError::BufferTooSmall {
+            needed: w * h,
+            got: src.len(),
+        });
+    }
+    if dst.len() < dst_stride * h {
+        return Err(RenderError::BufferTooSmall {
+            needed: dst_stride * h,
+            got: dst.len(),
+        });
+    }
+    for (srow, drow) in src.chunks_exact(w).zip(dst.chunks_exact_mut(dst_stride)).take(h) {
+        for (bits, byte) in srow.chunks(8).zip(drow.iter_mut()) {
+            let mut b = 0u8;
+            for (i, &l) in bits.iter().enumerate() {
+                if l >= 128 {
+                    b |= 0x80 >> i;
+                }
+            }
+            *byte = b;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn l8_to_i1_rows_and_errors() {
+        let src = [0u8, 255, 255, 0, 128, 127, 255, 255, 1];
+        let mut dst = [0xFFu8; 3];
+        convert_l8_to_i1(&src, &mut dst, 3, 3).unwrap();
+        assert_eq!(dst, [0b0110_0000, 0b0100_0000, 0b1100_0000]);
+        assert!(convert_l8_to_i1(&src, &mut dst, 3, 4).is_err());
+        assert!(convert_l8_to_i1(&src, &mut dst[..2], 3, 3).is_err());
+        assert!(convert_l8_to_i1(&[], &mut [], 0, 5).is_ok());
+    }
 
     #[test]
     fn rotate_90_small_known() {

@@ -61,7 +61,8 @@ impl Ihdr {
 }
 
 fn be32(b: &[u8], i: usize) -> Option<u32> {
-    b.get(i..i + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
+    b.get(i..i + 4)
+        .map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
 }
 
 fn parse_ihdr(bytes: &[u8]) -> Option<Ihdr> {
@@ -121,13 +122,18 @@ struct Extra<'a> {
 }
 
 /// Walks the chunks after IHDR: returns PLTE/tRNS and calls `idat` for every IDAT payload.
-fn chunks<'a>(bytes: &'a [u8], mut idat: impl FnMut(&'a [u8]) -> Result<(), Error>) -> Result<Extra<'a>, Error> {
+fn chunks<'a>(
+    bytes: &'a [u8],
+    mut idat: impl FnMut(&'a [u8]) -> Result<(), Error>,
+) -> Result<Extra<'a>, Error> {
     let mut extra = Extra::default();
     let mut pos = 8;
     let mut seen_idat = false;
     loop {
         let len = be32(bytes, pos).ok_or(Error::Decode("png truncated"))? as usize;
-        let kind = bytes.get(pos + 4..pos + 8).ok_or(Error::Decode("png truncated"))?;
+        let kind = bytes
+            .get(pos + 4..pos + 8)
+            .ok_or(Error::Decode("png truncated"))?;
         let data = bytes
             .get(pos + 8..pos + 8 + len)
             .ok_or(Error::Decode("png truncated"))?;
@@ -211,7 +217,9 @@ fn sample(row: &[u8], depth: u8, i: usize) -> u8 {
 /// Raw sample `i` (palette index or unscaled gray, 16-bit as full value).
 fn raw_sample(row: &[u8], depth: u8, i: usize) -> u16 {
     match depth {
-        16 => row.get(i * 2..i * 2 + 2).map_or(0, |s| u16::from_be_bytes([s[0], s[1]])),
+        16 => row
+            .get(i * 2..i * 2 + 2)
+            .map_or(0, |s| u16::from_be_bytes([s[0], s[1]])),
         8 => u16::from(row.get(i).copied().unwrap_or(0)),
         d => {
             let bit = i * usize::from(d);
@@ -229,12 +237,24 @@ fn pixel(ih: &Ihdr, ex: &Extra<'_>, row: &[u8], x: usize) -> [u8; 4] {
     match ih.color {
         0 => {
             let g = sample(row, d, x);
-            let a = if ex.trns.len() >= 2 && key(0) == Some(raw_sample(row, d, x)) { 0 } else { 255 };
+            let a = if ex.trns.len() >= 2 && key(0) == Some(raw_sample(row, d, x)) {
+                0
+            } else {
+                255
+            };
             [g, g, g, a]
         }
         2 => {
-            let (r, g, b) = (sample(row, d, x * n), sample(row, d, x * n + 1), sample(row, d, x * n + 2));
-            let raw = [raw_sample(row, d, x * n), raw_sample(row, d, x * n + 1), raw_sample(row, d, x * n + 2)];
+            let (r, g, b) = (
+                sample(row, d, x * n),
+                sample(row, d, x * n + 1),
+                sample(row, d, x * n + 2),
+            );
+            let raw = [
+                raw_sample(row, d, x * n),
+                raw_sample(row, d, x * n + 1),
+                raw_sample(row, d, x * n + 2),
+            ];
             let keyed = ex.trns.len() >= 6 && [key(0), key(1), key(2)] == raw.map(Some);
             [b, g, r, if keyed { 0 } else { 255 }]
         }

@@ -43,6 +43,9 @@ pub struct FontEntry {
     /// `"none"` (default), `"hor"` or `"ver"`.
     #[serde(default)]
     pub subpx: Option<String>,
+    /// Optional file listing extra characters (e.g. a common CJK character list).
+    #[serde(default)]
+    pub chars_file: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +78,7 @@ impl FontEntry {
             size: self.size,
             bpp: self.bpp,
             ranges: self.ranges.clone(),
+            chars_files: self.chars_file.iter().map(PathBuf::from).collect(),
             symbols,
             symbols_ttf: Vec::new(),
             compress: self.compress,

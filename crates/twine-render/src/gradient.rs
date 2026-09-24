@@ -176,6 +176,20 @@ const fn pack(c: Color, a: u8) -> u32 {
     ((a as u32) << 24) | ((c.r as u32) << 16) | ((c.g as u32) << 8) | c.b as u32
 }
 
+/// Fills `map` (256 entries) with samples of `stops`, packed `0xAARRGGBB`: entry `i` is the
+/// color at gradient position `i / 255` (the color map every gradient is drawn with).
+///
+/// ```
+/// use twine_core::Color;
+/// use twine_render::{GradStop, build_color_map};
+/// let mut map = [0u32; 256];
+/// build_color_map(&[GradStop::new(Color::BLACK, 0), GradStop::new(Color::WHITE, 255)], &mut map);
+/// assert_eq!((map[0], map[255]), (0xFF00_0000, 0xFFFF_FFFF));
+/// ```
+pub fn build_color_map(stops: &[GradStop], map: &mut [u32]) {
+    build_map(stops, map);
+}
+
 /// Fills `map` with 256 samples (packed `0xAARRGGBB`) of the stops.
 pub(crate) fn build_map(stops: &[GradStop], map: &mut [u32]) {
     let Some(first) = stops.first() else {

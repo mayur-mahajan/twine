@@ -1,0 +1,13 @@
+# Headless tour of core_widgets (cargo xtask sim-smoke): the labels scroll, the logo rotates;
+# tapping the checkable button checks it (red, the secondary color); F12 switches to the dark
+# theme. Inputs due at a frame apply before it is drawn and shots after, so each shot waits a
+# frame.
+wait 500
+shot initial
+tap 385 98
+wait 300
+shot core_widgets_after_tap
+wait 32
+hotkey F12
+wait 300
+shot dark

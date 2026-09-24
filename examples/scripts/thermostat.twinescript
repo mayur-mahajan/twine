@@ -1,0 +1,9 @@
+# Raise the target three times (the sensor thread sends readings every 2 s of real time).
+wait 100
+tap 231 70
+wait 50
+tap 231 70
+wait 50
+tap 231 70
+wait 200
+shot target_raised

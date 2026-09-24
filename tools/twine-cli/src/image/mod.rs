@@ -11,6 +11,7 @@ mod convert;
 mod emit;
 mod quantize;
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use twine_core::ColorFormat;
@@ -168,7 +169,7 @@ impl ImageOptions {
             format_name(self.format)
         );
         if self.compress != CompressArg::None {
-            s += &format!(" --compress {}", self.compress.name());
+            let _ = write!(s, " --compress {}", self.compress.name());
         }
         if self.dither {
             s += " --dither";
@@ -176,9 +177,9 @@ impl ImageOptions {
         if self.premultiply {
             s += " --premultiply";
         }
-        s += &format!(" --name {} --out {}", self.name, self.out.display());
+        let _ = write!(s, " --name {} --out {}", self.name, self.out.display());
         if self.crate_path != "twine_image" {
-            s += &format!(" --crate-path {}", self.crate_path);
+            let _ = write!(s, " --crate-path {}", self.crate_path);
         }
         s
     }
@@ -298,12 +299,12 @@ pub fn info(path: &Path) -> Result<String> {
     let mut out = String::new();
     for kv in line.trim_start_matches("// twine-image:").split_whitespace() {
         if let Some((k, v)) = kv.split_once('=') {
-            out += &format!("{k:>12}: {v}\n");
+            let _ = writeln!(out, "{k:>12}: {v}");
         }
     }
     let bin = rs.with_extension("bin");
     if let Ok(m) = std::fs::metadata(&bin) {
-        out += &format!("{:>12}: {} ({} bytes)\n", "file", bin.display(), m.len());
+        let _ = writeln!(out, "{:>12}: {} ({} bytes)", "file", bin.display(), m.len());
     }
     Ok(out)
 }

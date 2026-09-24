@@ -84,6 +84,12 @@
 //!    [`defer_current_effect`]; deferred effects are re-queued by the next flush with a
 //!    non-`()` context. [`has_pending_effects`] reports pending or deferred work.
 //!
+//! Code that runs without a context parameter (event handlers, user effects, timer
+//! callbacks) reaches the engine through the *ambient* slot: [`provide_ambient`] lends a
+//! `&mut dyn Any` for the duration of a call, [`with_ambient`] borrows it exclusively
+//! (taking it out of the slot, so nested borrows see `None`). A binding whose widget was
+//! deleted disposes itself with [`dispose_current_effect`].
+//!
 //! A flush processes effects in rounds (effects queued by one round form the next); after
 //! [`set_flush_iterations_limit`] rounds (default 100) the rest are dropped with an `error!`.
 //!
@@ -112,6 +118,7 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+mod ambient;
 mod batch;
 mod channel;
 mod effect;
@@ -123,14 +130,14 @@ mod runtime;
 mod scope;
 mod signal;
 
+pub use ambient::{provide_ambient, with_ambient};
 pub use batch::{
-    batch, defer_current_effect, flush_effects_with, has_pending_effects, set_flush_iterations_limit, untrack,
+    batch, defer_current_effect, dispose_current_effect, flush_effects_with, has_pending_effects,
+    set_flush_iterations_limit, untrack,
 };
 pub use channel::{Channel, UiWaker, any_channel_pending, drain_channels, register_waker};
 pub use effect::EffectId;
-#[cfg(not(feature = "std"))]
-pub use global::bind_to_current_context;
-pub use global::{create_root, debug_stats, reset};
+pub use global::{bind_to_current_context, create_root, debug_stats, reset};
 pub use memo::Memo;
 pub use scope::Scope;
 pub use signal::{ReadSignal, Signal, WriteSignal};

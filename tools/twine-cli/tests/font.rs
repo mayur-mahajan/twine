@@ -18,6 +18,7 @@ fn opts(size: u16, compress: bool) -> FontOptions {
         size,
         bpp: 4,
         ranges: vec!["0x20-0x7E".into(), "0xB0".into()],
+        chars_files: Vec::new(),
         symbols: Symbols::None,
         symbols_ttf: Vec::new(),
         compress,
@@ -190,4 +191,19 @@ fn symbols_are_merged_and_centered() {
             "{c:?}: {center2} vs {line_center2}"
         );
     }
+}
+
+#[test]
+fn chars_file_adds_characters() {
+    let dir = std::env::temp_dir().join(format!("twine-cli-chars-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let list = dir.join("chars.txt");
+    std::fs::write(&list, "é ñ\nü\n").unwrap();
+    let mut o = opts(14, false);
+    o.ranges = vec!["0x41".into()];
+    o.chars_files = vec![list.clone()];
+    let g = generate(&o, &root()).unwrap();
+    assert_eq!(g.code_points[1..], ['A', 'é', 'ñ', 'ü']);
+    assert!(g.source.contains("--chars-file"));
+    let _ = std::fs::remove_dir_all(&dir);
 }

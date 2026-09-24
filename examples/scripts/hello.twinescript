@@ -1,0 +1,3 @@
+# The label is drawn once; nothing else happens.
+wait 100
+shot hello

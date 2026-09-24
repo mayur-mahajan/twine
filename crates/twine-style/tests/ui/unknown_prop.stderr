@@ -1,0 +1,7 @@
+error: unknown style property: bg_colr
+ --> tests/ui/unknown_prop.rs:3:19
+  |
+3 | static S: Style = style! { radius: 4, bg_colr: 5 };
+  |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `$crate::__style_prop` which comes from the expansion of the macro `style` (in Nightly builds, run with -Z macro-backtrace for more info)

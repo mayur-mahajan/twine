@@ -11,11 +11,36 @@ repository.workspace = true
 workspace = true
 
 [features]
-default = []
+default = ["assets"]
+## The ready-made constructors (`DefaultTheme::light()` …) with the built-in Montserrat 14 font.
+assets = ["dep:twine-assets"]
+## std-only conveniences.
+std = ["twine-core/std", "twine-engine/std", "twine-style/std", "twine-text/std", "twine-image/std"]
+## Log through the `log` crate.
+log = ["twine-core/log", "twine-engine/log", "twine-style/log", "twine-text/log", "twine-image/log"]
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = [
+    "dep:defmt",
+    "twine-core/defmt",
+    "twine-engine/defmt",
+    "twine-style/defmt",
+    "twine-text/defmt",
+    "twine-image/defmt",
+]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
 twine-engine = { path = "../twine-engine" }
 twine-style = { path = "../twine-style" }
 twine-text = { path = "../twine-text" }
-twine-assets = { path = "../twine-assets" }
+twine-image = { path = "../twine-image" }
+twine-assets = { path = "../twine-assets", optional = true, features = ["montserrat-14"] }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+twine-theme = { path = ".", features = ["std", "log"] }
+twine-engine = { path = "../twine-engine", features = ["std", "debug-checks", "color-rgb565", "color-i1", "color-l8"] }
+twine-testing = { path = "../twine-testing", default-features = false, features = ["engine", "debug-checks"] }
+twine-hal = { path = "../twine-hal" }
+twine-assets = { path = "../twine-assets", features = ["montserrat-14"] }
+log = "0.4"

@@ -22,7 +22,7 @@ Every PR must meet this **Definition of Done**:
 
 1. **`cargo xtask ci` passes.** It runs formatting, clippy with `-D warnings`, all tests,
    `no_std` builds for every embedded target, rustdoc, the layering check, the work-marker check,
-   the generated-fonts check, a benchmark build, snapshot tests and Miri. Use
+   the generated-fonts, generated-images and style-property-table checks, a benchmark build, snapshot tests and Miri. Use
    `cargo xtask ci --quick` while iterating.
 2. **Tests cover the change.** New behaviour has tests; bug fixes add a regression test named
    `regression_<short_description>` that fails without the fix.
@@ -33,11 +33,15 @@ Every PR must meet this **Definition of Done**:
    with `cargo xtask snapshots --update`, inspect the diff images, and attach before/after
    screenshots to the PR. Never edit snapshot PNGs by hand.
 5. **Performance is considered.** For changes in rendering, layout, styles, input or the
-   reactive runtime, run `cargo xtask bench` and mention the impact in the PR. Regressions need
-   a justification.
+   reactive runtime, run `cargo xtask bench` (renderer, text) and `cargo bench -p twine-bench`
+   (engine refresh, layout and animation frames) and mention the impact in the PR. Regressions
+   need a justification.
 6. **Generated files are regenerated, not edited.** Built-in fonts come from
    `assets/fonts/fonts.toml` via `cargo xtask fonts`; `cargo xtask fonts --check` fails when a
-   generated file is out of date. New asset files record their source URL, license and SHA-256
+   generated file is out of date. Sample images in `assets/images/` are drawn by
+   `cargo xtask gen-assets` and converted from `assets/images/images.toml` by
+   `cargo xtask images` (both take `--check`). The style property table
+   `crates/twine-style/PROPERTIES.md` is written by `cargo xtask style-props` (`--check` too). New asset files record their source URL, license and SHA-256
    in the `SOURCES.md` of their folder.
 7. **Nothing is left half-done.** No `todo!()`, `unimplemented!()`, placeholder return values,
    ignored tests or `TODO`/`FIXME` comments. Track follow-up work in an issue instead.
@@ -90,8 +94,12 @@ These keep Twine usable on small, battery-powered devices. CI or review will rej
 
 ## Testing
 
-- **Snapshot tests** compare rendered output pixel-by-pixel against PNGs in `tests/snapshots/`.
-  On mismatch the actual and diff images are written to `target/twine-snapshots/`.
+- **Snapshot tests** compare rendered output pixel-by-pixel against reference PNGs in
+  `tests/snapshots/`. The references are local and git-ignored: the first run creates them,
+  later runs compare against them. On mismatch the actual and diff images are written to
+  `target/twine-snapshots/`. In CI (`CI` set) there are no references, so snapshot comparisons are
+  skipped. Run the snapshot tests locally before and after your change to catch visual
+  regressions.
 - **Harnesses** in `twine-testing`: `RenderHarness` (drawing primitives), `EngineHarness`
   (widget tree without reactivity) and `TestUi` (full declarative UI with scripted input and a
   mock clock). Use them only from integration tests (`tests/`), not from `#[cfg(test)]` modules.

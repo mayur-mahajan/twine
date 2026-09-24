@@ -157,8 +157,9 @@ mod tests {
         assert_eq!(quant(5, 31, None), 1);
         // Ordered dithering averages to the input over the 16 thresholds.
         let sum: u32 = (0..16).map(|t| u32::from(quant(100, 31, Some(t)))).sum();
-        let avg = sum as f32 / 16.0 * 255.0 / 31.0;
-        assert!((avg - 100.0).abs() < 8.0, "{avg}");
+        // Average level × 255 / 31 ≈ 100.
+        let avg = sum * 255 / (16 * 31);
+        assert!(avg.abs_diff(100) < 8, "{avg}");
     }
 
     #[test]

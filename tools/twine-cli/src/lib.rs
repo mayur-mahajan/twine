@@ -10,6 +10,7 @@
 //!     size: 14,
 //!     bpp: 4,
 //!     ranges: vec!["0x20-0x7E".into()],
+//!     chars_files: Vec::new(),
 //!     symbols: Symbols::None,
 //!     symbols_ttf: Vec::new(),
 //!     compress: false,

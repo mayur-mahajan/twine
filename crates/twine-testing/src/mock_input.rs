@@ -130,6 +130,7 @@ struct KeypadState {
     common: Common,
     queue: VecDeque<(Key, bool)>,
     last: Key,
+    last_pressed: bool,
 }
 
 impl Default for KeypadState {
@@ -138,6 +139,7 @@ impl Default for KeypadState {
             common: Common::default(),
             queue: VecDeque::new(),
             last: Key::Enter,
+            last_pressed: false,
         }
     }
 }
@@ -145,7 +147,8 @@ impl Default for KeypadState {
 /// A mock keypad with an event queue.
 ///
 /// Each `read` pops one event and sets `more` while further events are queued. With an empty
-/// queue it reports the last key as released.
+/// queue it reports the last key in its last state (a key pushed as pressed stays held until
+/// its release is pushed), like a keypad driver reporting the current key state.
 ///
 /// ```
 /// use twine_hal::{InputData, InputDevice, Key, KeypadData};
@@ -199,6 +202,7 @@ impl InputDevice for MockKeypad {
         let data = match s.queue.pop_front() {
             Some((key, pressed)) => {
                 s.last = key;
+                s.last_pressed = pressed;
                 KeypadData {
                     key,
                     pressed,
@@ -207,7 +211,7 @@ impl InputDevice for MockKeypad {
             }
             None => KeypadData {
                 key: s.last,
-                pressed: false,
+                pressed: s.last_pressed,
                 more: false,
             },
         };

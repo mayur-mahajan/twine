@@ -141,6 +141,12 @@ pub(crate) struct Inner {
     update_depth: u32,
     pub(crate) counters: Counters,
     pub(crate) created_logged: bool,
+    /// The value lent by the innermost active [`provide_ambient`](crate::provide_ambient)
+    /// (`None` outside one or while it is borrowed).
+    pub(crate) ambient: Option<core::ptr::NonNull<dyn Any>>,
+    /// The UI task's waker ([`register_waker`](crate::register_waker)), also registered in
+    /// channels subscribed later.
+    pub(crate) ui_waker: Option<core::task::Waker>,
 }
 
 impl Inner {
@@ -167,6 +173,8 @@ impl Inner {
                 loop_cuts: 0,
             },
             created_logged: false,
+            ambient: None,
+            ui_waker: None,
         }
     }
 
@@ -793,6 +801,15 @@ impl Runtime {
         }
     }
 
+    /// Disposes the running effect. Returns `false` outside an effect.
+    pub(crate) fn dispose_current_effect(&self) -> bool {
+        let Some(k) = self.inner.borrow().running_effect else {
+            return false;
+        };
+        self.dispose_node(k);
+        true
+    }
+
     /// Moves the running effect to `deferred`. Returns `false` outside an
     /// effect.
     pub(crate) fn defer_current_effect(&self) -> bool {
@@ -836,7 +853,9 @@ impl Runtime {
             inner.update_depth = 0;
             inner.flush_iterations_limit = DEFAULT_FLUSH_LIMIT;
             inner.counters = Counters::default();
-            (nodes, scopes, channels)
+            inner.ambient = None;
+            let waker = inner.ui_waker.take();
+            (nodes, scopes, channels, waker)
         };
         drop(garbage);
     }

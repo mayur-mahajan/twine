@@ -1,23 +1,44 @@
-//! Simulator configuration: [`SimConfig`], [`SimInputs`], [`Headless`], [`ThemeSlot`].
+//! Simulator configuration: [`SimConfig`], [`SimInputs`], [`Headless`], [`ThemeToggle`].
 
-use std::any::Any;
 use std::fmt;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use twine_core::{Color, ColorFormat, Rotation};
+use twine_engine::ThemeHook;
 use twine_hal::BufferSpec;
 
 use crate::paths;
 
-/// Placeholder for the theme the simulator applies to engine apps.
-///
-/// Holds any value until `twine-theme` exists.
-// NOTE(P14.S01): becomes `Box<dyn Theme>`.
-pub struct ThemeSlot(pub Box<dyn Any>);
+/// The two themes `F12` switches between (see [`SimConfig::theme_toggle`]).
+#[derive(Clone)]
+pub struct ThemeToggle {
+    /// The light theme (installed first).
+    pub light: Rc<dyn ThemeHook>,
+    /// The dark theme.
+    pub dark: Rc<dyn ThemeHook>,
+}
 
-impl fmt::Debug for ThemeSlot {
+impl fmt::Debug for ThemeToggle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("ThemeSlot(..)")
+        f.debug_struct("ThemeToggle")
+            .field("light", &self.light.name())
+            .field("dark", &self.dark.name())
+            .finish()
+    }
+}
+
+/// Callback of [`SimConfig::on_raw_key`]: receives the engine and each key pressed on the
+/// keyboard, besides the keypad device (for app-level shortcuts that must work whatever is
+/// focused).
+pub struct RawKeyHook(pub Box<RawKeyFn>);
+
+/// The function type of a [`RawKeyHook`].
+pub type RawKeyFn = dyn FnMut(&mut twine_engine::Engine, twine_hal::Key);
+
+impl fmt::Debug for RawKeyHook {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("RawKeyHook(..)")
     }
 }
 
@@ -91,10 +112,17 @@ pub struct SimConfig {
     pub buffer_mode: BufferSpec,
     /// Emulated bus throughput in bits per second (`None` = instant flushes).
     pub bus_hz: Option<u32>,
-    /// Display rotation (emulated in "hardware", like MIPI `MADCTL`).
+    /// Display rotation.
     pub rotation: Rotation,
-    /// The theme for engine apps.
-    pub theme: Option<ThemeSlot>,
+    /// `true` (default): rotation is emulated in "hardware" like MIPI `MADCTL` (the window
+    /// shows the logical screen). `false`: the panel keeps its physical orientation and engine
+    /// apps rotate in software (the window shows the physical panel).
+    pub hw_rotation: bool,
+    /// The theme installed on the display of engine apps before `setup` runs (any theme:
+    /// `twine_theme::DefaultTheme`, `SimpleTheme`, `MonoTheme` or a custom [`ThemeHook`]).
+    pub theme: Option<Rc<dyn ThemeHook>>,
+    /// Themes toggled with `F12` (the light one is installed when `theme` is `None`).
+    pub theme_toggle: Option<ThemeToggle>,
     /// Registered input devices.
     pub input: SimInputs,
     /// Headless mode when `Some`.
@@ -103,6 +131,11 @@ pub struct SimConfig {
     pub mono_colors: (Color, Color),
     /// Frame rate limit of continuously animating apps (default 60, `None` = unlimited).
     pub fps_limit: Option<u16>,
+    /// Engine apps: called with every key pressed (see [`RawKeyHook`]).
+    pub on_raw_key: Option<RawKeyHook>,
+    /// The configuration of engine apps' engine (the simulator adds its high-resolution
+    /// timer).
+    pub engine_config: twine_engine::EngineConfig,
 }
 
 /// Formats the simulator panel can emulate.
@@ -144,12 +177,64 @@ impl SimConfig {
             buffer_mode: BufferSpec::default(),
             bus_hz: None,
             rotation: Rotation::Deg0,
+            hw_rotation: true,
             theme: None,
+            theme_toggle: None,
             input: SimInputs::default(),
             headless: None,
             mono_colors: (Color::BLACK, Color::hex(0xB0_C8_A0)),
             fps_limit: Some(60),
+            on_raw_key: None,
+            engine_config: twine_engine::EngineConfig::default(),
         }
+    }
+
+    /// The physical panel size: `width × height`, swapped for a 90°/270° rotation done in
+    /// software (`hw_rotation == false`). The window and screenshots show the physical panel.
+    #[must_use]
+    pub fn panel_size(&self) -> (u16, u16) {
+        if !self.hw_rotation && self.rotation.swaps_axes() {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        }
+    }
+
+    /// Whether the rotation is emulated in hardware (default) or done by the engine in
+    /// software (see [`SimConfig::hw_rotation`]).
+    #[must_use]
+    pub fn hw_rotation(mut self, hw: bool) -> Self {
+        self.hw_rotation = hw;
+        self
+    }
+
+    /// Uses `cfg` for the engine of an engine app (e.g. to give the image cache a budget).
+    #[must_use]
+    pub fn engine_config(mut self, cfg: twine_engine::EngineConfig) -> Self {
+        self.engine_config = cfg;
+        self
+    }
+
+    /// Installs `theme` on the display of an engine app (before `setup` runs).
+    #[must_use]
+    pub fn theme(mut self, theme: Rc<dyn ThemeHook>) -> Self {
+        self.theme = Some(theme);
+        self
+    }
+
+    /// `F12` switches between `light` and `dark` (`Engine::set_theme`); `light` is installed
+    /// first unless [`theme`](Self::theme) sets another one.
+    #[must_use]
+    pub fn theme_toggle(mut self, light: Rc<dyn ThemeHook>, dark: Rc<dyn ThemeHook>) -> Self {
+        self.theme_toggle = Some(ThemeToggle { light, dark });
+        self
+    }
+
+    /// Calls `f` with the engine for every key pressed (engine apps).
+    #[must_use]
+    pub fn on_raw_key(mut self, f: impl FnMut(&mut twine_engine::Engine, twine_hal::Key) + 'static) -> Self {
+        self.on_raw_key = Some(RawKeyHook(Box::new(f)));
+        self
     }
 
     /// Sets the window title.

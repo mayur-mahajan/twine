@@ -11,7 +11,77 @@ repository.workspace = true
 workspace = true
 
 [features]
-default = []
+default = ["color-rgb565", "color-rgb565-swapped", "img-qoi", "perf-monitor", "log"]
+## std-only conveniences (thread-local reactive runtime).
+std = [
+    "twine-core/std",
+    "twine-reactive/std",
+    "twine-anim/std",
+    "twine-render/std",
+    "twine-text/std",
+    "twine-image/std",
+    "twine-style/std",
+    "twine-layout/std",
+    "twine-engine/std",
+    "twine-theme/std",
+    "twine-widgets/std",
+    "twine-view/std",
+]
+## Log through the `log` crate.
+log = ["twine-view/log", "twine-layout/log"]
+## Log through `defmt`.
+defmt = ["twine-view/defmt", "twine-layout/defmt"]
+## On-screen performance overlay.
+perf-monitor = ["twine-engine/perf-monitor"]
+## Expensive engine invariant checks.
+debug-checks = ["twine-engine/debug-checks"]
+## Keep test ids in release builds.
+test-ids = ["twine-engine/test-ids"]
+## Pixel formats the renderer is compiled for.
+color-rgb565 = ["twine-engine/color-rgb565"]
+color-rgb565-swapped = ["twine-engine/color-rgb565-swapped"]
+color-rgb888 = ["twine-engine/color-rgb888"]
+color-xrgb8888 = ["twine-engine/color-xrgb8888"]
+color-argb8888 = ["twine-engine/color-argb8888"]
+color-l8 = ["twine-engine/color-l8"]
+color-i1 = ["twine-engine/color-i1"]
+## Image decoders.
+img-qoi = ["twine-image/img-qoi"]
+img-png = ["twine-image/img-png"]
+img-jpeg = ["twine-image/img-jpeg"]
+img-gif = ["twine-image/img-gif"]
+img-bmp = ["twine-image/img-bmp"]
+img-lz4 = ["twine-image/img-lz4"]
+## Built-in fonts (`twine::fonts`).
+montserrat-8 = ["twine-assets/montserrat-8"]
+montserrat-10 = ["twine-assets/montserrat-10"]
+montserrat-12 = ["twine-assets/montserrat-12"]
+montserrat-14 = ["twine-assets/montserrat-14"]
+montserrat-16 = ["twine-assets/montserrat-16"]
+montserrat-18 = ["twine-assets/montserrat-18"]
+montserrat-20 = ["twine-assets/montserrat-20"]
+montserrat-22 = ["twine-assets/montserrat-22"]
+montserrat-24 = ["twine-assets/montserrat-24"]
+montserrat-26 = ["twine-assets/montserrat-26"]
+montserrat-28 = ["twine-assets/montserrat-28"]
+montserrat-30 = ["twine-assets/montserrat-30"]
+montserrat-32 = ["twine-assets/montserrat-32"]
+montserrat-34 = ["twine-assets/montserrat-34"]
+montserrat-36 = ["twine-assets/montserrat-36"]
+montserrat-38 = ["twine-assets/montserrat-38"]
+montserrat-40 = ["twine-assets/montserrat-40"]
+montserrat-42 = ["twine-assets/montserrat-42"]
+montserrat-44 = ["twine-assets/montserrat-44"]
+montserrat-46 = ["twine-assets/montserrat-46"]
+montserrat-48 = ["twine-assets/montserrat-48"]
+montserrat-14-subpx = ["twine-assets/montserrat-14-subpx"]
+unscii-8 = ["twine-assets/unscii-8"]
+unscii-16 = ["twine-assets/unscii-16"]
+dejavu-16-persian-hebrew = ["twine-assets/dejavu-16-persian-hebrew"]
+source-han-sans-sc-14-cjk = ["twine-assets/source-han-sans-sc-14-cjk"]
+source-han-sans-sc-16-cjk = ["twine-assets/source-han-sans-sc-16-cjk"]
+all-fonts = ["twine-assets/all-fonts"]
+
 
 [dependencies]
 twine-core = { path = "../twine-core" }
@@ -29,3 +99,8 @@ twine-widgets = { path = "../twine-widgets" }
 twine-widgets-ext = { path = "../twine-widgets-ext" }
 twine-view = { path = "../twine-view" }
 twine-assets = { path = "../twine-assets" }
+
+[dev-dependencies]
+twine = { path = ".", features = ["std", "montserrat-20"] }
+twine-testing = { path = "../twine-testing" }
+critical-section = { version = "1", features = ["std"] }

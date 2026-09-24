@@ -1,0 +1,6 @@
+# Toggle the gap twice.
+wait 100
+shot narrow
+tap 60 26
+wait 100
+shot wide

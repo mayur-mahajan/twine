@@ -42,11 +42,15 @@ mod gif {
     /// Frames of `bytes` as composited by the `image` crate (RGBA).
     fn reference_frames(bytes: &[u8]) -> Vec<Vec<u8>> {
         let d = image::codecs::gif::GifDecoder::new(Cursor::new(bytes)).unwrap();
-        d.into_frames().map(|f| f.unwrap().into_buffer().into_raw()).collect()
+        d.into_frames()
+            .map(|f| f.unwrap().into_buffer().into_raw())
+            .collect()
     }
 
     fn bgra(rgba: &[u8]) -> Vec<u8> {
-        rgba.chunks_exact(4).flat_map(|c| [c[2], c[1], c[0], c[3]]).collect()
+        rgba.chunks_exact(4)
+            .flat_map(|c| [c[2], c[1], c[0], c[3]])
+            .collect()
     }
 
     #[test]
@@ -161,7 +165,7 @@ mod gif {
     const BLUE: [u8; 4] = [255, 0, 0, 255];
     const CLEAR: [u8; 4] = [0, 0, 0, 0];
 
-    fn px(p: &GifPlayer, x: usize, y: usize) -> [u8; 4] {
+    fn px(p: &GifPlayer<'_>, x: usize, y: usize) -> [u8; 4] {
         let d = p.pixels().data;
         let o = (y * 4 + x) * 4;
         [d[o], d[o + 1], d[o + 2], d[o + 3]]
@@ -174,13 +178,37 @@ mod gif {
             2,
             &[
                 // Full red background.
-                F { rect: (0, 0, 4, 2), indices: vec![1; 8], disposal: 1, transparent: None, delay_cs: 10 },
+                F {
+                    rect: (0, 0, 4, 2),
+                    indices: vec![1; 8],
+                    disposal: 1,
+                    transparent: None,
+                    delay_cs: 10,
+                },
                 // A green 2×1 patch, restored to the previous canvas afterwards.
-                F { rect: (1, 0, 2, 1), indices: vec![2, 2], disposal: 3, transparent: None, delay_cs: 10 },
+                F {
+                    rect: (1, 0, 2, 1),
+                    indices: vec![2, 2],
+                    disposal: 3,
+                    transparent: None,
+                    delay_cs: 10,
+                },
                 // A blue pixel at (3, 1), then cleared to transparent.
-                F { rect: (3, 1, 1, 1), indices: vec![3], disposal: 2, transparent: None, delay_cs: 10 },
+                F {
+                    rect: (3, 1, 1, 1),
+                    indices: vec![3],
+                    disposal: 2,
+                    transparent: None,
+                    delay_cs: 10,
+                },
                 // Nothing new: 1×1 fully transparent frame.
-                F { rect: (0, 0, 1, 1), indices: vec![0], disposal: 0, transparent: Some(0), delay_cs: 10 },
+                F {
+                    rect: (0, 0, 1, 1),
+                    indices: vec![0],
+                    disposal: 0,
+                    transparent: Some(0),
+                    delay_cs: 10,
+                },
             ],
         ));
         let mut p = GifPlayer::new(file).unwrap();
@@ -206,18 +234,43 @@ mod gif {
             4,
             2,
             &[
-                F { rect: (0, 0, 4, 2), indices: vec![3; 8], disposal: 1, transparent: None, delay_cs: 5 },
+                F {
+                    rect: (0, 0, 4, 2),
+                    indices: vec![3; 8],
+                    disposal: 1,
+                    transparent: None,
+                    delay_cs: 5,
+                },
                 // Index 0 is transparent: only the red pixels replace the blue ones.
-                F { rect: (0, 0, 4, 1), indices: vec![0, 1, 0, 1], disposal: 1, transparent: Some(0), delay_cs: 5 },
+                F {
+                    rect: (0, 0, 4, 1),
+                    indices: vec![0, 1, 0, 1],
+                    disposal: 1,
+                    transparent: Some(0),
+                    delay_cs: 5,
+                },
             ],
         ));
         let mut p = GifPlayer::new(file).unwrap();
         assert_eq!(p.advance().as_millis(), 50);
         p.advance();
-        assert_eq!([px(&p, 0, 0), px(&p, 1, 0), px(&p, 2, 0), px(&p, 3, 0)], [BLUE, RED, BLUE, RED]);
+        assert_eq!(
+            [px(&p, 0, 0), px(&p, 1, 0), px(&p, 2, 0), px(&p, 3, 0)],
+            [BLUE, RED, BLUE, RED]
+        );
         // The first frame alone (static decoder): transparent index → transparent pixel.
         let mut out = Vec::new();
-        let single = build(2, 1, &[F { rect: (0, 0, 2, 1), indices: vec![0, 2], disposal: 0, transparent: Some(0), delay_cs: 0 }]);
+        let single = build(
+            2,
+            1,
+            &[F {
+                rect: (0, 0, 2, 1),
+                indices: vec![0, 2],
+                disposal: 0,
+                transparent: Some(0),
+                delay_cs: 0,
+            }],
+        );
         GifDecoder.decode(&single, &mut out).unwrap();
         assert_eq!(out, [CLEAR, GREEN].concat());
         let _ = BLACK;

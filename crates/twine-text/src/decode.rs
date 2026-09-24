@@ -352,13 +352,13 @@ mod tests {
         let (mut a, mut b) = ([0u8; 2], [0u8; 2]);
         let mut rows = Vec::new();
         let ok = decode_compressed(&data, 8, 2, 2, true, &mut a, &mut b, &mut |_, r| {
-            rows.push(r.to_vec())
+            rows.push(r.to_vec());
         });
         assert!(ok);
         assert_eq!(rows, vec![vec![1, 2], vec![2, 1]]);
         rows.clear();
         decode_compressed(&data, 8, 2, 2, false, &mut a, &mut b, &mut |_, r| {
-            rows.push(r.to_vec())
+            rows.push(r.to_vec());
         });
         assert_eq!(rows, vec![vec![1, 2], vec![3, 3]]);
     }

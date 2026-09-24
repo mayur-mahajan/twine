@@ -12,7 +12,21 @@ workspace = true
 
 [features]
 default = []
+## std-only conveniences of the dependencies.
+std = ["twine-core/std", "twine-style/std"]
+## Log through the `log` crate.
+log = ["twine-core/log", "twine-style/log"]
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = ["dep:defmt", "twine-core/defmt", "twine-style/defmt"]
+## `ToyTree`, a small `LayoutTree` implementation for tests of dependent crates.
+toy = []
 
 [dependencies]
 twine-core = { path = "../twine-core" }
 twine-style = { path = "../twine-style" }
+bitflags = { version = "2", default-features = false }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+proptest = "1"
+log = "0.4"

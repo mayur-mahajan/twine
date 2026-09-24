@@ -163,11 +163,7 @@ impl<'m> ImageMasks<'m> {
                 None
             }
         });
-        (radius.is_some() || bitmap.is_some()).then_some(Self {
-            radius,
-            bitmap,
-            area,
-        })
+        (radius.is_some() || bitmap.is_some()).then_some(Self { radius, bitmap, area })
     }
 
     /// Where anything can be visible.
@@ -203,7 +199,11 @@ impl<'m> ImageMasks<'m> {
                     0
                 } else {
                     let v = unpack_bits(row, bpp, (x - r.x0) as usize);
-                    if m.format == ColorFormat::L8 { v } else { expand_alpha(v, bpp) }
+                    if m.format == ColorFormat::L8 {
+                        v
+                    } else {
+                        expand_alpha(v, bpp)
+                    }
                 };
                 *c = udiv255(u32::from(*c) * u32::from(a)) as u8;
             }
@@ -316,7 +316,11 @@ impl Painter<'_> {
             }
         }
         let plain = masks.is_none() && ops == TexelOps::default() && dsc.blend_mode == BlendMode::Normal;
-        if plain && !dsc.tile && draw == img && !self.has_masks() && self.accel_blit(img, px, dsc.opa) == Some(true)
+        if plain
+            && !dsc.tile
+            && draw == img
+            && !self.has_masks()
+            && self.accel_blit(img, px, dsc.opa) == Some(true)
         {
             return;
         }
@@ -446,14 +450,23 @@ mod tests {
             chroma: Some(0),
         };
         let p = |f| ImagePixels::new(f, 2, 2, &d);
-        assert_eq!(ImagePath::choose(&p(ColorFormat::Rgb565), none), ImagePath::Direct);
+        assert_eq!(
+            ImagePath::choose(&p(ColorFormat::Rgb565), none),
+            ImagePath::Direct
+        );
         assert_eq!(ImagePath::choose(&p(ColorFormat::Rgb565), rc), ImagePath::Generic);
-        assert_eq!(ImagePath::choose(&p(ColorFormat::Argb8888), key), ImagePath::Generic);
+        assert_eq!(
+            ImagePath::choose(&p(ColorFormat::Argb8888), key),
+            ImagePath::Generic
+        );
         assert_eq!(
             ImagePath::choose(&p(ColorFormat::A4), rc),
             ImagePath::AlphaSolid(Color::RED)
         );
-        assert_eq!(ImagePath::choose(&p(ColorFormat::Rgb565A8), none), ImagePath::Rgb565A8);
+        assert_eq!(
+            ImagePath::choose(&p(ColorFormat::Rgb565A8), none),
+            ImagePath::Rgb565A8
+        );
         assert_eq!(ImagePath::choose(&p(ColorFormat::I4), none), ImagePath::Generic);
         assert_eq!(
             ImagePath::choose(&p(ColorFormat::Argb8888Premultiplied), none),
@@ -464,7 +477,10 @@ mod tests {
     #[test]
     fn transformed_area_identity_and_scale() {
         let a = Rect::from_xywh(10, 10, 20, 10);
-        assert_eq!(transformed_area(a, Angle::deg(360), Scale::ONE, Scale::ONE, Point::new(3, 3)), a);
+        assert_eq!(
+            transformed_area(a, Angle::deg(360), Scale::ONE, Scale::ONE, Point::new(3, 3)),
+            a
+        );
         let r = transformed_area(a, Angle(0), Scale(512), Scale(512), Point::new(0, 0));
         assert_eq!(r, Rect::from_xywh(10, 10, 40, 20));
     }

@@ -49,9 +49,15 @@ mod compress {
     fn rle_truncated_input_errors() {
         let mut out = [0u8; 16];
         // Literal of 3 blocks with only 2 present.
-        assert_eq!(rle_decompress(&[0x83, 1, 2], &mut out, 1), Err(Error::Decode("rle truncated")));
+        assert_eq!(
+            rle_decompress(&[0x83, 1, 2], &mut out, 1),
+            Err(Error::Decode("rle truncated"))
+        );
         // Repeat packet without its block.
-        assert_eq!(rle_decompress(&[0x05, 1], &mut out, 2), Err(Error::Decode("rle truncated")));
+        assert_eq!(
+            rle_decompress(&[0x05, 1], &mut out, 2),
+            Err(Error::Decode("rle truncated"))
+        );
         assert!(rle_decompress(&[1, 2], &mut out, 0).is_err());
     }
 
@@ -64,7 +70,10 @@ mod compress {
         assert_eq!(out, [1, 2, 1, 2, 7]);
         // A whole extra block is an error.
         let mut out = [0u8; 4];
-        assert_eq!(rle_decompress(&[0x03, 1, 2], &mut out, 2), Err(Error::Decode("rle overflow")));
+        assert_eq!(
+            rle_decompress(&[0x03, 1, 2], &mut out, 2),
+            Err(Error::Decode("rle overflow"))
+        );
     }
 
     #[test]
@@ -121,7 +130,10 @@ mod compress {
             assert_eq!(out, raw, "{method:?}");
             assert_eq!(
                 img.decompress_into(&mut out[..10]),
-                Err(Error::SizeMismatch { expected: raw.len(), got: 10 })
+                Err(Error::SizeMismatch {
+                    expected: raw.len(),
+                    got: 10
+                })
             );
         }
     }

@@ -296,3 +296,44 @@ ranges = ["0x20-0x7F"]
 symbols = "none"
 compress = false
 kerning = false
+
+# Hebrew, Arabic and Persian (with presentation forms for `twine_text::shape_into`); DejaVu Sans.
+[[font]]
+name = "DEJAVU_16_PERSIAN_HEBREW"
+feature = "dejavu-16-persian-hebrew"
+file = "dejavu_16_persian_hebrew.rs"
+ttf = "assets/fonts/DejaVuSans.ttf"
+size = 16
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022", "0x0590-0x05FF", "0x0600-0x06FF", "0xFB50-0xFDFF", "0xFE70-0xFEFF"]
+symbols = "fa"
+compress = true
+kerning = true
+
+# Chinese/Japanese subsets of Source Han Sans (CN subset OTF): ASCII, CJK punctuation, kana,
+# full-width forms and the ~1 300 characters of LVGL's own CJK fonts (`cjk_common_lvgl.txt`).
+[[font]]
+name = "SOURCE_HAN_SANS_SC_14_CJK"
+feature = "source-han-sans-sc-14-cjk"
+file = "source_han_sans_sc_14_cjk.rs"
+ttf = "assets/fonts/SourceHanSansCN-Regular.otf"
+size = 14
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022", "0x3000-0x303F", "0x3040-0x30FF", "0xFF01-0xFF5E"]
+chars_file = "assets/fonts/cjk_common_lvgl.txt"
+symbols = "fa"
+compress = true
+kerning = false
+
+[[font]]
+name = "SOURCE_HAN_SANS_SC_16_CJK"
+feature = "source-han-sans-sc-16-cjk"
+file = "source_han_sans_sc_16_cjk.rs"
+ttf = "assets/fonts/SourceHanSansCN-Regular.otf"
+size = 16
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022", "0x3000-0x303F", "0x3040-0x30FF", "0xFF01-0xFF5E"]
+chars_file = "assets/fonts/cjk_common_lvgl.txt"
+symbols = "fa"
+compress = true
+kerning = false

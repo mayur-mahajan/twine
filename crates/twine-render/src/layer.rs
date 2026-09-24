@@ -137,6 +137,7 @@ impl Painter<'_> {
     ///     p.fill(Rect::from_xywh(0, 0, 4, 4), Color::WHITE, Opa::COVER);
     ///     p.fill(Rect::from_xywh(0, 0, 2, 4), Color::WHITE, Opa::COVER); // overlap: not brighter
     /// });
+    /// drop(p); // the buffer is read after the painter (and any accelerator) is done
     /// assert_eq!(data[0], data[3]);
     /// ```
     pub fn layer(&mut self, area: Rect, dsc: &LayerDsc, mut f: impl FnMut(&mut Painter<'_>)) {

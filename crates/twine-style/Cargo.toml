@@ -12,6 +12,19 @@ workspace = true
 
 [features]
 default = []
+## std-only conveniences.
+std = ["twine-core/std", "twine-anim/std", "twine-render/std", "twine-text/std", "twine-image/std"]
+## Log through the `log` crate.
+log = ["twine-core/log", "twine-anim/log", "twine-render/log", "twine-text/log", "twine-image/log"]
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = [
+    "dep:defmt",
+    "twine-core/defmt",
+    "twine-anim/defmt",
+    "twine-render/defmt",
+    "twine-text/defmt",
+    "twine-image/defmt",
+]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
@@ -19,3 +32,21 @@ twine-anim = { path = "../twine-anim" }
 twine-render = { path = "../twine-render" }
 twine-text = { path = "../twine-text" }
 twine-image = { path = "../twine-image" }
+bitflags = { version = "2", default-features = false }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+proptest = "1"
+trybuild = "1"
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+iai-callgrind = "0.16"
+
+[[bench]]
+name = "style"
+harness = false
+
+[[bench]]
+name = "style_iai"
+harness = false

@@ -48,7 +48,12 @@ fn draw(dsc: &ImageDsc<'_>, f: ColorFormat) -> RenderHarness {
 
 #[test]
 fn rotate_0_equals_untransformed_blit() {
-    for f in [ColorFormat::Argb8888, ColorFormat::Rgb565, ColorFormat::I4, ColorFormat::A8] {
+    for f in [
+        ColorFormat::Argb8888,
+        ColorFormat::Rgb565,
+        ColorFormat::I4,
+        ColorFormat::A8,
+    ] {
         let plain = draw(&ImageDsc::default(), f);
         let pivot = draw(
             &ImageDsc {

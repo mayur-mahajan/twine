@@ -12,6 +12,22 @@ workspace = true
 
 [features]
 default = []
+## std-only conveniences.
+std = ["twine-core/std"]
+## Log through the `log` crate.
+log = ["twine-core/log"]
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = ["dep:defmt", "twine-core/defmt"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+proptest = "1"
+twine-testing = { path = "../twine-testing", default-features = false }
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "timeline"
+harness = false

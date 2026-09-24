@@ -1,6 +1,6 @@
 [package]
 name = "twine-embedded-graphics"
-description = "embedded-graphics adapter"
+description = "embedded-graphics adapter for Twine: any DrawTarget as a display, a Painter as a DrawTarget"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,22 @@ workspace = true
 
 [features]
 default = []
+## `PainterTarget`: draw embedded-graphics primitives and text with a twine `Painter`.
+drawtarget = ["dep:twine-render"]
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = ["dep:defmt", "twine-core/defmt", "twine-hal/defmt", "twine-render?/defmt"]
+## Log through the `log` crate.
+log = ["twine-core/log", "twine-hal/log", "twine-render?/log"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
 twine-hal = { path = "../twine-hal" }
+twine-render = { path = "../twine-render", optional = true }
+embedded-graphics-core = "0.4"
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+twine-embedded-graphics = { path = ".", features = ["drawtarget"] }
+twine-render = { path = "../twine-render", features = ["color-rgb565", "color-l8", "color-i1"] }
+twine-testing = { path = "../twine-testing", default-features = false, features = ["render"] }
+embedded-graphics = "0.8"

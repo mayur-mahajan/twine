@@ -14,12 +14,13 @@ workspace = true
 default = ["ui"]
 ## `RenderHarness` over `twine-render`.
 render = ["dep:twine-render"]
-## `EngineHarness` over a bare `Engine`.
-# NOTE(P09.S05): adds the optional engine/theme/assets deps and `EngineHarness`.
-engine = ["render"]
+## `EngineHarness`, `MockDmaDisplay` and `MockFramebufferDisplay` over a bare `Engine`.
+engine = ["render", "dep:twine-engine", "dep:twine-style", "dep:twine-theme", "dep:twine-assets"]
+## The engine's expensive invariant checks (invalidation log, render hook for the DMA mock);
+## for tests, never for benchmarks.
+debug-checks = ["engine", "twine-engine/debug-checks"]
 ## `TestUi` over the declarative `Ui`.
-# NOTE(P15.S06): adds the optional reactive/view/widgets deps and `TestUi`.
-ui = ["engine"]
+ui = ["engine", "dep:twine-reactive", "dep:twine-view", "dep:twine-widgets", "dep:critical-section"]
 
 [dependencies]
 twine-core = { path = "../twine-core", features = ["std", "log"] }
@@ -34,6 +35,30 @@ twine-render = { path = "../twine-render", optional = true, features = [
     "color-l8",
     "color-i1",
 ] }
+# `debug-checks` is opt-in (feature `debug-checks`): benchmarks built on the harness must
+# measure the engine without it.
+twine-engine = { path = "../twine-engine", optional = true, features = [
+    "std",
+    "log",
+    "perf-monitor",
+    # Queries by test id also in release test builds.
+    "test-ids",
+    "color-rgb565",
+    "color-rgb565-swapped",
+    "color-rgb888",
+    "color-xrgb8888",
+    "color-argb8888",
+    "color-l8",
+    "color-i1",
+] }
+twine-style = { path = "../twine-style", optional = true, features = ["std", "log"] }
+twine-theme = { path = "../twine-theme", optional = true, features = ["std", "log"] }
+twine-assets = { path = "../twine-assets", optional = true }
+twine-reactive = { path = "../twine-reactive", optional = true, features = ["std", "log"] }
+twine-view = { path = "../twine-view", optional = true, features = ["std", "log"] }
+twine-widgets = { path = "../twine-widgets", optional = true, features = ["std", "log"] }
+# Host implementation of `critical-section` (used by reactive channels) for test binaries.
+critical-section = { version = "1", optional = true, features = ["std"] }
 png = "0.17"
 log = "0.4"
 env_logger = "0.11"

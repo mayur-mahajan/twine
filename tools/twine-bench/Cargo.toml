@@ -1,0 +1,43 @@
+[package]
+name = "twine-bench"
+description = "Engine benchmarks, built without the engine's `debug-checks` feature"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# The engine's own tests enable the expensive `debug-checks` feature through its
+# dev-dependencies, and cargo enables dev-dependency features for benchmarks of the same
+# package too. Engine benchmarks live in this separate package so that
+# `cargo bench -p twine-bench` measures the engine as applications build it.
+
+[lints]
+workspace = true
+
+[dependencies]
+twine-core = { path = "../../crates/twine-core", features = ["std"] }
+twine-anim = { path = "../../crates/twine-anim", features = ["std"] }
+twine-style = { path = "../../crates/twine-style", features = ["std"] }
+twine-engine = { path = "../../crates/twine-engine", features = ["std", "color-rgb565"] }
+twine-testing = { path = "../../crates/twine-testing", default-features = false, features = ["engine"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "refresh"
+harness = false
+
+[[bench]]
+name = "layout"
+harness = false
+
+[[bench]]
+name = "anim"
+harness = false
+
+[[bench]]
+name = "scroll"
+harness = false

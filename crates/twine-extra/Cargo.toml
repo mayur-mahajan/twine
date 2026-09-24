@@ -12,10 +12,29 @@ workspace = true
 
 [features]
 default = []
+## QR code encoder (`QrMatrix`) and drawing helpers.
+qrcode = ["dep:qrcodegen-no-heap", "dep:twine-render", "dep:thiserror"]
+## Code 128 barcode encoder (`Code128`) and drawing helpers.
+barcode = ["dep:twine-render", "dep:thiserror"]
+## std-only conveniences.
+std = ["twine-core/std"]
+## Log through the `log` crate.
+log = ["twine-core/log", "twine-render?/log"]
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = ["dep:defmt", "twine-core/defmt", "twine-render?/defmt"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
-twine-view = { path = "../twine-view" }
-twine-engine = { path = "../twine-engine" }
-twine-widgets = { path = "../twine-widgets" }
-twine-fs = { path = "../twine-fs" }
+twine-render = { path = "../twine-render", optional = true }
+# NOTE(P25.S01): twine-view, twine-engine, twine-widgets and twine-fs are added back with the
+# QR/barcode widgets and the file explorer; the encoders and drawing helpers need none of them.
+qrcodegen-no-heap = { version = "1.8", default-features = false, optional = true }
+thiserror = { version = "2", default-features = false, optional = true }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+twine-extra = { path = ".", features = ["qrcode", "barcode", "std", "log"] }
+twine-render = { path = "../twine-render", features = ["color-rgb565", "color-l8"] }
+twine-testing = { path = "../twine-testing", default-features = false, features = ["render"] }
+# Independent QR / Code 128 decoder (a ZXing port): proves the generated symbols scan.
+rxing = { version = "0.9", default-features = false, features = ["decoders", "qrcode", "oned", "encoding_rs", "encoders"] }

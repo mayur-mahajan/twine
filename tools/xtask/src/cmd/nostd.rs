@@ -45,8 +45,17 @@ pub const NOSTD_FEATURE_SETS: &[(&str, &str)] = &[
     ("twine-core", "defmt"),
     ("twine-hal", "async"),
     ("twine-hal", "defmt"),
+    ("twine-drivers", "async"),
+    ("twine-drivers", "defmt,async"),
+    ("twine-drivers", "log"),
     ("twine-reactive", "log"),
     ("twine-reactive", "defmt"),
+    ("twine-anim", "log"),
+    ("twine-anim", "defmt"),
+    ("twine-style", "log"),
+    ("twine-style", "defmt"),
+    ("twine-layout", "log"),
+    ("twine-layout", "defmt"),
     (
         "twine-render",
         "log,color-rgb565,color-rgb565-swapped,color-rgb888,color-xrgb8888,color-argb8888,color-l8,color-i1",
@@ -54,12 +63,46 @@ pub const NOSTD_FEATURE_SETS: &[(&str, &str)] = &[
     ("twine-render", "defmt,color-rgb565"),
     ("twine-text", "log"),
     ("twine-text", "defmt"),
+    ("twine-text", "log,bidi,arabic-shaping"),
+    ("twine-fs", "log,fs-fat"),
+    ("twine-fs", "defmt,fs-fat"),
     ("twine-assets", "all-fonts"),
     (
         "twine-image",
         "log,img-qoi,img-png,img-jpeg,img-bmp,img-gif,img-lz4",
     ),
     ("twine-image", "defmt,img-qoi,img-lz4"),
+    ("twine-vector", "log,svg"),
+    ("twine-vector", "defmt,svg"),
+    (
+        "twine-engine",
+        "log,debug-checks,perf-monitor,test-ids,color-rgb565,color-rgb565-swapped,color-l8,color-i1",
+    ),
+    ("twine-engine", "defmt,color-rgb565,perf-monitor"),
+    ("twine-theme", "log"),
+    ("twine-theme", "defmt"),
+    ("twine-widgets", "log"),
+    ("twine-widgets", "defmt"),
+    ("twine-view", "log"),
+    ("twine-view", "defmt"),
+    ("twine-extra", "log,qrcode,barcode"),
+    ("twine-extra", "defmt,qrcode,barcode"),
+    ("twine-lottie", "log"),
+    ("twine-lottie", "defmt"),
+    ("twine-accel-stm32", "log"),
+    ("twine-embedded-graphics", "drawtarget,log"),
+    ("twine-embedded-graphics", "drawtarget,defmt"),
+];
+
+/// `(crate, features, target)` builds for features that only make sense on some targets
+/// (runtime TrueType fonts use `f32` and `static_cell`, which needs CAS atomics: FPU targets).
+pub const NOSTD_TARGET_FEATURE_SETS: &[(&str, &str, &str)] = &[
+    ("twine-text", "ttf,bidi,arabic-shaping", "thumbv7em-none-eabihf"),
+    ("twine-text", "ttf", "thumbv8m.main-none-eabihf"),
+    // DMA2D register access for the supported STM32 chips (Cortex-M4F / M7).
+    ("twine-accel-stm32", "stm32f429zi", "thumbv7em-none-eabihf"),
+    ("twine-accel-stm32", "stm32f746ng,defmt", "thumbv7em-none-eabihf"),
+    ("twine-accel-stm32", "stm32h743zi,log", "thumbv7em-none-eabihf"),
 ];
 
 /// Runs all builds; fails on the first error or on a missing target.
@@ -87,6 +130,9 @@ pub fn run() -> R {
         for (krate, features) in NOSTD_FEATURE_SETS {
             run_cmd(cargo().args(["build", "--target", t, "-p", krate, "--features", features]))?;
         }
+    }
+    for (krate, features, t) in NOSTD_TARGET_FEATURE_SETS {
+        run_cmd(cargo().args(["build", "--target", t, "-p", krate, "--features", features]))?;
     }
     println!(
         "nostd: {} crates built for {} targets",

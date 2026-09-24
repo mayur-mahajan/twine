@@ -1,0 +1,16 @@
+# Open the modal, then the settings with the first animation (over_left), and go back.
+wait 100
+shot home
+tap 66 57
+wait 100
+shot modal
+tap 160 132
+wait 100
+tap 52 101
+wait 150
+shot mid_anim
+wait 300
+shot settings
+tap 160 70
+wait 500
+shot back_home

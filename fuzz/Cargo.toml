@@ -1,0 +1,84 @@
+[package]
+name = "twine-fuzz"
+description = "Fuzz targets for Twine's image decoders, decompressors, SVG parser and Lottie loader (cargo-fuzz, nightly)"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+# A separate workspace: fuzzing needs nightly and sanitizers.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+twine-image = { path = "../crates/twine-image", features = ["std", "img-qoi", "img-png", "img-jpeg", "img-bmp", "img-gif", "img-lz4"] }
+twine-vector = { path = "../crates/twine-vector", features = ["std", "svg"] }
+twine-lottie = { path = "../crates/twine-lottie", features = ["std"] }
+twine-render = { path = "../crates/twine-render", features = ["color-rgb565"] }
+twine-core = { path = "../crates/twine-core" }
+
+[[bin]]
+name = "fuzz_qoi"
+path = "fuzz_targets/fuzz_qoi.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_png"
+path = "fuzz_targets/fuzz_png.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_jpeg"
+path = "fuzz_targets/fuzz_jpeg.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_gif"
+path = "fuzz_targets/fuzz_gif.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_bmp"
+path = "fuzz_targets/fuzz_bmp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rle"
+path = "fuzz_targets/fuzz_rle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_lz4"
+path = "fuzz_targets/fuzz_lz4.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "svg_parse"
+path = "fuzz_targets/svg_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lottie_load"
+path = "fuzz_targets/lottie_load.rs"
+test = false
+doc = false
+bench = false

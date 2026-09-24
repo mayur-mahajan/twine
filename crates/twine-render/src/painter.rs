@@ -25,6 +25,7 @@ use crate::{AccelResult, DrawAccel, DrawBuf, RenderCaches};
 /// let buf = DrawBuf::new_packed(&mut data, ColorFormat::L8, Rect::from_xywh(0, 0, 8, 8)).unwrap();
 /// let mut p = Painter::new(buf, &mut caches);
 /// p.with_clip(Rect::from_xywh(0, 0, 4, 8), |p| p.fill(Rect::from_xywh(0, 0, 8, 1), Color::WHITE, Opa::COVER));
+/// drop(p); // the buffer is read after the painter (and any accelerator) is done
 /// assert_eq!(&data[..8], &[255, 255, 255, 255, 0, 0, 0, 0]);
 /// ```
 pub struct Painter<'a> {
@@ -70,6 +71,14 @@ pub(crate) enum Paint<'p> {
         map: &'p [u32],
         dither: bool,
     },
+}
+
+/// Dropping a painter waits for queued accelerator work, so the buffer is complete before it is
+/// read again (e.g. handed to a display flush).
+impl Drop for Painter<'_> {
+    fn drop(&mut self) {
+        self.sync_accel();
+    }
 }
 
 impl<'a> Painter<'a> {
@@ -431,7 +440,7 @@ mod tests {
             p.fill(Rect::from_xywh(0, 0, 10, 10), Color::WHITE, Opa::COVER);
         });
         assert!(p.touched_area().is_none());
-        let _ = p;
+        drop(p);
         assert!(d.iter().all(|&v| v == 0));
     }
 }

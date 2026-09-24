@@ -97,6 +97,13 @@ jobs:
       - run: cargo xtask gen-assets --check
       - run: cargo xtask images --check
 
+  style-props:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask style-props --check
+
   coverage:
     runs-on: ubuntu-latest
     steps:

@@ -1,0 +1,9 @@
+# Switch to panel B and back.
+wait 100
+shot panel_a
+tap 55 25
+wait 100
+shot panel_b
+tap 55 25
+wait 100
+shot panel_a_again

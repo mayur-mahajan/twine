@@ -12,12 +12,16 @@
 //!
 //! | Item | Purpose |
 //! |------|---------|
+//! | [`run`], [`run_headless`] | declarative apps (`fn app(cx: Scope) -> impl View`) with the `Ui` update cycle |
+//! | [`run_engine`], [`run_engine_headless`] | engine apps: an `Engine` on a simulated display, stepped only when it asks to be woken |
 //! | [`show_framebuffer`], [`show_framebuffer_with_input`] | draw raw frames without the engine (with per-frame input: [`SimFrame`]); window or headless |
 //! | [`run_headless_framebuffer`] | the same, headless, returning a [`HeadlessReport`] |
 //! | [`SimConfig`], [`Headless`] | configuration, environment overrides (`TWINE_SIM_*`) |
-//! | [`SimDisplay`] | emulated panel (formats, bus speed, `hw_rotation`) |
+//! | [`set_title`] | change the window title at run time (e.g. to show an example's current settings) |
+//! | [`SimDisplay`] | emulated panel (formats, bus speed, hardware or software rotation) |
+//! | [`SimFramebufferDisplay`] | emulated memory-mapped panel for the `Full` / `Direct` buffer modes |
 //! | [`SimPointer`], [`SimKeypad`], [`SimEncoder`] | input devices fed by the window or a script |
-//! | [`Hotkey`] | F1 help, F9 screenshot, F10 recording, F2–F8/F12 for engine runners |
+//! | [`Hotkey`] | F1 help, F9 screenshot, F10 recording; F2 refresh debug, F3 layout bounds, F4 performance overlay, F8 tree dump for engine apps |
 //! | [`script`] | the `.twinescript` language of headless runs |
 //!
 //! ## Environment
@@ -42,18 +46,22 @@ mod app;
 pub mod config;
 pub mod convert;
 pub mod display;
+mod fb_display;
 pub mod hotkeys;
 pub mod input;
 pub mod paths;
 mod png_out;
 pub mod script;
+mod title;
 mod window;
 
-pub use app::{HEADLESS_FRAME, HeadlessReport, SimApp, SimClock, SimError, SimFrame};
-pub use config::{Headless, SimConfig, SimInputs, ThemeSlot};
+pub use app::{HEADLESS_FRAME, HeadlessReport, SimApp, SimClock, SimError, SimFrame, StepFn};
+pub use config::{Headless, RawKeyHook, SimConfig, SimInputs, ThemeToggle};
 pub use display::{FlushStat, SimDisplay, SimDisplayError};
+pub use fb_display::SimFramebufferDisplay;
 pub use hotkeys::Hotkey;
 pub use input::{SimDevices, SimEncoder, SimKeypad, SimPointer};
+pub use title::set_title;
 
 use twine_core::ColorFormat;
 
@@ -100,6 +108,125 @@ pub fn show_framebuffer_with_input(
 ) -> ! {
     init_logging();
     SimApp::framebuffer_with_input(cfg.from_env(), draw).run()
+}
+
+/// Runs an engine app and never returns: creates an [`Engine`](twine_engine::Engine) with a
+/// simulated display (buffer mode, format, rotation and bus speed from `cfg`, after
+/// [`SimConfig::from_env`]), calls `setup` to build the UI imperatively, then steps the engine
+/// whenever it asks to be woken — an idle UI leaves the event loop waiting, using no CPU.
+///
+/// Hotkeys: F2 refresh-area debug overlay, F3 layout bounds, F4 performance overlay, F8 tree
+/// dump (plus F1, F9, F10). Headless runs (`TWINE_SIM_HEADLESS=1`) execute the script.
+///
+/// ```no_run
+/// use twine_core::{Color, Opa};
+/// use twine_engine::Obj;
+/// use twine_sim::{SimConfig, run_engine};
+/// use twine_style::{Selector, StyleProp};
+///
+/// run_engine(SimConfig::new(320, 240), |engine| {
+///     let screen = engine.active_screen(engine.default_display().unwrap()).unwrap();
+///     let b = engine.create(screen, Box::new(Obj)).unwrap();
+///     engine.set_pos(b, 20, 20);
+///     engine.set_size(b, 100, 60);
+///     engine.set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::RED));
+///     engine.set_local_prop(b, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+/// });
+/// ```
+pub fn run_engine(cfg: SimConfig, setup: impl FnOnce(&mut twine_engine::Engine)) -> ! {
+    init_logging();
+    match SimApp::engine(cfg.from_env(), setup) {
+        Ok(app) => app.run(),
+        Err(e) => {
+            eprintln!("twine-sim: {e}");
+            std::process::exit(1)
+        }
+    }
+}
+
+/// Runs a declarative app and never returns: builds `app` (once) with a `Ui` update cycle on
+/// a simulated display (like [`run_engine`], after [`SimConfig::from_env`]) with the pointer,
+/// keypad and encoder of `cfg.input` and `cfg.theme` (default: LVGL's light default theme),
+/// then updates whenever the `Ui` asks to be woken — `Wake::Idle` leaves the event loop
+/// waiting, using no CPU, until an input or a channel message arrives (channel sends from
+/// other threads wake the window).
+///
+/// ```no_run
+/// use twine_sim::SimConfig;
+/// use twine_view::prelude::*;
+///
+/// fn hello(_cx: Scope) -> impl View {
+///     label("Hello, twine!")
+/// }
+///
+/// twine_sim::run(SimConfig::new(320, 240).title("hello"), hello);
+/// ```
+pub fn run<V: twine_view::View>(cfg: SimConfig, app: fn(twine_reactive::Scope) -> V) -> ! {
+    init_logging();
+    match build_ui_app(cfg.from_env(), app) {
+        Ok(sim) => sim.run(),
+        Err(e) => {
+            eprintln!("twine-sim: {e}");
+            std::process::exit(1)
+        }
+    }
+}
+
+/// Runs a declarative app headless (with `cfg.headless` or the defaults) and returns a
+/// report. The environment is **not** applied.
+pub fn run_headless<V: twine_view::View>(
+    cfg: SimConfig,
+    app: fn(twine_reactive::Scope) -> V,
+) -> Result<HeadlessReport, SimError> {
+    let cfg = if cfg.headless.is_some() {
+        cfg
+    } else {
+        cfg.headless(Some(Headless::default()))
+    };
+    build_ui_app(cfg, app)?.run_headless()
+}
+
+/// A [`SimApp`] running `app` through a `UiCore` (see [`run`]).
+fn build_ui_app<V: twine_view::View>(
+    mut cfg: SimConfig,
+    app: fn(twine_reactive::Scope) -> V,
+) -> Result<SimApp, SimError> {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    if cfg.theme.is_none() && cfg.theme_toggle.is_none() {
+        cfg.theme = Some(Rc::new(twine_theme::DefaultTheme::light()));
+    }
+    let core: Rc<RefCell<Option<twine_view::UiCore>>> = Rc::default();
+    let c = core.clone();
+    let mut sim = SimApp::engine(cfg, move |engine| {
+        if let Some(d) = engine.default_display() {
+            *c.borrow_mut() = Some(twine_view::UiCore::mount(engine, d, app));
+        }
+    })?;
+    let waker = core.borrow().as_ref().map(twine_view::UiCore::waker);
+    if let Some(w) = waker {
+        sim.on_waker(Box::new(move |std_waker| w.register(&std_waker)));
+    }
+    sim.set_step_fn(Box::new(move |engine, now| match core.borrow_mut().as_mut() {
+        Some(ui) => ui.update(engine, now),
+        None => engine.step(now),
+    }));
+    Ok(sim)
+}
+
+/// Runs an engine app headless (with `cfg.headless` or the defaults) and returns a report
+/// instead of exiting. The environment is **not** applied.
+pub fn run_engine_headless(
+    cfg: SimConfig,
+    setup: impl FnOnce(&mut twine_engine::Engine),
+) -> Result<HeadlessReport, SimError> {
+    let cfg = if cfg.headless.is_some() {
+        cfg
+    } else {
+        cfg.headless(Some(Headless::default()))
+    };
+    SimApp::engine(cfg, setup)?.run_headless()
 }
 
 /// Runs [`show_framebuffer`] headless (with `cfg.headless` or the defaults) and returns a

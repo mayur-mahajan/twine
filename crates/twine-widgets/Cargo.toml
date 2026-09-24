@@ -12,6 +12,22 @@ workspace = true
 
 [features]
 default = []
+## Animated GIFs in `AnimImg::from_gif` (the GIF decoder of `twine-image`).
+gif = ["twine-image/img-gif"]
+## std-only conveniences.
+std = ["twine-core/std", "twine-engine/std", "twine-style/std", "twine-text/std", "twine-image/std", "twine-render/std"]
+## Log through the `log` crate.
+log = ["twine-core/log", "twine-engine/log", "twine-style/log", "twine-text/log", "twine-image/log", "twine-render/log"]
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = [
+    "dep:defmt",
+    "twine-core/defmt",
+    "twine-engine/defmt",
+    "twine-style/defmt",
+    "twine-text/defmt",
+    "twine-image/defmt",
+    "twine-render/defmt",
+]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
@@ -19,6 +35,17 @@ twine-engine = { path = "../twine-engine" }
 twine-style = { path = "../twine-style" }
 twine-text = { path = "../twine-text" }
 twine-image = { path = "../twine-image" }
-twine-anim = { path = "../twine-anim" }
 twine-render = { path = "../twine-render" }
+bitflags = { version = "2", default-features = false }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+twine-widgets = { path = ".", features = ["std", "log", "gif"] }
+twine-engine = { path = "../twine-engine", features = ["std", "debug-checks", "color-rgb565", "color-i1"] }
+twine-image = { path = "../twine-image", features = ["img-qoi"] }
+twine-testing = { path = "../twine-testing", default-features = false, features = ["engine", "debug-checks"] }
 twine-theme = { path = "../twine-theme" }
+twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-20"] }
+twine-hal = { path = "../twine-hal" }
+proptest = "1"
+log = "0.4"

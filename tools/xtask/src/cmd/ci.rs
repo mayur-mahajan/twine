@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::cmd::{firmware, fonts, images, layers, miri, nostd, snapshots, todo};
+use crate::cmd::{firmware, fonts, images, layers, miri, nostd, snapshots, style_props, todo};
 use crate::util::{R, cargo, output, run as run_cmd, warn};
 
 /// `(crate, feature)` pairs left out of the all-features clippy pass because they cannot be
@@ -15,11 +15,29 @@ use crate::util::{R, cargo, output, run as run_cmd, warn};
 /// needs a target-side logger to link tests).
 pub const CLIPPY_ALL_FEATURES_EXCLUDE: &[(&str, &str)] = &[
     ("twine-core", "defmt"),
+    ("twine", "defmt"),
+    ("twine-view", "defmt"),
     ("twine-hal", "defmt"),
+    ("twine-drivers", "defmt"),
     ("twine-reactive", "defmt"),
     ("twine-render", "defmt"),
     ("twine-text", "defmt"),
     ("twine-image", "defmt"),
+    ("twine-vector", "defmt"),
+    ("twine-anim", "defmt"),
+    ("twine-style", "defmt"),
+    ("twine-layout", "defmt"),
+    ("twine-engine", "defmt"),
+    ("twine-theme", "defmt"),
+    ("twine-widgets", "defmt"),
+    ("twine-fs", "defmt"),
+    ("twine-lottie", "defmt"),
+    ("twine-extra", "defmt"),
+    ("twine-accel-stm32", "defmt"),
+    ("twine-embedded-graphics", "defmt"),
+    // `stm32-metapac` accepts exactly one chip feature; the all-features pass keeps `stm32f429zi`.
+    ("twine-accel-stm32", "stm32f746ng"),
+    ("twine-accel-stm32", "stm32h743zi"),
 ];
 
 /// Outcome of one stage.
@@ -99,13 +117,14 @@ fn test() -> Result<Outcome, Box<dyn std::error::Error>> {
 
 /// Tests of feature-gated backends that the default `cargo test --workspace` does not compile.
 fn test_features() -> Result<Outcome, Box<dyn std::error::Error>> {
-    ok(run_cmd(cargo().args([
-        "test",
-        "-p",
-        "twine-core",
-        "--features",
-        "log",
-    ])))
+    run_cmd(cargo().args(["test", "-p", "twine-core", "--features", "log"]))?;
+    // Layout warnings (invalid grid cells) captured through `log`.
+    run_cmd(cargo().args(["test", "-p", "twine-layout", "--features", "log"]))?;
+    // DMA2D bit layout cross-checked against the chip PAC (DMA2D v1 and v2).
+    for chip in ["stm32f429zi", "stm32h743zi"] {
+        run_cmd(cargo().args(["test", "-p", "twine-accel-stm32", "--lib", "--features", chip]))?;
+    }
+    Ok(Outcome::Ok)
 }
 
 fn todo_check() -> Result<Outcome, Box<dyn std::error::Error>> {
@@ -122,6 +141,10 @@ fn fonts_check() -> Result<Outcome, Box<dyn std::error::Error>> {
 
 fn images_check() -> Result<Outcome, Box<dyn std::error::Error>> {
     ok(images::gen_assets(true).and_then(|()| images::run(true)))
+}
+
+fn style_props_check() -> Result<Outcome, Box<dyn std::error::Error>> {
+    ok(style_props::run(true))
 }
 
 fn nostd_build() -> Result<Outcome, Box<dyn std::error::Error>> {
@@ -171,6 +194,7 @@ const STAGES: &[(&str, bool, StageFn)] = &[
     ("layers", true, layers_check),
     ("fonts", true, fonts_check),
     ("images", true, images_check),
+    ("style-props", true, style_props_check),
     ("nostd", false, nostd_build),
     ("doc", false, doc),
     ("bench-build", false, bench_build),

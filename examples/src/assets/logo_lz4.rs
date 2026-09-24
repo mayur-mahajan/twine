@@ -3,7 +3,7 @@
 // Input SHA-256: a0a83e3bc12c7cf9163aa791b6a93ba93ae05637468615d09f4a2153bd8c04d5
 // twine-image: format=ARGB8888 w=64 h=64 stride=256 flags=0x02 compression=lz4 stored=3538 size=16384
 
-/// `LOGO_LZ4` (64×64 ARGB8888).
+/// `LOGO_LZ4` (64×64 `ARGB8888`).
 pub static LOGO_LZ4: twine_image::Image = twine_image::Image {
     header: twine_image::ImageHeader {
         format: twine_image::ColorFormat::Argb8888,

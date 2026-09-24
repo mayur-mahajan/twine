@@ -12,7 +12,24 @@ workspace = true
 
 [features]
 default = []
+## SVG Tiny subset parser (`parse_svg`, `SvgDocument`).
+svg = ["dep:thiserror"]
+## std-only conveniences.
+std = ["twine-core/std", "twine-render/std"]
+## Log through the `log` crate.
+log = ["twine-core/log", "twine-render/log"]
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = ["dep:defmt", "twine-core/defmt", "twine-render/defmt"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
 twine-render = { path = "../twine-render" }
+heapless = { version = "0.8", default-features = false }
+thiserror = { version = "2", default-features = false, optional = true }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+twine-vector = { path = ".", features = ["svg", "std", "log"] }
+twine-render = { path = "../twine-render", features = ["color-rgb565", "color-argb8888", "color-l8"] }
+twine-testing = { path = "../twine-testing", default-features = false, features = ["render"] }
+proptest = "1"

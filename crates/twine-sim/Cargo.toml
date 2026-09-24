@@ -16,10 +16,27 @@ default = []
 [dependencies]
 twine-core = { path = "../twine-core", features = ["std", "log"] }
 twine-hal = { path = "../twine-hal", features = ["log"] }
-twine-view = { path = "../twine-view" }
-twine-engine = { path = "../twine-engine" }
+twine-view = { path = "../twine-view", features = ["std", "log"] }
+twine-reactive = { path = "../twine-reactive", features = ["std", "log"] }
+twine-theme = { path = "../twine-theme", features = ["std", "log"] }
+twine-engine = { path = "../twine-engine", features = [
+    "std",
+    "log",
+    "perf-monitor",
+    "color-rgb565",
+    "color-rgb565-swapped",
+    "color-rgb888",
+    "color-xrgb8888",
+    "color-argb8888",
+    "color-l8",
+    "color-i1",
+] }
 winit = "0.30"
 softbuffer = "0.4"
 png = "0.17"
 log = "0.4"
 env_logger = "0.11"
+
+[dev-dependencies]
+twine-style = { path = "../twine-style", features = ["std", "log"] }
+twine-assets = { path = "../twine-assets", features = ["montserrat-14"] }

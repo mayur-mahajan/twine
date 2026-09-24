@@ -162,6 +162,28 @@ pub fn defer_current_effect() {
     }
 }
 
+/// Called from inside a running effect: disposes it (its closure is released after this run).
+///
+/// View-layer bindings use this when the widget they write to was deleted. Outside an effect
+/// this logs a warning and does nothing.
+///
+/// ```
+/// let cx = twine_reactive::create_root();
+/// let a = cx.signal(1);
+/// let e = cx.effect(move || {
+///     if a.get() > 1 {
+///         twine_reactive::dispose_current_effect();
+///     }
+/// });
+/// a.set(2);
+/// assert!(!e.is_alive());
+/// ```
+pub fn dispose_current_effect() {
+    if !with_runtime(Runtime::dispose_current_effect) {
+        warn!(target: "twine::reactive", "dispose_current_effect called outside an effect; ignored");
+    }
+}
+
 /// Whether effects are waiting to run (pending, or deferred until a real context).
 ///
 /// ```

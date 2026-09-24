@@ -1,8 +1,9 @@
 //! Simulator hotkeys (F1…F12).
 //!
-//! Hotkeys are consumed by the simulator and never forwarded to the keypad. `F1`, `F9` and `F10`
-//! are handled by the simulator itself; the others are dispatched to callbacks registered with
-//! [`HotkeyRegistry::on`] by engine runners, and only log a hint when no callback is registered.
+//! Hotkeys are consumed by the simulator and never forwarded to the keypad. `F1`, `F5`–`F7`
+//! (time control), `F9` and `F10` are handled by the simulator itself, `F2`, `F3`, `F4` and `F8` by engine apps; every hotkey
+//! is also dispatched to callbacks registered with [`HotkeyRegistry::on`], and one that nothing
+//! handles logs a hint.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -152,11 +153,9 @@ pub fn help_text() -> String {
     s
 }
 
-/// Callbacks for hotkeys, registered by the engine runners.
-// NOTE(P09.S05): `run_engine` registers F8 (tree dump).
-// NOTE(P09.S10): F2/F3/F4 (refresh debug, layout bounds, perf monitor).
-// NOTE(P12.S05): F5/F6/F7 (slow motion, pause, step).
-// NOTE(P14.S10): F12 (theme toggle).
+/// Callbacks for hotkeys, registered by the engine runners (engine apps handle F2, F3, F4, F8
+/// and F12 (with [`SimConfig::theme_toggle`](crate::SimConfig::theme_toggle)) themselves;
+/// registered callbacks run in addition).
 #[derive(Default)]
 pub struct HotkeyRegistry {
     handlers: Vec<(Hotkey, Box<dyn FnMut()>)>,

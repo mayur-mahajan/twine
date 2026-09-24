@@ -3,7 +3,7 @@
 // Input SHA-256: a0a83e3bc12c7cf9163aa791b6a93ba93ae05637468615d09f4a2153bd8c04d5
 // twine-image: format=RGB565A8 w=64 h=64 stride=128 flags=0x02 compression=rle stored=4892 size=12288
 
-/// `LOGO_RLE` (64×64 RGB565A8).
+/// `LOGO_RLE` (64×64 `RGB565A8`).
 pub static LOGO_RLE: twine_image::Image = twine_image::Image {
     header: twine_image::ImageHeader {
         format: twine_image::ColorFormat::Rgb565A8,

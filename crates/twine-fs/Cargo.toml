@@ -12,6 +12,25 @@ workspace = true
 
 [features]
 default = []
+## std-only conveniences (`std::error::Error` impls).
+std = ["twine-core/std"]
+## `StdFs`: a directory of the host file system as a drive.
+fs-std = ["std"]
+## `FatFs`: FAT12/16/32 volumes on SD cards and other block devices via `embedded-sdmmc`.
+fs-fat = ["dep:embedded-sdmmc"]
+## Log through the `log` crate.
+log = ["twine-core/log"]
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = ["dep:defmt", "twine-core/defmt"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
+thiserror = { version = "2", default-features = false }
+heapless = { version = "0.8", default-features = false }
+defmt = { version = "1", optional = true }
+embedded-sdmmc = { version = "0.9", default-features = false, optional = true }
+
+[dev-dependencies]
+twine-fs = { path = ".", features = ["std", "fs-std", "fs-fat", "log"] }
+proptest = "1"
+fatfs = "0.3"

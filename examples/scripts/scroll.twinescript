@@ -1,0 +1,120 @@
+# Headless tour of scroll (cargo xtask sim-smoke): drag, throw, elastic, snapping, chaining,
+# scrollbar modes and scroll-on-focus. Inputs due at a frame apply before it is drawn and
+# shots after, so each shot waits a frame. The pointer reads every 30 ms.
+wait 32
+shot initial
+wait 32
+# Pull down at the top: the list and the page are both at their start, so the outermost
+# candidate, the page, is pulled (LVGL): elastic, 4 times slower, then it springs back.
+press 160 30
+wait 30
+move 160 40
+wait 30
+move 160 120
+wait 30
+move 160 200
+wait 150
+shot page_elastic
+wait 32
+release
+wait 1500
+shot page_sprung_back
+wait 32
+# Drag the list up slowly; the pointer rests before the release, so nothing is thrown.
+press 160 180
+wait 30
+move 160 170
+wait 30
+move 160 140
+wait 30
+move 160 110
+wait 30
+move 160 100
+wait 150
+shot list_dragged
+wait 32
+release
+wait 300
+# Throw the list: a fast drag and release, the momentum decays.
+drag 160 190 160 40 60
+wait 32
+shot list_throwing
+wait 2000
+shot list_thrown
+wait 32
+# A tap clicks a row (logged).
+tap 160 100
+wait 100
+# Scroll the page by 220 px with a slow drag on its left padding: the carousel and the panel.
+press 3 230
+wait 30
+move 3 220
+wait 30
+move 3 180
+wait 30
+move 3 140
+wait 30
+move 3 100
+wait 30
+move 3 60
+wait 30
+move 3 20
+wait 30
+move 3 10
+wait 150
+release
+wait 300
+shot page_scrolled
+wait 32
+# Swipe the carousel: one card per swipe (SCROLL_ONE), snapped to the center.
+drag 240 56 40 56 90
+wait 1000
+shot carousel_next
+wait 32
+drag 240 56 40 56 90
+wait 1000
+shot carousel_next_again
+wait 32
+drag 60 56 280 56 90
+wait 1000
+shot carousel_back
+wait 32
+# Drag the panel diagonally (locked to the first direction), then down beyond its start:
+# at the edge the scroll chains to the page.
+press 150 200
+wait 30
+move 138 200
+wait 30
+move 60 180
+wait 150
+release
+wait 500
+shot panel_scrolled
+wait 32
+drag 100 140 100 230 300
+wait 1500
+shot panel_chained
+wait 32
+# Scrollbar modes of the list: Auto -> On -> Active -> Off -> Auto; elastic and momentum.
+key s
+key s
+key s
+key s
+key e
+key m
+key e
+key m
+wait 32
+# Tab through the rows: the focused row is scrolled into view (the page scrolls back to it).
+key Next
+key Next
+key Next
+wait 1000
+shot focus_rows
+wait 32
+# F2: every redrawn area is tinted; only the list is refreshed while it scrolls.
+hotkey F2
+wait 32
+drag 160 80 160 30 90
+wait 64
+shot refresh_debug

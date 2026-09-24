@@ -195,10 +195,18 @@ fn images_565() -> &'static (Vec<u8>, Vec<u8>) {
     static IMG: std::sync::OnceLock<(Vec<u8>, Vec<u8>)> = std::sync::OnceLock::new();
     IMG.get_or_init(|| {
         let full = (0..W * H)
-            .flat_map(|i| Color::new((i % W) as u8, (i / W) as u8, 90).to_rgb565().to_le_bytes())
+            .flat_map(|i| {
+                Color::new((i % W) as u8, (i / W) as u8, 90)
+                    .to_rgb565()
+                    .to_le_bytes()
+            })
             .collect();
         let mut a8: Vec<u8> = (0..100 * 100)
-            .flat_map(|i| Color::new((i % 100) as u8 * 2, 60, (i / 100) as u8 * 2).to_rgb565().to_le_bytes())
+            .flat_map(|i| {
+                Color::new((i % 100) as u8 * 2, 60, (i / 100) as u8 * 2)
+                    .to_rgb565()
+                    .to_le_bytes()
+            })
             .collect();
         a8.extend((0..100 * 100).map(|i| ((i % 100) * 255 / 99) as u8));
         (full, a8)

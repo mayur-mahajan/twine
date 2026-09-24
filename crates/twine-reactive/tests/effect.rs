@@ -280,3 +280,22 @@ fn effect_panicking_effect_leaves_runtime_usable() {
     b.set(1);
     assert_eq!(runs.get(), 2);
 }
+
+#[test]
+fn effect_dispose_current_effect_stops_it() {
+    let cx = twine_reactive::create_root();
+    let a = cx.signal(0);
+    let runs = std::rc::Rc::new(std::cell::Cell::new(0));
+    let r = runs.clone();
+    let e = cx.effect(move || {
+        r.set(r.get() + 1);
+        if a.get() == 1 {
+            twine_reactive::dispose_current_effect();
+        }
+    });
+    a.set(1);
+    assert!(!e.is_alive());
+    a.set(2);
+    assert_eq!(runs.get(), 2);
+    cx.dispose();
+}

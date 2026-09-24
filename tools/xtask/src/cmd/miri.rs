@@ -13,6 +13,17 @@ pub const DEFAULT_CRATES: &[&str] = &["twine-core", "twine-reactive"];
 /// `CountingAllocator`).
 pub const DEFAULT_TESTS: &[(&str, &str)] = &[("twine-testing", "alloc_count")];
 
+/// Unit-test subsets also checked when no crates are given: `(crate, test name filter)`, run as
+/// `cargo miri test -p <crate> --lib -- <filter>`. `twine-engine`'s tree (arena links, iterators)
+/// and event dispatch (handlers taken out and put back while they run) run under Miri; its
+/// rendering tests are too slow for it. `twine-view`'s raw task waker runs under Miri too.
+pub const DEFAULT_FILTERED: &[(&str, &str)] = &[
+    ("twine-engine", "tree::"),
+    ("twine-engine", "handlers::"),
+    // The `Ui`'s task waker (a `RawWaker` over a `&'static UiWaker`).
+    ("twine-view", "ui::tests"),
+];
+
 /// Proptest cases per property under Miri (it is ~1000× slower than native).
 pub const PROPTEST_CASES: &str = "8";
 
@@ -73,11 +84,21 @@ pub fn run(crates: &[String]) -> R {
     } else {
         crates.to_vec()
     };
-    let mut targets: Vec<(String, Option<&str>)> = crates.iter().map(|c| (c.clone(), None)).collect();
+    let mut targets: Vec<(String, Option<&str>, Option<&str>)> =
+        crates.iter().map(|c| (c.clone(), None, None)).collect();
     if with_defaults {
-        targets.extend(DEFAULT_TESTS.iter().map(|(c, t)| ((*c).to_string(), Some(*t))));
+        targets.extend(
+            DEFAULT_TESTS
+                .iter()
+                .map(|(c, t)| ((*c).to_string(), Some(*t), None)),
+        );
+        targets.extend(
+            DEFAULT_FILTERED
+                .iter()
+                .map(|(c, f)| ((*c).to_string(), None, Some(*f))),
+        );
     }
-    for (krate, test) in &targets {
+    for (krate, test, filter) in &targets {
         let (features, flags, cases) = settings(krate);
         // The rustup proxy (not `$CARGO`, which is pinned to the stable toolchain) resolves `+nightly`.
         let mut cmd = Command::new("cargo");
@@ -91,6 +112,9 @@ pub fn run(crates: &[String]) -> R {
         }
         if let Some(t) = test {
             cmd.args(["--test", t]);
+        }
+        if let Some(f) = filter {
+            cmd.args(["--lib", "--", f]);
         }
         run_cmd(&mut cmd)?;
     }

@@ -1,7 +1,7 @@
 //! The image data model: header sizes, validation, pixel access and sources.
 
 use twine_core::ColorFormat;
-use twine_image::{Error, Image, ImageData, ImageFlags, ImageHeader, ImageSource, Compression};
+use twine_image::{Compression, Error, Image, ImageData, ImageFlags, ImageHeader, ImageSource};
 
 #[test]
 fn color_format_stride_and_size_all_formats() {
@@ -27,7 +27,13 @@ fn color_format_stride_and_size_all_formats() {
 fn validate_rejects_short_data() {
     let h = ImageHeader::new(ColorFormat::Argb8888, 4, 4);
     let img = Image::new_owned(h, Box::from(vec![0u8; 63]));
-    assert_eq!(img.validate(), Err(Error::SizeMismatch { expected: 64, got: 63 }));
+    assert_eq!(
+        img.validate(),
+        Err(Error::SizeMismatch {
+            expected: 64,
+            got: 63
+        })
+    );
     assert!(img.pixels().is_none());
     let bad_stride = ImageHeader { stride: 15, ..h };
     let img = Image::new_owned(bad_stride, Box::from(vec![0u8; 64]));
@@ -43,7 +49,13 @@ fn validate_rejects_short_data() {
             decompressed_size: 60,
         },
     };
-    assert_eq!(compressed.validate(), Err(Error::SizeMismatch { expected: 64, got: 60 }));
+    assert_eq!(
+        compressed.validate(),
+        Err(Error::SizeMismatch {
+            expected: 64,
+            got: 60
+        })
+    );
     assert!(compressed.pixels().is_none(), "compressed images need the cache");
 }
 
@@ -75,7 +87,12 @@ fn pixels_exposes_palette_and_alpha_plane() {
         flags: ImageFlags::PREMULTIPLIED,
         ..ImageHeader::new(ColorFormat::Argb8888, 1, 1)
     };
-    assert!(Image::new_owned(h, Box::from(vec![0u8; 4])).pixels().unwrap().premultiplied);
+    assert!(
+        Image::new_owned(h, Box::from(vec![0u8; 4]))
+            .pixels()
+            .unwrap()
+            .premultiplied
+    );
 }
 
 #[test]

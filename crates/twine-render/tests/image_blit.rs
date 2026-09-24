@@ -79,7 +79,11 @@ fn every_source_on_every_destination_matches_argb_reference() {
                 let worst = a.iter().zip(&b).map(|(x, y)| x.abs_diff(*y)).max().unwrap();
                 // Pixels are mixed from identical colors and alphas, only the order of
                 // conversion differs.
-                assert!(worst <= 2, "{f} on {dest} opa {}: channel delta {worst}", dsc.opa.0);
+                assert!(
+                    worst <= 2,
+                    "{f} on {dest} opa {}: channel delta {worst}",
+                    dsc.opa.0
+                );
             }
         }
     }
@@ -94,7 +98,14 @@ fn blit_same_format_uses_copy_path() {
     assert_eq!(h.caches().stats().image_copy_rows, u32::from(N));
     // Opacity, recolor or another format take other paths.
     h.paint(|p| {
-        p.image(area, &e.pixels(), &ImageDsc { opa: Opa(100), ..ImageDsc::default() });
+        p.image(
+            area,
+            &e.pixels(),
+            &ImageDsc {
+                opa: Opa(100),
+                ..ImageDsc::default()
+            },
+        );
         p.image(
             area,
             &e.pixels(),
@@ -110,7 +121,13 @@ fn blit_same_format_uses_copy_path() {
     assert_eq!(h.caches().stats().image_copy_rows, u32::from(N));
     // The copy is exact.
     let mut h = RenderHarness::new(N, N, ColorFormat::Rgb565);
-    h.paint(|p| p.image(Rect::from_xywh(0, 0, i32::from(N), i32::from(N)), &e.pixels(), &ImageDsc::default()));
+    h.paint(|p| {
+        p.image(
+            Rect::from_xywh(0, 0, i32::from(N), i32::from(N)),
+            &e.pixels(),
+            &ImageDsc::default(),
+        );
+    });
     assert_eq!(h.data(), &e.data[..]);
 }
 
@@ -119,7 +136,14 @@ fn gallery(p: &mut Painter<'_>, e: &Encoded, a8: &Encoded) {
     let size = i32::from(N);
     checker(p, Rect::from_xywh(0, 0, 176, 48));
     let at = |i: i32| Rect::from_xywh(4 + i * 43, 8, size, size);
-    p.image(at(0), &px, &ImageDsc { opa: Opa(96), ..ImageDsc::default() });
+    p.image(
+        at(0),
+        &px,
+        &ImageDsc {
+            opa: Opa(96),
+            ..ImageDsc::default()
+        },
+    );
     p.image(
         at(1),
         &px,
@@ -300,9 +324,17 @@ fn blit_partially_offscreen_negative_coords() {
     let mut reference = RenderHarness::new(64, 64, ColorFormat::Argb8888);
     // Top-left corner off screen.
     h.paint(|p| {
-        p.image(Rect::from_xywh(-20, -10, 32, 32), &e.pixels(), &ImageDsc::default());
+        p.image(
+            Rect::from_xywh(-20, -10, 32, 32),
+            &e.pixels(),
+            &ImageDsc::default(),
+        );
         p.image(Rect::from_xywh(50, 50, 32, 32), &e.pixels(), &ImageDsc::default());
-        p.image(Rect::from_xywh(-100, -100, 32, 32), &e.pixels(), &ImageDsc::default());
+        p.image(
+            Rect::from_xywh(-100, -100, 32, 32),
+            &e.pixels(),
+            &ImageDsc::default(),
+        );
         p.image(
             Rect::from_xywh(-7, 40, 20, 20),
             &e.pixels(),
@@ -331,7 +363,13 @@ fn blit_partially_offscreen_negative_coords() {
     for y in 0..22 {
         for x in 0..12 {
             let i = (y * 64 + x) * 3;
-            assert!(rgb[i..i + 3].iter().zip(&rf[i..i + 3]).all(|(a, b)| a.abs_diff(*b) <= 1), "({x}, {y})");
+            assert!(
+                rgb[i..i + 3]
+                    .iter()
+                    .zip(&rf[i..i + 3])
+                    .all(|(a, b)| a.abs_diff(*b) <= 1),
+                "({x}, {y})"
+            );
         }
     }
     // The tiled image starts mid-tile at x = 0 (source column 7).

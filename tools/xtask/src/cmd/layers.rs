@@ -43,7 +43,7 @@ pub const LAYERS: &[(&str, u8)] = &[
 pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[("twine-widgets", "twine-theme")];
 
 /// Workspace members that are not part of the layered library (tools, examples).
-pub const EXEMPT: &[&str] = &["xtask", "twine-cli", "twine-examples"];
+pub const EXEMPT: &[&str] = &["xtask", "twine-cli", "twine-bench", "twine-examples"];
 
 fn layer(name: &str) -> Option<u8> {
     LAYERS.iter().find(|(n, _)| *n == name).map(|(_, l)| *l)

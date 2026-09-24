@@ -14,17 +14,17 @@ use scenarios::{Target, layout_wrap_200, measure_label_20, paragraph};
 fn text(c: &mut Criterion) {
     let mut t = Target::new();
     c.bench_function("draw_50_glyphs_montserrat14", |b| {
-        b.iter(|| t.draw_50_glyphs_montserrat14())
+        b.iter(|| t.draw_50_glyphs_montserrat14());
     });
     let para = paragraph();
     c.bench_function("layout_1kb_paragraph_wrap_200px", |b| {
-        b.iter(|| layout_wrap_200(black_box(&para)))
+        b.iter(|| layout_wrap_200(black_box(&para)));
     });
     c.bench_function("measure_label_20_chars", |b| b.iter(measure_label_20));
     let mut t = Target::new();
     t.glyph_cache_hit_render();
     c.bench_function("glyph_cache_hit_render", |b| {
-        b.iter(|| t.glyph_cache_hit_render())
+        b.iter(|| t.glyph_cache_hit_render());
     });
 }
 

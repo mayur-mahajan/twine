@@ -25,9 +25,26 @@ pub struct SimInputState {
     pointer: PointerData,
     keys: VecDeque<(Key, bool)>,
     last_key: Key,
+    last_key_pressed: bool,
     enc_diff: i32,
     enc_pressed: bool,
     click: Option<Point>,
+    /// Keys pressed since the last [`take_raw_keys`](Self::take_raw_keys) (bounded).
+    raw_keys: VecDeque<Key>,
+    /// Devices whose state changed since the last [`take_changes`](Self::take_changes).
+    changes: InputChanges,
+}
+
+/// Which simulated devices changed state (the engine is notified for these, like an
+/// interrupt line).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InputChanges {
+    /// Pointer moved, pressed or released.
+    pub pointer: bool,
+    /// Keys queued.
+    pub keypad: bool,
+    /// Encoder rotated, pressed or released.
+    pub encoder: bool,
 }
 
 impl Default for SimInputState {
@@ -36,9 +53,12 @@ impl Default for SimInputState {
             pointer: PointerData::default(),
             keys: VecDeque::new(),
             last_key: Key::Enter,
+            last_key_pressed: false,
             enc_diff: 0,
             enc_pressed: false,
             click: None,
+            raw_keys: VecDeque::new(),
+            changes: InputChanges::default(),
         }
     }
 }
@@ -50,6 +70,7 @@ impl SimInputState {
             point: p,
             pressed: true,
         };
+        self.changes.pointer = true;
         log::debug!(target: "twine::sim", "pointer pressed at {p}");
     }
 
@@ -59,6 +80,7 @@ impl SimInputState {
             return;
         }
         self.pointer.point = p;
+        self.changes.pointer = true;
         if self.pointer.pressed {
             log::debug!(target: "twine::sim", "pointer moved to {p}");
         } else {
@@ -70,9 +92,21 @@ impl SimInputState {
     pub fn pointer_release(&mut self) {
         if self.pointer.pressed {
             self.pointer.pressed = false;
+            self.changes.pointer = true;
             self.click = Some(self.pointer.point);
             log::debug!(target: "twine::sim", "pointer released at {}", self.pointer.point);
         }
+    }
+
+    /// The keys pressed since the previous call (for [`SimConfig::on_raw_key`](crate::SimConfig::on_raw_key);
+    /// the keypad queue itself stays for the keypad device).
+    pub fn take_raw_keys(&mut self) -> Vec<Key> {
+        self.raw_keys.drain(..).collect()
+    }
+
+    /// The devices whose state changed since the previous call.
+    pub fn take_changes(&mut self) -> InputChanges {
+        core::mem::take(&mut self.changes)
     }
 
     /// The position of the last pointer release since the previous call (a "click").
@@ -103,6 +137,13 @@ impl SimInputState {
             log::warn!(target: "twine::sim", "keypad queue full, dropping {dropped:?}");
         }
         self.keys.push_back((key, pressed));
+        self.changes.keypad = true;
+        if pressed {
+            if self.raw_keys.len() >= KEY_QUEUE_CAPACITY {
+                self.raw_keys.pop_front();
+            }
+            self.raw_keys.push_back(key);
+        }
         log::debug!(
             target: "twine::sim",
             "key {} {}",
@@ -115,6 +156,7 @@ impl SimInputState {
     pub fn encoder_rotate(&mut self, diff: i16) {
         if diff != 0 {
             self.enc_diff = self.enc_diff.saturating_add(i32::from(diff));
+            self.changes.encoder = true;
             log::debug!(target: "twine::sim", "encoder diff {diff}");
         }
     }
@@ -123,6 +165,7 @@ impl SimInputState {
     pub fn encoder_button(&mut self, pressed: bool) {
         if self.enc_pressed != pressed {
             self.enc_pressed = pressed;
+            self.changes.encoder = true;
             log::debug!(
                 target: "twine::sim",
                 "encoder {}",
@@ -135,6 +178,15 @@ impl SimInputState {
     pub fn release_all(&mut self) {
         self.pointer_release();
         self.encoder_button(false);
+        let held = self
+            .keys
+            .back()
+            .map_or(self.last_key_pressed.then_some(self.last_key), |(k, p)| {
+                p.then_some(*k)
+            });
+        if let Some(k) = held {
+            self.key(k, false);
+        }
     }
 
     /// Number of queued keypad events.
@@ -147,15 +199,17 @@ impl SimInputState {
         match self.keys.pop_front() {
             Some((key, pressed)) => {
                 self.last_key = key;
+                self.last_key_pressed = pressed;
                 KeypadData {
                     key,
                     pressed,
                     more: !self.keys.is_empty(),
                 }
             }
+            // A key stays held until its release arrives.
             None => KeypadData {
                 key: self.last_key,
-                pressed: false,
+                pressed: self.last_key_pressed,
                 more: false,
             },
         }

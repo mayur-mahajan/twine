@@ -12,14 +12,71 @@ workspace = true
 
 [features]
 default = []
+## std-only conveniences (thread-local reactive runtime: no binding needed).
+std = [
+    "twine-core/std",
+    "twine-reactive/std",
+    "twine-anim/std",
+    "twine-style/std",
+    "twine-engine/std",
+    "twine-theme/std",
+    "twine-widgets/std",
+    "twine-text/std",
+    "twine-image/std",
+    "twine-render/std",
+]
+## Log through the `log` crate.
+log = [
+    "twine-core/log",
+    "twine-hal/log",
+    "twine-reactive/log",
+    "twine-anim/log",
+    "twine-style/log",
+    "twine-engine/log",
+    "twine-theme/log",
+    "twine-widgets/log",
+    "twine-text/log",
+    "twine-image/log",
+    "twine-render/log",
+]
+## Log through `defmt`.
+defmt = [
+    "dep:defmt",
+    "twine-core/defmt",
+    "twine-hal/defmt",
+    "twine-reactive/defmt",
+    "twine-anim/defmt",
+    "twine-style/defmt",
+    "twine-engine/defmt",
+    "twine-theme/defmt",
+    "twine-widgets/defmt",
+    "twine-text/defmt",
+    "twine-image/defmt",
+    "twine-render/defmt",
+]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
 twine-hal = { path = "../twine-hal" }
 twine-reactive = { path = "../twine-reactive" }
 twine-anim = { path = "../twine-anim" }
+twine-render = { path = "../twine-render" }
+twine-text = { path = "../twine-text" }
+twine-image = { path = "../twine-image" }
 twine-style = { path = "../twine-style" }
 twine-engine = { path = "../twine-engine" }
-twine-theme = { path = "../twine-theme" }
+twine-theme = { path = "../twine-theme", default-features = false }
 twine-widgets = { path = "../twine-widgets" }
 twine-widgets-ext = { path = "../twine-widgets-ext" }
+hashbrown = { version = "0.15", default-features = false, features = ["default-hasher"] }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+twine-view = { path = ".", features = ["std", "log"] }
+twine-engine = { path = "../twine-engine", features = ["std", "debug-checks", "color-rgb565"] }
+twine-testing = { path = "../twine-testing", features = ["debug-checks"] }
+twine-theme = { path = "../twine-theme" }
+twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-20"] }
+critical-section = { version = "1", features = ["std"] }
+proptest = "1"
+log = "0.4"

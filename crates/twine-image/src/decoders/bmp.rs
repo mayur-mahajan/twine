@@ -44,7 +44,8 @@ fn le16(b: &[u8], i: usize) -> Option<u16> {
 }
 
 fn le32(b: &[u8], i: usize) -> Option<u32> {
-    b.get(i..i + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+    b.get(i..i + 4)
+        .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
 }
 
 const RGB: u32 = 0;
@@ -60,7 +61,13 @@ fn parse(b: &[u8]) -> Option<Info> {
     let data = le32(b, 10)? as usize;
     let dib = le32(b, 14)? as usize;
     let (w, h, bpp, compression, entry) = if dib == 12 {
-        (u32::from(le16(b, 18)?), i32::from(le16(b, 20)?), le16(b, 24)?, RGB, 3)
+        (
+            u32::from(le16(b, 18)?),
+            i32::from(le16(b, 20)?),
+            le16(b, 24)?,
+            RGB,
+            3,
+        )
     } else if dib >= 40 {
         (le32(b, 18)?, le32(b, 22)? as i32, le16(b, 28)?, le32(b, 30)?, 4)
     } else {
@@ -87,7 +94,11 @@ fn parse(b: &[u8]) -> Option<Info> {
             r: le32(b, 54)?,
             g: le32(b, 58)?,
             b: le32(b, 62)?,
-            a: if compression == ALPHABITFIELDS || dib >= 56 { le32(b, 66)? } else { 0 },
+            a: if compression == ALPHABITFIELDS || dib >= 56 {
+                le32(b, 66)?
+            } else {
+                0
+            },
         }
     } else if bpp == 16 {
         Masks {
@@ -218,7 +229,11 @@ fn decode_rle(b: &[u8], info: &Info, out: &mut [u8]) -> Result<(), Error> {
         let v = next(&mut p)?;
         if n > 0 {
             for k in 0..usize::from(n) {
-                let i = if four { if k % 2 == 0 { v >> 4 } else { v & 15 } } else { v };
+                let i = if four {
+                    if k % 2 == 0 { v >> 4 } else { v & 15 }
+                } else {
+                    v
+                };
                 put(x, r, i);
                 x += 1;
             }
@@ -238,8 +253,14 @@ fn decode_rle(b: &[u8], info: &Info, out: &mut [u8]) -> Result<(), Error> {
                 let n = usize::from(n);
                 let bytes = if four { n.div_ceil(2) } else { n };
                 for k in 0..n {
-                    let byte = *b.get(p + if four { k / 2 } else { k }).ok_or(Error::Decode("bmp truncated"))?;
-                    let i = if four { if k % 2 == 0 { byte >> 4 } else { byte & 15 } } else { byte };
+                    let byte = *b
+                        .get(p + if four { k / 2 } else { k })
+                        .ok_or(Error::Decode("bmp truncated"))?;
+                    let i = if four {
+                        if k % 2 == 0 { byte >> 4 } else { byte & 15 }
+                    } else {
+                        byte
+                    };
                     put(x, r, i);
                     x += 1;
                 }

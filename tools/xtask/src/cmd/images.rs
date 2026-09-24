@@ -6,7 +6,7 @@
 //! `--check` regenerates everything in memory and fails if a file differs or is missing.
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use twine_cli::image::{CompressArg, ImageOptions, generate, parse_format};
@@ -91,13 +91,13 @@ fn module_file(entries: &[ImageEntry]) -> String {
 }
 
 /// Writes `bytes` to `path` unless unchanged (or `check`); records stale paths.
-fn update(path: PathBuf, bytes: &[u8], check: bool, stale: &mut Vec<String>) -> R {
-    if std::fs::read(&path).ok().as_deref() != Some(bytes) {
+fn update(path: &Path, bytes: &[u8], check: bool, stale: &mut Vec<String>) -> R {
+    if std::fs::read(path).ok().as_deref() != Some(bytes) {
         if !check {
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir)?;
             }
-            std::fs::write(&path, bytes)?;
+            std::fs::write(path, bytes)?;
             println!("images: wrote {}", path.display());
         }
         stale.push(path.display().to_string());
@@ -127,7 +127,7 @@ pub fn gen_assets(check: bool) -> R {
     let files = twine_cli::image::assets::all()?;
     let mut stale = Vec::new();
     for (name, bytes) in &files {
-        update(root.join(ASSETS_DIR).join(name), bytes, check, &mut stale)?;
+        update(&root.join(ASSETS_DIR).join(name), bytes, check, &mut stale)?;
     }
     finish("gen-assets", "gen-assets", &stale, files.len(), check)
 }
@@ -143,8 +143,8 @@ pub fn run(check: bool) -> R {
         let g = generate(&opts, &root)
             .map_err(|err| format!("{}: {err} (run `cargo xtask gen-assets` first?)", e.name))?;
         let out = root.join(&opts.out);
-        update(out.clone(), g.source.as_bytes(), check, &mut stale)?;
-        update(out.with_file_name(&g.bin_name), &g.bin, check, &mut stale)?;
+        update(&out, g.source.as_bytes(), check, &mut stale)?;
+        update(&out.with_file_name(&g.bin_name), &g.bin, check, &mut stale)?;
         println!(
             "| `{}` | {} | {} | {} |",
             e.name,
@@ -154,7 +154,7 @@ pub fn run(check: bool) -> R {
         );
     }
     update(
-        root.join(OUT_DIR).join("mod.rs"),
+        &root.join(OUT_DIR).join("mod.rs"),
         module_file(&entries).as_bytes(),
         check,
         &mut stale,

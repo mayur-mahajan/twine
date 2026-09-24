@@ -1,0 +1,7 @@
+# Click "Click me" twice, then take a shot.
+wait 100
+tap 160 71
+wait 100
+tap 160 71
+wait 200
+shot clicked

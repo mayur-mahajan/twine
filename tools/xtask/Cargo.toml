@@ -18,3 +18,5 @@ serde_json = "1"
 toml = "0.9"
 serde = { version = "1", features = ["derive"] }
 twine-cli = { path = "../twine-cli" }
+# `cargo xtask style-props`: the property table is generated from the style metadata.
+twine-style = { path = "../../crates/twine-style", features = ["std"] }

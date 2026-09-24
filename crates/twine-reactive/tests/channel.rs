@@ -255,3 +255,15 @@ fn channel_is_const_constructible_in_static() {
     assert_sync(&CH);
     assert_sync(&W);
 }
+
+#[test]
+fn channel_register_waker_reaches_channels_registered_later() {
+    let ch: &'static Channel<u8, 2> = static_channel!(u8, 2);
+    let cx = create_root();
+    let (count, waker) = count_waker();
+    register_waker(&waker);
+    cx.on_message(ch, |_| {});
+    ch.try_send(1).unwrap();
+    assert_eq!(count.0.load(Ordering::SeqCst), 1);
+    cx.dispose();
+}

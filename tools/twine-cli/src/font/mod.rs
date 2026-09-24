@@ -102,6 +102,10 @@ pub struct FontArgs {
     /// Code points: `0x20-0x7F`, `0xB0`, `32-126` or `chars:°•` (repeatable).
     #[arg(long = "range")]
     pub ranges: Vec<String>,
+    /// UTF-8 text files whose characters are added (repeatable; whitespace ignored), e.g. a
+    /// list of common CJK characters.
+    #[arg(long = "chars-file")]
+    pub chars_files: Vec<PathBuf>,
     /// Merge the built-in symbol set.
     #[arg(long, value_enum, default_value_t = Symbols::None)]
     pub symbols: Symbols,
@@ -146,6 +150,9 @@ pub struct FontOptions {
     pub bpp: u8,
     /// Range specs (as given).
     pub ranges: Vec<String>,
+    /// Character list files (read relative to the generator's root directory; whitespace
+    /// ignored).
+    pub chars_files: Vec<PathBuf>,
     /// Symbol set.
     pub symbols: Symbols,
     /// Symbol fonts searched in order (empty = [`DEFAULT_SYMBOLS_TTF`]).
@@ -172,6 +179,7 @@ impl FontOptions {
             size: a.size,
             bpp: a.bpp,
             ranges: a.ranges.clone(),
+            chars_files: a.chars_files.clone(),
             symbols: a.symbols,
             symbols_ttf: a.symbols_ttf.clone(),
             compress: a.compress,
@@ -198,6 +206,9 @@ impl FontOptions {
             } else {
                 let _ = write!(s, " --range {r}");
             }
+        }
+        for p in &self.chars_files {
+            let _ = write!(s, " --chars-file {}", p.display());
         }
         if self.symbols == Symbols::Fa {
             s.push_str(" --symbols fa");
@@ -302,7 +313,14 @@ pub fn generate(opts: &FontOptions, root: &Path) -> Result<Generated> {
     let subpx: Subpx = opts.subpx.into();
     let mut warnings = Vec::new();
     let (main_bytes, main) = load_font(&root.join(&opts.ttf), opts.size)?;
-    let cps = merge_ranges(&opts.ranges)?;
+    let mut cps = merge_ranges(&opts.ranges)?;
+    for path in &opts.chars_files {
+        let text = std::fs::read_to_string(root.join(path))
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        cps.extend(text.chars().filter(|c| !c.is_whitespace()));
+    }
+    cps.sort_unstable();
+    cps.dedup();
     if cps.is_empty() && opts.symbols == Symbols::None {
         return Err("no code points: pass at least one --range".into());
     }

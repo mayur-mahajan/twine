@@ -23,6 +23,11 @@ pub struct FlushRecord {
     /// Value of the `poll_flush` call counter when the buffer was returned (equal to
     /// `begin_at` while the flush is still in flight).
     pub end_at: u64,
+    /// Index of the draw buffer in order of first use (0 = first buffer seen, 1 = second…):
+    /// a stable name for [`buffer_addr`](Self::buffer_addr).
+    pub buffer: u8,
+    /// Frame number of the flush, filled in by harnesses that know it (0 otherwise).
+    pub frame: u32,
 }
 
 /// Errors of [`MemoryDisplay::begin_flush`]. The rejected buffer is returned by the next
@@ -101,6 +106,11 @@ pub struct MemoryDisplay {
     rejected: VecDeque<DrawBufferMem>,
     polls: u64,
     mono: (Color, Color),
+    /// Physical panel size (logical size with the axes swapped for 90°/270° software rotation).
+    panel_w: u16,
+    panel_h: u16,
+    /// Buffer addresses in order of first use.
+    buffers_seen: Vec<usize>,
 }
 
 impl MemoryDisplay {
@@ -115,11 +125,16 @@ impl MemoryDisplay {
             "MemoryDisplay: unsupported format {}",
             info.format
         );
-        let stride = info.bytes_per_row();
+        let (panel_w, panel_h) = if !info.hw_rotation && info.rotation.swaps_axes() {
+            (info.height, info.width)
+        } else {
+            (info.width, info.height)
+        };
+        let stride = info.format.stride(u32::from(panel_w)) as usize;
         Self {
             info,
             stride,
-            framebuffer: vec![0; stride * usize::from(info.height)],
+            framebuffer: vec![0; stride * usize::from(panel_h)],
             flushes: Vec::new(),
             seq_base: 0,
             next_seq: 0,
@@ -129,7 +144,25 @@ impl MemoryDisplay {
             rejected: VecDeque::new(),
             polls: 0,
             mono: (Color::BLACK, Color::WHITE),
+            panel_w,
+            panel_h,
+            buffers_seen: Vec::new(),
         }
+    }
+
+    /// The physical panel size: the logical size, with width and height swapped when the
+    /// display is rotated by 90° or 270° in software (`hw_rotation == false`). Flush areas and
+    /// the framebuffer use these physical coordinates.
+    #[must_use]
+    pub fn panel_size(&self) -> (u16, u16) {
+        (self.panel_w, self.panel_h)
+    }
+
+    /// Moves the flush records into `out` (keeping this display's allocation, so a harness
+    /// that drains every frame does not allocate in steady state).
+    pub fn drain_flushes_into(&mut self, out: &mut Vec<FlushRecord>) {
+        self.seq_base += self.flushes.len() as u64;
+        out.append(&mut self.flushes);
     }
 
     /// Returns buffers on the `polls`-th `poll_flush` call (0 = blocking).
@@ -159,7 +192,8 @@ impl MemoryDisplay {
         self.info
     }
 
-    /// The framebuffer bytes (`info.format`, stride = [`DisplayInfo::bytes_per_row`]).
+    /// The framebuffer bytes (`info.format`, rows of the physical panel width, see
+    /// [`panel_size`](Self::panel_size)).
     #[must_use]
     pub fn framebuffer(&self) -> &[u8] {
         &self.framebuffer
@@ -195,8 +229,8 @@ impl MemoryDisplay {
         convert::to_rgb888(
             &self.framebuffer,
             self.info.format,
-            u32::from(self.info.width),
-            u32::from(self.info.height),
+            u32::from(self.panel_w),
+            u32::from(self.panel_h),
             self.stride as u32,
             self.mono,
         )
@@ -209,10 +243,10 @@ impl MemoryDisplay {
     #[must_use]
     pub fn pixel(&self, x: u32, y: u32) -> Color {
         assert!(
-            x < u32::from(self.info.width) && y < u32::from(self.info.height),
+            x < u32::from(self.panel_w) && y < u32::from(self.panel_h),
             "MemoryDisplay::pixel({x}, {y}) outside {}x{}",
-            self.info.width,
-            self.info.height
+            self.panel_w,
+            self.panel_h
         );
         convert::pixel_color(
             &self.framebuffer,
@@ -226,8 +260,8 @@ impl MemoryDisplay {
 
     /// Fills the whole framebuffer with `c` (see [`convert::write_pixel`] for mono formats).
     pub fn clear(&mut self, c: Color) {
-        for y in 0..u32::from(self.info.height) {
-            for x in 0..u32::from(self.info.width) {
+        for y in 0..u32::from(self.panel_h) {
+            for x in 0..u32::from(self.panel_w) {
                 convert::write_pixel(
                     &mut self.framebuffer,
                     self.info.format,
@@ -241,7 +275,8 @@ impl MemoryDisplay {
     }
 
     fn validate(&self, area: Rect, len: usize) -> Result<(), MemoryDisplayError> {
-        if area.is_empty() || !self.info.area().contains_rect(&area) {
+        let panel = Rect::new(0, 0, i32::from(self.panel_w), i32::from(self.panel_h));
+        if area.is_empty() || !panel.contains_rect(&area) {
             return Err(MemoryDisplayError::OutOfBounds(area));
         }
         let needed = self.info.format.stride(area.width() as u32) as usize * area.height() as usize;
@@ -300,12 +335,21 @@ impl DisplayDriver for MemoryDisplay {
         let bytes = self.info.format.stride(area.width() as u32) as usize * area.height() as usize;
         let seq = self.next_seq;
         self.next_seq += 1;
+        let addr = buf.addr();
+        let buffer = if let Some(i) = self.buffers_seen.iter().position(|a| *a == addr) {
+            i as u8
+        } else {
+            self.buffers_seen.push(addr);
+            (self.buffers_seen.len() - 1) as u8
+        };
         self.flushes.push(FlushRecord {
             area,
             bytes,
-            buffer_addr: buf.addr(),
+            buffer_addr: addr,
             begin_at: self.polls,
             end_at: self.polls,
+            buffer,
+            frame: 0,
         });
         self.in_flight.push_back(InFlight {
             buf,

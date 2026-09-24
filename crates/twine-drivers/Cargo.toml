@@ -12,7 +12,27 @@ workspace = true
 
 [features]
 default = []
+## Async variants (`embedded-hal-async`): `AsyncDcsInterface`, `AsyncMipiDcs`, async OLED
+## drivers and `AsyncInputWait` for IRQ-driven input drivers.
+async = ["dep:embedded-hal-async", "twine-hal/async"]
+## Recording mock buses (`testkit` module) for host-side tests of code built on these drivers.
+testkit = []
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = ["dep:defmt", "twine-core/defmt", "twine-hal/defmt"]
+## Log through the `log` crate.
+log = ["twine-core/log", "twine-hal/log"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
 twine-hal = { path = "../twine-hal" }
+embedded-hal = "1"
+embedded-hal-async = { version = "1", optional = true }
+heapless = { version = "0.8", default-features = false }
+portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+# Unit tests, doc-tests and integration tests always see the async code and the recorders.
+twine-drivers = { path = ".", features = ["async", "testkit"] }
+critical-section = { version = "1", features = ["std"] }
+proptest = "1"

@@ -67,3 +67,47 @@ fn montserrat_14_metrics_regression_guard() {
     assert_eq!(UNSCII_8.line_height, 8);
     assert_eq!(UNSCII_16.line_height, 16);
 }
+
+#[test]
+fn cjk_font_contains_common_chars() {
+    let mut cache = GlyphCache::default();
+    // 50 samples spread over the character list, plus kana and CJK punctuation.
+    let list: Vec<char> = include_str!("../../../assets/fonts/cjk_common_lvgl.txt")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let sample: Vec<char> = list
+        .iter()
+        .step_by(list.len() / 50)
+        .copied()
+        .chain("你好世界中文あいうえおアイウエオ日本語、。「」（）".chars())
+        .collect();
+    assert!(sample.len() >= 50);
+    for (name, font) in [
+        ("sc 14", &SOURCE_HAN_SANS_SC_14_CJK),
+        ("sc 16", &SOURCE_HAN_SANS_SC_16_CJK),
+    ] {
+        for c in sample.iter().copied().chain((0x20u8..0x7F).map(char::from)) {
+            check_renders(name, font, c, &mut cache);
+        }
+        for &c in symbols::ALL {
+            check_renders(name, font, c, &mut cache);
+        }
+    }
+    assert_eq!(SOURCE_HAN_SANS_SC_16_CJK.line_height, 24);
+}
+
+#[test]
+fn persian_font_has_presentation_forms() {
+    let mut cache = GlyphCache::default();
+    let f = &DEJAVU_16_PERSIAN_HEBREW;
+    // Hebrew letters, Arabic and Persian base letters.
+    for c in "שלום אבגד سلام پچژگکی".chars() {
+        check_renders("dejavu", f, c, &mut cache);
+    }
+    // Presentation forms produced by the shaper: seen initial, lam-alef final, meem isolated,
+    // gaf medial, Persian yeh final, lam-alef isolated.
+    for cp in [0xFEB3u32, 0xFEFC, 0xFEE1, 0xFB95, 0xFBFD, 0xFEFB, 0xFE91, 0xFE90] {
+        check_renders("dejavu", f, char::from_u32(cp).unwrap(), &mut cache);
+    }
+}

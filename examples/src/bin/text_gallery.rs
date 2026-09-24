@@ -8,7 +8,12 @@
 //! Every panel format works (`TWINE_SIM_FORMAT=rgb565swapped|rgb888|xrgb8888|argb8888|l8|i1`).
 #![allow(clippy::unreadable_literal)] // colors read best as 0xRRGGBB
 
-use twine_assets::fonts::*;
+use twine_assets::fonts::{
+    MONTSERRAT_8, MONTSERRAT_10, MONTSERRAT_12, MONTSERRAT_14, MONTSERRAT_14_SUBPX, MONTSERRAT_16,
+    MONTSERRAT_18, MONTSERRAT_20, MONTSERRAT_22, MONTSERRAT_24, MONTSERRAT_26, MONTSERRAT_28, MONTSERRAT_30,
+    MONTSERRAT_32, MONTSERRAT_34, MONTSERRAT_36, MONTSERRAT_38, MONTSERRAT_40, MONTSERRAT_42, MONTSERRAT_44,
+    MONTSERRAT_46, MONTSERRAT_48, UNSCII_8, UNSCII_16,
+};
 use twine_core::{Color, ColorFormat, Opa, Rect};
 use twine_hal::Key;
 use twine_render::{DrawBuf, Painter, RenderCaches, RenderConfig, SubpxOrder};

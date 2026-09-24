@@ -1,6 +1,6 @@
 [package]
 name = "twine-accel-stm32"
-description = "STM32 DMA2D draw acceleration"
+description = "STM32 DMA2D (Chrom-ART) draw acceleration for the Twine renderer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,28 @@ workspace = true
 
 [features]
 default = []
+## STM32F429ZI (DMA2D v1): enables `PacRegs` over the chip's DMA2D registers.
+stm32f429zi = ["dep:stm32-metapac", "stm32-metapac/stm32f429zi"]
+## STM32F746NG (DMA2D v1, Cortex-M7 with D-cache): `PacRegs` + D-cache maintenance.
+stm32f746ng = ["dep:stm32-metapac", "stm32-metapac/stm32f746ng", "dcache"]
+## STM32H743ZI (DMA2D v2, Cortex-M7 with D-cache): `PacRegs` + D-cache maintenance.
+stm32h743zi = ["dep:stm32-metapac", "stm32-metapac/stm32h743zi", "dcache"]
+## Cortex-M7 D-cache maintenance (clean source, clean + invalidate destination) in `PacRegs`.
+dcache = ["dep:cortex-m"]
+## `MockRegs`: a recording register file for host-side tests of code built on `Dma2d`.
+mock = []
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = ["dep:defmt", "twine-core/defmt", "twine-render/defmt"]
+## Log through the `log` crate.
+log = ["twine-core/log", "twine-render/log"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
 twine-render = { path = "../twine-render" }
+stm32-metapac = { version = "21", default-features = false, features = ["pac"], optional = true }
+cortex-m = { version = "0.7", default-features = false, optional = true }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+twine-accel-stm32 = { path = ".", features = ["mock"] }
+twine-render = { path = "../twine-render", features = ["color-rgb565", "color-argb8888", "color-rgb888"] }

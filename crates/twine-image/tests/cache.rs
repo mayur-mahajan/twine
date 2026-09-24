@@ -51,7 +51,8 @@ mod cache {
         assert_eq!(c.stats().bytes_used, 0);
         // Decode errors are returned and nothing is cached.
         assert_eq!(
-            c.get_or_decode(SourceKey::Ptr(9), |_| Err(Error::Decode("x"))).unwrap_err(),
+            c.get_or_decode(SourceKey::Ptr(9), |_| Err(Error::Decode("x")))
+                .unwrap_err(),
             Error::Decode("x")
         );
         assert!(!c.contains(&SourceKey::Ptr(9)));
@@ -125,7 +126,13 @@ mod cache {
         c.get_or_decode(file.clone(), |o| l8(o, 5, 0)).unwrap();
         let ((), stats) = count_allocs(|| {
             for k in 1..8 {
-                assert_eq!(c.get_or_decode(SourceKey::Ptr(k), |_| Err(Error::NotFound)).unwrap().data.len(), 400);
+                assert_eq!(
+                    c.get_or_decode(SourceKey::Ptr(k), |_| Err(Error::NotFound))
+                        .unwrap()
+                        .data
+                        .len(),
+                    400
+                );
             }
             c.get_or_decode(file.clone(), |_| Err(Error::NotFound)).unwrap();
         });
@@ -221,14 +228,23 @@ mod resolve {
         assert_eq!((w, first), (5, vec![255, 0, 0, 255]));
         with_pixels(&src, &mut c.cx(), |_| ()).unwrap();
         assert_eq!(c.cache.stats().hits, 1);
-        assert_eq!(header_of(&src, &mut c.cx()).unwrap().format, ColorFormat::Xrgb8888);
+        assert_eq!(
+            header_of(&src, &mut c.cx()).unwrap().format,
+            ColorFormat::Xrgb8888
+        );
         // Garbage is an error, not a panic.
         let bad = ImageSource::Encoded(b"not an image");
         assert_eq!(with_pixels(&bad, &mut c.cx(), |_| ()), Err(Error::InvalidHeader));
         assert_eq!(header_of(&bad, &mut c.cx()), Err(Error::InvalidHeader));
         // Symbols and SVG are drawn elsewhere.
-        assert_eq!(with_pixels(&ImageSource::Symbol("x"), &mut c.cx(), |_| ()), Err(Error::UnsupportedSource("symbol")));
-        assert_eq!(header_of(&ImageSource::Svg(b"<svg/>"), &mut c.cx()), Err(Error::UnsupportedSource("svg")));
+        assert_eq!(
+            with_pixels(&ImageSource::Symbol("x"), &mut c.cx(), |_| ()),
+            Err(Error::UnsupportedSource("symbol"))
+        );
+        assert_eq!(
+            header_of(&ImageSource::Svg(b"<svg/>"), &mut c.cx()),
+            Err(Error::UnsupportedSource("svg"))
+        );
     }
 
     static PROBES: AtomicU32 = AtomicU32::new(0);
@@ -241,7 +257,9 @@ mod resolve {
         }
         fn probe(&self, bytes: &[u8]) -> Option<ImageHeader> {
             PROBES.fetch_add(1, Ordering::Relaxed);
-            bytes.starts_with(b"cnt").then(|| ImageHeader::new(ColorFormat::Argb8888, 7, 3))
+            bytes
+                .starts_with(b"cnt")
+                .then(|| ImageHeader::new(ColorFormat::Argb8888, 7, 3))
         }
         fn decode(&self, _: &[u8], out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
             DECODES.fetch_add(1, Ordering::Relaxed);

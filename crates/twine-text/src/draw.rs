@@ -2,9 +2,10 @@
 
 use bitflags::bitflags;
 use twine_core::{Color, Opa, Point, Rect};
-use twine_render::{Painter, SubpxOrder};
+use twine_render::{ImageDsc, Painter, SubpxOrder};
 
 use crate::cache::GlyphCache;
+use crate::dir::TextDir;
 use crate::font::{Font, Subpx};
 use crate::hit::{DOTS, TextAlign, TextDecor};
 use crate::layout::{Pen, TextFlags, TextLayout};
@@ -60,6 +61,12 @@ pub struct TextDsc {
     pub ofs: Point,
     /// Subpixel order of the panel (used by subpixel fonts).
     pub subpx_order: SubpxOrder,
+    /// Base direction: resolves [`TextAlign::Auto`] and, with the `bidi` feature, orders
+    /// mixed-direction lines visually ([`TextDir::Auto`] detects it from the text; without
+    /// `bidi` it means left to right).
+    // NOTE(P22.S06): widgets (label, textarea, spangroup, …) set `base_dir` from the style's
+    // `BaseDir`; textarea uses `pos_of_bidi` / `char_at_bidi` for its cursor.
+    pub base_dir: TextDir,
 }
 
 impl TextDsc {
@@ -82,6 +89,7 @@ impl TextDsc {
             ellipsis_lines: None,
             ofs: Point::ZERO,
             subpx_order: SubpxOrder::Rgb,
+            base_dir: TextDir::Ltr,
         }
     }
 
@@ -139,6 +147,24 @@ fn draw_char(
         return;
     };
     if info.box_w == 0 || info.box_h == 0 {
+        return;
+    }
+    if info.bpp == 0 {
+        // Image glyph (image fonts): drawn with the text's opacity, not its color.
+        let Some(img) = gfont.provider.glyph_image(c, next) else {
+            return;
+        };
+        let (w, h) = (i32::from(img.w), i32::from(img.h));
+        let gy = line_top + font.ascent() - h - i32::from(info.ofs_y);
+        let area = Rect::from_xywh(pen_x + i32::from(info.ofs_x), gy, w, h);
+        if area.intersects(&clip) {
+            cache.count_render();
+            let dsc = ImageDsc {
+                opa,
+                ..ImageDsc::default()
+            };
+            p.image(area, img, &dsc);
+        }
         return;
     }
     let (bw, bh) = (i32::from(info.box_w), i32::from(info.box_h));
@@ -266,6 +292,16 @@ fn draw_clipped(p: &mut Painter<'_>, area: Rect, text: &str, dsc: &TextDsc, cach
         _ => None,
     };
     let thick = i32::from(font.underline_thickness).max(1);
+    #[cfg(feature = "bidi")]
+    let base = crate::bidi::resolve_dir(dsc.base_dir, text);
+    #[cfg(not(feature = "bidi"))]
+    let base = match dsc.base_dir {
+        TextDir::Auto => TextDir::Ltr,
+        d => d,
+    };
+    let align = dsc.align.resolve(base);
+    #[cfg(feature = "bidi")]
+    let mut bidi = crate::bidi::BidiLine::default();
     let mut y = area.y0 + dsc.ofs.y;
     for (k, line) in layout.lines().enumerate() {
         if k >= max_lines {
@@ -295,18 +331,51 @@ fn draw_clipped(p: &mut Painter<'_>, area: Rect, text: &str, dsc: &TextDsc, cach
             range: range.clone(),
             width,
         };
-        let x0 = area.x0 + dsc.ofs.x + layout.line_x(&line_obj, area.width(), dsc.align);
+        let x0 = area.x0 + dsc.ofs.x + layout.line_x(&line_obj, area.width(), align);
         let mut pen = Pen::default();
         let end = range.end;
-        let chars = text[range.clone()]
-            .char_indices()
-            .map(|(i, c)| (range.start + i, c, false));
-        let dot_chars = dots
+        let line_text = &text[range.clone()];
+        // Bidi: lines with RTL content are drawn in visual order (neighbours for kerning are
+        // the visual ones); "..." goes to the visual end of the line.
+        #[cfg(feature = "bidi")]
+        let visual = base == TextDir::Rtl || crate::bidi::has_rtl(line_text);
+        #[cfg(not(feature = "bidi"))]
+        let visual = false;
+        // Trailing spaces are not part of the line width; in visual order they would move
+        // the line, so they are not drawn.
+        #[cfg(feature = "bidi")]
+        let line_text = if visual {
+            line_text.trim_end_matches(' ')
+        } else {
+            line_text
+        };
+        #[cfg(feature = "bidi")]
+        if visual {
+            bidi.reorder(line_text, base);
+        }
+        let logical = (!visual).then(|| line_text.char_indices().map(|(i, c)| (range.start + i, c, false)));
+        #[cfg(feature = "bidi")]
+        let reordered = visual.then(|| {
+            bidi.visual_chars(line_text)
+                .map(|(i, c)| (range.start + i, c, false))
+        });
+        #[cfg(not(feature = "bidi"))]
+        let reordered: Option<core::iter::Empty<(usize, char, bool)>> = None;
+        let dot_chars = || {
+            dots.into_iter()
+                .flat_map(|_| DOTS.char_indices().map(|(i, c)| (end + i, c, true)))
+        };
+        let dots_first = visual && base == TextDir::Rtl;
+        let mut it = dots_first
+            .then(dot_chars)
             .into_iter()
-            .flat_map(|_| DOTS.char_indices().map(|(i, c)| (end + i, c, true)));
-        let mut it = chars.chain(dot_chars).peekable();
+            .flatten()
+            .chain(logical.into_iter().flatten())
+            .chain(reordered.into_iter().flatten())
+            .chain((!dots_first).then(dot_chars).into_iter().flatten())
+            .peekable();
         while let Some((b, c, is_dot)) = it.next() {
-            let next = if is_dot || b + c.len_utf8() < end {
+            let next = if visual || is_dot || b + c.len_utf8() < end {
                 it.peek().map(|&(_, n, _)| n)
             } else if dots.is_some() {
                 Some('.')

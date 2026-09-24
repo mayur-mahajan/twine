@@ -145,10 +145,7 @@ impl<'a> ImagePixels<'a> {
         let w = usize::from(self.w);
         let (plane, base) = match self.alpha {
             Some(a) => (a, 0),
-            None => (
-                self.data,
-                usize::from(self.stride) * usize::from(self.h),
-            ),
+            None => (self.data, usize::from(self.stride) * usize::from(self.h)),
         };
         let s = base + usize::from(y) * w;
         plane.get(s..s + w).unwrap_or(&[])
@@ -158,6 +155,26 @@ impl<'a> ImagePixels<'a> {
     #[must_use]
     pub fn rect_at(&self, x: i32, y: i32) -> Rect {
         Rect::from_xywh(x, y, i32::from(self.w), i32::from(self.h))
+    }
+
+    /// Texel `(x, y)` as straight-alpha packed `0xAARRGGBB` (every format: palettes, alpha
+    /// planes and premultiplied pixels are resolved; alpha-only formats give black with the
+    /// texel's alpha). Outside the image, or when the data is short, the result is `0`
+    /// (transparent).
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_render::ImagePixels;
+    /// let px = ImagePixels::new(ColorFormat::L8, 2, 1, &[0x10, 0x80]);
+    /// assert_eq!(px.texel(1, 0), 0xFF80_8080);
+    /// assert_eq!(px.texel(2, 0), 0);
+    /// ```
+    #[must_use]
+    pub fn texel(&self, x: u16, y: u16) -> u32 {
+        if x >= self.w || y >= self.h {
+            return 0;
+        }
+        crate::image::read::with_texel!(self, T => <T as crate::image::read::Texel>::get(self, usize::from(x), usize::from(y)))
     }
 
     /// Whether texels must be un-premultiplied before blending.
@@ -189,8 +206,8 @@ mod tests {
             Err(RenderError::BufferTooSmall { needed: 16, got: 0 })
         );
         let a = [9u8; 8];
-        let px = ImagePixels::from_parts(ColorFormat::Rgb565A8, 4, 2, 8, &d[..16], None, Some(&a), false)
-            .unwrap();
+        let px =
+            ImagePixels::from_parts(ColorFormat::Rgb565A8, 4, 2, 8, &d[..16], None, Some(&a), false).unwrap();
         assert_eq!(px.alpha_row(1), &[9; 4]);
         assert!(px.alpha_row(2).is_empty());
         assert!(

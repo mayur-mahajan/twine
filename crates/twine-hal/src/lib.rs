@@ -17,7 +17,9 @@
 //! | `AsyncInputWait` | IRQ-driven input drivers (feature `async`) | `wait_for_interrupt` |
 //! | [`Clock`] | platform timers, `MockClock` | monotonic [`Instant`](twine_core::Instant) |
 //!
-//! Data types: [`DisplayInfo`], [`BufferSpec`], [`DrawBufferMem`], [`Rotation`] (from
+//! Touch drivers share [`Calibration`] (3-point affine mapping of raw resistive-touch readings).
+//!
+//! Data types: [`DisplayInfo`], [`BufferSpec`], [`DrawBufferMem`], [`Calibration`], [`Rotation`] (from
 //! `twine-core`), [`InputKind`], [`InputData`], [`PointerData`], [`KeypadData`],
 //! [`EncoderData`], [`ButtonData`], [`Key`], [`PollHint`].
 //!
@@ -40,11 +42,13 @@
 #![forbid(unsafe_code)]
 
 pub mod buffer;
+pub mod calibration;
 pub mod clock;
 pub mod display;
 pub mod input;
 
 pub use buffer::DrawBufferMem;
+pub use calibration::Calibration;
 pub use clock::Clock;
 #[cfg(feature = "async")]
 pub use display::AsyncDisplayDriver;

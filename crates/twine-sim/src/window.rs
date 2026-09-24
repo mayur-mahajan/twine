@@ -16,7 +16,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::Key as WKey;
 use winit::window::{Window, WindowId};
 
-use crate::app::{SimApp, SimError};
+use crate::app::{Deadline, SimApp, SimError};
 use crate::hotkeys::Hotkey;
 use crate::input::{WheelAccum, map_key, mouse_to_panel};
 
@@ -39,9 +39,31 @@ struct Runner {
     needs_present: bool,
 }
 
+/// Wakes the event loop (an empty user event) from any thread.
+struct ProxyWake(std::sync::Mutex<winit::event_loop::EventLoopProxy<()>>);
+
+impl std::task::Wake for ProxyWake {
+    fn wake(self: std::sync::Arc<Self>) {
+        self.wake_by_ref();
+    }
+    fn wake_by_ref(self: &std::sync::Arc<Self>) {
+        if let Ok(p) = self.0.lock() {
+            let _ = p.send_event(());
+        }
+    }
+}
+
+fn proxy_waker(p: winit::event_loop::EventLoopProxy<()>) -> std::task::Waker {
+    std::task::Waker::from(std::sync::Arc::new(ProxyWake(std::sync::Mutex::new(p))))
+}
+
 /// Opens the window and runs the event loop until the window is closed.
 pub(crate) fn run(app: SimApp) -> Result<(), SimError> {
     let event_loop = EventLoop::new().map_err(|e| SimError::Window(e.to_string()))?;
+    let mut app = app;
+    if let Some(sink) = app.waker_sink.take() {
+        sink(proxy_waker(event_loop.create_proxy()));
+    }
     log::info!(
         target: "twine::sim",
         "window {}x{} {} scale {}{} — press F1 for hotkeys",
@@ -74,9 +96,10 @@ pub(crate) fn run(app: SimApp) -> Result<(), SimError> {
 impl Runner {
     fn create_window(&mut self, el: &ActiveEventLoop) -> Result<Gfx, SimError> {
         let cfg = &self.app.cfg;
+        let (pw, ph) = self.app.panel_size();
         let size = PhysicalSize::new(
-            u32::from(cfg.width) * u32::from(cfg.scale),
-            u32::from(cfg.height) * u32::from(cfg.scale),
+            u32::from(pw) * u32::from(cfg.scale),
+            u32::from(ph) * u32::from(cfg.scale),
         );
         let attrs = Window::default_attributes()
             .with_title(cfg.title.clone())
@@ -98,48 +121,33 @@ impl Runner {
     /// Window pixels per panel pixel (the actual ratio, normally the configured scale).
     fn scale(&self) -> f64 {
         self.gfx.as_ref().map_or(f64::from(self.app.cfg.scale), |g| {
-            f64::from(g.window.inner_size().width) / f64::from(self.app.cfg.width.max(1))
+            f64::from(g.window.inner_size().width) / f64::from(self.app.panel_size().0.max(1))
         })
     }
 
     fn panel_point(&self) -> twine_core::Point {
-        mouse_to_panel(
-            self.cursor,
-            self.scale(),
-            (self.app.cfg.width, self.app.cfg.height),
-        )
+        mouse_to_panel(self.cursor, self.scale(), self.app.panel_size())
     }
 
-    /// Advances the app: reclaims the draw buffer, renders a frame when due, and requests a redraw
-    /// when the panel changed. Returns the next wake-up deadline (`None` = poll continuously).
-    fn tick(&mut self) -> Option<StdInstant> {
+    /// Advances the app (renders a due frame or steps the engine) and requests a redraw when
+    /// the panel changed. Returns when to run again.
+    fn tick(&mut self) -> Deadline {
         let now = StdInstant::now();
-        self.app.reclaim();
-        let interval = self.app.frame_interval();
-        let due = interval.is_none_or(|_| now >= self.next_frame);
-        if self.app.has_buffer() && due {
-            self.app.render_frame();
-            if let Some(i) = interval {
-                self.next_frame += i;
-                if self.next_frame < now {
-                    self.next_frame = now + i;
-                }
-            }
-            self.app.reclaim();
-        }
-        if self.app.display.take_dirty().is_some() {
+        let deadline = self.app.window_tick(now, &mut self.next_frame);
+        if self.app.take_dirty() {
             self.needs_present = true;
+        }
+        if let Some(t) = crate::title::take_pending() {
+            if let Some(g) = &self.gfx {
+                g.window.set_title(&t);
+            }
         }
         if self.needs_present {
             if let Some(g) = &self.gfx {
                 g.window.request_redraw();
             }
         }
-        if self.app.has_buffer() {
-            interval.map(|_| self.next_frame)
-        } else {
-            Some(self.app.display.busy_until().unwrap_or(now))
-        }
+        deadline
     }
 
     fn present(&mut self) -> Result<(), String> {
@@ -151,8 +159,9 @@ impl Runner {
             return Ok(());
         };
         g.surface.resize(ww, wh).map_err(|e| e.to_string())?;
-        self.app.display.panel_xrgb_into(&mut self.xrgb);
-        let (pw, ph) = (usize::from(self.app.cfg.width), usize::from(self.app.cfg.height));
+        self.app.panel_xrgb_into(&mut self.xrgb);
+        let (pw, ph) = self.app.panel_size();
+        let (pw, ph) = (usize::from(pw), usize::from(ph));
         let (ww, wh) = (size.width as usize, size.height as usize);
         let mut buffer = g.surface.buffer_mut().map_err(|e| e.to_string())?;
         if pw > 0 && ph > 0 {
@@ -268,8 +277,9 @@ impl ApplicationHandler for Runner {
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         match self.tick() {
-            Some(deadline) => el.set_control_flow(ControlFlow::WaitUntil(deadline)),
-            None => el.set_control_flow(ControlFlow::Poll),
+            Deadline::At(deadline) => el.set_control_flow(ControlFlow::WaitUntil(deadline)),
+            Deadline::Wait => el.set_control_flow(ControlFlow::Wait),
+            Deadline::Poll => el.set_control_flow(ControlFlow::Poll),
         }
     }
 }

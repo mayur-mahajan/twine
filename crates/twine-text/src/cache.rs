@@ -27,8 +27,9 @@ pub const MAX_ROW: usize = 255;
 pub const MAX_GLYPH_BYTES: usize = 255 * 255;
 /// Default budget (`EngineConfig::glyph_cache_bytes`).
 pub const DEFAULT_BUDGET: usize = 8 * 1024;
-/// Size of the "already warned" ring for missing glyphs.
-pub const WARN_RING: usize = 16;
+/// Capacity of the "already warned" set for missing glyphs and corrupt fonts; once it is
+/// full, no further such warnings are logged.
+pub const WARN_CAP: usize = 32;
 
 /// Cache key: `(provider address, glyph id)`.
 pub type GlyphKey = (usize, u32);
@@ -79,9 +80,9 @@ pub struct GlyphCache {
     pub(crate) row_b: Vec<u8>,
     glyph: Vec<u8>,
     pub(crate) lcd_row: Vec<u8>,
-    warned: [GlyphKey; WARN_RING],
+    warned: [GlyphKey; WARN_CAP],
     warned_len: usize,
-    warned_pos: usize,
+    warn_suppressed: bool,
 }
 
 impl core::fmt::Debug for GlyphCache {
@@ -121,9 +122,9 @@ impl GlyphCache {
             row_b: vec![0; MAX_ROW],
             glyph: Vec::new(),
             lcd_row: Vec::new(),
-            warned: [(0, 0); WARN_RING],
+            warned: [(0, 0); WARN_CAP],
             warned_len: 0,
-            warned_pos: 0,
+            warn_suppressed: false,
         }
     }
 
@@ -292,15 +293,27 @@ impl GlyphCache {
         self.glyph = buf;
     }
 
-    /// Records `key` in the 16-entry "already warned" ring; `true` if it was not there yet
-    /// (the caller should log). Used to rate-limit missing-glyph and corrupt-font warnings.
+    /// Records `key` (e.g. `(provider key, code point)`) in the "already warned" set; `true` if
+    /// it was not there yet, i.e. the caller should log. Used to warn once per missing glyph
+    /// or corrupt font. After [`WARN_CAP`] distinct keys the set is full: one last "further
+    /// warnings suppressed" message is logged and every later call returns `false`.
     pub fn first_warning(&mut self, key: GlyphKey) -> bool {
         if self.warned[..self.warned_len].contains(&key) {
             return false;
         }
-        self.warned[self.warned_pos] = key;
-        self.warned_pos = (self.warned_pos + 1) % WARN_RING;
-        self.warned_len = (self.warned_len + 1).min(WARN_RING);
+        if self.warned_len == WARN_CAP {
+            if !self.warn_suppressed {
+                self.warn_suppressed = true;
+                twine_core::warn!(
+                    target: "twine::text",
+                    "more than {} missing glyph / font warnings; further ones are suppressed",
+                    WARN_CAP
+                );
+            }
+            return false;
+        }
+        self.warned[self.warned_len] = key;
+        self.warned_len += 1;
         true
     }
 }
@@ -374,13 +387,14 @@ mod tests {
     }
 
     #[test]
-    fn warning_ring_rate_limits() {
+    fn warnings_once_per_key_then_capped() {
         let mut c = GlyphCache::new(0);
         assert!(c.first_warning((1, 65)));
         assert!(!c.first_warning((1, 65)));
-        for i in 0..WARN_RING as u32 {
+        for i in 1..WARN_CAP as u32 {
             assert!(c.first_warning((2, i)));
         }
-        assert!(c.first_warning((1, 65)), "evicted from the ring");
+        assert!(!c.first_warning((1, 65)), "still recorded");
+        assert!(!c.first_warning((3, 3)), "set full: no more warnings");
     }
 }

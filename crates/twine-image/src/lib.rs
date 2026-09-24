@@ -14,10 +14,10 @@
 //! | Feature | Enables |
 //! |---------|---------|
 //! | `img-qoi` | in-house QOI decoder |
-//! | `img-png` | PNG decoder (`minipng`, non-interlaced) |
+//! | `img-png` | in-house PNG decoder over `miniz_oxide` (all color types, Adam7) |
 //! | `img-jpeg` | JPEG decoder (`zune-jpeg`, baseline + progressive) |
-//! | `img-bmp` | BMP decoder (`tinybmp`) |
-//! | `img-gif` | in-house GIF decoder and [`GifPlayer`] animation |
+//! | `img-bmp` | in-house BMP decoder |
+//! | `img-gif` | in-house GIF decoder and [`GifPlayer`](decoders::gif::GifPlayer) animation |
 //! | `img-lz4` | LZ4-compressed images |
 //! | `std` | encoders used by tools and tests |
 //! | `log` / `defmt` | logging backend (target `"twine::image"`) |

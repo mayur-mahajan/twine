@@ -1,0 +1,64 @@
+# Headless tour of engine_input (cargo xtask sim-smoke): pointer, gestures, keys, encoder.
+# Inputs due at a frame apply before it is drawn and shots after, so each shot waits a frame.
+wait 32
+shot initial
+# Tap a checkable box (2), then double-tap box 1.
+tap 140 45
+wait 400
+tap 50 45
+wait 100
+tap 50 45
+wait 32
+shot taps
+# Long press on box 5 (log: LongPressed, LongPressedRepeat…).
+press 140 105
+wait 32
+shot pressed
+wait 600
+release
+wait 400
+# Swipe left over the grid: Gesture(LEFT) on the screen.
+drag 250 160 60 160 160
+wait 400
+# Keyboard: Tab to the right column, back to the grid, arrows inside, Enter clicks.
+key Next
+wait 32
+shot focus_a
+key Prev
+key Right
+key Down
+wait 32
+shot gridnav
+key Enter
+wait 32
+text "hi"
+# Wheel: focus moves on; middle click on the editable box enters edit mode.
+wheel 2
+wait 32
+enc_press
+wait 50
+enc_release
+wait 32
+shot edit_mode
+wheel 1
+wheel -2
+wait 32
+key Esc
+wait 100
+shot final_state
+wait 32
+# `+` / `-` resize the grid boxes: the flex row wraps them onto more or fewer rows.
+key -
+key -
+key -
+wait 32
+shot narrow
+wait 32
+key +
+key +
+key +
+key +
+key +
+key +
+wait 32
+shot wide

@@ -172,7 +172,8 @@ impl ImageCache {
 
     fn evict_lru(&mut self) {
         let clock = self.clock;
-        let Some(i) = (0..self.entries.len()).max_by_key(|&i| clock.wrapping_sub(self.entries[i].last_use)) else {
+        let Some(i) = (0..self.entries.len()).max_by_key(|&i| clock.wrapping_sub(self.entries[i].last_use))
+        else {
             return;
         };
         let e = self.entries.swap_remove(i);
