@@ -62,18 +62,18 @@ impl Calibration {
     };
 
     /// A typical calibration of the common 2.8" ILI9341 + XPT2046 module in landscape
-    /// (`Rotation::Deg90`, 320 × 240): raw Y (≈ 200…3900) runs along the screen's x axis, raw X
-    /// along its y axis.
+    /// (`Rotation::Deg90`, 320 × 240): raw Y (≈ 3900…200) runs along the screen's x axis, raw
+    /// X (≈ 3900…200) along its y axis.
     ///
-    /// Every module differs by tens of pixels; calibrate each device with
-    /// [`from_points`](Self::from_points) for accurate touch.
+    /// Every module differs by tens of pixels (and some mount the touch film mirrored);
+    /// calibrate each device with [`from_points`](Self::from_points) for accurate touch.
     pub const DEFAULT_320X240_ROT90: Self = Self {
         a: 0,
-        b: 320,
-        c: -320 * 200,
-        d: 240,
+        b: -320,
+        c: 320 * 3900,
+        d: -240,
         e: 0,
-        f: -240 * 200,
+        f: 240 * 3900,
         div: 3700,
     };
 
@@ -151,8 +151,8 @@ mod tests {
     #[test]
     fn default_rot90_maps_corners_roughly() {
         let c = Calibration::DEFAULT_320X240_ROT90;
-        assert_eq!(c.apply(200, 200), (0, 0));
-        assert_eq!(c.apply(3900, 3900), (320, 240));
+        assert_eq!(c.apply(3900, 3900), (0, 0));
+        assert_eq!(c.apply(200, 200), (320, 240));
     }
 
     #[test]

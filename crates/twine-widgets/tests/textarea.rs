@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use common::{Mode, get, harness, with};
 use twine_core::{Duration, Point, Rect};
-use twine_engine::{EventCode, EventFilter, EventParam, EventResult, Key, MeasureCx, NodeId, State};
+use twine_engine::{EventCode, EventFilter, EventResult, Key, MeasureCx, NodeId, State};
 use twine_style::{Align, Part, PropId};
 use twine_testing::EngineHarness;
 use twine_widgets::label::Label;
@@ -46,8 +46,10 @@ fn value_changes(h: &mut EngineHarness, ta: NodeId) -> Rc<RefCell<Vec<String>>> 
     let l = log.clone();
     h.engine_mut()
         .add_event_handler(ta, EventFilter::Code(EventCode::ValueChanged), move |cx, _| {
-            // The textarea is busy while it sends the event: read through the label.
-            let t = textarea::text_of(cx.engine(), cx.target()).unwrap().to_owned();
+            // The event arrives once the textarea is back in its node: read the widget.
+            let e = cx.engine();
+            let ta = e.widget::<Textarea>(cx.target()).expect("textarea readable");
+            let t = ta.text(&MeasureCx::new(e, cx.target())).to_owned();
             l.borrow_mut().push(t);
             EventResult::Continue
         });
@@ -184,8 +186,8 @@ mod textarea_model {
         let seen = Rc::new(RefCell::new(Vec::new()));
         let s = seen.clone();
         h.engine_mut()
-            .add_event_handler(ta, EventFilter::Code(EventCode::Insert), move |_, ev| {
-                s.borrow_mut().push(ev.param);
+            .add_event_handler(ta, EventFilter::Code(EventCode::Insert), move |cx, ev| {
+                s.borrow_mut().push(cx.text(ev).map(str::to_owned));
                 EventResult::Continue
             });
         with(&mut h, ta, |t: &mut Textarea, cx| {
@@ -202,9 +204,10 @@ mod textarea_model {
         });
         assert_eq!(text(&h, ta), "aK!", "x dropped, k replaced, deletion cancelled");
         assert_eq!(cursor(&h, ta), 3);
+        // `Insert` carries the (non-static) text; the replacement is announced too.
         let seen = seen.borrow();
-        assert_eq!(seen[0], EventParam::Key(Key::Char('a')));
-        assert!(seen.contains(&EventParam::Key(Key::Backspace)));
+        let s = |t: &str| Some(t.to_owned());
+        assert_eq!(*seen, [s("a"), s("x"), s("k"), s("K!"), s(textarea::DELETE_TEXT)]);
     }
 
     #[test]
@@ -260,14 +263,20 @@ mod textarea_model {
     fn value_changed_per_edit() {
         let (mut h, ta) = scene(Mode::Light);
         let log = value_changes(&mut h, ta);
-        with(&mut h, ta, |t: &mut Textarea, cx| {
-            t.add_char(cx, 'a');
-            t.add_text(cx, "bc");
-            t.delete_char(cx);
-            t.set_text(cx, "xyz");
-            t.cursor_left(cx); // not an edit
-        });
+        with(&mut h, ta, |t: &mut Textarea, cx| t.add_char(cx, 'a'));
+        with(&mut h, ta, |t: &mut Textarea, cx| t.add_text(cx, "bc"));
+        with(&mut h, ta, |t: &mut Textarea, cx| t.delete_char(cx));
+        with(&mut h, ta, |t: &mut Textarea, cx| t.set_text(cx, "xyz"));
+        with(&mut h, ta, |t: &mut Textarea, cx| t.cursor_left(cx)); // not an edit
         assert_eq!(*log.borrow(), vec!["a", "abc", "ab", "xyz"]);
+        // Several edits in one setter call: one event each, dispatched once the textarea is
+        // back in its node (the handlers see the final text).
+        log.borrow_mut().clear();
+        with(&mut h, ta, |t: &mut Textarea, cx| {
+            t.add_char(cx, '1');
+            t.add_char(cx, '2');
+        });
+        assert_eq!(*log.borrow(), vec!["xy12z", "xy12z"]);
     }
 
     #[derive(Clone, Debug)]
@@ -425,6 +434,24 @@ fn cursor_blinks_only_when_focused() {
     let g = h.engine().group_of(ta).unwrap();
     h.engine_mut().focus_next(g);
     assert!(!get::<Textarea>(&h, ta).is_blinking(&MeasureCx::new(h.engine(), ta)));
+    h.run_until_idle();
+    h.assert_idle();
+}
+
+#[test]
+fn raw_focused_state_starts_and_stops_blink() {
+    let (mut h, ta) = scene(Mode::Light);
+    h.run_until_idle();
+    let blinking = |h: &EngineHarness| get::<Textarea>(h, ta).is_blinking(&MeasureCx::new(h.engine(), ta));
+    assert!(!blinking(&h));
+    // No focus group involved: the application sets the state directly.
+    h.engine_mut().add_state(ta, State::FOCUSED);
+    assert!(blinking(&h), "StateChanged starts the blink");
+    h.update(); // the blink period starts at this update
+    h.advance(Duration::ms(410));
+    assert!(!get::<Textarea>(&h, ta).cursor().show);
+    h.engine_mut().clear_state(ta, State::FOCUSED);
+    assert!(!blinking(&h), "StateChanged stops the blink at once");
     h.run_until_idle();
     h.assert_idle();
 }

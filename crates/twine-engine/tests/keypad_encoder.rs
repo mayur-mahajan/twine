@@ -211,7 +211,7 @@ fn encoder_click_on_editable_enters_edit_mode() {
 }
 
 #[test]
-fn encoder_rotation_in_edit_mode_sends_left_right_and_rotary() {
+fn encoder_rotation_in_edit_mode_sends_only_arrow_keys() {
     let (mut h, ids, logs) = setup(true);
     let g = h.engine().default_group().unwrap();
     h.encoder(1);
@@ -230,7 +230,8 @@ fn encoder_rotation_in_edit_mode_sends_left_right_and_rotary() {
     h.encoder(-1);
     assert_eq!(h.engine().focused(g), Some(ids[1]), "focus stays in edit mode");
     assert_eq!(*k.borrow(), [Key::Right, Key::Right, Key::Left]);
-    assert_eq!(*rot.borrow(), [2, -1]);
+    // LVGL: the rotation is the arrow keys, no `Rotary` on top (one path for widgets).
+    assert!(rot.borrow().is_empty());
     // A click in edit mode clicks and sends Enter.
     logs[1].borrow_mut().clear();
     k.borrow_mut().clear();
@@ -309,4 +310,27 @@ fn button_device_clicks_mapped_point() {
         "{codes:?}"
     );
     assert!(!input_codes(&logs[0]).contains(&C::Clicked));
+}
+
+#[test]
+fn keypad_burst_beyond_one_update_is_not_lost() {
+    let (mut h, ids, _) = setup(false);
+    let g = h.engine().default_group().unwrap();
+    assert_eq!(h.engine().focused(g), Some(ids[0]));
+    let k = keys(&mut h, ids[0]);
+    // 40 characters = 80 press/release events queued at once, far more than one update reads.
+    let text: String = ('a'..='z').chain('A'..='N').collect();
+    let w = h.type_text(&text);
+    assert!(k.borrow().len() < 40, "one update reads only part of the burst");
+    assert_ne!(w, twine_engine::Wake::Idle, "the rest is read right away");
+    h.run_until_idle();
+    let typed: String = k
+        .borrow()
+        .iter()
+        .filter_map(|key| match key {
+            Key::Char(c) => Some(*c),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(typed, text);
 }

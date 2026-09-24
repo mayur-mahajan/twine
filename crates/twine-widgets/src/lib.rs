@@ -68,12 +68,13 @@
 //! assert_eq!(h.engine().widget::<Label>(lbl).unwrap().text(), "OK");
 //! ```
 //!
-//! Value widgets (slider, arc, spinbox, button matrix) send `ValueChanged` with the new value
-//! (the button index for a button matrix) as
-//! [`EventParam::Value`](twine_engine::EventParam::Value): the widget itself is busy handling
-//! the input while its handlers run. A textarea's handlers read its text with
-//! [`textarea::text_of`] (from the label child that holds it). Checkable widgets (switch, checkbox) use the engine's
-//! `State::CHECKED`; set it from code with their `set_checked` so they redraw.
+//! Value widgets (slider, arc, spinbox, button matrix, keyboard, textarea) send `ValueChanged`
+//! once the change is complete and the widget is back in its node
+//! ([`Engine::post_event`](twine_engine::Engine::post_event)), so handlers can read it with
+//! `engine.widget::<W>(ev.target)`. The new value (the button index for a button matrix) is
+//! also carried as [`EventParam::Value`](twine_engine::EventParam::Value). Checkable widgets
+//! (switch, checkbox) use the engine's `State::CHECKED`; set it from code with their
+//! `set_checked` so they redraw.
 //!
 //! ## Features
 //!
@@ -103,7 +104,6 @@ pub mod slider;
 pub mod spangroup;
 pub mod spinbox;
 pub mod spinner;
-mod state_dsc;
 pub mod switch;
 pub mod textarea;
 mod util;

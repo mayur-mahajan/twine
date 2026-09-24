@@ -256,6 +256,12 @@ impl ThemeHook for SimpleTheme {
     fn name(&self) -> &'static str {
         "simple"
     }
+    fn color_primary(&self) -> Color {
+        COLOR_DARK
+    }
+    fn color_secondary(&self) -> Color {
+        COLOR_DIM
+    }
 }
 
 impl Theme for SimpleTheme {
@@ -264,11 +270,5 @@ impl Theme for SimpleTheme {
     }
     fn font_large(&self) -> &'static Font {
         self.font
-    }
-    fn color_primary(&self) -> Color {
-        COLOR_DARK
-    }
-    fn color_secondary(&self) -> Color {
-        COLOR_DIM
     }
 }

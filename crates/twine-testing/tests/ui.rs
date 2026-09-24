@@ -119,3 +119,25 @@ fn type_text_sends_chars() {
     t.run_until_idle();
     assert_eq!(*got.borrow(), "hey");
 }
+
+#[test]
+fn keyboard_type_taps_on_screen_keys() {
+    use twine_widgets::keyboard::{self, Keyboard};
+    use twine_widgets::textarea;
+    let mut ids = None;
+    let mut t = TestUi::new(320, 240).mount_engine(|e| {
+        let d = e.default_display().unwrap();
+        let screen = e.active_screen(d).unwrap();
+        let ta = textarea::create(e, screen).unwrap();
+        e.set_size(ta, 300, 60);
+        let kb = keyboard::create(e, screen).unwrap();
+        e.with_widget_mut(kb, |k: &mut Keyboard, cx| k.set_textarea(cx, Some(ta)));
+        ids = Some((ta, kb));
+    });
+    let (ta, kb) = ids.unwrap();
+    // The attached textarea's cursor blinks: never idle.
+    t.advance(Duration::ms(100));
+    // Lower case, upper case (mode switch) and digits (special layout), a space and a line.
+    t.keyboard_type(kb, "Hi 42\nok");
+    assert_eq!(textarea::text_of(&t.engine(), ta), Some("Hi 42\nok"));
+}

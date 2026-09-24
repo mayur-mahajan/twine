@@ -17,6 +17,16 @@
 //! all the ST7789 needs; the vendor table only adds `NORON` (as mipidsi's `ST7789` model and
 //! Adafruit's `generic_st7789` table do). Rotation uses [`standard_madctl`].
 //!
+//! # Wiring
+//!
+//! | Panel pin | Driver argument |
+//! |-----------|-----------------|
+//! | `SCK`, `SDI`/`MOSI` (`SDO`/`MISO` is not needed) | the bus of `spi`, an `embedded_hal(_async)::spi::SpiDevice` (use a DMA-capable async one to overlap transfers with rendering) |
+//! | `CS` | the chip select owned by `spi` |
+//! | `DC`/`RS` | `dc`, any `OutputPin` |
+//! | `RESET` | `rst`: `Some(OutputPin)`, or `None` when it is tied to the MCU reset (a software reset is sent instead) |
+//! | `LED`/`BL` | not driven by the driver: switch it (or PWM it) from your firmware |
+//!
 //! ```
 //! use twine_drivers::st7789::{self, ST7789_135X240};
 //! use twine_drivers::testkit::Recorder;
@@ -42,6 +52,8 @@ pub static ST7789: PanelSpec = PanelSpec {
     offset_y: 0,
     madctl: standard_madctl(Madctl::EMPTY),
     colmod: 0x55,
+    align: 1,
+    sw_rotation: false,
     invert: true,
     init: &ST7789_INIT,
 };
@@ -76,12 +88,13 @@ mod tests {
         assert_eq!(origin_windows(&ST7789), [win10(0, 0); 4]);
         assert_eq!(
             origin_windows(&ST7789_240X240),
-            [win10(0, 0), win10(0, 0), win10(0, 80), win10(80, 0)]
+            [win10(0, 0), win10(80, 0), win10(0, 80), win10(0, 0)]
         );
-        // Matches TFT_eSPI's T-Display offsets (rotation 0..3: 52/40, 40/53, 53/40, 40/52).
+        // Matches TFT_eSPI's T-Display offsets (rotation 0..3: 52/40, 40/53, 53/40, 40/52; its
+        // rotations 1 and 3 are our Deg270 and Deg90).
         assert_eq!(
             origin_windows(&ST7789_135X240),
-            [win10(52, 40), win10(40, 53), win10(53, 40), win10(40, 52)]
+            [win10(52, 40), win10(40, 52), win10(53, 40), win10(40, 53)]
         );
     }
 

@@ -1,4 +1,4 @@
-//! Focaltech FT6206 / FT6236 / FT6336 capacitive touch controllers (I2C).
+//! Focaltech FT6206 / FT6236 / FT6336 (and FT3168) capacitive touch controllers (I2C).
 //!
 //! | | |
 //! |-|-|
@@ -11,7 +11,16 @@
 //! A reading is one `write_read` of 5 registers starting at `TD_STATUS` (`0x02`): number of
 //! touch points, then `P1_XH` (event flag in bits 7:6, X bits 11:8), `P1_XL`, `P1_YH`, `P1_YL`.
 //! Only the first point is used; gestures are ignored. The `FT5x06` family has the same map
-//! ([`Ft5x06`](super::Ft5x06)).
+//! ([`Ft5x06`](super::Ft5x06)), and so has the FT3168 of small AMOLED boards (Waveshare
+//! ESP32-S3-Touch-AMOLED): select it with [`Ft6x36::with_model`]`(`[`FtModel::Ft3168`]`)`.
+//!
+//! # Wiring
+//!
+//! | Controller pin | Driver argument |
+//! |----------------|-----------------|
+//! | `SDA`, `SCL` | `i2c`, an `embedded_hal::i2c::I2c` (address `0x38`) |
+//! | `INT`/`IRQ` | `irq`: `Some(InputPin)` (`+ Wait` for the async wake-up), or `None` to poll |
+//! | `RST` | not driven by the driver: hold it high from your firmware |
 //!
 //! ```
 //! use twine_drivers::touch::{Ft6x36, TouchTransform};
@@ -38,11 +47,37 @@ pub const REG_TD_STATUS: u8 = 0x02;
 /// Maximum number of points reported by the family (`FT5x06`: 5).
 const MAX_POINTS: u8 = 5;
 
+/// The Focaltech controller behind an [`Ft6x36`] driver (register-compatible models).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FtModel {
+    /// FT6206 / FT6236 / FT6336 (up to 2 points).
+    #[default]
+    Ft6x36,
+    /// FT5206 / FT5306 / FT5406 (up to 5 points).
+    Ft5x06,
+    /// FT3168 / FT3268 (AMOLED watch-size panels, 1 point).
+    Ft3168,
+}
+
+impl FtModel {
+    /// The model name used in logs.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            FtModel::Ft6x36 => "ft6x36",
+            FtModel::Ft5x06 => "ft5x06",
+            FtModel::Ft3168 => "ft3168",
+        }
+    }
+}
+
 /// `FT6x36` driver implementing [`InputDevice`] (`Pointer`).
 #[derive(Debug)]
 pub struct Ft6x36<I2C, IRQ> {
     i2c: I2C,
     addr: u8,
+    model: FtModel,
     pub(super) irq: IrqState<IRQ>,
     transform: TouchTransform,
 }
@@ -54,9 +89,23 @@ impl<I2C, IRQ> Ft6x36<I2C, IRQ> {
         Self {
             i2c,
             addr: ADDR,
+            model: FtModel::Ft6x36,
             irq: IrqState::new(irq),
             transform,
         }
+    }
+
+    /// Sets the controller model (log names; all share the register map).
+    #[must_use]
+    pub fn with_model(mut self, model: FtModel) -> Self {
+        self.model = model;
+        self
+    }
+
+    /// The controller model.
+    #[must_use]
+    pub fn model(&self) -> FtModel {
+        self.model
     }
 
     /// Uses another I2C address.
@@ -92,7 +141,7 @@ impl<I2C: I2c, IRQ: InputPin> Ft6x36<I2C, IRQ> {
         self.i2c.write_read(self.addr, &[REG_TD_STATUS], &mut b)?;
         let points = b[0] & 0x0F;
         let event = b[1] >> 6;
-        trace!(target: "twine::driver", "ft6x36 regs {:?}", b);
+        trace!(target: "twine::driver", "{} regs {:?}", self.model.name(), b);
         if points == 0 || points > MAX_POINTS || event == 1 {
             // No touch, invalid count (0x0F after reset) or "lift up" event.
             return Ok(None);
@@ -119,11 +168,11 @@ impl<I2C: I2c, IRQ: InputPin> InputDevice for Ft6x36<I2C, IRQ> {
             },
             Ok(None) => self.irq.released(),
             Err(_) => {
-                warn!(target: "twine::driver", "ft6x36: I2C error");
+                warn!(target: "twine::driver", "{}: I2C error", self.model.name());
                 self.irq.released()
             }
         };
-        InputData::Pointer(self.irq.update("ft6x36", data))
+        InputData::Pointer(self.irq.update(self.model.name(), data))
     }
 
     fn poll_hint(&self) -> PollHint {
@@ -224,6 +273,24 @@ mod tests {
         assert_eq!(t.kind(), InputKind::Pointer);
         t.set_transform(TouchTransform::identity(1, 1));
         let _ = t.release();
+    }
+
+    #[test]
+    fn ft3168_model_same_register_map() {
+        let rec = Recorder::new();
+        let regs = Regs::install(&rec);
+        rec.set_level("int", false);
+        regs.set(0x02, &[0x01, 0x80, 0x10, 0x01, 0x00]);
+        let mut t = dut(&rec).with_model(FtModel::Ft3168);
+        assert_eq!(t.model(), FtModel::Ft3168);
+        assert_eq!(
+            t.read(),
+            InputData::Pointer(PointerData {
+                point: Point::new(16, 256),
+                pressed: true
+            })
+        );
+        assert_eq!(FtModel::Ft3168.name(), "ft3168");
     }
 
     #[test]

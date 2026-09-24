@@ -197,3 +197,43 @@ pub(crate) fn bind_label_text(cx: &mut BuildCx<'_>, node: NodeId, text: TextProp
         }
     }
 }
+
+/// Applies a text property to any widget text through two setters: `set_static` for
+/// `'static` texts (no copy) and `set` for the others. Dynamic texts become a binding;
+/// [`text!`](crate::text!) and signal texts format into a scratch string owned by the binding
+/// (no allocation once it is large enough). The setters should be idempotent.
+pub(crate) fn bind_str(
+    cx: &mut BuildCx<'_>,
+    node: NodeId,
+    text: TextProp,
+    set_static: impl Fn(&mut twine_engine::Engine, NodeId, &'static str) + 'static,
+    set: impl Fn(&mut twine_engine::Engine, NodeId, &str) + 'static,
+) {
+    match text {
+        TextProp::Static(s) => set_static(cx.engine(), node, s),
+        TextProp::Owned(s) => set(cx.engine(), node, &s),
+        TextProp::Fn(f) => {
+            let scope = cx.scope();
+            cx.provide(|| bind_effect(scope, node, f, move |e, n, s: String| set(e, n, &s)));
+        }
+        TextProp::Write(w) => {
+            let scope = cx.scope();
+            let scratch = alloc::rc::Rc::new(core::cell::RefCell::new(String::new()));
+            cx.provide(|| {
+                bind_effect(
+                    scope,
+                    node,
+                    move || {
+                        {
+                            let mut b = scratch.borrow_mut();
+                            b.clear();
+                            w(&mut *b);
+                        }
+                        scratch.clone()
+                    },
+                    move |e, n, s: alloc::rc::Rc<core::cell::RefCell<String>>| set(e, n, &s.borrow()),
+                );
+            });
+        }
+    }
+}

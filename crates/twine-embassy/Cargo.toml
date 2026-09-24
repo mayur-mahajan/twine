@@ -12,8 +12,23 @@ workspace = true
 
 [features]
 default = []
+## Log through `defmt`.
+defmt = ["dep:defmt", "twine-core/defmt", "twine-view/defmt"]
+## Log through the `log` crate.
+log = ["twine-core/log", "twine-view/log"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
-twine-hal = { path = "../twine-hal" }
-twine-view = { path = "../twine-view" }
+twine-hal = { path = "../twine-hal", features = ["async"] }
+twine-reactive = { path = "../twine-reactive" }
+twine-view = { path = "../twine-view", features = ["async"] }
+embassy-time = "0.5"
+embassy-futures = "0.1"
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+twine-view = { path = "../twine-view", features = ["async", "std"] }
+twine-engine = { path = "../twine-engine", features = ["std", "debug-checks", "color-rgb565"] }
+twine-testing = { path = "../twine-testing" }
+embassy-time = { version = "0.5", features = ["mock-driver", "generic-queue-8"] }
+critical-section = { version = "1", features = ["std"] }

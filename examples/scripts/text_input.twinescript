@@ -1,0 +1,21 @@
+# Headless tour of text_input (cargo xtask sim-smoke): tap the name field (the keyboard opens),
+# tap "a" and "b" on the on-screen keyboard (the preview follows), tap OK (the keyboard
+# closes), then type " Lovelace" on the PC keyboard into the focused field (in two parts: the
+# simulated keypad queues at most 16 key events per frame).
+wait 300
+tap 160 71
+wait 300
+shot keyboard_open
+tap 59 165
+wait 100
+tap 174 194
+wait 300
+shot typed_ab
+tap 296 223
+wait 400
+shot keyboard_closed
+text " Love"
+wait 100
+text "lace"
+wait 600
+shot typed_keypad

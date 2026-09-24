@@ -115,3 +115,93 @@ pub(crate) fn bind_model<T: PartialEq + Clone + 'static>(
         }
     }
 }
+
+/// Like [`bind_model`], for widgets whose value cannot be read from the `ValueChanged` event
+/// (e.g. a range slider: the event carries the value of whichever knob moved): every
+/// `ValueChanged` of the node schedules a read, which runs in the effect flush of the same
+/// update (the widget is back in its node then) and writes the value with `set_if_changed`.
+pub(crate) fn bind_model_synced<T: PartialEq + Clone + 'static>(
+    cx: &mut BuildCx<'_>,
+    node: NodeId,
+    model: Model<T>,
+    show: impl Fn(&mut Engine, NodeId, T) + 'static,
+    read: impl Fn(&Engine, NodeId) -> Option<T> + 'static,
+) {
+    match model {
+        Model::Owned(v) => show(cx.engine(), node, v),
+        Model::Bound(sig) => {
+            bind_node(
+                cx,
+                node,
+                Prop::Dynamic(alloc::boxed::Box::new(move || sig.get())),
+                show,
+            );
+            let scope = cx.scope();
+            let tick = scope.signal(0u32);
+            cx.engine().add_event_handler(
+                node,
+                EventFilter::Code(EventCode::ValueChanged),
+                move |ecx, ev| {
+                    if ev.target == ecx.node() && tick.is_alive() {
+                        EngineAccess::provide(ecx.engine_mut(), || tick.update(|t| *t = t.wrapping_add(1)));
+                    }
+                    EventResult::Continue
+                },
+            );
+            let mut first = true;
+            scope.effect(move || {
+                let _ = tick.get();
+                if core::mem::take(&mut first) {
+                    return;
+                }
+                if !EngineAccess::available() {
+                    return twine_reactive::defer_current_effect();
+                }
+                let v = EngineAccess::with(|e| {
+                    if e.tree().contains(node) {
+                        read(e, node)
+                    } else {
+                        None
+                    }
+                })
+                .flatten();
+                if let Some(v) = v {
+                    if sig.is_alive() {
+                        sig.set_if_changed(v);
+                    }
+                }
+            });
+        }
+    }
+}
+
+/// The value an event carries as [`EventParam::Value`](twine_engine::EventParam::Value).
+pub(crate) fn event_value(ev: &Event) -> Option<i32> {
+    match ev.param {
+        twine_engine::EventParam::Value(v) => Some(v),
+        _ => None,
+    }
+}
+
+/// Registers `f` for every `ValueChanged` sent to `node` itself, with `map(engine, event)`
+/// as argument (skipped when `map` returns `None`); the engine is lent to `f` through
+/// [`EngineAccess`].
+pub(crate) fn on_value_changed<T: 'static>(
+    cx: &mut BuildCx<'_>,
+    node: NodeId,
+    map: impl Fn(&Engine, NodeId, &Event) -> Option<T> + 'static,
+    mut f: impl FnMut(T) + 'static,
+) {
+    cx.engine().add_event_handler(
+        node,
+        EventFilter::Code(EventCode::ValueChanged),
+        move |ecx, ev| {
+            if ev.target == ecx.node() {
+                if let Some(v) = map(ecx.engine(), ev.target, ev) {
+                    EngineAccess::provide(ecx.engine_mut(), || f(v));
+                }
+            }
+            EventResult::Continue
+        },
+    );
+}

@@ -1,0 +1,61 @@
+[package]
+name = "twine-example-esp32c3"
+description = "Example firmware: Twine on an ESP32-C3 with an SPI display and a touch controller"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Standalone firmware project (not a member of the library workspace).
+[workspace]
+
+# Feature sets `cargo xtask firmware` builds ("" = the defaults).
+[package.metadata.twine]
+feature-sets = ["", "panel-st7789,touch-ft6x36,demo-controls", "panel-ili9341,touch-xpt2046,demo-calibrate"]
+
+[features]
+default = ["panel-ili9341", "touch-xpt2046", "demo-counter"]
+## ILI9341 240 × 320 SPI panel.
+panel-ili9341 = ["twine-drivers/ili9341"]
+## ST7789 240 × 320 SPI panel.
+panel-st7789 = ["twine-drivers/st7789"]
+## XPT2046 resistive touch sharing the display's SPI bus (own chip select).
+touch-xpt2046 = ["twine-drivers/xpt2046"]
+## FT6x36 capacitive touch on I2C.
+touch-ft6x36 = ["twine-drivers/ft6x36"]
+## The counter demo.
+demo-counter = []
+## The controls demo (sliders, switches, arcs, spinner).
+demo-controls = []
+## Touch calibration (resistive touch): logs a `Calibration { .. }` to paste into the wiring block.
+demo-calibrate = []
+
+[dependencies]
+twine = { path = "../../crates/twine", default-features = false, features = ["log", "color-rgb565-swapped", "perf-monitor", "montserrat-20"] }
+twine-drivers = { path = "../../crates/twine-drivers", features = ["async", "log"] }
+twine-embassy = { path = "../../crates/twine-embassy" }
+twine-demos = { path = "../../crates/twine-demos", features = ["async"] }
+
+esp-hal = { version = "~1.2.2", features = ["esp32c3", "log-04", "unstable"] }
+esp-rtos = { version = "0.4.0", features = ["embassy", "esp-alloc", "esp32c3", "log-04"] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32c3", "log-04"] }
+esp-alloc = { version = "0.11.0", features = ["esp32c3"] }
+esp-backtrace = { version = "0.20.0", features = ["esp32c3", "panic-handler", "println"] }
+esp-println = { version = "0.18.0", features = ["esp32c3", "log-04"] }
+embassy-executor = { version = "0.10.0", features = ["log"] }
+embassy-time = { version = "0.5.0", features = ["log"] }
+embassy-embedded-hal = "0.6"
+embassy-sync = "0.8"
+embedded-hal = "1"
+critical-section = "1.2.0"
+static_cell = "2.1.1"
+log = "0.4.27"
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+lto = "fat"
+opt-level = "s"

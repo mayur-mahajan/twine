@@ -5,6 +5,7 @@
 ///
 /// With `spec` the constructors take the panel variant as an argument; otherwise they use the
 /// given fixed spec.
+#[cfg(all(feature = "mipi-dcs", feature = "spi"))]
 macro_rules! spi_panel {
     (@aliases $alias:ident, $async_alias:ident, $model:literal) => {
         #[doc = concat!("A ", $model, " on 4-wire SPI (blocking): [`MipiDcs`](crate::mipi_dcs::MipiDcs) over [`SpiInterface`](crate::interface::SpiInterface).")]
@@ -130,10 +131,62 @@ macro_rules! spi_panel {
     };
 }
 
+#[cfg(all(feature = "mipi-dcs", feature = "spi"))]
 pub(crate) use spi_panel;
 
+/// Generates `new` (blocking) and `new_async` (feature `async`) QSPI constructors plus the
+/// `$alias` / `$async_alias` type aliases for a QSPI panel module; the panel variant is an
+/// argument.
+#[cfg(all(feature = "mipi-dcs", feature = "qspi"))]
+macro_rules! qspi_panel {
+    ($alias:ident, $async_alias:ident, $model:literal) => {
+        #[doc = concat!("A ", $model, " on quad SPI (blocking): [`MipiDcs`](crate::mipi_dcs::MipiDcs) over [`QspiInterface`](crate::interface::QspiInterface).")]
+        pub type $alias<B, RST> = $crate::mipi_dcs::MipiDcs<$crate::interface::QspiInterface<B>, RST>;
+
+        #[doc = concat!("A ", $model, " on quad SPI (async, feature `async`).")]
+        #[cfg(feature = "async")]
+        pub type $async_alias<B, RST> =
+            $crate::mipi_dcs::AsyncMipiDcs<$crate::interface::QspiInterface<B>, RST>;
+
+        #[doc = concat!("Resets and initializes a ", $model, " panel `spec` on quad SPI (blocking).")]
+        pub fn new<B, RST>(
+            bus: B,
+            rst: ::core::option::Option<RST>,
+            spec: &'static $crate::mipi_dcs::PanelSpec,
+            rotation: ::twine_hal::Rotation,
+            delay: &mut impl ::embedded_hal::delay::DelayNs,
+        ) -> ::core::result::Result<$alias<B, RST>, $crate::mipi_dcs::DcsError<B::Error>>
+        where
+            B: $crate::interface::QspiBus,
+            RST: ::embedded_hal::digital::OutputPin,
+        {
+            $crate::mipi_dcs::MipiDcs::new($crate::interface::QspiInterface::new(bus), rst, spec, rotation, delay)
+        }
+
+        #[doc = concat!("Resets and initializes a ", $model, " panel `spec` on quad SPI (async, feature `async`).")]
+        #[cfg(feature = "async")]
+        pub async fn new_async<B, RST>(
+            bus: B,
+            rst: ::core::option::Option<RST>,
+            spec: &'static $crate::mipi_dcs::PanelSpec,
+            rotation: ::twine_hal::Rotation,
+            delay: &mut impl ::embedded_hal_async::delay::DelayNs,
+        ) -> ::core::result::Result<$async_alias<B, RST>, $crate::mipi_dcs::DcsError<B::Error>>
+        where
+            B: $crate::interface::AsyncQspiBus,
+            RST: ::embedded_hal::digital::OutputPin,
+        {
+            $crate::mipi_dcs::AsyncMipiDcs::new($crate::interface::QspiInterface::new(bus), rst, spec, rotation, delay)
+                .await
+        }
+    };
+}
+
+#[cfg(all(feature = "mipi-dcs", feature = "qspi"))]
+pub(crate) use qspi_panel;
+
 /// Test helpers for panel modules.
-#[cfg(test)]
+#[cfg(all(test, feature = "all"))]
 pub(crate) mod test_util {
     use alloc::vec::Vec;
 
@@ -206,6 +259,62 @@ pub(crate) mod test_util {
             }
         }
         v.extend(tail);
+        v
+    }
+
+    /// Initializes a QSPI panel `spec` on a recorder (with a reset pin).
+    pub fn init_qspi(
+        spec: &'static PanelSpec,
+        rot: Rotation,
+    ) -> (
+        Recorder,
+        MipiDcs<crate::interface::QspiInterface<crate::mock::RecordingQspi>, RecordingPin>,
+    ) {
+        let rec = Recorder::new();
+        let d = MipiDcs::new(
+            crate::interface::QspiInterface::new(rec.qspi()),
+            Some(rec.pin("rst")),
+            spec,
+            rot,
+            &mut rec.delay(),
+        )
+        .unwrap();
+        (rec, d)
+    }
+
+    /// The expected QSPI init log for a hand-transcribed vendor command list followed by the
+    /// common tail (after a hardware reset).
+    pub fn expected_qspi_init(
+        spec: &PanelSpec,
+        rot: Rotation,
+        cmds: &[crate::mipi_dcs::InitOp],
+    ) -> Vec<BusOp> {
+        use crate::mipi_dcs::{InitOp, cmd};
+        let q = |c: u8, d: &[u8]| BusOp::QspiCmd {
+            instr: 0x02,
+            addr: u32::from(c) << 8,
+            data: d.to_vec(),
+        };
+        let mut v = alloc::vec![
+            BusOp::Pin("rst", false),
+            BusOp::DelayUs(10),
+            BusOp::Pin("rst", true),
+            BusOp::DelayUs(120_000),
+        ];
+        for op in cmds {
+            match *op {
+                InitOp::Cmd(c, p) => v.push(q(c, p)),
+                InitOp::DelayMs(ms) => v.push(BusOp::DelayUs(ms * 1000)),
+            }
+        }
+        v.extend([
+            q(cmd::COLMOD, &[spec.colmod]),
+            q(cmd::MADCTL, &[spec.madctl_for(rot).bits()]),
+            q(if spec.invert { cmd::INVON } else { cmd::INVOFF }, &[]),
+            q(cmd::SLPOUT, &[]),
+            BusOp::DelayUs(120_000),
+            q(cmd::DISPON, &[]),
+        ]);
         v
     }
 

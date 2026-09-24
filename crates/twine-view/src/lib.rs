@@ -31,7 +31,9 @@
 //! | [`IntoProp`], [`Prop`], [`IntoText`], [`text!`], [`IntoModel`] | constant, signal, memo or closure property values; zero-allocation text; two-way bindings |
 //! | [`ViewExt`] | every style, flag, event and identity modifier |
 //! | [`column()`], [`row`], [`grid`], [`container`], [`stack`], [`spacer`], [`scroll_view`] | layout containers |
-//! | [`label`], [`button`], [`image`] | widget views |
+//! | [`label`], [`button`], [`image`], [`image_button`], [`animimg`] | core widget views |
+//! | [`bar`], [`slider`], [`switch`], [`checkbox`], [`arc`], [`led`], [`line()`], [`spinner`] | basic controls (value widgets take an [`IntoModel`]: two-way with a signal) |
+//! | [`textarea`], [`keyboard`], [`spinbox`], [`buttonmatrix`], [`spangroup`] + [`span`] | text and number entry, rich text |
 //! | [`when`], [`dynamic`], [`for_each`], [`virtual_list`] | structural reactivity limited to one region |
 //! | [`NodeRef`], [`ScopeExt`] | the imperative escape hatch, tweens, animations, timers, modals |
 //! | [`Ui`], [`UiBuilder`], [`UiCore`] | the runtime: the update cycle and [`Wake`] |
@@ -66,6 +68,8 @@
 extern crate alloc;
 
 mod access;
+#[cfg(feature = "async")]
+mod async_ui;
 mod bind;
 mod build;
 mod containers;
@@ -83,6 +87,8 @@ mod view;
 pub mod widgets;
 
 pub use access::{EffectCx, EngineAccess};
+#[cfg(feature = "async")]
+pub use async_ui::{AsyncUi, AsyncUiBuilder, NoInputWait};
 pub use build::{BuildCx, BuildOp, WidgetView, widget_view};
 pub use containers::{Container, Flex, Grid, column, container, flex, grid, row, scroll_view, spacer, stack};
 pub use flow::{Dynamic, ForEach, VirtualList, When, WhenElse, dynamic, for_each, virtual_list, when};
@@ -95,7 +101,10 @@ pub use prop::{IntoProp, Prop};
 pub use text::{IntoText, TextFn, TextProp};
 pub use ui::{DisplaySetup, Framebuffer, Partial, Ui, UiBuilder, UiCore};
 pub use view::{AnyView, IntoAnyView, View, ViewSeq};
-pub use widgets::{button, image, label};
+pub use widgets::{
+    SpanView, animimg, arc, bar, button, buttonmatrix, checkbox, image, image_button, keyboard, label, led,
+    line, line_static, slider, span, spangroup, spinbox, spinner, switch, textarea,
+};
 
 /// When `Ui::update` must be called again (defined by the engine, re-exported here).
 pub use twine_engine::Wake;

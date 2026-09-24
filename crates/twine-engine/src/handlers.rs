@@ -2,10 +2,11 @@
 //! ([`Engine::send_event`]).
 
 use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::event::{Event, EventCode, EventCx, EventParam, EventResult};
-use crate::{Engine, NodeId, ObjFlags, fmt_node_id};
+use crate::event::{Event, EventCode, EventCx, EventParam, EventResult, EventText};
+use crate::{Engine, NodeId, ObjFlags, Widget, fmt_node_id};
 
 /// Handle of a user event handler, returned by [`Engine::add_event_handler`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -33,6 +34,21 @@ impl EventFilter {
 
 /// A user event handler.
 pub type Handler = Box<dyn FnMut(&mut EventCx<'_>, &Event) -> EventResult>;
+
+/// Events waiting for a busy widget and the texts of events being dispatched. Every buffer
+/// keeps its capacity: posting events and sending texts allocate nothing in steady state.
+#[derive(Debug, Default)]
+pub(crate) struct EventQueues {
+    /// Events posted to nodes whose widget was busy, in posting order.
+    posted: Vec<(NodeId, EventCode, EventParam)>,
+    /// The texts of the events being dispatched (nested dispatch stacks them).
+    text: String,
+    /// The handles of those texts, innermost last.
+    text_frames: Vec<EventText>,
+    next_text_serial: u32,
+    /// A `flush_posted` is running.
+    flushing: bool,
+}
 
 /// The user handlers of one node. A handler's slot is `None` while it runs.
 #[derive(Default)]
@@ -159,6 +175,147 @@ impl Engine {
         c
     }
 
+    /// Sends an event to `target` once its widget can take part (LVGL-style notifications
+    /// such as `ValueChanged` sent by the widget itself).
+    ///
+    /// While a widget's [`Widget::event`], setter ([`with_widget_mut`](Self::with_widget_mut)),
+    /// `init` or animation callback runs, the widget is taken out of its node: an event sent
+    /// to that node right then would not reach the widget, and the node's handlers could not
+    /// read it ([`widget`](Self::widget) gives `None`). A posted event waits until the widget
+    /// is back and is dispatched right then, before the running dispatch continues; when the
+    /// widget is not busy it is sent immediately. Posted events of a node deleted meanwhile
+    /// are dropped. The result of the dispatch is not reported.
+    ///
+    /// ```
+    /// use std::{cell::Cell, rc::Rc};
+    /// use twine_engine::{Engine, EngineConfig, EventCode, EventFilter, EventParam, EventResult, Obj};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let n = e.create_root(Box::new(Obj)).unwrap();
+    /// let readable = Rc::new(Cell::new(None));
+    /// let r = readable.clone();
+    /// e.add_event_handler(n, EventFilter::Code(EventCode::ValueChanged), move |cx, ev| {
+    ///     r.set(Some(cx.engine().widget::<Obj>(ev.target).is_some()));
+    ///     EventResult::Continue
+    /// });
+    /// // From inside a setter the widget is busy: the event waits for it.
+    /// let r = readable.clone();
+    /// e.with_widget_mut(n, move |_o: &mut Obj, cx| {
+    ///     cx.post_event(EventCode::ValueChanged, EventParam::Value(1));
+    ///     assert_eq!(r.get(), None, "not dispatched yet");
+    /// });
+    /// assert_eq!(readable.get(), Some(true), "dispatched with the widget readable");
+    /// ```
+    pub fn post_event(&mut self, target: NodeId, code: EventCode, param: EventParam) {
+        let busy = self
+            .tree
+            .node(target)
+            .is_some_and(|n| n.widget.is::<crate::obj::Detached>());
+        if !busy {
+            self.send_event(target, code, param);
+            return;
+        }
+        if matches!(param, EventParam::Text(_)) {
+            twine_core::warn!(
+                target: "twine::event",
+                "post_event: {:?} to busy {} carries a text that ends with the current dispatch",
+                code,
+                fmt_node_id(target)
+            );
+        }
+        twine_core::trace!(target: "twine::event", "{:?} -> {} posted (widget busy)", code, fmt_node_id(target));
+        self.events.posted.push((target, code, param));
+    }
+
+    /// Puts `w` back into node `id` after it was taken out, then dispatches the posted events
+    /// that became deliverable. Returns `false` (dropping the widget) when the node was
+    /// deleted.
+    pub(crate) fn restore_widget(&mut self, id: NodeId, w: Box<dyn Widget>) -> bool {
+        let Some(n) = self.tree.node_mut(id) else {
+            self.events.posted.retain(|p| p.0 != id);
+            return false;
+        };
+        n.widget = w;
+        self.flush_posted();
+        true
+    }
+
+    /// Dispatches posted events in posting order, each once its node's widget is not busy;
+    /// events of deleted nodes are dropped. Only the outermost call drains (nested widget
+    /// restores during a posted dispatch leave the order to it).
+    fn flush_posted(&mut self) {
+        if self.events.flushing || self.events.posted.is_empty() {
+            return;
+        }
+        self.events.flushing = true;
+        loop {
+            let tree = &self.tree;
+            self.events.posted.retain(|p| tree.contains(p.0));
+            let ready = self.events.posted.iter().position(|p| {
+                self.tree
+                    .node(p.0)
+                    .is_some_and(|n| !n.widget.is::<crate::obj::Detached>())
+            });
+            let Some(i) = ready else { break };
+            let (t, c, p) = self.events.posted.remove(i);
+            self.send_event(t, c, p);
+        }
+        self.events.flushing = false;
+    }
+
+    /// Sends an event carrying `text` ([`EventParam::Text`]) and returns the result like
+    /// [`send_event`](Self::send_event). The text is copied into a buffer of the engine
+    /// (reused: no allocation once it is large enough) and readable by the handlers with
+    /// [`EventCx::text`] while the event is dispatched.
+    ///
+    /// ```
+    /// use std::{cell::RefCell, rc::Rc};
+    /// use twine_engine::{Engine, EngineConfig, EventCode, EventFilter, EventResult, Obj};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let n = e.create_root(Box::new(Obj)).unwrap();
+    /// let seen = Rc::new(RefCell::new(String::new()));
+    /// let s = seen.clone();
+    /// e.add_event_handler(n, EventFilter::Code(EventCode::Insert), move |cx, ev| {
+    ///     s.borrow_mut().push_str(cx.text(ev).unwrap_or(""));
+    ///     EventResult::Continue
+    /// });
+    /// let typed = String::from("héllo");
+    /// e.send_event_text(n, EventCode::Insert, &typed);
+    /// assert_eq!(*seen.borrow(), "héllo");
+    /// ```
+    pub fn send_event_text(&mut self, target: NodeId, code: EventCode, text: &str) -> EventResult {
+        let q = &mut self.events;
+        let start = q.text.len();
+        q.text.push_str(text);
+        let h = EventText {
+            start: start as u32,
+            len: text.len() as u32,
+            serial: q.next_text_serial,
+        };
+        q.next_text_serial = q.next_text_serial.wrapping_add(1);
+        q.text_frames.push(h);
+        let r = self.send_event(target, code, EventParam::Text(h));
+        let q = &mut self.events;
+        q.text_frames.pop();
+        q.text.truncate(start);
+        r
+    }
+
+    /// The text of an [`EventParam::Text`] while its event is being dispatched (`None` for
+    /// other parameters and for handles of finished dispatches).
+    #[must_use]
+    pub fn event_text(&self, param: &EventParam) -> Option<&str> {
+        let EventParam::Text(h) = param else {
+            return None;
+        };
+        if !self.events.text_frames.contains(h) {
+            return None;
+        }
+        let start = h.start as usize;
+        self.events.text.get(start..start + h.len as usize)
+    }
+
     /// Sends an event to `target` and returns the most decisive result of its handlers.
     ///
     /// On each node: the built-in object behaviour (states), then
@@ -213,9 +370,8 @@ impl Engine {
             let mut cx = EventCx::new(self, node, target);
             let r = w.event(&mut cx, &ev);
             let (mut stop, prevent) = (cx.stop_bubbling, cx.prevent_default);
-            match self.tree.node_mut(node) {
-                Some(n) => n.widget = w,
-                None => return EventResult::Consumed,
+            if !self.restore_widget(node, w) || !self.tree.contains(node) {
+                return EventResult::Consumed;
             }
             let mut consumed = r == EventResult::Consumed || prevent;
             stop |= r == EventResult::Stop;

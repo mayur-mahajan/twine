@@ -164,9 +164,47 @@ fn btnm_row_split_on_newline() {
 }
 
 #[test]
+fn btnm_themed_press_invalidates_only_button() {
+    // The default theme styles `Items | PRESSED` (and `CHECKED`, `FOCUS_KEY`…): the node's
+    // state changes must still redraw only the pressed button (`Items` is an item part).
+    for mode in Mode::ALL {
+        let (mut h, m) = scene(mode, &MAP_3X4);
+        let b = area(&h, m, 4);
+        let expected = get::<ButtonMatrix>(&h, m)
+            .btn_invalidation_area(&MeasureCx::new(h.engine(), m), 4)
+            .unwrap();
+        let check = |h: &EngineHarness, what: &str| {
+            let inv: Vec<Rect> = h
+                .invalidations()
+                .iter()
+                .chain(h.engine().invalidation_log())
+                .map(|(r, _)| *r)
+                .collect();
+            assert!(!inv.is_empty(), "{what}: nothing redrawn");
+            for r in &inv {
+                assert!(expected.contains_rect(r), "{what}: {r:?} outside {expected:?}");
+            }
+        };
+        h.press(center(b));
+        assert_eq!(get::<ButtonMatrix>(&h, m).selected_btn(), Some(4));
+        check(&h, "press");
+        assert_eq!(h.engine().transition_count(), 0, "items get no transitions");
+        h.advance(Duration::ms(100));
+        h.release();
+        check(&h, "release");
+        h.run_until_idle();
+        // Another press of the same button: still only that button.
+        h.press(center(b));
+        check(&h, "second press");
+        h.release();
+        h.run_until_idle();
+        h.assert_idle();
+    }
+}
+
+#[test]
 fn btnm_press_invalidates_only_button() {
-    // Without state styles on the node (the default theme's `Items | PRESSED` style makes the
-    // engine redraw the whole node on a state change; see the widget docs).
+    // Local `Items` styles without a theme.
     let mut h = EngineHarness::new(240, 160).no_theme();
     let screen = h.screen();
     let e = h.engine_mut();

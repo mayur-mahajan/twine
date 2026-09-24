@@ -2,9 +2,8 @@
 //! programs, wrapped in functions where they are fragments. If one of these stops compiling,
 //! the public API changed.
 //!
-//! NOTE(P16.S09): the widget sections (bar, slider, switch, checkbox, arc, led, line, spinner,
-//! image button, animimg) are added with their views; msgbox (§6 modal example), chart (§8),
-//! keyboard, textarea and the other complex widgets with their phases.
+//! NOTE(P19.S01): msgbox (§6 modal example), chart (§8) and the other complex widgets of §3.5
+//! (dropdown, roller, list, menu, tabview, …) are added with their views.
 // The guide's code is kept verbatim: public items without docs, unused parameters.
 #![allow(
     missing_docs,
@@ -217,6 +216,111 @@ fn s3_views_and_props() {
     );
     let _ = column(seq);
     cx.dispose();
+}
+
+// ---- §3.5 Widgets: basic controls, text entry ----------------------------------------------
+
+static FRAMES: [ImageSource; 2] = [
+    ImageSource::Symbol(symbols::PLAY),
+    ImageSource::Symbol(symbols::PAUSE),
+];
+static POINTS: [Point; 3] = [Point::new(0, 10), Point::new(20, 0), Point::new(40, 10)];
+static MAP: [&str; 5] = ["1", "2", "\n", "3", "4"];
+static KB_MAP: [&str; 3] = ["a", "b", "c"];
+static KB_CTRL: [BtnCtrl; 3] = [BtnCtrl::empty(), BtnCtrl::empty(), BtnCtrl::empty()];
+
+fn basic_controls(cx: Scope) -> impl View {
+    let level = cx.signal(40);
+    let low = cx.signal(10);
+    let on = cx.signal(false);
+    let pts = cx.signal(vec![Point::new(0, 0), Point::new(30, 20)]);
+    column((
+        image_button(
+            ImageSource::Symbol(symbols::PLAY),
+            ImageSource::Symbol(symbols::PLAY),
+        )
+        .checked_images(
+            ImageSource::Symbol(symbols::PAUSE),
+            ImageSource::Symbol(symbols::PAUSE),
+        )
+        .disabled_image(ImageSource::Symbol(symbols::STOP)),
+        animimg(&FRAMES, Duration::ms(500))
+            .repeat(Repeat::Infinite)
+            .playing(on),
+        arc(level)
+            .range(0..=100)
+            .angles(Angle::deg(0), Angle::deg(90))
+            .bg_angles(Angle::deg(0), Angle::deg(270))
+            .mode(ArcMode::Normal)
+            .rotation(Angle::deg(135))
+            .knob(true)
+            .change_rate(720),
+        bar(level)
+            .range(0..=100)
+            .mode(BarMode::Range)
+            .start_value(low)
+            .orientation(Orientation::Horizontal)
+            .animated(Duration::ms(200)),
+        slider(level)
+            .range(0..=100)
+            .mode(SliderMode::Range)
+            .left_value(low)
+            .orientation(Orientation::Auto),
+        switch(on).orientation(Orientation::Horizontal),
+        checkbox("Enabled", on),
+        led(on).color(Color::RED).brightness(200),
+        line(pts).y_invert(false).width(2).rounded(true).dash(4, 2),
+        line_static(&POINTS),
+        spinner().period(Duration::ms(1000)).arc_angle(Angle::deg(200)),
+    ))
+}
+
+fn text_entry(cx: Scope) -> impl View {
+    let text = cx.signal(String::new());
+    let qty = cx.signal(5);
+    let name = cx.signal(String::from("Ada"));
+    let ta: NodeRef<Textarea> = cx.node_ref();
+    column((
+        buttonmatrix(&MAP)
+            .ctrl(0, BtnCtrl::CHECKABLE)
+            .one_checked(true)
+            .on_select(|idx: usize| {}),
+        textarea(text)
+            .placeholder("Type here")
+            .one_line(true)
+            .password(false)
+            .max_length(32)
+            .accepted_chars("abc")
+            .cursor_click_pos(true)
+            .text_selection(true)
+            .on_ready(|| {})
+            .node_ref(ta),
+        keyboard(ta)
+            .mode(KeyboardMode::TextLower)
+            .custom_map(KeyboardMode::User1, &KB_MAP, &KB_CTRL)
+            .popovers(true),
+        spinbox(qty).range(0..=99).digits(2, 0).step(1).rollover(false),
+        spangroup((
+            span("Hello, "),
+            span(name)
+                .font(&fonts::MONTSERRAT_20)
+                .text_color(Color::BLUE)
+                .text_decor(TextDecor::UNDERLINE),
+        ))
+        .mode(SpanMode::Break)
+        .overflow(SpanOverflow::Ellipsis)
+        .indent(8)
+        .max_lines(2),
+    ))
+}
+
+#[test]
+fn s3_5_widgets() {
+    // The spinner runs forever: a few frames instead of waiting for idle.
+    let mut t = TestUi::new(320, 480).mount(basic_controls);
+    t.advance(Duration::ms(100));
+    let mut t = TestUi::new(320, 480).mount(text_entry);
+    t.advance(Duration::ms(100));
 }
 
 // ---- §3.3 Containers and §3.4 control flow ------------------------------------------------

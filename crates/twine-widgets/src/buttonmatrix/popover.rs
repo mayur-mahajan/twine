@@ -14,8 +14,6 @@ use twine_engine::{DrawCx, Engine, MeasureCx, NodeId, ObjFlags, State, Widget, W
 use twine_style::{Part, TextAlign};
 use twine_text::TextLayout;
 
-use crate::state_dsc::StateStyles;
-
 /// The class of the popover node: `"buttonmatrix_popover"`, no flags (not clickable, not
 /// scrollable, not focusable).
 pub static POPOVER_CLASS: WidgetClass =
@@ -41,10 +39,12 @@ impl Widget for Popover {
         }
         let area = cx.coords();
         let opa = e.opa_recursive(self.owner);
-        let s = StateStyles::new(e, self.owner, Part::Items, self.state);
-        let rect = s.rect_dsc(opa);
-        let mut text = s.text_dsc(opa);
-        cx.painter().rect(area, &rect.dsc());
+        let rect = e.rect_dsc_for_state(self.owner, Part::Items, self.state, opa);
+        let mut text = e.text_dsc_for_state(self.owner, Part::Items, self.state, opa);
+        let mut dsc = rect.dsc();
+        // Drawn in one go (LVGL `lv_draw_rect`).
+        dsc.border_post = false;
+        cx.painter().rect(area, &dsc);
         let mut l = TextLayout::new(&self.text, text.font);
         l.letter_space = text.letter_space;
         l.line_space = text.line_space;

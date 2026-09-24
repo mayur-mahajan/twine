@@ -233,3 +233,59 @@ fn transition_press_snapshots() {
         h.assert_panel_snapshot(name);
     }
 }
+
+#[test]
+fn dsc_for_state_skips_running_transitions() {
+    let (mut h, b) = scene(&PRESSED);
+    let t0 = h.now();
+    h.engine_mut().add_state(b, State::PRESSED);
+    h.update();
+    at(&mut h, t0, 50);
+    let e = h.engine();
+    assert!(e.transition_count() > 0);
+    // The current descriptor shows the transition midway...
+    let now = e.rect_dsc(b, Part::Main, Opa::COVER).base.bg_color;
+    assert_ne!(now, Color::BLUE);
+    assert_ne!(now, Color::RED);
+    // ...the state-resolved ones the end values of each state.
+    let pressed = e.rect_dsc_for_state(b, Part::Main, State::PRESSED, Opa::COVER);
+    assert_eq!(pressed.base.bg_color, Color::BLUE);
+    let default = e.rect_dsc_for_state(b, Part::Main, State::DEFAULT, Opa::COVER);
+    assert_eq!(default.base.bg_color, Color::RED);
+    assert_eq!(default.base.bg_opa, Opa::COVER);
+    h.run_until_idle();
+    let e = h.engine();
+    assert_eq!(
+        e.rect_dsc_for_state(b, Part::Main, State::PRESSED, Opa::P50).base,
+        e.rect_dsc(b, Part::Main, Opa::P50).base,
+        "same as the current descriptor in the current state"
+    );
+}
+
+#[test]
+fn dsc_for_state_applies_ancestor_recolor_and_own_state_recolor() {
+    let (mut h, b) = scene(&PRESSED_SAME);
+    let e = h.engine_mut();
+    let parent = e.tree().parent(b).unwrap();
+    e.set_local_prop(parent, Selector::MAIN, StyleProp::Recolor(Color::BLACK));
+    e.set_local_prop(parent, Selector::MAIN, StyleProp::RecolorOpa(Opa::P50));
+    let items = Selector::part(Part::Items);
+    e.set_local_prop(b, items, StyleProp::TextColor(Color::WHITE));
+    e.set_local_prop(
+        b,
+        Selector::state(State::CHECKED),
+        StyleProp::Recolor(Color::BLACK),
+    );
+    e.set_local_prop(
+        b,
+        Selector::state(State::CHECKED),
+        StyleProp::RecolorOpa(Opa::COVER),
+    );
+    let e = h.engine();
+    let plain = e.text_dsc_for_state(b, Part::Items, State::DEFAULT, Opa::COVER);
+    assert_eq!(plain.color, e.text_dsc(b, Part::Items, Opa::COVER).color);
+    assert_ne!(plain.color, Color::WHITE, "the parent's recolor darkens it");
+    // In `CHECKED` the node's own `Main` recolor (resolved in that state) covers it fully.
+    let checked = e.text_dsc_for_state(b, Part::Items, State::CHECKED, Opa::COVER);
+    assert_eq!(checked.color, Color::BLACK);
+}

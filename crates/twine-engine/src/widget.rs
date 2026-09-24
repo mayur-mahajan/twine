@@ -115,7 +115,9 @@ pub trait Widget: AsAny {
     /// [`EventResult::Consumed`] skips the user handlers. Default: [`EventResult::Continue`].
     ///
     /// While this runs the widget is taken out of its node: an event sent to the same node
-    /// from inside reaches only the built-in behaviour and the user handlers.
+    /// from inside reaches only the built-in behaviour and the user handlers, and they cannot
+    /// read the widget. Notify with [`EventCx::post`] instead (e.g. `ValueChanged`): the event
+    /// is dispatched right after this returns.
     fn event(&mut self, cx: &mut EventCx<'_>, ev: &Event) -> EventResult {
         let _ = (cx, ev);
         EventResult::Continue
@@ -210,6 +212,12 @@ pub struct WidgetClass {
     pub editable: Editable,
     /// Whether themes style it like its base class.
     pub theme_inheritable: bool,
+    /// Parts the widget draws as several items, each in its own state (with
+    /// [`Engine::rect_dsc_for_state`]), like the buttons (`Items`) of a button matrix. A state
+    /// change of the node ignores the styles of these parts: it neither redraws the whole node
+    /// for them nor starts their transitions. The widget invalidates the affected items itself
+    /// (on [`EventCode::StateChanged`](crate::EventCode::StateChanged)). Default: none.
+    pub item_parts: &'static [Part],
 }
 
 impl WidgetClass {
@@ -224,6 +232,7 @@ impl WidgetClass {
             group_def: GroupDef::Default,
             editable: Editable::Inherit,
             theme_inheritable: true,
+            item_parts: &[],
         }
     }
 
@@ -259,6 +268,13 @@ impl WidgetClass {
     #[must_use]
     pub const fn theme_inheritable(mut self, on: bool) -> Self {
         self.theme_inheritable = on;
+        self
+    }
+
+    /// With these item parts (see [`WidgetClass::item_parts`]).
+    #[must_use]
+    pub const fn item_parts(mut self, parts: &'static [Part]) -> Self {
+        self.item_parts = parts;
         self
     }
 }
@@ -377,6 +393,22 @@ impl<'a> MeasureCx<'a> {
             .text_dsc(self.node, part, self.engine.opa_recursive(self.node))
     }
 
+    /// The rectangle style of `part` as if the node were in `state`, as
+    /// [`DrawCx::rect_dsc_for_state`] would build it.
+    #[must_use]
+    pub fn rect_dsc_for_state(&self, part: Part, state: State) -> RectStyle {
+        self.engine
+            .rect_dsc_for_state(self.node, part, state, self.engine.opa_recursive(self.node))
+    }
+
+    /// The text style of `part` as if the node were in `state`, as
+    /// [`DrawCx::text_dsc_for_state`] would build it.
+    #[must_use]
+    pub fn text_dsc_for_state(&self, part: Part, state: State) -> TextDsc {
+        self.engine
+            .text_dsc_for_state(self.node, part, state, self.engine.opa_recursive(self.node))
+    }
+
     /// The image style of `part`, as [`DrawCx::image_dsc`] would build it.
     #[must_use]
     pub fn image_dsc(&self, part: Part) -> ImageDsc<'static> {
@@ -440,6 +472,13 @@ impl<'a> WidgetCx<'a> {
     pub fn invalidate_area(&mut self, area: Rect) {
         self.engine
             .invalidate_node_area(self.node, area, InvalidateReason::Explicit);
+    }
+
+    /// Sends an event to the node once the widget is back in it (see
+    /// [`Engine::post_event`]): the way a setter or `init` notifies handlers
+    /// (`ValueChanged`) so that they can read the widget.
+    pub fn post_event(&mut self, code: crate::EventCode, param: crate::EventParam) {
+        self.engine.post_event(self.node, code, param);
     }
 
     /// Marks the node's size/position for the layout pass.

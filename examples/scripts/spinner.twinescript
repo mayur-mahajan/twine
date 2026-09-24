@@ -1,0 +1,7 @@
+# Headless run of spinner (cargo xtask sim-smoke): the spinner at t = 0.5 s, then with the
+# performance overlay (F4) after two more seconds.
+wait 500
+shot spinner
+hotkey F4
+wait 2000
+shot spinner_perf

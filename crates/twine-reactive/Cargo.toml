@@ -23,7 +23,7 @@ log = ["twine-core/log"]
 [dependencies]
 twine-core = { path = "../twine-core" }
 critical-section = "1"
-portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }
+portable-atomic = { version = "1", default-features = false }
 heapless = { version = "0.8", default-features = false }
 defmt = { version = "1", optional = true }
 

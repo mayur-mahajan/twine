@@ -770,7 +770,7 @@ impl Arc {
             self.last_tick = now;
             self.set_value(&mut cx.widget_cx(), v);
             if self.value != old {
-                cx.send(node, EventCode::ValueChanged, EventParam::Value(v));
+                cx.post(node, EventCode::ValueChanged, EventParam::Value(v));
             }
         }
         if v == self.min || v == self.max {
@@ -785,7 +785,7 @@ impl Arc {
         self.set_value(&mut cx.widget_cx(), v);
         if self.value != old {
             let node = cx.node();
-            cx.send(node, EventCode::ValueChanged, EventParam::Value(self.value()));
+            cx.post(node, EventCode::ValueChanged, EventParam::Value(self.value()));
         }
     }
 
@@ -901,9 +901,9 @@ impl Widget for Arc {
                 Some(Key::Left | Key::Down) => self.step(cx, -1),
                 _ => {}
             },
-            // An encoder's rotation arrives as arrow keys too (engine); only other devices'
-            // rotations are applied here.
-            EventCode::Rotary if util::active_input_kind(cx.engine()) != Some(InputKind::Encoder) => {
+            // Encoders turn in edit mode as arrow keys (above); `Rotary` comes from other
+            // sources (e.g. a mouse wheel forwarded by the application).
+            EventCode::Rotary => {
                 if let EventParam::Rotary(d) = ev.param {
                     self.step(cx, d);
                 }

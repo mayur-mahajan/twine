@@ -78,7 +78,7 @@ impl DisplaySize {
 ///
 /// ```
 /// use twine_core::Color;
-/// use twine_theme::{DefaultTheme, Palette, Theme, ThemeMode};
+/// use twine_theme::{DefaultTheme, Palette, ThemeHook, ThemeMode};
 ///
 /// let dark = DefaultTheme::dark().with_dpi(160);
 /// assert_eq!(dark.mode(), ThemeMode::Dark);
@@ -430,6 +430,12 @@ impl ThemeHook for DefaultTheme {
             ThemeMode::Dark => "default-dark",
         }
     }
+    fn color_primary(&self) -> Color {
+        self.primary
+    }
+    fn color_secondary(&self) -> Color {
+        self.secondary
+    }
 }
 
 impl Theme for DefaultTheme {
@@ -438,11 +444,5 @@ impl Theme for DefaultTheme {
     }
     fn font_large(&self) -> &'static Font {
         self.font_large
-    }
-    fn color_primary(&self) -> Color {
-        self.primary
-    }
-    fn color_secondary(&self) -> Color {
-        self.secondary
     }
 }

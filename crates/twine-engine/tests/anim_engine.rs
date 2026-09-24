@@ -450,3 +450,16 @@ fn anim_gallery_scene_idle_when_paused() {
     }
     assert!(!h.update().is_idle());
 }
+
+#[test]
+fn timer_is_paused_reports_pause_state() {
+    let mut e = Engine::new(twine_engine::EngineConfig::default()).unwrap();
+    let t = e.timer_add(Duration::ms(10), |_, _| {});
+    assert!(!e.timer_is_paused(t));
+    assert!(e.timer_pause(t));
+    assert!(e.timer_is_paused(t));
+    assert!(e.timer_resume(t));
+    assert!(!e.timer_is_paused(t));
+    assert!(e.timer_remove(t));
+    assert!(!e.timer_is_paused(t), "unknown timers are not paused");
+}

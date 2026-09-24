@@ -45,9 +45,18 @@ pub const NOSTD_FEATURE_SETS: &[(&str, &str)] = &[
     ("twine-core", "defmt"),
     ("twine-hal", "async"),
     ("twine-hal", "defmt"),
-    ("twine-drivers", "async"),
-    ("twine-drivers", "defmt,async"),
-    ("twine-drivers", "log"),
+    ("twine-drivers", "all"),
+    ("twine-drivers", "all,async"),
+    ("twine-drivers", "all,defmt,async"),
+    ("twine-drivers", "all,log"),
+    ("twine-drivers", "ili9341,xpt2046,async"),
+    ("twine-drivers", "co5300,ft6x36,async"),
+    ("twine-drivers", "ssd1306,i2c,encoder"),
+    ("twine-view", "async"),
+    ("twine-embassy", "defmt"),
+    ("twine-embassy", "log"),
+    ("twine-demos", "async"),
+    ("twine-demos", "async,defmt"),
     ("twine-reactive", "log"),
     ("twine-reactive", "defmt"),
     ("twine-anim", "log"),
@@ -105,6 +114,24 @@ pub const NOSTD_TARGET_FEATURE_SETS: &[(&str, &str, &str)] = &[
     ("twine-accel-stm32", "stm32h743zi,log", "thumbv7em-none-eabihf"),
 ];
 
+/// Targets without atomic compare-and-swap. The library crates leave `portable-atomic`'s
+/// fallback to the application; these builds pick the single-core one.
+pub const NO_CAS_TARGETS: &[&str] = &["thumbv6m-none-eabi", "riscv32imc-unknown-none-elf"];
+
+/// A `cargo` command for building for `target` (with the `portable-atomic` single-core cfg on
+/// targets without compare-and-swap).
+fn target_cargo(target: &str) -> std::process::Command {
+    let mut cmd = cargo();
+    if NO_CAS_TARGETS.contains(&target) {
+        let var = format!(
+            "CARGO_TARGET_{}_RUSTFLAGS",
+            target.replace(['-', '.'], "_").to_ascii_uppercase()
+        );
+        cmd.env(var, "--cfg portable_atomic_unsafe_assume_single_core");
+    }
+    cmd
+}
+
 /// Runs all builds; fails on the first error or on a missing target.
 pub fn run() -> R {
     let missing: Vec<_> = TARGETS.iter().filter(|t| !has_target(t)).collect();
@@ -121,18 +148,18 @@ pub fn run() -> R {
         .into());
     }
     for t in TARGETS {
-        let mut cmd = cargo();
+        let mut cmd = target_cargo(t);
         cmd.args(["build", "--target", t]);
         for c in NOSTD_CRATES {
             cmd.args(["-p", c]);
         }
         run_cmd(&mut cmd)?;
         for (krate, features) in NOSTD_FEATURE_SETS {
-            run_cmd(cargo().args(["build", "--target", t, "-p", krate, "--features", features]))?;
+            run_cmd(target_cargo(t).args(["build", "--target", t, "-p", krate, "--features", features]))?;
         }
     }
     for (krate, features, t) in NOSTD_TARGET_FEATURE_SETS {
-        run_cmd(cargo().args(["build", "--target", t, "-p", krate, "--features", features]))?;
+        run_cmd(target_cargo(t).args(["build", "--target", t, "-p", krate, "--features", features]))?;
     }
     println!(
         "nostd: {} crates built for {} targets",

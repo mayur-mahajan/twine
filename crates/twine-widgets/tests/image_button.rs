@@ -224,3 +224,28 @@ fn snapshot_imgbtn() {
         h.assert_snapshot(&format!("imgbtn_{name}"));
     }
 }
+
+#[test]
+fn imgbtn_symbol_source_sized_by_its_text() {
+    let (mut h, b) = scene(Mode::Light);
+    with(&mut h, b, |w: &mut ImageButton, cx| {
+        w.set_src(
+            cx,
+            S::Released,
+            None,
+            Some(ImageSource::Symbol(twine_text::symbols::POWER)),
+            None,
+        );
+    });
+    h.run_until_idle();
+    let size = h.engine().coords(b).size();
+    assert!(
+        size.w > 4 && size.h > 4,
+        "a symbol image button is not 0 × 0: {size:?}"
+    );
+    // The symbol is drawn (some pixel differs from the white screen).
+    let c = h.engine().coords(b);
+    let drawn = (c.x0..c.x1).any(|x| (c.y0..c.y1).any(|y| h.pixel(x as u32, y as u32) != Color::WHITE));
+    assert!(drawn);
+    h.assert_idle();
+}

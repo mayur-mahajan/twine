@@ -10,8 +10,20 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[package.metadata.docs.rs]
+features = ["all", "async", "testkit"]
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = []
+## Every driver and interface (CI, documentation, host tests).
+all = [
+    "spi", "i2c", "i80", "qspi", "mipi-dcs",
+    "ili9341", "ili9342", "ili9488", "st7789", "st7735", "st7796", "gc9a01", "jd9853",
+    "co5300", "sh8601", "rm67162", "ssd1306", "sh1106",
+    "xpt2046", "ft6x36", "gt911", "cst816s", "stmpe811", "axs5106l",
+    "encoder", "keypad",
+]
 ## Async variants (`embedded-hal-async`): `AsyncDcsInterface`, `AsyncMipiDcs`, async OLED
 ## drivers and `AsyncInputWait` for IRQ-driven input drivers.
 async = ["dep:embedded-hal-async", "twine-hal/async"]
@@ -22,17 +34,77 @@ defmt = ["dep:defmt", "twine-core/defmt", "twine-hal/defmt"]
 ## Log through the `log` crate.
 log = ["twine-core/log", "twine-hal/log"]
 
+#! ### Bus interfaces
+## 4-wire SPI with a DC pin (`SpiInterface`).
+spi = []
+## I2C with control bytes (`I2cInterface`, OLEDs).
+i2c = []
+## Intel 8080 parallel bus bit-banged on GPIOs (`I80Interface8`/`I80Interface16`).
+i80 = []
+## Quad SPI of AMOLED controllers (`QspiInterface`, `QspiBus`).
+qspi = []
+## The generic MIPI DCS panel driver (`mipi_dcs`), for panels described by your own `PanelSpec`.
+mipi-dcs = []
+
+#! ### Displays
+## ILI9341 240 × 320 (SPI).
+ili9341 = ["mipi-dcs", "spi"]
+## ILI9342C 320 × 240 (SPI).
+ili9342 = ["mipi-dcs", "spi"]
+## ILI9488 320 × 480, RGB666 (SPI).
+ili9488 = ["mipi-dcs", "spi"]
+## ST7789 240 × 320 / 240 × 240 / 135 × 240 (SPI).
+st7789 = ["mipi-dcs", "spi"]
+## ST7735R/S 128 × 160, 80 × 160 (SPI).
+st7735 = ["mipi-dcs", "spi"]
+## ST7796S 320 × 480 (SPI).
+st7796 = ["mipi-dcs", "spi"]
+## GC9A01 240 × 240 round (SPI).
+gc9a01 = ["mipi-dcs", "spi"]
+## JD9853 172 × 320 IPS (SPI).
+jd9853 = ["mipi-dcs", "spi"]
+## CO5300 AMOLED (QSPI).
+co5300 = ["mipi-dcs", "qspi"]
+## SH8601 AMOLED (QSPI).
+sh8601 = ["mipi-dcs", "qspi"]
+## RM67162 AMOLED (QSPI).
+rm67162 = ["mipi-dcs", "qspi"]
+## SSD1306 monochrome OLED (pass an `I2cInterface` or `SpiInterface`).
+ssd1306 = []
+## SH1106 monochrome OLED (pass an `I2cInterface` or `SpiInterface`).
+sh1106 = []
+
+#! ### Touch and input
+## XPT2046 / ADS7843 resistive touch (SPI).
+xpt2046 = []
+## Focaltech FT6x36, FT5x06 and FT3168 capacitive touch (I2C).
+ft6x36 = []
+## Goodix GT911 capacitive touch (I2C).
+gt911 = []
+## Hynitron CST816S capacitive touch (I2C).
+cst816s = []
+## AXS5106L capacitive touch (I2C).
+axs5106l = []
+## ST STMPE811 resistive touch controller (I2C).
+stmpe811 = []
+## Rotary encoder on GPIOs (quadrature decoder + button).
+encoder = []
+## Key matrix on GPIOs.
+keypad = []
+
 [dependencies]
 twine-core = { path = "../twine-core" }
 twine-hal = { path = "../twine-hal" }
 embedded-hal = "1"
 embedded-hal-async = { version = "1", optional = true }
 heapless = { version = "0.8", default-features = false }
-portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }
+portable-atomic = { version = "1", default-features = false }
 defmt = { version = "1", optional = true }
 
 [dev-dependencies]
 # Unit tests, doc-tests and integration tests always see the async code and the recorders.
-twine-drivers = { path = ".", features = ["async", "testkit"] }
+twine-drivers = { path = ".", features = ["all", "async", "testkit"] }
 critical-section = { version = "1", features = ["std"] }
 proptest = "1"
+twine-render = { path = "../twine-render" }
+twine-engine = { path = "../twine-engine", features = ["color-rgb565-swapped"] }

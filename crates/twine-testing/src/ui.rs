@@ -253,6 +253,57 @@ impl TestUi {
         self.h_mut().type_text(s);
     }
 
+    /// Types `s` by tapping the keys of the on-screen keyboard `kb` (a
+    /// [`Keyboard`](twine_widgets::keyboard::Keyboard) node), switching its layout with the
+    /// mode keys (`abc`, `ABC`, `1#`) when a character is on another layout. `'\n'` taps the
+    /// new-line key. Each tap is followed by a short wait so a key never counts as a long
+    /// press or a double click.
+    ///
+    /// # Panics
+    /// If `kb` is not a keyboard or a character has no key on any layout.
+    pub fn keyboard_type(&mut self, kb: NodeId, s: &str) {
+        use twine_widgets::keyboard::{MODE_SPECIAL, MODE_TEXT_LOWER, MODE_TEXT_UPPER};
+        let mut buf = [0u8; 4];
+        for c in s.chars() {
+            let label: &str = if c == '\n' {
+                twine_text::symbols::NEW_LINE
+            } else {
+                c.encode_utf8(&mut buf)
+            };
+            let mut tried: Vec<&str> = Vec::new();
+            loop {
+                if let Some(p) = self.keyboard_key(kb, label) {
+                    self.tap(p);
+                    self.advance(Duration::ms(50));
+                    break;
+                }
+                // Switch to a layout not tried yet for this character.
+                let next = [MODE_TEXT_LOWER, MODE_TEXT_UPPER, MODE_SPECIAL]
+                    .into_iter()
+                    .find(|m| !tried.contains(m) && self.keyboard_key(kb, m).is_some());
+                let Some(mode) = next else {
+                    panic!("keyboard_type: no key for {c:?} on any layout");
+                };
+                tried.push(mode);
+                let p = self.keyboard_key(kb, mode).expect("mode key");
+                self.tap(p);
+                self.advance(Duration::ms(50));
+            }
+        }
+    }
+
+    /// The center of the key labelled `label` on keyboard `kb`'s current layout.
+    fn keyboard_key(&self, kb: NodeId, label: &str) -> Option<Point> {
+        let e = self.engine();
+        let k = e
+            .widget::<twine_widgets::keyboard::Keyboard>(kb)
+            .expect("keyboard_type: not a keyboard");
+        let m = k.buttonmatrix();
+        let i = (0..m.btn_count()).find(|&i| m.btn_text(i) == Some(label))?;
+        let r = m.btn_area(&twine_engine::MeasureCx::new(&e, kb), i)?;
+        Some(Point::new((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2))
+    }
+
     /// Rotates the encoder by `diff` steps.
     pub fn encoder(&mut self, diff: i16) {
         self.h_mut().encoder(diff);

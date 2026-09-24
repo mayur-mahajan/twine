@@ -11,7 +11,9 @@ well tested. Please read them before opening a pull request.
 - **Optional tools** (the checks that need them are skipped with a warning if missing):
   - nightly toolchain with Miri: `rustup toolchain install nightly --component miri`
   - coverage: `cargo install cargo-llvm-cov`
-  - ESP32-S3 firmware builds: [`espup`](https://github.com/esp-rs/espup)
+  - Xtensa (ESP32, ESP32-S3) firmware builds: [`espup`](https://github.com/esp-rs/espup)
+    (`espup install`); `cargo xtask firmware` builds the example firmware in `firmware/` and
+    skips examples whose toolchain or target is missing
 - **Simulator**: `cargo xtask sim <example>` opens a desktop window (pure Rust, no SDL needed).
   Set `TWINE_SIM_HEADLESS=1` to run without a window and write PNG screenshots instead.
 - **Logs**: `RUST_LOG=twine=debug` (or e.g. `twine::refresh=trace`) in the simulator and tests.
@@ -22,7 +24,8 @@ Every PR must meet this **Definition of Done**:
 
 1. **`cargo xtask ci` passes.** It runs formatting, clippy with `-D warnings`, all tests,
    `no_std` builds for every embedded target, rustdoc, the layering check, the work-marker check,
-   the generated-fonts, generated-images and style-property-table checks, a benchmark build, snapshot tests and Miri. Use
+   the generated-fonts, generated-images and style-property-table checks, a benchmark build, snapshot tests, Miri and
+   the example firmware builds. Use
    `cargo xtask ci --quick` while iterating.
 2. **Tests cover the change.** New behaviour has tests; bug fixes add a regression test named
    `regression_<short_description>` that fails without the fix.

@@ -13,6 +13,14 @@
 //! `XL`, `YH`, `YL`. Because the controller does not answer while asleep, a failed read is
 //! reported as "released" and logged at debug level only.
 //!
+//! # Wiring
+//!
+//! | Controller pin | Driver argument |
+//! |----------------|-----------------|
+//! | `SDA`, `SCL` | `i2c`, an `embedded_hal::i2c::I2c` (address `0x15`) |
+//! | `INT`/`IRQ` | `irq`: `Some(InputPin)` (`+ Wait` for the async wake-up), or `None` to poll |
+//! | `RST` | not driven by the driver: hold it high from your firmware; the chip sleeps between touches and does not answer then |
+//!
 //! ```
 //! use twine_drivers::touch::{Cst816s, TouchTransform};
 //! use twine_drivers::testkit::Recorder;

@@ -37,8 +37,8 @@ pub type SliderMode = BarMode;
 ///
 /// - **Pointer**: the value follows the pointer once it moved `scroll_limit` pixels (or
 ///   jumps to the point of a tap on release), exactly like LVGL; `ValueChanged` is sent only
-///   when the value changes, with the new value as [`EventParam::Value`] (handlers of this
-///   event cannot read the slider itself: it is busy handling the input). In
+///   when the value changes, with the new value as [`EventParam::Value`] (handlers may also
+///   read the slider: the event is dispatched once the slider is done). In
 ///   [`SliderMode::Range`] the knob nearer to the pointer is
 ///   dragged. A right-to-left base direction reverses a horizontal slider.
 /// - **Keys**: `Right`/`Up` add 1, `Left`/`Down` subtract 1 (on the left knob when it has the
@@ -346,7 +346,7 @@ impl Slider {
             ObjFlags::SCROLL_CHAIN_HOR
         };
         wcx.engine_mut().set_flag(node, flag, false);
-        cx.send(node, EventCode::ValueChanged, EventParam::Value(v));
+        cx.post(node, EventCode::ValueChanged, EventParam::Value(v));
     }
 
     /// Changes the focused knob's value by `d` for a key (LVGL `LV_EVENT_KEY`); sends
@@ -368,7 +368,7 @@ impl Slider {
             } else {
                 self.bar.value
             };
-            cx.send(node, EventCode::ValueChanged, EventParam::Value(v));
+            cx.post(node, EventCode::ValueChanged, EventParam::Value(v));
         }
     }
 
@@ -501,9 +501,9 @@ impl Widget for Slider {
                 Some(Key::Left | Key::Down) => self.step(cx, -1),
                 _ => {}
             },
-            // The engine follows an encoder's `Rotary` with arrow keys (handled above); only
-            // other devices' rotations (mouse wheels) are applied here.
-            EventCode::Rotary if util::active_input_kind(cx.engine()) != Some(InputKind::Encoder) => {
+            // Encoders turn in edit mode as arrow keys (above); `Rotary` comes from other
+            // sources (e.g. a mouse wheel forwarded by the application).
+            EventCode::Rotary => {
                 if let EventParam::Rotary(d) = ev.param {
                     self.step(cx, d);
                 }

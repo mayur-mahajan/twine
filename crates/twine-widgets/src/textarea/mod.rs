@@ -133,8 +133,10 @@ struct SelState {
 ///   works at the cursor, a **character** index; the label's buffer is edited in place, so
 ///   typing reuses its capacity. Before inserting, the `Insert` event is sent and the
 ///   [insert filter](Self::set_insert_filter) may replace or cancel the text; after every
-///   change `ValueChanged` is sent. Its handlers read the text with [`text_of`] (the
-///   textarea itself is busy while it sends the event).
+///   change `ValueChanged` is sent, once the textarea is done: its handlers can read the
+///   widget (or use [`text_of`]). `Insert` carries the text as
+///   [`EventParam::Text`] (read it with
+///   [`EventCx::text`](twine_engine::EventCx::text); a deletion sends [`DELETE_TEXT`]).
 /// - **Constraints**: [`max_length`](Self::set_max_length) in characters, an
 ///   [accepted characters](Self::set_accepted_chars) list, and
 ///   [one-line mode](Self::set_one_line) (line breaks are dropped, `Enter` sends `Ready`, the
@@ -824,7 +826,8 @@ impl Textarea {
 }
 
 /// The text of the textarea or spinbox `id`, read from its label, so it also works while the
-/// widget itself is busy (in handlers of the `ValueChanged` and `Insert` events it sends).
+/// widget itself is busy (e.g. in handlers of the `Insert` event it sends, or of a
+/// `ValueChanged` sent to a spinbox's textarea through its own handlers).
 ///
 /// ```
 /// use twine_testing::EngineHarness;
@@ -916,8 +919,19 @@ impl Textarea {
             return false;
         }
         match ev.code {
-            EventCode::Focused => self.start_blink(&mut cx.widget_cx()),
-            EventCode::Defocused | EventCode::Leave => self.stop_blink(&mut cx.widget_cx()),
+            // Gaining or losing `FOCUSED` by any means (focus groups, a keyboard attaching,
+            // `add_state` from application code) starts or stops the blink.
+            EventCode::StateChanged => {
+                let prev = ev.prev_state().unwrap_or_default();
+                let mut wcx = cx.widget_cx();
+                let now = wcx.state();
+                if now.contains(State::FOCUSED) && !prev.contains(State::FOCUSED) {
+                    self.start_blink(&mut wcx);
+                } else if !now.contains(State::FOCUSED) && prev.contains(State::FOCUSED) {
+                    self.stop_blink(&mut wcx);
+                }
+            }
+            EventCode::Leave => self.stop_blink(&mut cx.widget_cx()),
             EventCode::Key => {
                 if let Some(k) = ev.key() {
                     self.key(cx, k);

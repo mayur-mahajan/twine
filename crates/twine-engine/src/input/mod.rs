@@ -36,7 +36,9 @@ use crate::{DisplayId, Engine, EngineError, EventCode, EventParam, GroupId, Node
 /// Most input devices registered at once.
 pub const MAX_INPUTS: usize = 8;
 
-/// Keypad events read in one [`Engine::read_inputs`] call while the device reports `more`.
+/// Keypad events read in one [`Engine::read_inputs`] call while the device reports `more`;
+/// the rest stays queued in the driver and is read at the next update, which is requested
+/// at once (nothing is dropped).
 const MAX_KEYPAD_READS: usize = 16;
 
 /// Handle of an input device registered with [`Engine::add_input`]. Printed as `i0`, `i1`, ….
@@ -523,6 +525,7 @@ impl Engine {
             }
             st.notified = false;
             let serial = st.serial;
+            let mut more = false;
             for _ in 0..MAX_KEYPAD_READS {
                 let Some(st) = self.inputs[idx].as_mut().filter(|s| s.serial == serial) else {
                     break;
@@ -533,7 +536,8 @@ impl Engine {
                     st.last_data = Some(data);
                 }
                 self.process_input(idx, serial, data, now);
-                if !matches!(data, InputData::Keypad(k) if k.more) {
+                more = matches!(data, InputData::Keypad(k) if k.more);
+                if !more {
                     break;
                 }
             }
@@ -541,6 +545,12 @@ impl Engine {
                 continue;
             };
             let active = st.proc.as_ref().is_some_and(Proc::is_active);
+            if more {
+                // Events left in the driver's queue: read on at the next update, right away.
+                twine_core::debug!(target: "twine::input", "{:?}: more than {} keypad events, continuing next update", st.id, MAX_KEYPAD_READS);
+                st.next_read = Some(now);
+                continue;
+            }
             match hint {
                 PollHint::Periodic => st.next_read = Some(now + period),
                 PollHint::Interrupt if active => st.next_read = Some(now + period),

@@ -18,8 +18,19 @@
 //! Init tables and rotation mapping follow Adafruit-ST7735-Library (`Rcmd1`, `Rcmd3`,
 //! `setRotation`; BSD license, <https://github.com/adafruit/Adafruit-ST7735-Library>), minus
 //! the commands the generic init sends (`SWRESET`, `SLPOUT`, `INVOFF`, `MADCTL`, `COLMOD`,
-//! `DISPON`) and the address commands of `Rcmd2*` (every flush sets its window). Rotation:
-//! `Deg0 = MX|MY`, `Deg90 = MY|MV`, `Deg180 = —`, `Deg270 = MX|MV`.
+//! `DISPON`) and the address commands of `Rcmd2*` (every flush sets its window). Rotation
+//! (Adafruit's values with 90° and 270° exchanged to match the engine's rotation direction):
+//! `Deg0 = MX|MY`, `Deg90 = MX|MV`, `Deg180 = —`, `Deg270 = MY|MV`.
+//!
+//! # Wiring
+//!
+//! | Panel pin | Driver argument |
+//! |-----------|-----------------|
+//! | `SCK`, `SDI`/`MOSI` (`SDO`/`MISO` is not needed) | the bus of `spi`, an `embedded_hal(_async)::spi::SpiDevice` (use a DMA-capable async one to overlap transfers with rendering) |
+//! | `CS` | the chip select owned by `spi` |
+//! | `DC`/`RS` | `dc`, any `OutputPin` |
+//! | `RESET` | `rst`: `Some(OutputPin)`, or `None` when it is tied to the MCU reset (a software reset is sent instead) |
+//! | `LED`/`BL` | not driven by the driver: switch it (or PWM it) from your firmware |
 //!
 //! ```
 //! use twine_drivers::st7735::{self, ST7735R_GREENTAB};
@@ -62,13 +73,14 @@ static ST7735R_INIT: [InitOp; 14] = [
     InitOp::DelayMs(10),
 ];
 
-/// Adafruit's ST7735 rotation mapping (`setRotation`) plus `extra` (RGB/BGR).
+/// Adafruit's ST7735 rotation mapping (`setRotation`, 90°/270° exchanged to match the
+/// engine's rotation direction) plus `extra` (RGB/BGR).
 const fn st7735_madctl(extra: Madctl) -> [Madctl; 4] {
     [
         extra.union(Madctl::MX).union(Madctl::MY),
-        extra.union(Madctl::MY).union(Madctl::MV),
-        extra,
         extra.union(Madctl::MX).union(Madctl::MV),
+        extra,
+        extra.union(Madctl::MY).union(Madctl::MV),
     ]
 }
 
@@ -83,6 +95,8 @@ pub static ST7735R_REDTAB: PanelSpec = PanelSpec {
     offset_y: 0,
     madctl: st7735_madctl(Madctl::BGR),
     colmod: 0x05,
+    align: 1,
+    sw_rotation: false,
     invert: false,
     init: &ST7735R_INIT,
 };

@@ -97,6 +97,11 @@ impl StyleList {
         }
     }
 
+    /// Removes and returns the entry at `i`.
+    pub(crate) fn remove_at(&mut self, i: usize) -> StyleEntry {
+        self.0.remove(i)
+    }
+
     /// Removes entries for which `f` is true; returns how many.
     pub(crate) fn remove_where(&mut self, mut f: impl FnMut(&StyleEntry) -> bool) -> usize {
         let before = self.0.len();
@@ -383,7 +388,9 @@ impl Engine {
     /// Adds (`on`) or removes states. Idempotent; when the change selects the same style
     /// entries as before nothing is invalidated (LVGL `lv_obj_style_state_compare`).
     /// Otherwise the style transitions of the new state start (see `TransitionDsc`; only on
-    /// nodes that were drawn already).
+    /// nodes that were drawn already). Every actual change sends
+    /// [`StateChanged`](crate::EventCode::StateChanged) with the previous state (posted: a
+    /// busy widget gets it once it is back, see [`post_event`](Self::post_event)).
     pub fn set_state(&mut self, id: NodeId, s: State, on: bool) {
         let Some(n) = self.tree.node(id) else {
             warn_missing("set_state", id);
@@ -394,7 +401,8 @@ impl Engine {
         if old == new {
             return;
         }
-        let (cmp, inherited) = state_compare(n.styles.entries(), old, new);
+        let items = n.class().item_parts;
+        let (cmp, inherited) = state_compare(n.styles.entries(), old, new, items);
         twine_core::trace!(target: "twine::style", "{} state {:?} -> {:?}: {:?}", fmt_node_id(id), old, new, cmp);
         if let Some(n) = self.tree.node_mut(id) {
             n.state = new;
@@ -419,6 +427,7 @@ impl Engine {
         if inherited && cmp != StateCmp::Layout {
             self.bump_epoch_and_invalidate_descendants(id);
         }
+        self.post_event(id, crate::EventCode::StateChanged, crate::EventParam::State(old));
     }
 
     /// Refreshes every node that uses the shared style `style` after it was mutated (scans the
@@ -480,14 +489,18 @@ impl Engine {
     }
 }
 
-/// Compares which entries apply in `old` and `new` state. Returns the strongest effect and
+/// Compares which entries apply in `old` and `new` state, ignoring entries of the class's
+/// `item_parts` (the widget redraws those items itself). Returns the strongest effect and
 /// whether an inherited property is involved.
-fn state_compare(entries: &[StyleEntry], old: State, new: State) -> (StateCmp, bool) {
+fn state_compare(entries: &[StyleEntry], old: State, new: State, item_parts: &[Part]) -> (StateCmp, bool) {
     let applies = |sel: &Selector, st: State| sel.state == State::ANY || sel.state.bits() & !st.bits() == 0;
     let mut res = StateCmp::Same;
     let mut inherited = false;
     for e in entries {
-        if e.kind == EntryKind::Transition || applies(&e.selector, old) == applies(&e.selector, new) {
+        if e.kind == EntryKind::Transition
+            || item_parts.contains(&e.selector.part)
+            || applies(&e.selector, old) == applies(&e.selector, new)
+        {
             continue;
         }
         for_each_prop(&e.style, |p| {
@@ -571,15 +584,29 @@ mod tests {
         let d = State::DEFAULT;
         let p = State::PRESSED;
         assert_eq!(
-            state_compare(&[e(&PRESSED_COLOR)], d, p),
+            state_compare(&[e(&PRESSED_COLOR)], d, p, &[]),
             (StateCmp::Redraw, false)
         );
-        assert_eq!(state_compare(&[e(&PRESSED_PAD)], d, p).0, StateCmp::Layout);
-        assert_eq!(state_compare(&[e(&PRESSED_SHADOW)], d, p).0, StateCmp::ExtDraw);
+        assert_eq!(state_compare(&[e(&PRESSED_PAD)], d, p, &[]).0, StateCmp::Layout);
         assert_eq!(
-            state_compare(&[e(&PRESSED_COLOR)], d, State::FOCUSED).0,
+            state_compare(&[e(&PRESSED_SHADOW)], d, p, &[]).0,
+            StateCmp::ExtDraw
+        );
+        assert_eq!(
+            state_compare(&[e(&PRESSED_COLOR)], d, State::FOCUSED, &[]).0,
             StateCmp::Same
         );
+        // Entries of item parts are the widget's business.
+        let items = StyleEntry::new(
+            Selector::part(Part::Items).with_state(State::PRESSED),
+            &PRESSED_SHADOW,
+            EntryKind::Theme,
+        );
+        assert_eq!(
+            state_compare(core::slice::from_ref(&items), d, p, &[]).0,
+            StateCmp::ExtDraw
+        );
+        assert_eq!(state_compare(&[items], d, p, &[Part::Items]).0, StateCmp::Same);
         assert_eq!(length_px(StyleValue::Length(Length::Pct(50)), 30), 15);
         assert_eq!(length_px(StyleValue::Length(Length::Px(7)), 30), 7);
     }

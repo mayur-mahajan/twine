@@ -10,8 +10,10 @@ use twine_core::{Color, Opa, Rect};
 use twine_render::{
     ArcDsc, BlendMode, BorderSide, GradKind, GradStop, Gradient, ImageDsc, LineDsc, RectDsc, ShadowDsc,
 };
-use twine_style::{GradDir, Part, PropId, TextAlign, TextDecor};
-use twine_text::TextDsc;
+use twine_style::{
+    GradDir, Length, Part, PropId, ResolveOptions, State, StyleValue, TextAlign, TextDecor, resolve_with,
+};
+use twine_text::{Font, TextDsc};
 
 use crate::style_list::length_px;
 use crate::{Engine, NodeId};
@@ -92,6 +94,72 @@ fn over32(fg: Color32, bg: Color32) -> Color32 {
     r
 }
 
+/// Resolves the properties of one node for a descriptor: in its current state (through the
+/// engine's resolver and caches), or as if it were in another state with transitions skipped
+/// (LVGL sets `obj->state` and `skip_trans` temporarily, e.g. for button matrix buttons).
+#[derive(Clone, Copy)]
+struct Props<'a> {
+    e: &'a Engine,
+    id: NodeId,
+    state: Option<State>,
+}
+
+impl Props<'_> {
+    fn get(&self, part: Part, p: PropId) -> StyleValue {
+        match self.state {
+            None => self.e.style_prop(self.id, part, p),
+            Some(state) => resolve_with(
+                &self.e.tree,
+                self.id,
+                part,
+                p,
+                &self.e.style_defaults(),
+                ResolveOptions {
+                    state: Some(state),
+                    skip_transitions: true,
+                },
+            ),
+        }
+    }
+
+    fn i32(&self, part: Part, p: PropId) -> i32 {
+        let v = self.get(part, p);
+        v.as_i32()
+            .or_else(|| match v.as_length() {
+                Some(Length::Px(x)) => Some(x),
+                _ => None,
+            })
+            .unwrap_or(0)
+    }
+
+    fn color(&self, part: Part, p: PropId) -> Color {
+        self.get(part, p).as_color().unwrap_or(Color::BLACK)
+    }
+
+    fn opa(&self, part: Part, p: PropId) -> Opa {
+        self.get(part, p).as_opa().unwrap_or(Opa::COVER)
+    }
+
+    fn font(&self, part: Part) -> &'static Font {
+        self.get(part, PropId::TextFont)
+            .get::<&'static Font>()
+            .unwrap_or(self.e.style_defaults().font)
+    }
+
+    /// The node's own `Main` recolor (cached in the current state).
+    fn main_recolor(&self) -> (Color, Opa) {
+        if self.state.is_none() {
+            let m = self.e.cached_main(self.id);
+            (m.recolor, m.recolor_opa)
+        } else {
+            (
+                self.color(Part::Main, PropId::Recolor),
+                self.opa(Part::Main, PropId::RecolorOpa),
+            )
+        }
+    }
+}
+
 impl Engine {
     /// LVGL `lv_obj_style_apply_recolor`: `c` with `id`'s recolor of `part` under it.
     fn apply_recolor(&self, id: NodeId, part: Part, c: Color32) -> Color32 {
@@ -114,21 +182,34 @@ impl Engine {
     /// LVGL `lv_obj_get_style_recolor_recursive`: the recolor of `part` of `id` combined with
     /// the `Main` recolors of `id` (for other parts) and of every ancestor.
     pub(crate) fn recolor_recursive(&self, id: NodeId, part: Part) -> Color32 {
+        self.recolor_with(
+            Props {
+                e: self,
+                id,
+                state: None,
+            },
+            part,
+        )
+    }
+
+    fn recolor_with(&self, props: Props<'_>, part: Part) -> Color32 {
+        let id = props.id;
         let (color, opa) = if part == Part::Main {
-            let m = self.cached_main(id);
-            (m.recolor, m.recolor_opa)
+            props.main_recolor()
         } else {
             (
-                self.style_color(id, part, PropId::Recolor),
-                self.style_opa(id, part, PropId::RecolorOpa),
+                props.color(part, PropId::Recolor),
+                props.opa(part, PropId::RecolorOpa),
             )
         };
         let mut r = Color32 { color, alpha: opa.0 };
-        let mut cur = if part == Part::Main {
-            self.tree.parent(id)
-        } else {
-            Some(id)
-        };
+        if part != Part::Main {
+            let (color, opa) = props.main_recolor();
+            if opa.0 > 0 {
+                r = over32(r, Color32 { color, alpha: opa.0 });
+            }
+        }
+        let mut cur = self.tree.parent(id);
         while let Some(c) = cur {
             r = self.apply_recolor(c, Part::Main, r);
             cur = self.tree.parent(c);
@@ -179,19 +260,64 @@ impl Engine {
     /// `opa` and every color recolored.
     #[must_use]
     pub fn rect_dsc(&self, id: NodeId, part: Part, opa: Opa) -> RectStyle {
-        let (bg_color, bg_opa, radius, border_width, border_color) = if part == Part::Main {
-            let m = self.cached_main(id);
-            (m.bg_color, m.bg_opa, m.radius, m.border_width, m.border_color)
-        } else {
-            (
-                self.style_color(id, part, PropId::BgColor),
-                self.style_opa(id, part, PropId::BgOpa),
-                self.style_i32(id, part, PropId::Radius),
-                self.style_i32(id, part, PropId::BorderWidth),
-                self.style_color(id, part, PropId::BorderColor),
-            )
-        };
-        let rc = self.recolor_recursive(id, part);
+        self.rect_dsc_with(
+            Props {
+                e: self,
+                id,
+                state: None,
+            },
+            part,
+            opa,
+        )
+    }
+
+    /// The rectangle style of `part` of `id` as if the node were in `state`, with running
+    /// transitions ignored (LVGL sets `obj->state` and `skip_trans` around
+    /// `lv_obj_init_draw_rect_dsc`): for widgets that draw several items of one part in their
+    /// own states, like the buttons of a button matrix. Opacity and recolor are applied as in
+    /// [`rect_dsc`](Self::rect_dsc) (ancestors in their current state).
+    ///
+    /// ```
+    /// use twine_core::{Color, Opa};
+    /// use twine_engine::{Engine, EngineConfig, Obj};
+    /// use twine_style::{Part, Selector, State, StyleProp};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let n = e.create_root(Box::new(Obj)).unwrap();
+    /// let pressed = Selector::part(Part::Items).with_state(State::PRESSED);
+    /// e.set_local_prop(n, pressed, StyleProp::BgColor(Color::RED));
+    /// let d = e.rect_dsc_for_state(n, Part::Items, State::PRESSED, Opa::COVER);
+    /// assert_eq!(d.base.bg_color, Color::RED);
+    /// assert_ne!(e.rect_dsc(n, Part::Items, Opa::COVER).base.bg_color, Color::RED);
+    /// ```
+    #[must_use]
+    pub fn rect_dsc_for_state(&self, id: NodeId, part: Part, state: State, opa: Opa) -> RectStyle {
+        self.rect_dsc_with(
+            Props {
+                e: self,
+                id,
+                state: Some(state),
+            },
+            part,
+            opa,
+        )
+    }
+
+    fn rect_dsc_with(&self, props: Props<'_>, part: Part, opa: Opa) -> RectStyle {
+        let (bg_color, bg_opa, radius, border_width, border_color) =
+            if part == Part::Main && props.state.is_none() {
+                let m = self.cached_main(props.id);
+                (m.bg_color, m.bg_opa, m.radius, m.border_width, m.border_color)
+            } else {
+                (
+                    props.color(part, PropId::BgColor),
+                    props.opa(part, PropId::BgOpa),
+                    props.i32(part, PropId::Radius),
+                    props.i32(part, PropId::BorderWidth),
+                    props.color(part, PropId::BorderColor),
+                )
+            };
+        let rc = self.recolor_with(props, part);
         let recolor = |c: Color| {
             if rc.alpha == 0 {
                 c
@@ -199,14 +325,12 @@ impl Engine {
                 Color::mix(rc.color, c, Opa(rc.alpha))
             }
         };
-        let o = |p| self.style_opa(id, part, p).mul(opa);
+        let o = |p| props.opa(part, p).mul(opa);
         let bg_opa = bg_opa.mul(opa);
-        let bg_grad = self
-            .style_prop(id, part, PropId::BgGrad)
-            .get::<&'static Gradient>();
+        let bg_grad = props.get(part, PropId::BgGrad).get::<&'static Gradient>();
         let simple_grad = if bg_grad.is_none() && !bg_opa.is_transparent() {
-            let kind = match self
-                .style_prop(id, part, PropId::BgGradDir)
+            let kind = match props
+                .get(part, PropId::BgGradDir)
                 .get::<GradDir>()
                 .unwrap_or_default()
             {
@@ -215,18 +339,18 @@ impl Engine {
                 _ => None,
             };
             kind.map(|k| {
-                let stop = |p| self.style_i32(id, part, p).clamp(0, 255) as u8;
+                let stop = |p| props.i32(part, p).clamp(0, 255) as u8;
                 Gradient::new(
                     k,
                     &[
                         GradStop::with_opa(
                             recolor(bg_color),
-                            self.style_opa(id, part, PropId::BgMainOpa),
+                            props.opa(part, PropId::BgMainOpa),
                             stop(PropId::BgMainStop),
                         ),
                         GradStop::with_opa(
-                            recolor(self.style_color(id, part, PropId::BgGradColor)),
-                            self.style_opa(id, part, PropId::BgGradOpa),
+                            recolor(props.color(part, PropId::BgGradColor)),
+                            props.opa(part, PropId::BgGradOpa),
                             stop(PropId::BgGradStop),
                         ),
                     ],
@@ -235,8 +359,8 @@ impl Engine {
         } else {
             None
         };
-        let border_side = self
-            .style_prop(id, part, PropId::BorderSide)
+        let border_side = props
+            .get(part, PropId::BorderSide)
             .get::<BorderSide>()
             .unwrap_or(BorderSide::FULL);
         let base = RectDsc {
@@ -248,20 +372,17 @@ impl Engine {
             border_width,
             border_opa: o(PropId::BorderOpa),
             border_side,
-            border_post: self
-                .style_prop(id, part, PropId::BorderPost)
-                .as_bool()
-                .unwrap_or(false),
-            outline_color: recolor(self.style_color(id, part, PropId::OutlineColor)),
-            outline_width: self.style_i32(id, part, PropId::OutlineWidth),
+            border_post: props.get(part, PropId::BorderPost).as_bool().unwrap_or(false),
+            outline_color: recolor(props.color(part, PropId::OutlineColor)),
+            outline_width: props.i32(part, PropId::OutlineWidth),
             outline_opa: o(PropId::OutlineOpa),
-            outline_pad: self.style_i32(id, part, PropId::OutlinePad),
+            outline_pad: props.i32(part, PropId::OutlinePad),
             shadow: ShadowDsc {
-                width: self.style_i32(id, part, PropId::ShadowWidth),
-                ofs_x: self.style_i32(id, part, PropId::ShadowOffsetX),
-                ofs_y: self.style_i32(id, part, PropId::ShadowOffsetY),
-                spread: self.style_i32(id, part, PropId::ShadowSpread),
-                color: recolor(self.style_color(id, part, PropId::ShadowColor)),
+                width: props.i32(part, PropId::ShadowWidth),
+                ofs_x: props.i32(part, PropId::ShadowOffsetX),
+                ofs_y: props.i32(part, PropId::ShadowOffsetY),
+                spread: props.i32(part, PropId::ShadowSpread),
+                color: recolor(props.color(part, PropId::ShadowColor)),
                 opa: o(PropId::ShadowOpa),
             },
         };
@@ -287,19 +408,52 @@ impl Engine {
     /// properties (inherited ones included), opacity multiplied by `opa`, color recolored.
     #[must_use]
     pub fn text_dsc(&self, id: NodeId, part: Part, opa: Opa) -> TextDsc {
-        let mut d = TextDsc::new(self.style_font(id, part));
-        d.color = self.recolored(id, part, self.style_color(id, part, PropId::TextColor));
-        d.opa = self.style_opa(id, part, PropId::TextOpa).mul(opa);
-        d.align = self
-            .style_prop(id, part, PropId::TextAlign)
+        self.text_dsc_with(
+            Props {
+                e: self,
+                id,
+                state: None,
+            },
+            part,
+            opa,
+        )
+    }
+
+    /// The text style of `part` of `id` as if the node were in `state`, with transitions
+    /// ignored (see [`rect_dsc_for_state`](Self::rect_dsc_for_state)).
+    #[must_use]
+    pub fn text_dsc_for_state(&self, id: NodeId, part: Part, state: State, opa: Opa) -> TextDsc {
+        self.text_dsc_with(
+            Props {
+                e: self,
+                id,
+                state: Some(state),
+            },
+            part,
+            opa,
+        )
+    }
+
+    fn text_dsc_with(&self, props: Props<'_>, part: Part, opa: Opa) -> TextDsc {
+        let mut d = TextDsc::new(props.font(part));
+        let rc = self.recolor_with(props, part);
+        let c = props.color(part, PropId::TextColor);
+        d.color = if rc.alpha == 0 {
+            c
+        } else {
+            Color::mix(rc.color, c, Opa(rc.alpha))
+        };
+        d.opa = props.opa(part, PropId::TextOpa).mul(opa);
+        d.align = props
+            .get(part, PropId::TextAlign)
             .get::<TextAlign>()
             .unwrap_or(TextAlign::Auto);
-        d.decor = self
-            .style_prop(id, part, PropId::TextDecor)
+        d.decor = props
+            .get(part, PropId::TextDecor)
             .get::<TextDecor>()
             .unwrap_or_default();
-        d.letter_space = self.style_i32(id, part, PropId::TextLetterSpace);
-        d.line_space = self.style_i32(id, part, PropId::TextLineSpace);
+        d.letter_space = props.i32(part, PropId::TextLetterSpace);
+        d.line_space = props.i32(part, PropId::TextLineSpace);
         d
     }
 

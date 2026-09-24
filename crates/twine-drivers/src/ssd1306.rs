@@ -30,6 +30,14 @@
 //! address window and converts the chunk page by page ([`mono::i1_to_page`](crate::mono::i1_to_page))
 //! through a 128-byte scratch buffer — no allocation.
 //!
+//! # Wiring
+//!
+//! | Panel pin | Driver argument |
+//! |-----------|-----------------|
+//! | `SDA`, `SCL` (I2C modules) | `I2cInterface::new(i2c, 0x3C)` with an `embedded_hal(_async)::i2c::I2c` |
+//! | `SCK`, `MOSI`, `CS`, `DC` (SPI modules) | `SpiInterface::new(spi_device, dc)` |
+//! | `RES` | not driven by the driver: hold it high (or pulse it low once) from your firmware |
+//!
 //! ```
 //! use twine_core::{ColorFormat, Rect};
 //! use twine_drivers::interface::I2cInterface;
@@ -56,6 +64,7 @@ use twine_hal::{DisplayDriver, DisplayInfo, DrawBufferMem, Rotation};
 
 use crate::interface::DcsInterface;
 use crate::mono::i1_to_page;
+pub use crate::mono::{OLED_DPI, OledError};
 
 // NOTE(P21.S03): the engine-side test `engine_rounds_area_to_8_rows` (EngineHarness with an
 // `align = 8` MemoryDisplay) and the `mono_oled` simulator example belong to the engine and
@@ -101,16 +110,6 @@ impl Ssd1306Size {
             _ => 0x12,
         }
     }
-}
-
-/// Errors of the OLED drivers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum OledError<E> {
-    /// The interface failed.
-    Interface(E),
-    /// The flush area is outside the panel, not page aligned, or the buffer is too short.
-    BadArea,
 }
 
 /// `(segment remap, COM scan)` commands for the rotation the controller performs.
@@ -176,9 +175,6 @@ fn oled_info(native: (u16, u16), rotation: Rotation, dpi: u16) -> DisplayInfo {
         .with_align(8)
         .with_dpi(dpi)
 }
-
-/// Default DPI of the small OLEDs (a 0.96" 128 × 64 panel is ≈ 150 dpi).
-pub const OLED_DPI: u16 = 150;
 
 /// SSD1306 driver (blocking) implementing [`DisplayDriver`].
 pub struct Ssd1306<I> {

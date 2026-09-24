@@ -76,7 +76,8 @@ fn filter_by_code() {
     e.add_event_handler(n, EventFilter::All, push(&log, "all"));
     click(&mut e, n);
     e.send_event(n, EventCode::Pressed, EventParam::None);
-    assert_eq!(*log.borrow(), ["all", "pressed", "all"]);
+    // `Pressed` first adds the `PRESSED` state: `StateChanged` reaches "all" before it.
+    assert_eq!(*log.borrow(), ["all", "all", "pressed", "all"]);
 }
 
 #[test]
@@ -347,4 +348,132 @@ fn size_changed_carries_old_area() {
             EventParam::Area(twine_core::Rect::from_xywh(5, 5, 10, 10))
         ]
     );
+}
+
+/// A widget that counts clicks and notifies with a posted `ValueChanged` (like a slider) and
+/// adds `CHECKED` to itself while busy.
+#[derive(Default)]
+struct Counter {
+    clicks: i32,
+}
+static COUNTER: WidgetClass = WidgetClass::new("counter");
+impl Widget for Counter {
+    fn class(&self) -> &'static WidgetClass {
+        &COUNTER
+    }
+    fn event(&mut self, cx: &mut EventCx<'_>, ev: &Event) -> EventResult {
+        if ev.code == EventCode::Clicked {
+            self.clicks += 1;
+            let n = cx.node();
+            cx.post(n, EventCode::ValueChanged, EventParam::Value(self.clicks));
+            cx.widget_cx().add_state(twine_style::State::CHECKED);
+        }
+        EventResult::Continue
+    }
+}
+
+#[test]
+fn posted_value_changed_can_read_the_widget() {
+    let mut e = engine();
+    let n = e.create_root(Box::<Counter>::default()).unwrap();
+    let log: Log = Rc::default();
+    let l = log.clone();
+    e.add_event_handler(n, EventFilter::All, move |cx, ev| {
+        let w = cx.engine().widget::<Counter>(ev.target).map(|c| c.clicks);
+        match ev.code {
+            EventCode::ValueChanged => l
+                .borrow_mut()
+                .push(format!("value {:?} widget {w:?}", ev.value())),
+            EventCode::StateChanged => l
+                .borrow_mut()
+                .push(format!("state from {:?} widget {w:?}", ev.prev_state())),
+            EventCode::Clicked => l.borrow_mut().push(format!("clicked widget {w:?}")),
+            _ => {}
+        }
+        EventResult::Continue
+    });
+    click(&mut e, n);
+    // The posted events run right after the widget's `event`, before the user handlers of
+    // `Clicked`, with the widget readable.
+    assert_eq!(
+        *log.borrow(),
+        [
+            "value Some(1) widget Some(1)",
+            "state from Some(State(0x0)) widget Some(1)",
+            "clicked widget Some(1)"
+        ]
+    );
+}
+
+#[test]
+fn post_event_to_idle_widget_sends_immediately_and_drops_for_deleted_nodes() {
+    let mut e = engine();
+    let root = e.create_root(Box::new(Obj)).unwrap();
+    let n = e.create(root, Box::new(Obj)).unwrap();
+    let log: Log = Rc::default();
+    e.add_event_handler(n, EventFilter::Code(EventCode::ValueChanged), push(&log, "value"));
+    e.post_event(n, EventCode::ValueChanged, EventParam::None);
+    assert_eq!(*log.borrow(), ["value"]);
+    // Posted while busy, then the node is deleted by the setter: nothing is delivered.
+    e.with_widget_mut(n, |_o: &mut Obj, cx| {
+        cx.post_event(EventCode::ValueChanged, EventParam::None);
+        let id = cx.node();
+        cx.engine_mut().delete(id).unwrap();
+    });
+    assert_eq!(*log.borrow(), ["value"]);
+}
+
+#[test]
+fn state_changed_reports_previous_state_once_per_change() {
+    use twine_style::State;
+    let mut e = engine();
+    let n = e.create_root(Box::new(Obj)).unwrap();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let s = seen.clone();
+    e.add_event_handler(n, EventFilter::Code(EventCode::StateChanged), move |cx, ev| {
+        let now = cx.engine().tree().node(ev.target).unwrap().state();
+        s.borrow_mut().push((ev.prev_state().unwrap(), now));
+        EventResult::Continue
+    });
+    e.add_state(n, State::FOCUSED);
+    e.add_state(n, State::FOCUSED); // idempotent: no event
+    e.clear_state(n, State::FOCUSED | State::CHECKED);
+    assert_eq!(
+        *seen.borrow(),
+        [(State::DEFAULT, State::FOCUSED), (State::FOCUSED, State::DEFAULT)]
+    );
+}
+
+#[test]
+fn event_text_is_borrowed_for_the_dispatch_only() {
+    let mut e = engine();
+    let root = e.create_root(Box::new(Obj)).unwrap();
+    let n = e.create(root, Box::new(Obj)).unwrap();
+    let log: Log = Rc::default();
+    let kept = Rc::new(RefCell::new(None));
+    let (l, k) = (log.clone(), kept.clone());
+    e.add_event_handler(n, EventFilter::Code(EventCode::Insert), move |cx, ev| {
+        l.borrow_mut().push(cx.text(ev).unwrap_or("-").to_string());
+        *k.borrow_mut() = Some(ev.param);
+        // A nested text event stacks its text on top.
+        if cx.text(ev) == Some("outer") {
+            let root = cx.engine().tree().parent(cx.node()).unwrap();
+            cx.engine_mut().send_event_text(root, EventCode::Insert, "inner");
+            assert_eq!(cx.text(ev), Some("outer"), "outer text intact after nesting");
+        }
+        EventResult::Continue
+    });
+    let l = log.clone();
+    e.add_event_handler(root, EventFilter::Code(EventCode::Insert), move |cx, ev| {
+        l.borrow_mut()
+            .push(format!("root {}", cx.text(ev).unwrap_or("-")));
+        EventResult::Continue
+    });
+    let dynamic = String::from("outer");
+    e.send_event_text(n, EventCode::Insert, &dynamic);
+    assert_eq!(*log.borrow(), ["outer", "root inner"]);
+    // After the dispatch the handle no longer reads.
+    let stale = kept.borrow().unwrap();
+    assert_eq!(e.event_text(&stale), None);
+    assert_eq!(e.event_text(&EventParam::Value(3)), None);
 }

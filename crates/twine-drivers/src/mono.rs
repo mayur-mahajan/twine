@@ -67,6 +67,19 @@ pub fn page_to_i1(src: &[u8], stride: usize, width: usize, page: usize, out: &mu
     }
 }
 
+/// Errors of the OLED drivers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum OledError<E> {
+    /// The interface failed.
+    Interface(E),
+    /// The flush area is outside the panel, not page aligned, or the buffer is too short.
+    BadArea,
+}
+
+/// Default DPI of the small OLEDs (a 0.96" 128 × 64 panel is ≈ 150 dpi).
+pub const OLED_DPI: u16 = 150;
+
 #[cfg(test)]
 mod tests {
     use super::*;

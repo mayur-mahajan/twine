@@ -51,6 +51,24 @@ pub enum BusOp {
     },
     /// An async wait for a pin level.
     Wait(&'static str, bool),
+    /// A single-line QSPI transaction (register write).
+    QspiCmd {
+        /// Instruction byte.
+        instr: u8,
+        /// 24-bit address.
+        addr: u32,
+        /// Data bytes.
+        data: Vec<u8>,
+    },
+    /// A quad QSPI transaction (pixel write); the bytes go to [`Recorder::pixel_bytes`].
+    QspiPixels {
+        /// Instruction byte.
+        instr: u8,
+        /// 24-bit address.
+        addr: u32,
+        /// Number of data bytes.
+        len: usize,
+    },
 }
 
 impl fmt::Display for BusOp {
@@ -80,6 +98,15 @@ impl fmt::Display for BusOp {
             }
             BusOp::I2cRead { addr, len } => write!(f, "i2c_read {addr:02X} {len}"),
             BusOp::Wait(name, level) => write!(f, "wait {name} {}", u8::from(*level)),
+            BusOp::QspiCmd { instr, addr, data } => {
+                write!(f, "qspi {instr:02X} {addr:06X}")?;
+                if !data.is_empty() {
+                    f.write_char(' ')?;
+                    hex(f, data)?;
+                }
+                Ok(())
+            }
+            BusOp::QspiPixels { instr, addr, len } => write!(f, "qspi4 {instr:02X} {addr:06X} pixels {len}"),
         }
     }
 }
@@ -267,6 +294,12 @@ impl Recorder {
         RecordingSpi(self.clone())
     }
 
+    /// A recording quad-SPI bus.
+    #[must_use]
+    pub fn qspi(&self) -> RecordingQspi {
+        RecordingQspi(self.clone())
+    }
+
     /// A recording I2C bus.
     #[must_use]
     pub fn i2c(&self) -> RecordingI2c {
@@ -440,6 +473,69 @@ impl embedded_hal_async::spi::SpiDevice for RecordingSpi {
     async fn transaction(&mut self, operations: &mut [Operation<'_, u8>]) -> Result<(), MockError> {
         // The transfer "starts" (is logged) on the first poll, then optionally stays pending once.
         let r = self.0.with(|s| s.spi_transaction(operations));
+        maybe_yield(&self.0).await;
+        r
+    }
+}
+
+/// Recording quad-SPI bus (blocking and async): one [`BusOp::QspiCmd`] or
+/// [`BusOp::QspiPixels`] per transaction.
+#[derive(Clone, Debug)]
+pub struct RecordingQspi(Recorder);
+
+impl State {
+    fn qspi_write(
+        &mut self,
+        instr: u8,
+        addr: u32,
+        data: &[u8],
+        lines: crate::interface::QspiLines,
+    ) -> Result<(), MockError> {
+        self.take_failure()?;
+        self.spi_transactions += 1;
+        match lines {
+            crate::interface::QspiLines::Single => self.ops.push(BusOp::QspiCmd {
+                instr,
+                addr,
+                data: data.to_vec(),
+            }),
+            crate::interface::QspiLines::Quad => {
+                self.ops.push(BusOp::QspiPixels {
+                    instr,
+                    addr,
+                    len: data.len(),
+                });
+                self.pixel_bytes.extend_from_slice(data);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl crate::interface::QspiBus for RecordingQspi {
+    type Error = MockError;
+    fn write(
+        &mut self,
+        instr: u8,
+        addr: u32,
+        data: &[u8],
+        lines: crate::interface::QspiLines,
+    ) -> Result<(), MockError> {
+        self.0.with(|s| s.qspi_write(instr, addr, data, lines))
+    }
+}
+
+#[cfg(feature = "async")]
+impl crate::interface::AsyncQspiBus for RecordingQspi {
+    type Error = MockError;
+    async fn write(
+        &mut self,
+        instr: u8,
+        addr: u32,
+        data: &[u8],
+        lines: crate::interface::QspiLines,
+    ) -> Result<(), MockError> {
+        let r = self.0.with(|s| s.qspi_write(instr, addr, data, lines));
         maybe_yield(&self.0).await;
         r
     }

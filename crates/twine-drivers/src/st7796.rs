@@ -10,6 +10,16 @@
 //! Init as mipidsi's `ST7796` model (which reuses its ST7789 sequence): the generic init plus
 //! `NORON`. Rotation uses [`standard_madctl`].
 //!
+//! # Wiring
+//!
+//! | Panel pin | Driver argument |
+//! |-----------|-----------------|
+//! | `SCK`, `SDI`/`MOSI` (`SDO`/`MISO` is not needed) | the bus of `spi`, an `embedded_hal(_async)::spi::SpiDevice` (use a DMA-capable async one to overlap transfers with rendering) |
+//! | `CS` | the chip select owned by `spi` |
+//! | `DC`/`RS` | `dc`, any `OutputPin` |
+//! | `RESET` | `rst`: `Some(OutputPin)`, or `None` when it is tied to the MCU reset (a software reset is sent instead) |
+//! | `LED`/`BL` | not driven by the driver: switch it (or PWM it) from your firmware |
+//!
 //! ```
 //! use twine_drivers::st7796;
 //! use twine_drivers::testkit::Recorder;
@@ -35,6 +45,8 @@ pub static ST7796: PanelSpec = PanelSpec {
     offset_y: 0,
     madctl: standard_madctl(Madctl::BGR),
     colmod: 0x55,
+    align: 1,
+    sw_rotation: false,
     invert: false,
     init: &ST7796_INIT,
 };
@@ -57,7 +69,7 @@ mod tests {
     #[test]
     fn st7796_rotation_offsets_all_four() {
         assert_eq!(origin_windows(&ST7796), [win10(0, 0); 4]);
-        assert_eq!(ST7796.madctl.map(Madctl::bits), [0x08, 0x68, 0xC8, 0xA8]);
+        assert_eq!(ST7796.madctl.map(Madctl::bits), [0x08, 0xA8, 0xC8, 0x68]);
     }
 
     #[test]

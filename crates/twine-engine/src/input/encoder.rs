@@ -50,8 +50,8 @@ impl EncoderProc {
     /// One encoder sample (the button acts as `Enter`).
     ///
     /// - Rotation (only counted while the button is up): in navigate mode moves the focus by
-    ///   `diff` nodes; in edit mode sends `Rotary(diff)` and then `Key(Right)` / `Key(Left)`
-    ///   `|diff|` times to the focused node.
+    ///   `diff` nodes; in edit mode sends `Key(Right)` / `Key(Left)` `|diff|` times to the
+    ///   focused node (LVGL: no `Rotary` event, so widgets have a single encoder path).
     /// - Press: `Pressed` to non-editable nodes, or to any node in edit mode.
     /// - Long press: toggles edit mode on editable nodes (not when the group has a single
     ///   node), else `LongPressed`.
@@ -141,9 +141,6 @@ impl EncoderProc {
             return;
         }
         if e.group_editing(g) {
-            if let Some(f) = e.focused(g) {
-                e.input_send(id, f, EventCode::Rotary, EventParam::Rotary(diff));
-            }
             let key = if diff > 0 { Key::Right } else { Key::Left };
             for _ in 0..diff.unsigned_abs() {
                 if !send_key(e, id, g, key) {

@@ -152,7 +152,10 @@ impl fmt::Display for Size {
     }
 }
 
-/// Software display rotation (see `Rect::rotate_in`). Re-exported by `twine-hal`.
+/// Display rotation, in LVGL's convention: the panel is turned clockwise by this angle and the
+/// picture stays upright, so `Deg90` draws logical `(x, y)` on native pixel `(y, w − 1 − x)`
+/// (see `Rect::rotate_in`). Software rotation and the panel drivers' hardware rotation
+/// (`MADCTL`) follow the same convention. Re-exported by `twine-hal`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Rotation {

@@ -27,6 +27,8 @@ std = [
     "twine-widgets/std",
     "twine-view/std",
 ]
+## The async runtime (`AsyncUi`, `Ui::builder_async`) and the async HAL traits.
+async = ["twine-hal/async", "twine-view/async"]
 ## Log through the `log` crate.
 log = ["twine-view/log", "twine-layout/log"]
 ## Log through `defmt`.

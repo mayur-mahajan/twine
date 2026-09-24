@@ -13,34 +13,29 @@
 //! [`interpolate`]. When the animation starts (after its delay) it re-reads the current value
 //! and cancels older transitions of the same property; when it completes the property leaves
 //! the transition style, whose entry is removed once empty.
+//!
+//! Steady state allocates nothing (P4): the animations carry the transition's serial as an
+//! [`AnimTarget::Custom`] target (no boxed closures or callbacks; the start is noticed at the
+//! first value, the end when the animation has left the timeline), and the emptied
+//! transition style buffers go to a small pool that the next transition reuses.
 
 use alloc::rc::Rc;
 use alloc::vec::Vec;
-use core::any::Any;
 
-use twine_anim::{Anim, AnimId};
+use twine_anim::{Anim, AnimId, AnimTarget};
 use twine_style::{
     EntryKind, Part, PropId, ResolveOptions, Selector, State, StyleBuf, StyleEntry, StyleProp, StyleRef,
     StyleValue, TransitionDsc, interpolate, resolve_with,
 };
 
-use crate::anim::{Deferred, Op};
 use crate::{Engine, NodeId, fmt_node_id};
 
 /// Maximum number of properties that start transitions in one state change (LVGL
 /// `STYLE_TRANSITION_MAX`).
 const STYLE_TRANSITION_MAX: usize = 32;
 
-/// Events of a transition's animation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TransOp {
-    /// The delay is over (LVGL `trans_anim_start_cb`).
-    Start,
-    /// New progress `0..=255` (LVGL `trans_anim_cb`).
-    Value(i32),
-    /// Completed (LVGL `trans_anim_completed_cb`).
-    Done,
-}
+/// Emptied transition style buffers kept for reuse (more are freed).
+const TRANS_POOL_MAX: usize = 8;
 
 /// A running transition (LVGL `trans_t`).
 #[derive(Clone, Copy, Debug)]
@@ -53,6 +48,8 @@ struct Transition {
     start: StyleValue,
     end: StyleValue,
     anim: AnimId,
+    /// Whether the delay is over (the first value arrived).
+    started: bool,
 }
 
 /// The engine's running transitions.
@@ -60,12 +57,8 @@ struct Transition {
 pub(crate) struct TransState {
     list: Vec<Transition>,
     next_serial: u32,
-}
-
-fn push_op(ctx: &mut dyn Any, op: Op) {
-    if let Some(q) = ctx.downcast_mut::<Deferred>() {
-        q.ops.push(op);
-    }
+    /// Empty transition style buffers for reuse (no allocation per state change).
+    pool: Vec<Rc<StyleBuf>>,
 }
 
 impl Engine {
@@ -76,10 +69,15 @@ impl Engine {
         if !n.rendered.get() {
             return;
         }
+        // Items are drawn in their own states without transitions.
+        let items = n.class().item_parts;
         let mut ts: heapless::Vec<(Part, State, PropId, &'static TransitionDsc), STYLE_TRANSITION_MAX> =
             heapless::Vec::new();
         'entries: for e in n.styles.entries() {
-            if e.kind == EntryKind::Transition || e.selector.state.bits() & !new.bits() != 0 {
+            if e.kind == EntryKind::Transition
+                || e.selector.state.bits() & !new.bits() != 0
+                || items.contains(&e.selector.part)
+            {
                 continue;
             }
             let Some(StyleValue::Transition(tr)) = e.style.get(PropId::Transition) else {
@@ -146,11 +144,8 @@ impl Engine {
             .delay(dsc.delay)
             .easing(dsc.easing)
             .early_apply(false)
-            .on_start(move |cx| push_op(cx.ctx(), Op::Trans(serial, TransOp::Start)))
-            .on_complete(move |cx| push_op(cx.ctx(), Op::Trans(serial, TransOp::Done)));
-        let aid = self.anim_start_internal(anim, move |ctx, v| {
-            push_op(ctx, Op::Trans(serial, TransOp::Value(v)));
-        });
+            .target(AnimTarget::Custom(serial));
+        let aid = self.anim_start_target(anim);
         twine_core::debug!(
             target: "twine::style",
             "{} transition {:?} {:?}: {:?} -> {:?} ({})",
@@ -169,11 +164,15 @@ impl Engine {
             start: v1,
             end: v2,
             anim: aid,
+            started: false,
         });
     }
 
-    /// Handles an event of transition `serial` (ignored when it was cancelled meanwhile).
-    pub(crate) fn transition_op(&mut self, serial: u32, op: TransOp) {
+    /// Applies progress `v` (`0..=255`) of transition `serial` (ignored when it was cancelled
+    /// meanwhile). The first value after the delay first re-reads the start value and cancels
+    /// older transitions of the property (LVGL `trans_anim_start_cb`); once the animation has
+    /// left the timeline the transition completes (LVGL `trans_anim_completed_cb`).
+    pub(crate) fn transition_value(&mut self, serial: u32, v: i32) {
         let Some(i) = self.trans.list.iter().position(|t| t.serial == serial) else {
             return;
         };
@@ -181,34 +180,42 @@ impl Engine {
         if !self.tree.contains(t.node) {
             return;
         }
-        match op {
-            TransOp::Start => {
-                let start = self.style_prop(t.node, t.part, t.prop);
-                self.trans.list[i].start = start;
-                self.remove_transitions(t.node, Some(t.part), Some(t.prop), Some(serial));
-                self.trans_style_set(t.node, t.part, t.prop, start);
+        if !t.started {
+            let start = self.style_prop(t.node, t.part, t.prop);
+            self.trans.list[i].start = start;
+            self.trans.list[i].started = true;
+            self.remove_transitions(t.node, Some(t.part), Some(t.prop), Some(serial));
+            self.trans_style_set(t.node, t.part, t.prop, start);
+            self.refresh_style(t.node, t.part, Some(t.prop));
+        }
+        // Cancelling older transitions shifted the list.
+        let Some(i) = self.trans.list.iter().position(|o| o.serial == serial) else {
+            return;
+        };
+        let t = self.trans.list[i];
+        let v = interpolate(t.prop, &t.start, &t.end, v.clamp(0, 255) as u8);
+        if self.trans_style_set(t.node, t.part, t.prop, v) {
+            self.refresh_style(t.node, t.part, Some(t.prop));
+        }
+        if self.anim.timeline.get(t.anim).is_none() {
+            self.transition_done(i);
+        }
+    }
+
+    /// The transition at `i` completed: it leaves the list, and its property leaves the
+    /// transition style unless a newer transition of it runs.
+    fn transition_done(&mut self, i: usize) {
+        let t = self.trans.list.remove(i);
+        let running = self
+            .trans
+            .list
+            .iter()
+            .any(|o| o.node == t.node && o.part == t.part && o.prop == t.prop);
+        if !running {
+            let before = self.style_prop(t.node, t.part, t.prop);
+            self.trans_style_remove(t.node, Some(t.part), t.prop);
+            if self.style_prop(t.node, t.part, t.prop) != before {
                 self.refresh_style(t.node, t.part, Some(t.prop));
-            }
-            TransOp::Value(v) => {
-                let v = interpolate(t.prop, &t.start, &t.end, v.clamp(0, 255) as u8);
-                if self.trans_style_set(t.node, t.part, t.prop, v) {
-                    self.refresh_style(t.node, t.part, Some(t.prop));
-                }
-            }
-            TransOp::Done => {
-                self.trans.list.remove(i);
-                let running = self
-                    .trans
-                    .list
-                    .iter()
-                    .any(|o| o.node == t.node && o.part == t.part && o.prop == t.prop);
-                if !running {
-                    let before = self.style_prop(t.node, t.part, t.prop);
-                    self.trans_style_remove(t.node, Some(t.part), t.prop);
-                    if self.style_prop(t.node, t.part, t.prop) != before {
-                        self.refresh_style(t.node, t.part, Some(t.prop));
-                    }
-                }
             }
         }
     }
@@ -274,7 +281,7 @@ impl Engine {
         let Some(n) = self.tree.node_mut(id) else {
             return false;
         };
-        let changed = n.styles.transition_mut(part).set(p);
+        let changed = n.styles.transition_mut(part, &mut self.trans.pool).set(p);
         if changed {
             n.style_cache.invalidate();
         }
@@ -285,14 +292,15 @@ impl Engine {
     /// drops transition entries that became empty.
     fn trans_style_remove(&mut self, id: NodeId, part: Option<Part>, prop: PropId) {
         let Some(n) = self.tree.node_mut(id) else { return };
-        n.styles.transition_remove(part, prop);
+        n.styles.transition_remove(part, prop, &mut self.trans.pool);
         n.style_cache.invalidate();
     }
 }
 
 impl crate::StyleList {
-    /// The transition style of `part`, created when missing.
-    pub(crate) fn transition_mut(&mut self, part: Part) -> &mut StyleBuf {
+    /// The transition style of `part`, created when missing (from `pool` when it has a
+    /// buffer).
+    pub(crate) fn transition_mut(&mut self, part: Part, pool: &mut Vec<Rc<StyleBuf>>) -> &mut StyleBuf {
         let find = |l: &Self| {
             l.entries().iter().position(|e| {
                 e.kind == EntryKind::Transition
@@ -303,11 +311,8 @@ impl crate::StyleList {
         let pos = if let Some(p) = find(self) {
             p
         } else {
-            self.insert(StyleEntry::new(
-                Selector::part(part),
-                Rc::new(StyleBuf::new()),
-                EntryKind::Transition,
-            ));
+            let buf = pool.pop().unwrap_or_default();
+            self.insert(StyleEntry::new(Selector::part(part), buf, EntryKind::Transition));
             find(self).unwrap_or(0)
         };
         match &mut self.entries_mut()[pos].style {
@@ -317,8 +322,13 @@ impl crate::StyleList {
     }
 
     /// Removes `prop` from the transition entries of `part` (`None` = all parts); empty
-    /// transition entries are dropped.
-    pub(crate) fn transition_remove(&mut self, part: Option<Part>, prop: PropId) {
+    /// transition entries are dropped, their buffers kept in `pool` (up to a few).
+    pub(crate) fn transition_remove(
+        &mut self,
+        part: Option<Part>,
+        prop: PropId,
+        pool: &mut Vec<Rc<StyleBuf>>,
+    ) {
         for e in self.entries_mut() {
             if e.kind == EntryKind::Transition && part.is_none_or(|p| p == e.selector.part || p == Part::Any)
             {
@@ -329,8 +339,15 @@ impl crate::StyleList {
                 }
             }
         }
-        self.remove_where(|e| {
+        let empty = |e: &StyleEntry| {
             e.kind == EntryKind::Transition && matches!(&e.style, StyleRef::Shared(b) if b.is_empty())
-        });
+        };
+        while let Some(i) = self.entries().iter().position(empty) {
+            if let StyleRef::Shared(rc) = self.remove_at(i).style {
+                if pool.len() < TRANS_POOL_MAX && Rc::strong_count(&rc) == 1 && Rc::weak_count(&rc) == 0 {
+                    pool.push(rc);
+                }
+            }
+        }
     }
 }

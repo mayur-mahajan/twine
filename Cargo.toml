@@ -33,7 +33,7 @@ members = [
     "tools/twine-bench",
     "examples",
 ]
-exclude = ["firmware", "fuzz"]
+exclude = ["firmware", "fuzz", "crates/twine-esp"]
 
 [workspace.package]
 version = "0.1.0"
@@ -67,6 +67,11 @@ opt-level = 1          # renderer is too slow at opt-level 0 for the simulator
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# Test binaries: line tables keep backtraces with file:line but skip full debug info, which
+# cuts compile and link time of the ~200 test executables (and of doctests).
+[profile.test]
+debug = "line-tables-only"
 
 [profile.release]
 debug = 1

@@ -1,0 +1,59 @@
+[package]
+name = "twine-example-stm32f411"
+description = "Example firmware: Twine on an STM32F411 (e.g. WeAct BlackPill) with an SPI display and a touch controller"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Standalone firmware project (not a member of the library workspace).
+[workspace]
+
+# Feature sets `cargo xtask firmware` builds ("" = the defaults).
+[package.metadata.twine]
+feature-sets = ["", "panel-st7789,touch-ft6x36,demo-controls", "panel-ili9341,touch-xpt2046,demo-calibrate"]
+
+[features]
+default = ["panel-ili9341", "touch-xpt2046", "demo-counter"]
+## ILI9341 240 × 320 SPI panel.
+panel-ili9341 = ["twine-drivers/ili9341"]
+## ST7789 240 × 320 SPI panel.
+panel-st7789 = ["twine-drivers/st7789"]
+## XPT2046 resistive touch on its own SPI bus.
+touch-xpt2046 = ["twine-drivers/xpt2046"]
+## FT6x36 capacitive touch on I2C.
+touch-ft6x36 = ["twine-drivers/ft6x36"]
+## The counter demo.
+demo-counter = []
+## The controls demo (sliders, switches, arcs, spinner).
+demo-controls = []
+## Touch calibration (resistive touch): logs a `Calibration { .. }` to paste into the wiring block.
+demo-calibrate = []
+
+[dependencies]
+twine = { path = "../../crates/twine", default-features = false, features = ["defmt", "color-rgb565-swapped", "perf-monitor", "montserrat-20"] }
+twine-drivers = { path = "../../crates/twine-drivers", features = ["async", "defmt"] }
+twine-embassy = { path = "../../crates/twine-embassy", features = ["defmt"] }
+twine-demos = { path = "../../crates/twine-demos", features = ["async", "defmt"] }
+
+embassy-stm32 = { version = "0.6", features = ["stm32f411ce", "time-driver-any", "memory-x", "exti", "unstable-pac", "defmt"] }
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread", "defmt"] }
+embassy-time = { version = "0.5", features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-embedded-hal = { version = "0.6", features = ["defmt"] }
+embassy-sync = { version = "0.8", features = ["defmt"] }
+cortex-m = { version = "0.7", features = ["critical-section-single-core", "inline-asm"] }
+cortex-m-rt = "0.7"
+embedded-alloc = "0.7"
+static_cell = "2.1"
+defmt = "1"
+defmt-rtt = "1"
+panic-probe = { version = "1", features = ["print-defmt"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+debug = 2
+codegen-units = 1
+
+[profile.dev]
+opt-level = "s"

@@ -260,7 +260,7 @@ type InputAdder = Box<dyn FnOnce(&mut Engine, DisplayId) -> Result<InputId, Engi
 /// Configures and builds a [`Ui`] (see [`Ui::builder`]).
 #[must_use]
 pub struct UiBuilder<S: DisplaySetup> {
-    display: S,
+    pub(crate) display: S,
     config: EngineConfig,
     buffers: Option<BufferMode>,
     inputs: Vec<InputAdder>,
@@ -279,7 +279,7 @@ impl<S: DisplaySetup> core::fmt::Debug for UiBuilder<S> {
 }
 
 impl<S: DisplaySetup> UiBuilder<S> {
-    fn new(display: S) -> Self {
+    pub(crate) fn new(display: S) -> Self {
         Self {
             display,
             config: EngineConfig::default(),
@@ -354,6 +354,16 @@ impl<S: DisplaySetup> UiBuilder<S> {
     /// [`EngineError::InvalidConfig`] without a clock; the engine's errors for the display,
     /// buffers and inputs.
     pub fn try_build<V: View>(self, app: impl FnOnce(Scope) -> V) -> Result<Ui, EngineError> {
+        let (engine, core, clock) = self.build_parts(app)?;
+        Ok(Ui { engine, core, clock })
+    }
+
+    /// The engine (display, theme, inputs added), the mounted application and the clock:
+    /// everything of a [`Ui`] (shared with the async runtime).
+    pub(crate) fn build_parts<V: View>(
+        self,
+        app: impl FnOnce(Scope) -> V,
+    ) -> Result<(Engine, UiCore, Box<dyn Clock>), EngineError> {
         let Some(clock) = self.clock else {
             twine_core::error!(target: "twine::view", "Ui: no clock (UiBuilder::clock)");
             return Err(EngineError::InvalidConfig("Ui needs a clock"));
@@ -381,7 +391,7 @@ impl<S: DisplaySetup> UiBuilder<S> {
             }
         }
         let core = UiCore::mount(&mut engine, display, app);
-        Ok(Ui { engine, core, clock })
+        Ok((engine, core, clock))
     }
 
     /// [`try_build`](Self::try_build), panicking on a configuration error.

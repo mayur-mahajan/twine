@@ -371,9 +371,7 @@ impl Spinbox {
         self.value = v;
         util::log_value(SPINBOX_CLASS.name, v);
         self.update_value(cx);
-        let n = cx.node();
-        cx.engine_mut()
-            .send_event(n, EventCode::ValueChanged, EventParam::Value(v));
+        cx.post_event(EventCode::ValueChanged, EventParam::Value(v));
     }
 
     /// LVGL `lv_spinbox_updatevalue`: the text and the cursor on the step digit.

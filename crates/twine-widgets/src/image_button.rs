@@ -8,7 +8,8 @@ use twine_engine::{
     Widget, WidgetClass, WidgetCx,
 };
 use twine_image::{ImageHeader, ImageSource, with_pixels};
-use twine_style::Part;
+use twine_style::{Part, TextAlign};
+use twine_text::TextLayout;
 
 use crate::image::same_source;
 use crate::log_set;
@@ -85,11 +86,29 @@ impl ImageButtonState {
     }
 }
 
-/// One image of a state: the source and its header.
+/// One image of a state: the source and its header (`None` for a symbol, which is measured
+/// and drawn as text with the `Main` text style).
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Slot {
     src: ImageSource,
-    header: ImageHeader,
+    header: Option<ImageHeader>,
+}
+
+impl Slot {
+    /// The size the image takes: its header, or a symbol's text size in the `Main` font.
+    fn size(&self, m: &MeasureCx<'_>) -> Size {
+        match (&self.header, &self.src) {
+            (Some(h), _) => Size::new(i32::from(h.w), i32::from(h.h)),
+            (None, ImageSource::Symbol(t)) => {
+                let d = m.text_dsc(Part::Main);
+                let mut l = TextLayout::new(t, d.font);
+                l.letter_space = d.letter_space;
+                l.line_space = d.line_space;
+                l.measure()
+            }
+            (None, _) => Size::ZERO,
+        }
+    }
 }
 
 /// A button drawn from images (LVGL `lv_imagebutton`). Each [`ImageButtonState`] has up to
@@ -162,11 +181,19 @@ impl ImageButton {
         log_set(IMAGE_BUTTON_CLASS.name, cx.node(), "src");
         let [l, m, r] = new;
         let slots = [l, m, r].map(|s| {
-            s.and_then(|src| match cx.engine_mut().image_header(&src) {
-                Ok(header) => Some(Slot { src, header }),
-                Err(e) => {
-                    twine_core::warn!(target: "twine::image", "imagebutton: cannot read {}: {:?}", src, e);
-                    None
+            s.and_then(|src| {
+                if matches!(src, ImageSource::Symbol(_)) {
+                    return Some(Slot { src, header: None });
+                }
+                match cx.engine_mut().image_header(&src) {
+                    Ok(header) => Some(Slot {
+                        src,
+                        header: Some(header),
+                    }),
+                    Err(e) => {
+                        twine_core::warn!(target: "twine::image", "imagebutton: cannot read {}: {:?}", src, e);
+                        None
+                    }
                 }
             })
         });
@@ -234,9 +261,8 @@ impl Widget for ImageButton {
     /// The images' widths (the middle one once) and the middle image's height.
     fn content_size(&self, cx: &MeasureCx<'_>) -> Size {
         let s = self.slots(cx.state());
-        let w = |i: usize| s[i].as_ref().map_or(0, |x| i32::from(x.header.w));
-        let h = s[1].as_ref().map_or(0, |x| i32::from(x.header.h));
-        Size::new(w(0) + w(1) + w(2), h)
+        let size = |i: usize| s[i].as_ref().map_or(Size::ZERO, |x| x.size(cx));
+        Size::new(size(0).w + size(1).w + size(2).w, size(1).h)
     }
 
     /// LVGL `draw_main`: left and right images at the ends, the middle one tiled between.
@@ -250,6 +276,13 @@ impl Widget for ImageButton {
         let slots = self.slots(st);
         let dsc = cx.image_dsc(Part::Main);
         let draw = |cx: &mut DrawCx<'_, '_>, src: &ImageSource, area: Rect, clip: Rect, tile: bool| {
+            if let ImageSource::Symbol(t) = src {
+                // Symbols are text in the `Main` font, centered in their area.
+                let mut td = cx.text_dsc(Part::Main);
+                td.align = TextAlign::Center;
+                let _ = cx.with_clip(clip, |cx| cx.draw_text(area, t, &td));
+                return;
+            }
             let mut d = dsc;
             d.tile = tile;
             let _ = cx.with_clip(clip, |cx| {
@@ -258,13 +291,15 @@ impl Widget for ImageButton {
         };
         let (mut left_w, mut right_w) = (0, 0);
         if let Some(l) = &slots[0] {
-            left_w = i32::from(l.header.w);
-            let a = Rect::from_xywh(c.x0, c.y0, left_w, i32::from(l.header.h));
+            let sz = l.size(&m);
+            left_w = sz.w;
+            let a = Rect::from_xywh(c.x0, c.y0, left_w, sz.h);
             draw(cx, &l.src, a, a, false);
         }
         if let Some(r) = &slots[2] {
-            right_w = i32::from(r.header.w);
-            let a = Rect::from_xywh(c.x1 - right_w, c.y0, right_w, i32::from(r.header.h));
+            let sz = r.size(&m);
+            right_w = sz.w;
+            let a = Rect::from_xywh(c.x1 - right_w, c.y0, right_w, sz.h);
             draw(cx, &r.src, a, a, false);
         }
         if let Some(mid) = &slots[1] {

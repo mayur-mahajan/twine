@@ -99,6 +99,20 @@
 //! cleanups, `Clone`/`PartialEq`/`Drop` of values), so effects, memos, cleanups and channel
 //! handlers may freely create, read, write and dispose reactive nodes.
 //!
+//! ## Atomics on chips without compare-and-swap
+//!
+//! The crate uses `portable-atomic` and does not choose its fallback: the application does. On
+//! targets without atomic read-modify-write instructions — `thumbv6m` (RP2040, Cortex-M0/M0+)
+//! and single-core `riscv32imc` (ESP32-C3) — add one of:
+//!
+//! - `portable-atomic = { version = "1", features = ["critical-section"] }` plus a
+//!   critical-section implementation (e.g. `embassy-rp`'s `critical-section-impl`,
+//!   `cortex-m`'s `critical-section-single-core`), or
+//! - `--cfg portable_atomic_unsafe_assume_single_core` in `RUSTFLAGS` (single-core chips only;
+//!   esp-hal already enables `portable-atomic`'s `unsafe-assume-single-core` on the ESP32-C3).
+//!
+//! Not both: `portable-atomic` rejects the combination. Other targets need nothing.
+//!
 //! ## Global runtime and features
 //!
 //! - `std`: one runtime per thread (`thread_local!`). Used on the host, in the simulator and

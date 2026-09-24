@@ -51,6 +51,8 @@ pub struct Engine {
     pub(crate) bounds_overlay: bool,
     pub(crate) perf: PerfMonitor,
     last_perf_log: Option<Instant>,
+    /// The display whose frame is being rendered through the chunk-level refresh API.
+    pub(crate) chunk_display: Option<usize>,
     /// Input devices (slot index = `InputId`).
     pub(crate) inputs: crate::input::InputSlots,
     /// Serial number of the last added input device.
@@ -77,6 +79,8 @@ pub struct Engine {
     pub(crate) anim: crate::anim::AnimState,
     /// Style transitions.
     pub(crate) trans: crate::transition::TransState,
+    /// Posted events and event texts.
+    pub(crate) events: crate::handlers::EventQueues,
     #[cfg(feature = "debug-checks")]
     pub(crate) invalidations: Vec<(Rect, InvalidateReason)>,
     /// The invalidations rendered by the last frame that started.
@@ -132,6 +136,7 @@ impl Engine {
             bounds_overlay: false,
             perf: PerfMonitor::default(),
             last_perf_log: None,
+            chunk_display: None,
             inputs: Vec::new(),
             input_serial: 0,
             input_active: None,
@@ -145,6 +150,7 @@ impl Engine {
             layout: crate::layout::LayoutState::default(),
             anim: crate::anim::AnimState::default(),
             trans: crate::transition::TransState::default(),
+            events: crate::handlers::EventQueues::default(),
             // Both logs are swapped at every frame start: allocated once, up front.
             #[cfg(feature = "debug-checks")]
             invalidations: Vec::with_capacity(64),
@@ -225,7 +231,8 @@ impl Engine {
     }
 
     /// Calls `hook(buffer_index)` right before a chunk is rendered into partial buffer
-    /// `buffer_index` (feature `debug-checks`; used by tests to prove DMA overlap).
+    /// `buffer_index` (0 for chunks of the chunk-level API, whose buffers the caller owns)
+    /// (feature `debug-checks`; used by tests to prove DMA overlap).
     #[cfg(feature = "debug-checks")]
     pub fn set_render_hook(&mut self, hook: Option<fn(u8)>) {
         self.render_hook = hook;

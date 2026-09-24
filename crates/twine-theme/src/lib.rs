@@ -23,7 +23,7 @@
 //!
 //! ```
 //! use std::rc::Rc;
-//! use twine_theme::{DefaultTheme, Palette, Theme, ThemeMode};
+//! use twine_theme::{DefaultTheme, Palette, ThemeHook, ThemeMode};
 //!
 //! let light = DefaultTheme::light();
 //! assert_eq!(light.color_primary(), Palette::Blue.main());

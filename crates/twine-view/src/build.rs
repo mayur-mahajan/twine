@@ -1,7 +1,9 @@
 //! [`BuildCx`] and the generic widget builder [`WidgetView`].
 
 use alloc::boxed::Box;
+use alloc::rc::Rc;
 use alloc::vec::Vec;
+use core::any::Any;
 
 use twine_engine::{
     DisplayId, Engine, EventCode, EventFilter, EventResult, NodeId, Widget, WidgetCx, fmt_node_id,
@@ -165,6 +167,9 @@ pub struct WidgetView<W: Widget> {
     ops: Vec<BuildOp>,
     children: Option<ChildrenFn>,
     post: Vec<BuildOp>,
+    /// Settings shared by a widget view's builder methods and its build steps (see
+    /// [`WidgetView::shared`]).
+    shared: Option<Rc<dyn Any>>,
 }
 
 /// Builds the children of a [`WidgetView`].
@@ -188,6 +193,7 @@ pub fn widget_view<W: Widget>(ctor: impl FnOnce() -> W + 'static) -> WidgetView<
         ops: Vec::new(),
         children: None,
         post: Vec::new(),
+        shared: None,
     }
 }
 
@@ -227,6 +233,20 @@ impl<W: Widget> WidgetView<W> {
     pub fn after_children(mut self, f: impl FnOnce(&mut BuildCx<'_>, NodeId) + 'static) -> Self {
         self.post.push(Box::new(f));
         self
+    }
+
+    /// The view's shared settings of type `T` (created with `T::default()` on first use).
+    ///
+    /// Builder methods write them and build steps read them when the view is built, after
+    /// every builder method ran (e.g. `bar(v).animated(d)`: the value binding created by
+    /// `bar` animates). A view has settings of one type; another type replaces them.
+    pub(crate) fn shared<T: Default + 'static>(&mut self) -> Rc<T> {
+        if let Some(t) = self.shared.clone().and_then(|a| a.downcast::<T>().ok()) {
+            return t;
+        }
+        let t = Rc::new(T::default());
+        self.shared = Some(t.clone());
+        t
     }
 
     pub(crate) fn push_op(mut self, op: BuildOp) -> Self {

@@ -21,6 +21,16 @@
 //! Init as mipidsi's `ili948x::init_common`: display function control `0xB6 [02 02 3B]`, `NORON`,
 //! plus the generic sequence. Rotation uses [`standard_madctl`].
 //!
+//! # Wiring
+//!
+//! | Panel pin | Driver argument |
+//! |-----------|-----------------|
+//! | `SCK`, `SDI`/`MOSI` (`SDO`/`MISO` is not needed) | the bus of `spi`, an `embedded_hal(_async)::spi::SpiDevice` (use a DMA-capable async one to overlap transfers with rendering) |
+//! | `CS` | the chip select owned by `spi` |
+//! | `DC`/`RS` | `dc`, any `OutputPin` |
+//! | `RESET` | `rst`: `Some(OutputPin)`, or `None` when it is tied to the MCU reset (a software reset is sent instead) |
+//! | `LED`/`BL` | not driven by the driver: switch it (or PWM it) from your firmware |
+//!
 //! ```
 //! use twine_core::ColorFormat;
 //! use twine_drivers::ili9488;
@@ -51,6 +61,8 @@ pub static ILI9488: PanelSpec = PanelSpec {
     offset_y: 0,
     madctl: standard_madctl(Madctl::EMPTY),
     colmod: 0x66,
+    align: 1,
+    sw_rotation: false,
     invert: false,
     init: &ILI9488_INIT,
 };

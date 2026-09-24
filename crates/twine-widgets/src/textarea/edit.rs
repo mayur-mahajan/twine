@@ -6,7 +6,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 
 use twine_core::Point;
-use twine_engine::{Engine, EventCode, EventParam, Key, MeasureCx, WidgetCx, fmt_node_id};
+use twine_engine::{Engine, EventCode, EventParam, MeasureCx, WidgetCx, fmt_node_id};
 use twine_style::{Part, PropId};
 
 use super::{CURSOR_LAST, DELETE_TEXT, Textarea, byte_of};
@@ -102,9 +102,7 @@ impl Textarea {
         if self.quiet {
             return;
         }
-        let n = cx.node();
-        cx.engine_mut()
-            .send_event(n, EventCode::ValueChanged, EventParam::None);
+        cx.post_event(EventCode::ValueChanged, EventParam::None);
     }
 
     fn log_edit(&self, cx: &WidgetCx<'_>, what: &str) {
@@ -123,13 +121,8 @@ impl Textarea {
     /// cancelled or replaced (the replacement is inserted here).
     fn insert_handler(&mut self, cx: &mut WidgetCx<'_>, txt: &str) -> bool {
         let n = cx.node();
-        let mut chars = txt.chars();
-        let param = match (chars.next(), chars.next()) {
-            _ if txt == DELETE_TEXT => EventParam::Key(Key::Backspace),
-            (Some(c), None) => EventParam::Key(Key::Char(c)),
-            _ => EventParam::None,
-        };
-        cx.engine_mut().send_event(n, EventCode::Insert, param);
+        // LVGL `LV_EVENT_INSERT` with the text (`DELETE_TEXT` for a deletion).
+        cx.engine_mut().send_event_text(n, EventCode::Insert, txt);
         if self.in_replace {
             return true;
         }

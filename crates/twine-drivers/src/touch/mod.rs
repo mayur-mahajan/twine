@@ -3,10 +3,11 @@
 //! | Module | Controller | Bus | Address | IRQ |
 //! |--------|------------|-----|---------|-----|
 //! | [`xpt2046`] | XPT2046 / ADS7843 resistive | SPI | — | `T_IRQ`, active low |
-//! | [`ft6x36`] | Focaltech FT6206/FT6236/FT6336 capacitive | I2C | `0x38` | `INT`, active low |
+//! | [`ft6x36`] | Focaltech FT6206/FT6236/FT6336, FT3168 (model flag) capacitive | I2C | `0x38` | `INT`, active low |
 //! | [`ft5x06`] | Focaltech FT5206/FT5306/FT5406 capacitive | I2C | `0x38` | `INT`, active low |
 //! | [`gt911`] | Goodix GT911 capacitive | I2C | `0x5D` or `0x14` | `INT`, active low (default config) |
 //! | [`cst816s`] | Hynitron CST816S capacitive | I2C | `0x15` | `IRQ`, active low pulses |
+//! | [`axs5106l`] | AXS5106L capacitive | I2C | `0x63` | `INT`, active low |
 //! | [`stmpe811`] | ST STMPE811 resistive controller | I2C | `0x41` (or `0x44`) | `INT`, active low |
 //!
 //! # Power (P1)
@@ -22,24 +23,57 @@
 //! screen (swap / mirror / clamp). Resistive controllers ([`Xpt2046`], [`Stmpe811`]) need a
 //! per-module [`Calibration`] instead.
 
+#[cfg(feature = "axs5106l")]
+#[cfg_attr(docsrs, doc(cfg(feature = "axs5106l")))]
+pub mod axs5106l;
+#[cfg(feature = "cst816s")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cst816s")))]
 pub mod cst816s;
+#[cfg(feature = "ft6x36")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ft6x36")))]
 pub mod ft5x06;
+#[cfg(feature = "ft6x36")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ft6x36")))]
 pub mod ft6x36;
+#[cfg(feature = "gt911")]
+#[cfg_attr(docsrs, doc(cfg(feature = "gt911")))]
 pub mod gt911;
+#[cfg(feature = "stmpe811")]
+#[cfg_attr(docsrs, doc(cfg(feature = "stmpe811")))]
 pub mod stmpe811;
+#[cfg(feature = "xpt2046")]
+#[cfg_attr(docsrs, doc(cfg(feature = "xpt2046")))]
 pub mod xpt2046;
 
-use embedded_hal::digital::InputPin;
 use twine_core::Point;
-use twine_core::log::debug;
-use twine_hal::{PointerData, PollHint, Rotation};
+use twine_hal::Rotation;
+#[cfg(any(
+    feature = "ft6x36",
+    feature = "gt911",
+    feature = "stmpe811",
+    feature = "cst816s",
+    feature = "axs5106l"
+))]
+use {
+    embedded_hal::digital::InputPin,
+    twine_core::log::debug,
+    twine_hal::{PointerData, PollHint},
+};
 
+#[cfg(feature = "axs5106l")]
+pub use axs5106l::Axs5106l;
+#[cfg(feature = "cst816s")]
 pub use cst816s::Cst816s;
+#[cfg(feature = "ft6x36")]
 pub use ft5x06::Ft5x06;
-pub use ft6x36::Ft6x36;
+#[cfg(feature = "ft6x36")]
+pub use ft6x36::{Ft6x36, FtModel};
+#[cfg(feature = "gt911")]
 pub use gt911::Gt911;
+#[cfg(feature = "stmpe811")]
 pub use stmpe811::Stmpe811;
 pub use twine_hal::Calibration;
+#[cfg(feature = "xpt2046")]
 pub use xpt2046::Xpt2046;
 
 /// Maps raw panel coordinates of a capacitive controller to logical screen coordinates.
@@ -84,11 +118,10 @@ impl TouchTransform {
         }
     }
 
-    /// The transform matching the engine's **software** display rotation (`DisplayInfo
-    /// .hw_rotation = false`) for a touch panel aligned with a `native_w × native_h` display.
-    ///
-    /// For panels rotated in hardware (MIPI `MADCTL`) the direction of 90°/270° depends on the
-    /// panel's `MADCTL` table; if touches come out mirrored, flip `invert_x`/`invert_y`.
+    /// The transform matching the display rotation for a touch panel aligned with a
+    /// `native_w × native_h` display. Software rotation and the `MADCTL` tables of this crate
+    /// turn the picture the same way, so this holds for both. (A touch panel mounted mirrored
+    /// relative to the display needs `invert_x`/`invert_y` flipped.)
     #[must_use]
     pub const fn for_rotation(rotation: Rotation, native_w: u16, native_h: u16) -> Self {
         match rotation {
@@ -115,6 +148,32 @@ impl TouchTransform {
                 height: native_w,
             },
         }
+    }
+
+    /// The same transform for a touch panel whose raw X axis runs opposite to the display's
+    /// native columns (raw `x` becomes `native_w − 1 − x` before the rotation). Use it after
+    /// [`for_rotation`](Self::for_rotation) or [`identity`](Self::identity): it flips whichever
+    /// logical mirror the raw X axis ends up on (`invert_x`, or `invert_y` when the axes are
+    /// swapped).
+    ///
+    /// ```
+    /// use twine_core::Point;
+    /// use twine_hal::Rotation;
+    /// use twine_drivers::touch::TouchTransform;
+    ///
+    /// let t = TouchTransform::for_rotation(Rotation::Deg0, 172, 320).with_raw_mirror_x();
+    /// assert_eq!(t.apply(0, 5), Point::new(171, 5));
+    /// let t = TouchTransform::for_rotation(Rotation::Deg270, 172, 320).with_raw_mirror_x();
+    /// assert_eq!(t.apply(10, 20), Point::new(20, 10)); // swap only
+    /// ```
+    #[must_use]
+    pub const fn with_raw_mirror_x(mut self) -> Self {
+        if self.swap_xy {
+            self.invert_y = !self.invert_y;
+        } else {
+            self.invert_x = !self.invert_x;
+        }
+        self
     }
 
     /// Transforms a raw point.
@@ -144,6 +203,7 @@ pub enum Filter {
 }
 
 /// Median of up to 3 values (`vals` non-empty).
+#[cfg(feature = "stmpe811")]
 pub(crate) fn median3(vals: &[u16]) -> u16 {
     match *vals {
         [a] => a,
@@ -153,6 +213,13 @@ pub(crate) fn median3(vals: &[u16]) -> u16 {
     }
 }
 
+#[cfg(any(
+    feature = "ft6x36",
+    feature = "gt911",
+    feature = "stmpe811",
+    feature = "cst816s",
+    feature = "axs5106l"
+))]
 /// Interrupt line + last state shared by the I2C touch drivers.
 #[derive(Debug)]
 pub(crate) struct IrqState<IRQ> {
@@ -161,6 +228,13 @@ pub(crate) struct IrqState<IRQ> {
     pub last: PointerData,
 }
 
+#[cfg(any(
+    feature = "ft6x36",
+    feature = "gt911",
+    feature = "stmpe811",
+    feature = "cst816s",
+    feature = "axs5106l"
+))]
 impl<IRQ> IrqState<IRQ> {
     pub const fn new(irq: Option<IRQ>) -> Self {
         Self {
@@ -205,6 +279,13 @@ impl<IRQ> IrqState<IRQ> {
     }
 }
 
+#[cfg(any(
+    feature = "ft6x36",
+    feature = "gt911",
+    feature = "stmpe811",
+    feature = "cst816s",
+    feature = "axs5106l"
+))]
 impl<IRQ: InputPin> IrqState<IRQ> {
     /// Whether the bus must be read: always without IRQ pin, while pressed, or when the
     /// interrupt line is active (errors reading the pin count as active).
@@ -220,6 +301,13 @@ impl<IRQ: InputPin> IrqState<IRQ> {
 }
 
 #[cfg(feature = "async")]
+#[cfg(any(
+    feature = "ft6x36",
+    feature = "gt911",
+    feature = "stmpe811",
+    feature = "cst816s",
+    feature = "axs5106l"
+))]
 impl<IRQ: embedded_hal_async::digital::Wait> IrqState<IRQ> {
     /// Waits for the interrupt line to become active; never completes without an IRQ pin.
     pub async fn wait(&mut self, name: &str) {
@@ -242,6 +330,7 @@ impl<IRQ: embedded_hal_async::digital::Wait> IrqState<IRQ> {
 
 /// Implements the shared builder methods and `AsyncInputWait` for an I2C touch driver with an
 /// `irq: IrqState<IRQ>` field.
+#[cfg(any(feature = "ft6x36", feature = "gt911", feature = "stmpe811"))]
 macro_rules! irq_touch_common {
     ($ty:ident, $name:literal) => {
         #[cfg(feature = "async")]
@@ -253,6 +342,7 @@ macro_rules! irq_touch_common {
         }
     };
 }
+#[cfg(any(feature = "ft6x36", feature = "gt911", feature = "stmpe811"))]
 pub(crate) use irq_touch_common;
 
 #[cfg(test)]
@@ -347,6 +437,28 @@ mod tests {
             for (x, y) in [(0, 0), (5, 7), (lw - 1, lh - 1), (lw / 2, 3)] {
                 let phys = twine_core::Rect::from_xywh(x, y, 1, 1).rotate_in(rot, lw, lh);
                 assert_eq!(t.apply(phys.x0, phys.y0), Point::new(x, y), "{rot:?} ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn raw_mirror_x_matches_mirrored_panel() {
+        // A panel whose raw x is mirrored: raw (x, y) is native (nw − 1 − x, y).
+        let (nw, nh) = (172u16, 320u16);
+        for rot in [
+            Rotation::Deg0,
+            Rotation::Deg90,
+            Rotation::Deg180,
+            Rotation::Deg270,
+        ] {
+            let straight = TouchTransform::for_rotation(rot, nw, nh);
+            let mirrored = straight.with_raw_mirror_x();
+            for (x, y) in [(0, 0), (5, 7), (171, 319), (86, 3)] {
+                assert_eq!(
+                    mirrored.apply(i32::from(nw) - 1 - x, y),
+                    straight.apply(x, y),
+                    "{rot:?} ({x}, {y})"
+                );
             }
         }
     }

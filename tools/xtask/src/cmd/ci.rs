@@ -3,6 +3,7 @@
 //! A summary table is printed at the end. `--quick` skips `nostd`, `doc`, `bench-build`, `miri`
 //! and `firmware`.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use serde_json::Value;
@@ -19,6 +20,8 @@ pub const CLIPPY_ALL_FEATURES_EXCLUDE: &[(&str, &str)] = &[
     ("twine-view", "defmt"),
     ("twine-hal", "defmt"),
     ("twine-drivers", "defmt"),
+    ("twine-embassy", "defmt"),
+    ("twine-demos", "defmt"),
     ("twine-reactive", "defmt"),
     ("twine-render", "defmt"),
     ("twine-text", "defmt"),
@@ -111,8 +114,14 @@ fn clippy_all_features() -> Result<Outcome, Box<dyn std::error::Error>> {
     ])))
 }
 
+/// Set once the `test` stage ran: its `cargo test --workspace` already compared every
+/// snapshot, so the `snapshots` stage does not run the whole suite a second time.
+static TESTS_RAN: AtomicBool = AtomicBool::new(false);
+
+/// The whole workspace test suite (snapshot comparisons included, mismatch artefacts listed).
 fn test() -> Result<Outcome, Box<dyn std::error::Error>> {
-    ok(run_cmd(cargo().args(["test", "--workspace"])))
+    TESTS_RAN.store(true, Ordering::Relaxed);
+    ok(snapshots::run(false))
 }
 
 /// Tests of feature-gated backends that the default `cargo test --workspace` does not compile.
@@ -163,10 +172,13 @@ fn miri_check() -> Result<Outcome, Box<dyn std::error::Error>> {
 }
 
 fn doc() -> Result<Outcome, Box<dyn std::error::Error>> {
+    // Every driver of twine-drivers is behind its own feature: document all of them.
     ok(run_cmd(cargo().env("RUSTDOCFLAGS", "-D warnings").args([
         "doc",
         "--workspace",
         "--no-deps",
+        "--features",
+        "twine-drivers/all,twine-drivers/async,twine-drivers/testkit",
     ])))
 }
 
@@ -176,11 +188,14 @@ fn bench_build() -> Result<Outcome, Box<dyn std::error::Error>> {
 }
 
 fn snapshot_check() -> Result<Outcome, Box<dyn std::error::Error>> {
+    if TESTS_RAN.load(Ordering::Relaxed) {
+        return Ok(Outcome::Skipped("covered by the `test` stage".into()));
+    }
     ok(snapshots::run(false))
 }
 
 fn firmware_build() -> Result<Outcome, Box<dyn std::error::Error>> {
-    ok(firmware::run(None))
+    ok(firmware::run(None, false))
 }
 
 /// `(name, runs in --quick mode, stage)`.

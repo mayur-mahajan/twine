@@ -16,8 +16,10 @@
 //!
 //! # Rotation
 //!
-//! `MADCTL` per rotation follows Adafruit's `setRotation`: `Deg0 = MX|BGR` (240 × 320 portrait),
-//! `Deg90 = MV|BGR` (320 × 240 landscape), `Deg180 = MY|BGR`, `Deg270 = MX|MY|MV|BGR`.
+//! `MADCTL` per rotation (Adafruit's `setRotation` values, with 90° and 270° exchanged so that
+//! `Deg90` turns the picture like the engine's software rotation: the module is held turned
+//! 90° clockwise): `Deg0 = MX|BGR` (240 × 320 portrait), `Deg90 = MX|MY|MV|BGR` (320 × 240
+//! landscape), `Deg180 = MY|BGR`, `Deg270 = MV|BGR`.
 //!
 //! # Frame rate and tearing
 //!
@@ -25,6 +27,16 @@
 //! panels update their memory while scanning it out, so a flush that crosses the scan line
 //! shows a diagonal shear (tearing). Synchronizing (`DisplayConfig::vsync`) needs the panel's
 //! TE pin, which the common modules do not expose; without it tearing is expected and harmless.
+//!
+//! # Wiring
+//!
+//! | Panel pin | Driver argument |
+//! |-----------|-----------------|
+//! | `SCK`, `SDI`/`MOSI` (`SDO`/`MISO` is not needed) | the bus of `spi`, an `embedded_hal(_async)::spi::SpiDevice` (use a DMA-capable async one to overlap transfers with rendering) |
+//! | `CS` | the chip select owned by `spi` |
+//! | `DC`/`RS` | `dc`, any `OutputPin` |
+//! | `RESET` | `rst`: `Some(OutputPin)`, or `None` when it is tied to the MCU reset (a software reset is sent instead) |
+//! | `LED`/`BL` | not driven by the driver: switch it (or PWM it) from your firmware |
 //!
 //! ```
 //! use twine_drivers::ili9341;
@@ -81,11 +93,13 @@ pub static ILI9341: PanelSpec = PanelSpec {
     offset_y: 0,
     madctl: [
         Madctl::MX.union(Madctl::BGR),
-        Madctl::MV.union(Madctl::BGR),
-        Madctl::MY.union(Madctl::BGR),
         Madctl::MX.union(Madctl::MY).union(Madctl::MV).union(Madctl::BGR),
+        Madctl::MY.union(Madctl::BGR),
+        Madctl::MV.union(Madctl::BGR),
     ],
     colmod: 0x55,
+    align: 1,
+    sw_rotation: false,
     invert: false,
     init: &ILI9341_INIT,
 };

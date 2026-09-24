@@ -3,19 +3,37 @@
 //!
 //! | Interface | Bus | Notes |
 //! |-----------|-----|-------|
-//! | [`SpiInterface`] | 4-wire SPI (`SpiDevice` + DC pin) | the usual MIPI DCS panel wiring; DMA happens inside the HAL's `SpiDevice` |
-//! | [`I2cInterface`] | I2C (control byte `0x00` / `0x40`) | SSD1306 / SH1106 OLEDs |
-//! | [`I80Interface8`], [`I80Interface16`] | Intel 8080 parallel via GPIO bit-banging | slow (~1–3 MB/s), for completeness |
+//! | `SpiInterface` | 4-wire SPI (`SpiDevice` + DC pin) | the usual MIPI DCS panel wiring; DMA happens inside the HAL's `SpiDevice` |
+//! | `I2cInterface` | I2C (control byte `0x00` / `0x40`) | SSD1306 / SH1106 OLEDs |
+//! | `I80Interface8`, `I80Interface16` | Intel 8080 parallel via GPIO bit-banging | slow (~1–3 MB/s), for completeness |
+//! | `QspiInterface` | quad SPI (`QspiBus`, no DC pin) | AMOLED controllers (CO5300, SH8601, RM67162) |
 //!
-//! A panel driver ([`MipiDcs`](crate::mipi_dcs::MipiDcs), [`Ssd1306`](crate::ssd1306::Ssd1306),
+//! A panel driver (`MipiDcs`, `Ssd1306`,
 //! …) is generic over the interface, so the same panel works over any of them.
 
+#[cfg(feature = "i2c")]
 mod i2c;
+#[cfg(feature = "i80")]
 mod i80;
+#[cfg(feature = "qspi")]
+#[cfg_attr(docsrs, doc(cfg(feature = "qspi")))]
+pub mod qspi;
+#[cfg(feature = "spi")]
 mod spi;
 
+#[cfg(feature = "i2c")]
+#[cfg_attr(docsrs, doc(cfg(feature = "i2c")))]
 pub use i2c::I2cInterface;
+#[cfg(feature = "i80")]
+#[cfg_attr(docsrs, doc(cfg(feature = "i80")))]
 pub use i80::{I80Interface8, I80Interface16};
+#[cfg(all(feature = "qspi", feature = "async"))]
+pub use qspi::AsyncQspiBus;
+#[cfg(feature = "qspi")]
+#[cfg_attr(docsrs, doc(cfg(feature = "qspi")))]
+pub use qspi::{QspiBus, QspiInterface, QspiLines};
+#[cfg(feature = "spi")]
+#[cfg_attr(docsrs, doc(cfg(feature = "spi")))]
 pub use spi::SpiInterface;
 
 /// Error of an interface that drives a bus plus GPIO pins.

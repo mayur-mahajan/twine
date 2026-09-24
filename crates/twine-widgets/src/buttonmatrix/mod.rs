@@ -18,7 +18,6 @@ use twine_style::{BaseDir, Part, PropId, TextAlign};
 use twine_text::TextLayout;
 
 use crate::log_set;
-use crate::state_dsc::StateStyles;
 use crate::util::{self, Area};
 
 pub use popover::POPOVER_CLASS;
@@ -170,6 +169,7 @@ pub const BUTTONMATRIX_DEFAULT_MAP: &[&str] = &["Btn1", "Btn2", "Btn3", "\n", "B
 /// `lv_buttonmatrix_class`).
 pub static BUTTONMATRIX_CLASS: WidgetClass = WidgetClass::new("buttonmatrix")
     .parts(&[Part::Main, Part::Items])
+    .item_parts(&[Part::Items])
     .default_flags(OBJ_FLAGS)
     .group_def(GroupDef::True)
     .editable(Editable::True);
@@ -178,6 +178,12 @@ pub static BUTTONMATRIX_CLASS: WidgetClass = WidgetClass::new("buttonmatrix")
 pub const BUTTONMATRIX_DEFAULT_WIDTH: i32 = util::DPI_DEF * 2;
 /// LVGL `lv_buttonmatrix_class.height_def`: `LV_DPI_DEF`.
 pub const BUTTONMATRIX_DEFAULT_HEIGHT: i32 = util::DPI_DEF;
+
+/// The node states the selected button shows (LVGL `draw_main`).
+const SELECTED_STATES: State = State::PRESSED
+    .union(State::FOCUSED)
+    .union(State::FOCUS_KEY)
+    .union(State::EDITED);
 
 /// LVGL `BTN_EXTRA_CLICK_AREA_MAX`: `LV_DPI_DEF / 10`.
 const BTN_EXTRA_CLICK_AREA_MAX: i32 = util::DPI_DEF / 10;
@@ -194,7 +200,9 @@ static WARN_RECOLOR: AtomicBool = AtomicBool::new(false);
 /// - **Drawing**: `Main` is the background; each button is an `Items` rectangle with its
 ///   text centered, drawn with the `Items` styles of the button's own state: `CHECKED`,
 ///   `DISABLED`, and for the selected button the widget's `PRESSED`, `FOCUSED`,
-///   `FOCUS_KEY` and `EDITED` states.
+///   `FOCUS_KEY` and `EDITED` states (without style transitions). `Items` is an item part
+///   of the class: pressing, focusing or editing redraws only the selected button, not the
+///   whole matrix.
 /// - **Events**: pressing a button sends `ValueChanged` with the button index as
 ///   [`EventParam::Value`] (on release for [`BtnCtrl::CLICK_TRIG`] and
 ///   [`BtnCtrl::POPOVER`] buttons), long press repeats it (unless
@@ -688,6 +696,16 @@ impl ButtonMatrix {
         }
         let node = cx.node();
         match ev.code {
+            // `Items` are item parts: a state change of the node redraws only the selected
+            // button, the one that shows the node's pressed / focused / edited state.
+            EventCode::StateChanged => {
+                let prev = ev.prev_state().unwrap_or_default();
+                let mut wcx = cx.widget_cx();
+                if (prev ^ wcx.state()).intersects(SELECTED_STATES) {
+                    self.invalidate_btn(&mut wcx, self.selected);
+                }
+                None
+            }
             EventCode::StyleChanged | EventCode::SizeChanged => {
                 let mut wcx = cx.widget_cx();
                 self.update_map(&mut wcx);
@@ -874,7 +892,7 @@ impl ButtonMatrix {
         if c.contains(BtnCtrl::DISABLED) {
             s |= State::DISABLED;
         } else if self.selected == u16::try_from(i).ok() {
-            s |= node_state & (State::PRESSED | State::FOCUSED | State::FOCUS_KEY | State::EDITED);
+            s |= node_state & SELECTED_STATES;
         }
         s
     }
@@ -897,9 +915,8 @@ impl ButtonMatrix {
             .style_i32(Part::Main, PropId::PadRow)
             .max(dpi_margin)
             .max(m.style_i32(Part::Main, PropId::PadColumn).max(dpi_margin));
-        let def = StateStyles::new(e, node, Part::Items, State::DEFAULT);
-        let def_rect = def.rect_dsc(opa);
-        let def_text = def.text_dsc(opa);
+        let def_rect = e.rect_dsc_for_state(node, Part::Items, State::DEFAULT, opa);
+        let def_text = e.text_dsc_for_state(node, Part::Items, State::DEFAULT, opa);
         for (i, a) in self.areas.iter().enumerate() {
             let c = self.ctrl[i];
             if c.contains(BtnCtrl::HIDDEN) {
@@ -919,10 +936,14 @@ impl ButtonMatrix {
             let (rect, mut text) = if st == State::DEFAULT {
                 (def_rect, def_text)
             } else {
-                let s = StateStyles::new(e, node, Part::Items, st);
-                (s.rect_dsc(opa), s.text_dsc(opa))
+                (
+                    e.rect_dsc_for_state(node, Part::Items, st, opa),
+                    e.text_dsc_for_state(node, Part::Items, st, opa),
+                )
             };
             let mut dsc = rect.dsc();
+            // Each button is drawn in one go (LVGL `lv_draw_rect`).
+            dsc.border_post = false;
             if dsc.border_side.0 & BorderSide::INTERNAL.0 != 0 {
                 let mut side = BorderSide::FULL.0;
                 if btn.x1 == obj.x0 + pad.left {
@@ -1012,7 +1033,7 @@ impl Widget for ButtonMatrix {
     fn event(&mut self, cx: &mut EventCx<'_>, ev: &Event) -> EventResult {
         if let Some(b) = self.handle(cx, ev) {
             let node = cx.node();
-            cx.send(node, EventCode::ValueChanged, EventParam::Value(i32::from(b)));
+            cx.post(node, EventCode::ValueChanged, EventParam::Value(i32::from(b)));
         }
         EventResult::Continue
     }

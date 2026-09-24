@@ -152,6 +152,10 @@ impl<D: FramebufferDisplay + 'static> FbBackend for D {
 pub(crate) enum Backend {
     Flush(Box<dyn FlushBackend>),
     Framebuffer(Box<dyn FbBackend>),
+    /// No driver: the caller renders frames through the chunk-level refresh API
+    /// ([`Engine::refresh_begin`], [`Engine::render_chunk`], [`Engine::refresh_end`]) and flushes
+    /// the chunks itself (the async runtime).
+    External(()),
 }
 
 impl Backend {
@@ -159,12 +163,14 @@ impl Backend {
         match self {
             Backend::Flush(b) => b.as_any(),
             Backend::Framebuffer(b) => b.as_any(),
+            Backend::External(u) => u,
         }
     }
     fn as_any_mut(&mut self) -> &mut dyn Any {
         match self {
             Backend::Flush(b) => b.as_any_mut(),
             Backend::Framebuffer(b) => b.as_any_mut(),
+            Backend::External(u) => u,
         }
     }
 }
@@ -233,6 +239,41 @@ impl Engine {
         let info = DisplayDriver::info(&driver);
         let refresher = Refresher::new_partial(&info, a, b)?;
         self.push_display(Backend::Flush(Box::new(driver)), info, refresher)
+    }
+
+    /// Registers a display without a driver, rendered through the chunk-level refresh API
+    /// ([`refresh_begin`](Self::refresh_begin), [`render_chunk`](Self::render_chunk),
+    /// [`refresh_end`](Self::refresh_end)): the caller owns the draw buffers (at least
+    /// `chunk_bytes` each) and flushes each rendered chunk itself, e.g. through an async
+    /// driver. Rotation, alignment and mono conversion work as with [`add_display`](Self::add_display).
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_engine::{Engine, EngineConfig};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::Rgb565), 64 * 2 * 8).unwrap();
+    /// let mut buf = vec![0u8; 64 * 2 * 8];
+    /// assert!(e.refresh_begin(twine_core::Instant::from_millis(0)).is_some());
+    /// let mut chunks = 0;
+    /// while let Some(area) = e.render_chunk(&mut buf) {
+    ///     assert_eq!(area.height(), 8); // 64 × 32 in 8-row chunks
+    ///     chunks += 1;
+    /// }
+    /// e.refresh_end();
+    /// assert_eq!((chunks, e.last_stats(d).chunks), (4, 4));
+    /// ```
+    pub fn add_chunked_display(
+        &mut self,
+        info: DisplayInfo,
+        chunk_bytes: usize,
+    ) -> Result<DisplayId, EngineError> {
+        if self.displays.len() >= MAX_DISPLAYS {
+            return Err(EngineError::TooManyDisplays);
+        }
+        let refresher = Refresher::new_external(&info, chunk_bytes)?;
+        self.push_display(Backend::External(()), info, refresher)
     }
 
     /// Registers a memory-mapped display (LTDC, RGB, Linux fb). `buffers` must be
@@ -509,7 +550,9 @@ impl Engine {
     /// the node: the way to call a widget's setters (LVGL `lv_<widget>_set_*`). Returns `None`
     /// (and logs `warn!`) when the node does not exist or holds another widget type.
     ///
-    /// While `f` runs the widget is taken out of its node (like during `Widget::init`).
+    /// While `f` runs the widget is taken out of its node (like during `Widget::init`);
+    /// events the setter posts to the node ([`WidgetCx::post_event`](crate::WidgetCx::post_event),
+    /// e.g. `ValueChanged`) are dispatched right after `f` returns, with the widget back.
     ///
     /// ```
     /// use twine_engine::{Engine, EngineConfig, Obj};
@@ -539,9 +582,7 @@ impl Engine {
         let r = w
             .downcast_mut::<W>()
             .map(|w| f(w, &mut crate::WidgetCx::new(self, id)));
-        if let Some(n) = self.tree.node_mut(id) {
-            n.widget = w;
-        }
+        self.restore_widget(id, w);
         r
     }
 
@@ -551,9 +592,7 @@ impl Engine {
         };
         let mut w: Box<dyn Widget> = core::mem::replace(&mut n.widget, Box::new(crate::obj::Detached));
         w.init(&mut crate::WidgetCx::new(self, id));
-        if let Some(n) = self.tree.node_mut(id) {
-            n.widget = w;
-        }
+        self.restore_widget(id, w);
     }
 
     /// Deletes `id` and its subtree. Every node of the subtree receives `Delete` (children

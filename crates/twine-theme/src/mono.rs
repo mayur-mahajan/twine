@@ -164,7 +164,7 @@ impl MonoStyles {
 /// buttons get a thicker border, checked ones are inverted, focus and edit show outlines.
 ///
 /// ```
-/// use twine_theme::{MonoTheme, Theme};
+/// use twine_theme::{MonoTheme, ThemeHook};
 /// let t = MonoTheme::new(true, &twine_assets::fonts::MONTSERRAT_14);
 /// assert_eq!(t.color_primary(), twine_core::Color::WHITE);
 /// ```
@@ -352,6 +352,12 @@ impl ThemeHook for MonoTheme {
     fn name(&self) -> &'static str {
         if self.dark { "mono-dark" } else { "mono-light" }
     }
+    fn color_primary(&self) -> Color {
+        if self.dark { Color::WHITE } else { Color::BLACK }
+    }
+    fn color_secondary(&self) -> Color {
+        if self.dark { Color::BLACK } else { Color::WHITE }
+    }
 }
 
 impl Theme for MonoTheme {
@@ -360,11 +366,5 @@ impl Theme for MonoTheme {
     }
     fn font_large(&self) -> &'static Font {
         self.font
-    }
-    fn color_primary(&self) -> Color {
-        if self.dark { Color::WHITE } else { Color::BLACK }
-    }
-    fn color_secondary(&self) -> Color {
-        if self.dark { Color::BLACK } else { Color::WHITE }
     }
 }

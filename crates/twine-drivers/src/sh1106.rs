@@ -13,6 +13,14 @@
 //! VCOM deselect `0x40`, resume from RAM, normal, display on. Rotation handling is as for the
 //! [`ssd1306`](crate::ssd1306) driver (hardware `Deg0`/`Deg180`, software `Deg90`/`Deg270`).
 //!
+//! # Wiring
+//!
+//! | Panel pin | Driver argument |
+//! |-----------|-----------------|
+//! | `SDA`, `SCL` (I2C modules) | `I2cInterface::new(i2c, 0x3C)` with an `embedded_hal(_async)::i2c::I2c` |
+//! | `SCK`, `MOSI`, `CS`, `DC` (SPI modules) | `SpiInterface::new(spi_device, dc)` |
+//! | `RES` | not driven by the driver: hold it high (or pulse it low once) from your firmware |
+//!
 //! ```
 //! use twine_drivers::interface::I2cInterface;
 //! use twine_drivers::sh1106::Sh1106;
@@ -31,7 +39,7 @@ use twine_hal::{DisplayDriver, DisplayInfo, DrawBufferMem, Rotation};
 
 use crate::interface::DcsInterface;
 use crate::mono::i1_to_page;
-use crate::ssd1306::{OLED_DPI, OledError};
+use crate::mono::{OLED_DPI, OledError};
 
 /// Visible size.
 const SIZE: (u16, u16) = (128, 64);
@@ -178,8 +186,8 @@ mod asynch {
 
     use super::{COLUMN_OFFSET, check, info, init_bytes, page_cmds};
     use crate::interface::AsyncDcsInterface;
+    use crate::mono::OledError;
     use crate::mono::i1_to_page;
-    use crate::ssd1306::OledError;
 
     /// Async SH1106 driver (feature `async`); same bytes as [`Sh1106`](super::Sh1106).
     pub struct AsyncSh1106<I> {

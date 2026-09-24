@@ -73,17 +73,25 @@ enforces this).
 
 ## Supported targets
 
-All boards use a 2.8" ILI9341 320×240 SPI TFT with XPT2046 touch, except the STM32F429 Discovery,
-which uses its on-board display.
+Twine ships drivers, not board support: every display, touch and input driver in
+`twine-drivers` is a cargo feature that you enable and wire to your own board's pins. The
+`firmware/` directory holds one small example per chip family — a template with a single
+"Wiring: edit for your board" block — that proves the stack builds and fits on that chip:
 
-| Firmware crate | Board | Target | Toolchain |
-|----------------|-------|--------|-----------|
-| `rp2040-ili9341` | Raspberry Pi Pico | `thumbv6m-none-eabi` | stable |
-| `rp2350-ili9341` | Raspberry Pi Pico 2 | `thumbv8m.main-none-eabihf` | stable |
-| `stm32f411-ili9341` | WeAct BlackPill F411CE | `thumbv7em-none-eabihf` | stable |
-| `stm32f429i-disco` | STM32F429I-DISC1 (LTDC + DMA2D) | `thumbv7em-none-eabihf` | stable |
-| `esp32c3-ili9341` | ESP32-C3-DevKitM-1 | `riscv32imc-unknown-none-elf` | stable |
-| `esp32s3-ili9341` | ESP32-S3-DevKitC-1 (N8R8) | `xtensa-esp32s3-none-elf` | `esp` (espup) |
+| Example | Chip | Target | Toolchain |
+|---------|------|--------|-----------|
+| `firmware/rp2040` | RP2040 | `thumbv6m-none-eabi` | stable |
+| `firmware/rp2350` | RP2350 | `thumbv8m.main-none-eabihf` | stable |
+| `firmware/stm32f411` | STM32F411 | `thumbv7em-none-eabihf` | stable |
+| `firmware/esp32c3` | ESP32-C3 | `riscv32imc-unknown-none-elf` | stable |
+| `firmware/esp32c6` | ESP32-C6 | `riscv32imac-unknown-none-elf` | stable |
+| `firmware/esp32s3` | ESP32-S3 (SPI panels and QSPI AMOLEDs) | `xtensa-esp32s3-none-elf` | `esp` (espup) |
+| `firmware/esp32` | ESP32 | `xtensa-esp32-none-elf` | `esp` (espup) |
+
+`firmware/README.md` lists the pins and features for known boards (the common 2.8" ILI9341 +
+XPT2046 module, the ESP32 "Cheap Yellow Display", Waveshare and LilyGO ESP32-S3 AMOLED boards,
+Waveshare's ESP32-C6 1.47" LCD)
+and the hardware checklist.
 
 ## Building
 
@@ -94,7 +102,7 @@ Prerequisites:
   (`cargo install cargo-llvm-cov`) for `cargo xtask coverage`; a nightly toolchain with Miri
   (`rustup toolchain install nightly --component miri`) for `cargo xtask miri`;
   [`probe-rs`](https://probe.rs) to flash ARM/RP boards; [`espup`](https://github.com/esp-rs/espup)
-  for the ESP32-S3 toolchain.
+  for the Xtensa (ESP32, ESP32-S3) toolchain.
 
 Commands:
 
@@ -104,7 +112,7 @@ Commands:
 | `cargo xtask sim <example>` | run a simulator example (`examples/src/bin/<example>.rs`) |
 | `cargo xtask snapshots [--update]` | run / refresh snapshot tests (review diffs before updating) |
 | `cargo xtask nostd` | build the `no_std` crates for all embedded targets |
-| `cargo xtask firmware [board]` | build firmware crates |
+| `cargo xtask firmware [example] [--strict]` | build the example firmware and print flash/RAM sizes |
 | `cargo xtask coverage` | per-crate line coverage with thresholds |
 | `cargo xtask miri [crate…]` | run tests under Miri (nightly) to detect undefined behaviour |
 

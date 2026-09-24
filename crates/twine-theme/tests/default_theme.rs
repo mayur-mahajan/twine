@@ -183,6 +183,12 @@ impl ThemeHook for RedCards {
     fn font_normal(&self) -> &'static Font {
         &twine_assets::fonts::MONTSERRAT_14
     }
+    fn color_primary(&self) -> Color {
+        Color::RED
+    }
+    fn color_secondary(&self) -> Color {
+        Color::RED
+    }
 }
 impl Theme for RedCards {
     fn font_small(&self) -> &'static Font {
@@ -190,12 +196,6 @@ impl Theme for RedCards {
     }
     fn font_large(&self) -> &'static Font {
         self.font_normal()
-    }
-    fn color_primary(&self) -> Color {
-        Color::RED
-    }
-    fn color_secondary(&self) -> Color {
-        Color::RED
     }
 }
 

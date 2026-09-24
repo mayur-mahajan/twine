@@ -265,3 +265,27 @@ fn snapshot_line() {
         h.assert_snapshot(&format!("line_rounded_thick_{}", m.suffix()));
     }
 }
+
+#[test]
+fn led_takes_theme_primary_color() {
+    use std::rc::Rc;
+    use twine_theme::{DefaultTheme, Palette, ThemeMode};
+    let theme = DefaultTheme::new(
+        Palette::Teal,
+        Palette::Amber,
+        ThemeMode::Light,
+        &twine_assets::fonts::MONTSERRAT_14,
+    );
+    let mut h = EngineHarness::new(60, 60).theme(Rc::new(theme));
+    let screen = h.screen();
+    let l = led::create(h.engine_mut(), screen).unwrap();
+    assert_eq!(get::<Led>(&h, l).color(), Palette::Teal.main());
+    assert_eq!(h.engine().color_primary(l), Palette::Teal.main());
+    assert_eq!(h.engine().color_secondary(l), Palette::Amber.main());
+    // Without a theme: LVGL's default blue.
+    let mut h = EngineHarness::new(60, 60).no_theme();
+    let screen = h.screen();
+    let l = led::create(h.engine_mut(), screen).unwrap();
+    assert_eq!(get::<Led>(&h, l).color(), LED_DEFAULT_COLOR);
+    assert_eq!(LED_DEFAULT_COLOR, twine_engine::DEFAULT_COLOR_PRIMARY);
+}

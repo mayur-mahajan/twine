@@ -7,14 +7,19 @@
 
 use alloc::rc::Rc;
 
-use twine_core::Size;
+use twine_core::{Color, Size};
 use twine_style::{EntryKind, Selector, StyleEntry, StyleRef};
 use twine_text::Font;
 
 use crate::{DisplayId, Engine, NodeId, Tree, WidgetClass, fmt_node_id};
 
-/// What the engine needs from a theme (LVGL `lv_theme_t`): styling a node when it is created
-/// and the default font.
+/// LVGL's default primary color (`lv_palette_main(LV_PALETTE_BLUE)`), used without a theme.
+pub const DEFAULT_COLOR_PRIMARY: Color = Color::hex(0x0021_96F3);
+/// LVGL's default secondary color (`lv_palette_main(LV_PALETTE_RED)`), used without a theme.
+pub const DEFAULT_COLOR_SECONDARY: Color = Color::hex(0x00F4_4336);
+
+/// What the engine needs from a theme (LVGL `lv_theme_t`): styling a node when it is created,
+/// the default font and the primary / secondary colors widgets take (an LED's default color).
 ///
 /// A theme adds styles with [`ThemeCx::add_style`]; they get the lowest priority of all
 /// styles (after normal and local styles), exactly like LVGL theme styles. The engine calls
@@ -68,6 +73,18 @@ pub trait ThemeHook {
     /// A short name for logs (default `"theme"`).
     fn name(&self) -> &'static str {
         "theme"
+    }
+
+    /// The primary color (buttons, sliders, focus outlines; LVGL `color_primary`). Default
+    /// [`DEFAULT_COLOR_PRIMARY`].
+    fn color_primary(&self) -> Color {
+        DEFAULT_COLOR_PRIMARY
+    }
+
+    /// The secondary color (checked buttons, edit outlines; LVGL `color_secondary`). Default
+    /// [`DEFAULT_COLOR_SECONDARY`].
+    fn color_secondary(&self) -> Color {
+        DEFAULT_COLOR_SECONDARY
     }
 }
 
@@ -234,6 +251,29 @@ impl Engine {
             .map(|t| t.font_normal())
             .or(self.config.default_font)
             .unwrap_or(&twine_text::EMPTY_FONT)
+    }
+
+    /// The theme of the display showing `id` (on a screen or a layer), if any.
+    #[must_use]
+    pub fn theme_of(&self, id: NodeId) -> Option<&Rc<dyn ThemeHook>> {
+        let root = self.tree.root_of(id)?;
+        self.displays.iter().find(|d| d.owns_root(root))?.theme.as_ref()
+    }
+
+    /// The primary color of the theme of `id`'s display (LVGL `lv_theme_get_color_primary`):
+    /// [`DEFAULT_COLOR_PRIMARY`] without a theme.
+    #[must_use]
+    pub fn color_primary(&self, id: NodeId) -> Color {
+        self.theme_of(id)
+            .map_or(DEFAULT_COLOR_PRIMARY, |t| t.color_primary())
+    }
+
+    /// The secondary color of the theme of `id`'s display (LVGL
+    /// `lv_theme_get_color_secondary`): [`DEFAULT_COLOR_SECONDARY`] without a theme.
+    #[must_use]
+    pub fn color_secondary(&self, id: NodeId) -> Color {
+        self.theme_of(id)
+            .map_or(DEFAULT_COLOR_SECONDARY, |t| t.color_secondary())
     }
 
     fn replace_theme(&mut self, display: DisplayId, theme: Option<Rc<dyn ThemeHook>>) {

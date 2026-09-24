@@ -41,7 +41,7 @@ data 00 0E 14 03 11 07 31 C1 48 08 0F 0C 31 36 0F
 cmd 3A
 data 55
 cmd 36
-data 28
+data E8
 cmd 20
 cmd 11
 delay_us 120000

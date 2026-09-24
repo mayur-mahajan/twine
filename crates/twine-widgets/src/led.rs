@@ -16,9 +16,9 @@ pub const LED_BRIGHT_MIN: u8 = 80;
 pub const LED_BRIGHT_MAX: u8 = 255;
 /// LVGL `lv_led_class.width_def` / `height_def`: `LV_DPI_DEF / 5`.
 pub const LED_DEFAULT_SIZE: i32 = util::DPI_DEF / 5;
-/// The default LED color: the default theme's primary color (LVGL
-/// `lv_theme_get_color_primary`, blue 500).
-pub const LED_DEFAULT_COLOR: Color = Color::hex(0x0021_96F3);
+/// The LED color without a theme: LVGL's default primary color (blue 500). With a theme a new
+/// LED takes the theme's primary color (LVGL `lv_theme_get_color_primary`).
+pub const LED_DEFAULT_COLOR: Color = twine_engine::DEFAULT_COLOR_PRIMARY;
 
 /// The class of [`Led`]: `"led"`, part `Main`, the base object's flags (LVGL `lv_led_class`).
 pub static LED_CLASS: WidgetClass = WidgetClass::new("led").default_flags(OBJ_FLAGS);
@@ -61,7 +61,8 @@ pub const fn color_brightness(c: Color) -> u8 {
 }
 
 impl Led {
-    /// An LED in [`LED_DEFAULT_COLOR`], on (LVGL `lv_led_constructor`).
+    /// An LED, on, in [`LED_DEFAULT_COLOR`] until it is created: then it takes the primary
+    /// color of its display's theme (LVGL `lv_led_constructor`).
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -151,6 +152,8 @@ impl Widget for Led {
 
     fn init(&mut self, cx: &mut WidgetCx<'_>) {
         let id = cx.node();
+        // LVGL `lv_led_constructor`: the theme's primary color.
+        self.color = cx.engine().color_primary(id);
         cx.engine_mut().set_size(id, LED_DEFAULT_SIZE, LED_DEFAULT_SIZE);
     }
 

@@ -395,6 +395,7 @@ const KEYBOARD_FLAGS: ObjFlags = OBJ_FLAGS.difference(ObjFlags::CLICK_FOCUSABLE)
 /// default focus group (LVGL `lv_keyboard_class`, a button matrix subclass).
 pub static KEYBOARD_CLASS: WidgetClass = WidgetClass::new("keyboard")
     .parts(&[Part::Main, Part::Items])
+    .item_parts(&[Part::Items])
     .default_flags(KEYBOARD_FLAGS)
     .group_def(GroupDef::True)
     .editable(Editable::True);
@@ -490,18 +491,31 @@ impl Keyboard {
         log_set(KEYBOARD_CLASS.name, cx.node(), "textarea");
         let e = cx.engine_mut();
         if let Some(old) = self.ta.filter(|t| e.tree().contains(*t)) {
+            // `StateChanged` stops the old cursor's blink.
             e.clear_state(old, State::FOCUSED);
-            with_textarea(e, old, super::textarea::Textarea::stop_blink);
         }
         self.ta = ta;
         if let Some(new) = ta {
             if e.tree().contains(new) {
+                // `StateChanged` starts the new cursor's blink.
                 e.add_state(new, State::FOCUSED);
-                with_textarea(e, new, super::textarea::Textarea::start_blink);
             } else {
                 twine_core::warn!(target: "twine::engine", "keyboard: textarea {} not found", fmt_node_id(new));
                 self.ta = None;
             }
+        }
+    }
+
+    /// A deleted keyboard gives up its textarea: the textarea loses the `FOCUSED` state the
+    /// keyboard gave it (so its cursor stops blinking), unless it holds its focus group's
+    /// focus (typing with a keypad continues there).
+    fn release_textarea(&mut self, e: &mut Engine) {
+        let Some(ta) = self.ta.take().filter(|t| e.tree().contains(*t)) else {
+            return;
+        };
+        let group_focus = e.group_of(ta).is_some_and(|g| e.focused(g) == Some(ta));
+        if !group_focus {
+            e.clear_state(ta, State::FOCUSED);
         }
     }
 
@@ -694,12 +708,15 @@ impl Widget for Keyboard {
     }
 
     fn event(&mut self, cx: &mut EventCx<'_>, ev: &Event) -> EventResult {
+        if ev.code == EventCode::Delete && ev.target == cx.node() {
+            self.release_textarea(cx.engine_mut());
+        }
         if let Some(b) = self.btnm.handle(cx, ev) {
             // LVGL: the keyboard's own handler runs before the application's.
             self.def_event(cx, b);
             let node = cx.node();
             if cx.engine().tree().contains(node) {
-                cx.send(node, EventCode::ValueChanged, EventParam::Value(i32::from(b)));
+                cx.post(node, EventCode::ValueChanged, EventParam::Value(i32::from(b)));
             }
         }
         EventResult::Continue

@@ -305,3 +305,55 @@ fn snapshot_kb_popover_pressed() {
     h.assert_panel_snapshot("kb_popover_pressed");
     h.release();
 }
+
+#[test]
+fn kb_delete_releases_textarea() {
+    let (mut h, ta, kb) = scene(Mode::Light);
+    // The group's focus is elsewhere: the textarea is `FOCUSED` only through the keyboard.
+    let screen = h.screen();
+    let other = twine_widgets::button::create(h.engine_mut(), screen).unwrap();
+    h.engine_mut().focus(other);
+    with(&mut h, kb, |k: &mut Keyboard, cx| {
+        k.set_textarea(cx, None);
+        k.set_textarea(cx, Some(ta));
+    });
+    let blinking = |h: &EngineHarness| get::<Textarea>(h, ta).is_blinking(&MeasureCx::new(h.engine(), ta));
+    assert!(
+        h.engine()
+            .tree()
+            .node(ta)
+            .unwrap()
+            .state()
+            .contains(State::FOCUSED)
+    );
+    assert!(blinking(&h));
+    h.engine_mut().delete(kb).unwrap();
+    assert!(
+        !h.engine()
+            .tree()
+            .node(ta)
+            .unwrap()
+            .state()
+            .contains(State::FOCUSED)
+    );
+    assert!(!blinking(&h), "the cursor stops blinking");
+    h.run_until_idle();
+    h.assert_idle();
+}
+
+#[test]
+fn kb_delete_keeps_group_focused_textarea() {
+    let (mut h, ta, kb) = scene(Mode::Light);
+    let g = h.engine_mut().create_group().unwrap();
+    h.engine_mut().group_add(g, ta);
+    h.engine_mut().focus(ta);
+    h.engine_mut().delete(kb).unwrap();
+    assert!(
+        h.engine()
+            .tree()
+            .node(ta)
+            .unwrap()
+            .state()
+            .contains(State::FOCUSED)
+    );
+}

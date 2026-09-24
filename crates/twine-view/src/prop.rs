@@ -157,6 +157,15 @@ impl_into_prop!(
     twine_render::BorderSide,
     twine_render::ShadowDsc,
     twine_widgets::image::ImageAlign,
+    twine_widgets::Orientation,
+    twine_widgets::bar::BarMode,
+    twine_widgets::arc::ArcMode,
+    twine_widgets::keyboard::KeyboardMode,
+    twine_widgets::spangroup::SpanMode,
+    twine_widgets::spangroup::SpanOverflow,
+    twine_anim::Repeat,
+    core::ops::RangeInclusive<i32>,
+    alloc::vec::Vec<Point>,
 );
 
 impl<T: 'static> IntoProp<Option<T>> for Option<T> {

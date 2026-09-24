@@ -1,0 +1,77 @@
+[package]
+name = "twine-example-esp32s3"
+description = "Example firmware: Twine on an ESP32-S3 with an SPI or QSPI (AMOLED) display and a touch controller"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Standalone firmware project (not a member of the library workspace).
+[workspace]
+
+# Feature sets `cargo xtask firmware` builds ("" = the defaults).
+[package.metadata.twine]
+feature-sets = [
+    "",
+    "panel-st7789,touch-ft6x36,demo-controls",
+    "panel-co5300,touch-ft6x36",
+    "panel-sh8601,touch-ft6x36",
+    "panel-rm67162,touch-cst816s",
+    "panel-ili9341,touch-xpt2046,demo-calibrate",
+]
+
+[features]
+default = ["panel-ili9341", "touch-xpt2046", "demo-counter"]
+## ILI9341 240 × 320 SPI panel.
+panel-ili9341 = ["twine-drivers/ili9341"]
+## ST7789 240 × 320 SPI panel.
+panel-st7789 = ["twine-drivers/st7789"]
+## CO5300 AMOLED on quad SPI (e.g. 410 × 502).
+panel-co5300 = ["twine-drivers/co5300", "dep:twine-esp"]
+## SH8601 AMOLED on quad SPI (e.g. 368 × 448).
+panel-sh8601 = ["twine-drivers/sh8601", "dep:twine-esp"]
+## RM67162 AMOLED on quad SPI (240 × 536).
+panel-rm67162 = ["twine-drivers/rm67162", "dep:twine-esp"]
+## XPT2046 resistive touch on its own SPI bus.
+touch-xpt2046 = ["twine-drivers/xpt2046"]
+## FT6x36 / FT3168 capacitive touch on I2C.
+touch-ft6x36 = ["twine-drivers/ft6x36"]
+## CST816S capacitive touch on I2C.
+touch-cst816s = ["twine-drivers/cst816s"]
+## The counter demo.
+demo-counter = []
+## The controls demo (sliders, switches, arcs, spinner).
+demo-controls = []
+## Touch calibration (resistive touch): logs a `Calibration { .. }` to paste into the wiring block.
+demo-calibrate = []
+
+[dependencies]
+twine = { path = "../../crates/twine", default-features = false, features = ["log", "color-rgb565-swapped", "perf-monitor", "montserrat-20"] }
+twine-drivers = { path = "../../crates/twine-drivers", features = ["async", "log"] }
+twine-embassy = { path = "../../crates/twine-embassy" }
+twine-demos = { path = "../../crates/twine-demos", features = ["async"] }
+twine-esp = { path = "../../crates/twine-esp", features = ["esp32s3"], optional = true }
+
+esp-hal = { version = "~1.2.2", features = ["esp32s3", "log-04", "unstable"] }
+esp-rtos = { version = "0.4.0", features = ["embassy", "esp-alloc", "esp32s3", "log-04"] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32s3", "log-04"] }
+esp-alloc = { version = "0.11.0", features = ["esp32s3"] }
+esp-backtrace = { version = "0.20.0", features = ["esp32s3", "panic-handler", "println"] }
+esp-println = { version = "0.18.0", features = ["esp32s3", "log-04"] }
+embassy-executor = { version = "0.10.0", features = ["log"] }
+embassy-time = { version = "0.5.0", features = ["log"] }
+embassy-embedded-hal = "0.6"
+embassy-sync = "0.8"
+embedded-hal = "1"
+critical-section = "1.2.0"
+static_cell = "2.1.1"
+log = "0.4.27"
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+lto = "fat"
+opt-level = "s"

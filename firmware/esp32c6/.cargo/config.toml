@@ -1,0 +1,10 @@
+[target.riscv32imac-unknown-none-elf]
+runner = "espflash flash --monitor --chip esp32c6"
+
+[build]
+# Frame pointers give esp-backtrace usable backtraces.
+rustflags = ["-C", "force-frame-pointers"]
+target = "riscv32imac-unknown-none-elf"
+
+[env]
+ESP_LOG = "info"

@@ -39,8 +39,6 @@ pub(crate) enum Op {
     Timer(TimerRc, TimerId),
     /// A call queued with [`Deferred::defer`].
     Call(Box<dyn FnOnce(&mut Engine)>),
-    /// A style transition event (transition serial, event).
-    Trans(u32, crate::transition::TransOp),
     /// A screen load animation event (display index, event).
     Screen(u8, crate::screen_anim::ScreenOp),
 }
@@ -268,6 +266,16 @@ impl Engine {
         id
     }
 
+    /// Adds an animation whose values arrive as [`Op::Apply`] of its own target (internal:
+    /// style transitions use [`AnimTarget::Custom`] with their serial). Allocates nothing once
+    /// the timeline has a free slot.
+    pub(crate) fn anim_start_target(&mut self, anim: Anim) -> AnimId {
+        let now = self.anim.now();
+        let id = self.anim.timeline.add(anim, now);
+        self.anim.after_add(id);
+        id
+    }
+
     /// Stops an animation (no callbacks). Returns `false` for a finished or unknown id.
     pub fn anim_stop(&mut self, id: AnimId) -> bool {
         self.anim.pending.retain(|(p, _)| *p != id);
@@ -440,6 +448,13 @@ impl Engine {
         self.anim.timers.contains(id)
     }
 
+    /// Whether `id` is a paused timer ([`timer_pause`](Self::timer_pause); `false` for running
+    /// and unknown timers).
+    #[must_use]
+    pub fn timer_is_paused(&self, id: TimerId) -> bool {
+        self.anim.timers.is_paused(id)
+    }
+
     /// Runs the due timers at `now` (update cycle step 4; called by [`step`](Self::step)).
     pub fn run_timers(&mut self, now: Instant) {
         self.anim.last_now = now;
@@ -545,9 +560,8 @@ impl Engine {
                     self.anim_apply(id, prop, v);
                 }
             }
-            Op::Apply(AnimTarget::Custom(c), _) => {
-                twine_core::debug!(target: "twine::anim", "custom target {} has no engine property", c);
-            }
+            // The engine's own timeline uses custom targets only for style transitions.
+            Op::Apply(AnimTarget::Custom(serial), v) => self.transition_value(serial, v),
             Op::Exec(f, v) => match f.try_borrow_mut() {
                 Ok(mut f) => f(self, v),
                 Err(_) => {
@@ -567,7 +581,6 @@ impl Engine {
                 }
             }
             Op::Call(f) => f(self),
-            Op::Trans(serial, t) => self.transition_op(serial, t),
             Op::Screen(d, s) => self.screen_anim_op(usize::from(d), s),
         }
     }
@@ -627,9 +640,7 @@ impl Engine {
         };
         let mut w: Box<dyn crate::Widget> = core::mem::replace(&mut n.widget, Box::new(crate::obj::Detached));
         f(&mut *w, &mut crate::WidgetCx::new(self, id));
-        if let Some(n) = self.tree.node_mut(id) {
-            n.widget = w;
-        }
+        self.restore_widget(id, w);
     }
 
     /// Stops every animation of the deleted nodes `ids` (node properties and transitions).

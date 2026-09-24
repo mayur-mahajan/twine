@@ -25,6 +25,10 @@ std = [
     "twine-image/std",
     "twine-render/std",
 ]
+## The async runtime `AsyncUi` (`Ui::builder_async`) for `AsyncDisplayDriver`s: frames are
+## rendered chunk by chunk while the previous chunk is transferred (DMA). Run it with
+## `twine-embassy`.
+async = ["twine-hal/async"]
 ## Log through the `log` crate.
 log = [
     "twine-core/log",

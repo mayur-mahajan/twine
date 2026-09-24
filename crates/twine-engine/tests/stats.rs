@@ -166,3 +166,20 @@ fn debug_refresh_tints_only_dirty_area() {
     assert_ne!(h.pixel(15, 15), Color::WHITE, "old area tinted");
     h.assert_panel_snapshot("debug_refresh_tint");
 }
+
+#[test]
+fn perf_overlay_uses_the_theme_font() {
+    // No `default_font` configured: the display theme's font draws the overlay.
+    let mut h = EngineHarness::new(200, 120);
+    assert!(h.engine().config().default_font.is_none());
+    h.run_until_idle();
+    let d = h.display();
+    h.engine_mut().set_perf_overlay(d, true).unwrap();
+    h.run_until_idle();
+    let overlay = h.engine().perf_overlay(d).unwrap();
+    let c = h.engine().coords(overlay);
+    assert!(
+        c.width() > 20 && c.height() > 10,
+        "overlay sized by the theme font: {c:?}"
+    );
+}

@@ -10,7 +10,7 @@
 
 use twine_core::Point;
 use twine_hal::Key;
-use twine_style::Dir;
+use twine_style::{Dir, State};
 
 use crate::{Engine, InputId, NodeId, WidgetCx};
 
@@ -60,7 +60,9 @@ pub enum EventCode {
     Gesture,
     /// A key for the focused node ([`EventParam::Key`]).
     Key,
-    /// Encoder rotation for the focused node in edit mode ([`EventParam::Rotary`]).
+    /// A rotation by `n` steps ([`EventParam::Rotary`]), e.g. a mouse wheel over the node,
+    /// sent by the application. Encoders do not send it: in edit mode their rotation arrives
+    /// as `Key(Right)` / `Key(Left)` per step, like in LVGL, so widgets handle one input path.
     Rotary,
     /// The node got the focus.
     Focused,
@@ -125,6 +127,12 @@ pub enum EventCode {
     SizeChanged,
     /// A style of the node changed.
     StyleChanged,
+    /// The node's state changed ([`EventParam::State`] holds the previous state; LVGL
+    /// `LV_EVENT_STATE_CHANGED`). Sent after the new state is set, including for
+    /// [`Engine::add_state`] / [`Engine::clear_state`] called directly; when the node's
+    /// widget is busy (its own `event` or setter is running) it arrives right after that
+    /// returns (see [`Engine::post_event`]).
+    StateChanged,
     /// The layout of the node changed.
     LayoutChanged,
     /// Content size request.
@@ -221,10 +229,25 @@ pub enum EventParam {
     Rotary(i32),
     /// A value.
     Value(i32),
-    /// A static text (e.g. `Insert`).
-    Text(&'static str),
+    /// A text (e.g. `Insert`), sent with [`Engine::send_event_text`] and read with
+    /// [`EventCx::text`] or [`Engine::event_text`] while the event is being dispatched.
+    Text(EventText),
+    /// A state (`StateChanged`: the previous state).
+    State(State),
     /// An area (`SizeChanged`: the old coordinates).
     Area(twine_core::Rect),
+}
+
+/// Handle of the text of an event sent with [`Engine::send_event_text`]. The text itself is
+/// kept by the engine (in a reused buffer, so sending text allocates nothing in steady state)
+/// only while the event is being dispatched; read it with [`EventCx::text`] or
+/// [`Engine::event_text`]. A handle kept longer reads as `None`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct EventText {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
+    pub(crate) serial: u32,
 }
 
 /// What a handler asks the dispatcher to do next.
@@ -270,6 +293,24 @@ impl Event {
     pub fn dir(&self) -> Option<Dir> {
         match self.param {
             EventParam::Dir(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// The value of an event with [`EventParam::Value`] (e.g. `ValueChanged` of a slider).
+    #[must_use]
+    pub fn value(&self) -> Option<i32> {
+        match self.param {
+            EventParam::Value(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// The previous state of a `StateChanged` event.
+    #[must_use]
+    pub fn prev_state(&self) -> Option<State> {
+        match self.param {
+            EventParam::State(s) => Some(s),
             _ => None,
         }
     }
@@ -362,7 +403,25 @@ impl<'a> EventCx<'a> {
     }
 
     /// Sends another event (nested dispatch) and returns its result.
+    ///
+    /// From a widget's own [`Widget::event`](crate::Widget::event), an event sent to the
+    /// widget's node does not reach the widget (it is busy) and its handlers cannot read the
+    /// widget; use [`post`](Self::post) for notifications such as `ValueChanged`.
     pub fn send(&mut self, target: NodeId, code: EventCode, param: EventParam) -> EventResult {
         self.engine.send_event(target, code, param)
+    }
+
+    /// Sends an event once `target`'s widget is back in its node (see
+    /// [`Engine::post_event`]): from a widget's `event`, a `ValueChanged` posted to its own
+    /// node reaches the handlers right after `event` returns, and they can read the widget.
+    pub fn post(&mut self, target: NodeId, code: EventCode, param: EventParam) {
+        self.engine.post_event(target, code, param);
+    }
+
+    /// The text of `ev` when it carries one ([`EventParam::Text`]), e.g. the text being
+    /// inserted into a textarea (`Insert`).
+    #[must_use]
+    pub fn text(&self, ev: &Event) -> Option<&str> {
+        self.engine.event_text(&ev.param)
     }
 }

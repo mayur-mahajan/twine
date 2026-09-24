@@ -20,7 +20,7 @@ engine = ["render", "dep:twine-engine", "dep:twine-style", "dep:twine-theme", "d
 ## for tests, never for benchmarks.
 debug-checks = ["engine", "twine-engine/debug-checks"]
 ## `TestUi` over the declarative `Ui`.
-ui = ["engine", "dep:twine-reactive", "dep:twine-view", "dep:twine-widgets", "dep:critical-section"]
+ui = ["engine", "dep:twine-reactive", "dep:twine-view", "dep:twine-widgets", "dep:twine-text", "dep:critical-section"]
 
 [dependencies]
 twine-core = { path = "../twine-core", features = ["std", "log"] }
@@ -57,6 +57,7 @@ twine-assets = { path = "../twine-assets", optional = true }
 twine-reactive = { path = "../twine-reactive", optional = true, features = ["std", "log"] }
 twine-view = { path = "../twine-view", optional = true, features = ["std", "log"] }
 twine-widgets = { path = "../twine-widgets", optional = true, features = ["std", "log"] }
+twine-text = { path = "../twine-text", optional = true, features = ["std", "log"] }
 # Host implementation of `critical-section` (used by reactive channels) for test binaries.
 critical-section = { version = "1", optional = true, features = ["std"] }
 png = "0.17"

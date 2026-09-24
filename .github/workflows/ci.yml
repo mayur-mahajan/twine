@@ -2,9 +2,8 @@
 # The toolchain comes from rust-toolchain.toml (stable + embedded targets), so no toolchain
 # action is needed for the stable jobs.
 #
-# Planned jobs (added together with firmware support):
-#   firmware          → added with firmware support (rp2040, rp2350, stm32f411, stm32f429i-disco, esp32c3)
-#   firmware-esp32s3  → added with ESP32-S3 support (esp-rs/xtensa-toolchain action)
+# The `firmware` jobs build the example firmware in `firmware/` (one standalone project per chip
+# family) for each of its feature sets and add flash/RAM sizes to the job summary.
 
 name: CI
 
@@ -135,3 +134,39 @@ jobs:
         with:
           tool: iai-callgrind-runner@0.16.1
       - run: cargo xtask bench --iai
+
+  firmware:
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [rp2040, rp2350, stm32f411, esp32c3, esp32c6]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            firmware/${{ matrix.example }}
+      - run: cargo xtask firmware ${{ matrix.example }} --strict
+
+  firmware-xtensa:
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [esp32s3, esp32]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: esp-rs/xtensa-toolchain@v1.7
+        with:
+          default: false
+          override: false
+          buildtargets: ${{ matrix.example }}
+          ldproxy: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            firmware/${{ matrix.example }}
+      - run: cargo xtask firmware ${{ matrix.example }} --strict

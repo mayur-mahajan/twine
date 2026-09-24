@@ -26,6 +26,14 @@
 //! `Ui::notify_input()` from the pin interrupt, or let `twine-embassy` await
 //! `AsyncInputWait::wait_for_interrupt` with feature `async`).
 //!
+//! # Wiring
+//!
+//! | Module pin | Driver argument |
+//! |------------|-----------------|
+//! | `T_CLK`, `T_DIN`, `T_DO` | the bus of `spi`, a blocking `embedded_hal::spi::SpiDevice` at ≤ 2 MHz (it may share the display's bus with its own CS) |
+//! | `T_CS` | the chip select owned by `spi` |
+//! | `T_IRQ` | `irq`: `Some(InputPin)` (with pull-up; `+ Wait` for the async wake-up), or `None` to poll |
+//!
 //! ```
 //! use twine_drivers::touch::xpt2046::Xpt2046;
 //! use twine_drivers::testkit::Recorder;
@@ -447,11 +455,11 @@ mod tests {
         let mut t: Xpt2046<_, RecordingPin> = Xpt2046::new(rec.spi(), None);
         assert_eq!(t.poll_hint(), PollHint::Periodic);
         assert_eq!(t.calibration(), Calibration::DEFAULT_320X240_ROT90);
-        // raw (x 200, y 3900) → (320, 0), clamped to x = 319.
+        // raw (x 200, y 3900) → (0, 240), clamped to y = 239.
         assert_eq!(
             t.read(),
             InputData::Pointer(PointerData {
-                point: Point::new(319, 0),
+                point: Point::new(0, 239),
                 pressed: true
             })
         );

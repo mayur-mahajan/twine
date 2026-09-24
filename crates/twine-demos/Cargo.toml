@@ -12,9 +12,14 @@ workspace = true
 
 [features]
 default = []
+## `AsyncInputWait` for `calibration::RawTouchInput` (async runtimes).
+async = ["twine/async"]
+## Log through `defmt` (enable it when the firmware logs with defmt: the calibration demo logs).
+defmt = ["dep:defmt", "twine/defmt"]
 
 [dependencies]
-twine = { path = "../twine", default-features = false, features = ["montserrat-20"] }
+defmt = { version = "1", optional = true }
+twine = { path = "../twine", default-features = false, features = ["montserrat-16", "montserrat-20"] }
 
 [dev-dependencies]
 twine = { path = "../twine", features = ["std"] }

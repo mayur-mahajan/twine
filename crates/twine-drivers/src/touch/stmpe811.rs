@@ -25,6 +25,14 @@
 //! [`Filter`] (default median of 3), calibrated and clamped. The FIFO and the interrupt status
 //! are then cleared.
 //!
+//! # Wiring
+//!
+//! | Controller pin | Driver argument |
+//! |----------------|-----------------|
+//! | `SDA`, `SCL` | `i2c`, an `embedded_hal::i2c::I2c` (address `0x41` or `0x44`) |
+//! | `INT`/`IRQ` | `irq`: `Some(InputPin)` (`+ Wait` for the async wake-up), or `None` to poll |
+//! | `RST` | not driven by the driver: hold it high from your firmware |
+//!
 //! ```
 //! use twine_drivers::touch::Stmpe811;
 //! use twine_drivers::testkit::Recorder;

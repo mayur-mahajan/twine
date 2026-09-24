@@ -18,11 +18,20 @@ const MARGIN: i32 = 4;
 
 static WARN_NO_FONT: AtomicBool = AtomicBool::new(false);
 
-/// The overlay widget: draws its text on a translucent dark box with the configured
-/// `default_font` (nothing without a font).
+/// The overlay widget: draws its text on a translucent dark box with the display's default
+/// font — its theme's font, else `EngineConfig::default_font` (nothing without a font).
 #[derive(Debug, Default)]
 pub struct PerfOverlay {
     text: heapless::String<64>,
+}
+
+/// The overlay's font: the default font of its display (theme font first, then the
+/// configured `default_font`); `None` when there is none.
+fn overlay_font(e: &Engine, id: NodeId) -> Option<&'static twine_text::Font> {
+    let f = e
+        .display_of(id)
+        .map_or(e.config().default_font, |d| Some(e.default_font(d)))?;
+    (!core::ptr::eq(f, &raw const twine_text::EMPTY_FONT)).then_some(f)
 }
 
 impl Widget for PerfOverlay {
@@ -31,10 +40,10 @@ impl Widget for PerfOverlay {
     }
 
     fn draw(&self, cx: &mut DrawCx<'_, '_>) {
-        let Some(font) = cx.engine().config().default_font else {
+        let Some(font) = overlay_font(cx.engine(), cx.node()) else {
             if !WARN_NO_FONT.load(Ordering::Relaxed) {
                 WARN_NO_FONT.store(true, Ordering::Relaxed);
-                twine_core::warn!(target: "twine::perf", "perf overlay: no default_font configured, nothing drawn");
+                twine_core::warn!(target: "twine::perf", "perf overlay: no theme font or default_font, nothing drawn");
             }
             return;
         };
@@ -47,7 +56,7 @@ impl Widget for PerfOverlay {
     }
 
     fn content_size(&self, cx: &MeasureCx<'_>) -> Size {
-        cx.engine().config().default_font.map_or(Size::ZERO, |f| {
+        overlay_font(cx.engine(), cx.node()).map_or(Size::ZERO, |f| {
             TextDsc::new(f).layout(&self.text, i32::MAX).measure()
         })
     }

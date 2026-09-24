@@ -38,7 +38,7 @@ fn changes(h: &mut EngineHarness, s: NodeId) -> Rc<RefCell<Vec<i32>>> {
     let l = log.clone();
     h.engine_mut()
         .add_event_handler(s, EventFilter::Code(EventCode::ValueChanged), move |_, ev| {
-            // The slider sends its new value with the event (it is busy while it sends it).
+            // The slider sends its new value with the event.
             let EventParam::Value(v) = ev.param else {
                 panic!("no value: {:?}", ev.param);
             };
@@ -391,5 +391,41 @@ fn snapshot_slider_states() {
         });
         h.run_until_idle();
         h.assert_snapshot(&format!("slider_range_{}", m.suffix()));
+    }
+}
+
+#[test]
+fn slider_rotary_event_steps_value_once() {
+    let (mut h, s) = scene(Mode::Light);
+    let log = changes(&mut h, s);
+    // `Rotary` comes from the application (e.g. a mouse wheel), whatever device is active.
+    let _ = h.encoder_input();
+    h.engine_mut()
+        .send_event(s, EventCode::Rotary, EventParam::Rotary(5));
+    assert_eq!(value(&h, s), 5);
+    h.engine_mut()
+        .send_event(s, EventCode::Rotary, EventParam::Rotary(-2));
+    assert_eq!(value(&h, s), 3);
+    assert_eq!(*log.borrow(), [5, 3]);
+}
+
+#[test]
+fn slider_value_changed_handler_reads_the_slider() {
+    let (mut h, s) = scene(Mode::Light);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sn = seen.clone();
+    h.engine_mut()
+        .add_event_handler(s, EventFilter::Code(EventCode::ValueChanged), move |cx, ev| {
+            let w = cx.engine().widget::<Slider>(ev.target).map(Slider::value);
+            sn.borrow_mut().push((ev.value(), w));
+            EventResult::Continue
+        });
+    let c = h.engine().coords(s);
+    h.tap(Point::new(c.x0 + W * 3 / 4, (c.y0 + c.y1) / 2));
+    h.key(Key::Right);
+    let seen = seen.borrow();
+    assert!(!seen.is_empty());
+    for &(param, widget) in seen.iter() {
+        assert_eq!(widget, param, "the handler sees the slider with the new value");
     }
 }

@@ -22,7 +22,10 @@
 //! # Rotation
 //!
 //! Rotation is done by the controller (`MADCTL`), so [`DisplayInfo::hw_rotation`] is `true` and
-//! flush areas are in logical (rotated) coordinates. Offsets of panels that show only part of
+//! flush areas are in logical (rotated) coordinates. Every `MADCTL` table turns the picture the
+//! same way as the engine's software rotation (`Deg90`: panel turned 90° clockwise, logical
+//! `(x, y)` on native pixel `(y, w − 1 − x)`), so switching a display between hardware and
+//! software rotation never changes what is shown. Offsets of panels that show only part of
 //! the controller memory are derived from the `MADCTL` mirror bits of each rotation.
 
 use core::ops::{BitOr, BitOrAssign};
@@ -67,6 +70,10 @@ pub mod cmd {
     pub const MADCTL: u8 = 0x36;
     /// Interface pixel format.
     pub const COLMOD: u8 = 0x3A;
+    /// Write display brightness (OLED/AMOLED controllers).
+    pub const WRDISBV: u8 = 0x51;
+    /// Write CTRL display (brightness control block, dimming).
+    pub const WRCTRLD: u8 = 0x53;
 }
 
 /// `MADCTL` (memory access control) bits.
@@ -142,16 +149,22 @@ impl BitOrAssign for Madctl {
     }
 }
 
-/// The common rotation → `MADCTL` mapping (mipidsi / `TFT_eSPI` convention):
-/// `Deg0: —, Deg90: MX|MV, Deg180: MX|MY, Deg270: MY|MV`, each combined with `extra` (e.g.
+/// The common rotation → `MADCTL` mapping for panels whose unmirrored memory is upright:
+/// `Deg0: —, Deg90: MY|MV, Deg180: MX|MY, Deg270: MX|MV`, each combined with `extra` (e.g.
 /// [`Madctl::BGR`]).
+///
+/// The rotations follow the engine's convention ([`Rotation`]): `Deg90` means the panel is
+/// turned 90° clockwise, so the picture is drawn turned 90° counter-clockwise in panel
+/// memory — logical `(x, y)` lands on native pixel `(y, w − 1 − x)`, exactly where the
+/// engine's software rotation puts it. (`TFT_eSPI`'s and mipidsi's rotation 1 is the other
+/// direction: their `Deg90` is this `Deg270`.)
 #[must_use]
 pub const fn standard_madctl(extra: Madctl) -> [Madctl; 4] {
     [
         extra,
-        extra.union(Madctl::MX).union(Madctl::MV),
-        extra.union(Madctl::MX).union(Madctl::MY),
         extra.union(Madctl::MY).union(Madctl::MV),
+        extra.union(Madctl::MX).union(Madctl::MY),
+        extra.union(Madctl::MX).union(Madctl::MV),
     ]
 }
 
@@ -205,6 +218,13 @@ pub struct PanelSpec {
     pub colmod: u8,
     /// Colour inversion (`INVON`) — many IPS panels need it.
     pub invert: bool,
+    /// Flush areas' x, y, width and height must be multiples of this ([`DisplayInfo::align`];
+    /// 2 for most AMOLED controllers, otherwise 1).
+    pub align: u8,
+    /// The controller cannot exchange rows and columns (no usable `MADCTL.MV`): `MADCTL` stays
+    /// at the `Deg0` entry, [`DisplayInfo::hw_rotation`] is `false` and the engine rotates in
+    /// software, so flush areas are in native panel coordinates.
+    pub sw_rotation: bool,
     /// Vendor init table, run after reset and before `COLMOD`/`MADCTL`/`SLPOUT`/`DISPON`.
     pub init: &'static [InitOp],
 }
@@ -236,16 +256,30 @@ impl PanelSpec {
         if self.colmod & 0x07 == 0x06 { 3 } else { 2 }
     }
 
-    /// The `MADCTL` value for a rotation.
+    /// The rotation done by the controller for display rotation `r`: `r` itself, or `Deg0`
+    /// for [`sw_rotation`](Self::sw_rotation) panels.
     #[must_use]
-    pub const fn madctl_for(&self, r: Rotation) -> Madctl {
-        self.madctl[rot_index(r)]
+    pub const fn hw_rotation(&self, r: Rotation) -> Rotation {
+        if self.sw_rotation { Rotation::Deg0 } else { r }
     }
 
-    /// Logical `(width, height)` for a rotation (swapped when its `MADCTL` has `MV`).
+    /// The `MADCTL` value for a rotation (always the `Deg0` entry for
+    /// [`sw_rotation`](Self::sw_rotation) panels).
+    #[must_use]
+    pub const fn madctl_for(&self, r: Rotation) -> Madctl {
+        self.madctl[rot_index(self.hw_rotation(r))]
+    }
+
+    /// Logical `(width, height)` for a rotation (swapped when its `MADCTL` has `MV`, or for
+    /// 90°/270° on [`sw_rotation`](Self::sw_rotation) panels).
     #[must_use]
     pub const fn logical_size(&self, r: Rotation) -> (u16, u16) {
-        if self.madctl_for(r).contains(Madctl::MV) {
+        let swapped = if self.sw_rotation {
+            r.swaps_axes()
+        } else {
+            self.madctl_for(r).contains(Madctl::MV)
+        };
+        if swapped {
             (self.native_h, self.native_w)
         } else {
             (self.native_w, self.native_h)
@@ -273,11 +307,18 @@ impl PanelSpec {
         }
     }
 
-    /// `CASET` and `RASET` parameters (big-endian inclusive start/end) for a logical area, or
-    /// `None` if the area is empty or outside the logical screen.
+    /// `CASET` and `RASET` parameters (big-endian inclusive start/end) for an area of the
+    /// flush coordinate space of rotation `r` (logical, or native for
+    /// [`sw_rotation`](Self::sw_rotation) panels), or `None` if the area is empty, outside the
+    /// screen or not a multiple of [`align`](Self::align).
     #[must_use]
     pub fn window(&self, r: Rotation, area: Rect) -> Option<([u8; 4], [u8; 4])> {
+        let r = self.hw_rotation(r);
         let (w, h) = self.logical_size(r);
+        let a = i32::from(self.align.max(1));
+        if [area.x0, area.y0, area.x1, area.y1].iter().any(|v| v % a != 0) {
+            return None;
+        }
         if area.is_empty() || !Rect::new(0, 0, i32::from(w), i32::from(h)).contains_rect(&area) {
             return None;
         }
@@ -326,6 +367,13 @@ impl PanelSpec {
         self.native_h = native_h;
         self.offset_x = offset_x;
         self.offset_y = offset_y;
+        self
+    }
+
+    /// Returns a copy with another flush alignment.
+    #[must_use]
+    pub const fn with_align(mut self, align: u8) -> Self {
+        self.align = align;
         self
     }
 
@@ -406,7 +454,7 @@ fn check_flush<E>(
     len: usize,
 ) -> Result<([u8; 4], [u8; 4], usize), DcsError<E>> {
     let Some((c, r)) = spec.window(rotation, area) else {
-        error!(target: "twine::driver", "{}: flush area {:?} outside the display", spec.name, area);
+        error!(target: "twine::driver", "{}: flush area {:?} outside the display or misaligned", spec.name, area);
         return Err(DcsError::BadArea);
     };
     let bytes = area.area() as usize * spec.bytes_per_pixel();
@@ -421,8 +469,8 @@ fn display_info(spec: &PanelSpec, rotation: Rotation, dpi: u16) -> DisplayInfo {
     let (w, h) = spec.logical_size(rotation);
     DisplayInfo::new(w, h, spec.format())
         .with_rotation(rotation)
-        .with_hw_rotation(true)
-        .with_align(1)
+        .with_hw_rotation(!spec.sw_rotation)
+        .with_align(spec.align.max(1))
         .with_dpi(dpi)
 }
 
@@ -582,6 +630,12 @@ impl<I: DcsInterface, RST: OutputPin> MipiDcs<I, RST> {
         } else {
             self.command(cmd::TEOFF, &[])
         }
+    }
+
+    /// Sets the display brightness (`WRDISBV`, `0x51`; `0` = off, `255` = maximum) of
+    /// controllers that dim themselves (AMOLED, OLED). LCD panels dim with their backlight pin.
+    pub fn set_brightness(&mut self, level: u8) -> Result<(), DcsError<I::Error>> {
+        self.command(cmd::WRDISBV, &[level])
     }
 
     /// Sends pixels of `area` immediately (the body of `begin_flush`).
@@ -773,6 +827,11 @@ mod asynch {
             }
         }
 
+        /// Sets the display brightness (`WRDISBV`, `0x51`) of self-dimming controllers.
+        pub async fn set_brightness(&mut self, level: u8) -> Result<(), DcsError<I::Error>> {
+            self.command(cmd::WRDISBV, &[level]).await
+        }
+
         /// Returns the interface and the reset pin.
         #[must_use]
         pub fn release(self) -> (I, Option<RST>) {
@@ -824,6 +883,8 @@ mod tests {
         offset_y: 2,
         madctl: standard_madctl(Madctl::BGR),
         colmod: 0x55,
+        align: 1,
+        sw_rotation: false,
         invert: true,
         init: &[InitOp::Cmd(0xB1, &[0x00, 0x18]), InitOp::DelayMs(5)],
     };
@@ -909,7 +970,7 @@ mod tests {
 
     #[test]
     fn set_window_rotation90_swaps_axes() {
-        // Deg90 = MX|MV: logical 20×10; column offset mirrored (12 − 10 − 1 = 1), then swapped.
+        // Deg90 = MY|MV: logical 20×10; row offset mirrored (24 − 20 − 2 = 2), then swapped.
         let (rec, mut d) = dut(&TEST, Rotation::Deg90);
         assert_eq!((d.info().width, d.info().height), (20, 10));
         assert_eq!(TEST.offset(Rotation::Deg90), (2, 1));
@@ -1010,9 +1071,9 @@ mod tests {
     fn rotation_changes_madctl_and_info() {
         let table = [
             (Rotation::Deg0, 0x08, (10, 20), (1, 2)),
-            (Rotation::Deg90, 0x68, (20, 10), (2, 1)),
+            (Rotation::Deg90, 0xA8, (20, 10), (2, 1)),
             (Rotation::Deg180, 0xC8, (10, 20), (1, 2)),
-            (Rotation::Deg270, 0xA8, (20, 10), (2, 1)),
+            (Rotation::Deg270, 0x68, (20, 10), (2, 1)),
         ];
         let (rec, mut d) = dut(&TEST, Rotation::Deg0);
         for (rot, madctl, size, offset) in table {

@@ -1,0 +1,21 @@
+# Headless tour of controls (cargo xtask sim-smoke): drag the slider (the bar, the dial and the
+# label follow), click the switch (the checkbox, the LED and the power button follow), move the
+# keypad focus three times and press Enter on the focused control, then scroll down.
+wait 300
+shot initial
+drag 48 52 70 52 300
+wait 400
+shot slider_dragged
+tap 43 206
+wait 300
+shot switch_on
+key Next
+key Next
+key Next
+wait 50
+key Enter
+wait 400
+shot keypad
+drag 160 220 160 80 300
+wait 600
+shot scrolled

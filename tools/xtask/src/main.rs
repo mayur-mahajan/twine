@@ -66,10 +66,13 @@ enum Cmd {
     },
     /// Run every simulator example headless (with `examples/scripts/<name>.twinescript` if present).
     SimSmoke,
-    /// Build firmware crates (all boards, or one).
+    /// Build the example firmware in `firmware/` (all, or one) and print flash/RAM sizes.
     Firmware {
-        /// Board crate name in `firmware/`.
-        board: Option<String>,
+        /// Example directory name in `firmware/` (`all` or omitted: every example).
+        example: Option<String>,
+        /// Fail instead of skipping an example whose target or toolchain is missing.
+        #[arg(long)]
+        strict: bool,
     },
     /// Per-crate line coverage with thresholds (needs cargo-llvm-cov).
     Coverage,
@@ -144,7 +147,7 @@ fn main() {
             &args,
         ),
         Cmd::SimSmoke => cmd::sim::smoke(),
-        Cmd::Firmware { board } => cmd::firmware::run(board.as_deref()),
+        Cmd::Firmware { example, strict } => cmd::firmware::run(example.as_deref(), strict),
         Cmd::Coverage => cmd::coverage::run(),
         Cmd::Bench { iai, save_baseline } => cmd::bench::run(iai, save_baseline),
         Cmd::Fonts { check } => cmd::fonts::run(check),

@@ -170,6 +170,20 @@ impl<'a, 'p> DrawCx<'a, 'p> {
         self.engine.text_dsc(self.node, part, self.opa)
     }
 
+    /// The rectangle style of `part` as if the node were in `state` (transitions ignored; see
+    /// [`Engine::rect_dsc_for_state`]), with the node's opacity and recolor applied.
+    #[must_use]
+    pub fn rect_dsc_for_state(&self, part: Part, state: twine_style::State) -> RectStyle {
+        self.engine.rect_dsc_for_state(self.node, part, state, self.opa)
+    }
+
+    /// The text style of `part` as if the node were in `state` (see
+    /// [`Engine::text_dsc_for_state`]).
+    #[must_use]
+    pub fn text_dsc_for_state(&self, part: Part, state: twine_style::State) -> TextDsc {
+        self.engine.text_dsc_for_state(self.node, part, state, self.opa)
+    }
+
     /// The image style of `part` (`Image*` properties).
     #[must_use]
     pub fn image_dsc(&self, part: Part) -> ImageDsc<'static> {

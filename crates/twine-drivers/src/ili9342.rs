@@ -12,6 +12,16 @@
 //! inversion) and `NORON`, plus the generic sequence. Rotation uses [`standard_madctl`];
 //! `Deg0` is landscape 320 × 240.
 //!
+//! # Wiring
+//!
+//! | Panel pin | Driver argument |
+//! |-----------|-----------------|
+//! | `SCK`, `SDI`/`MOSI` (`SDO`/`MISO` is not needed) | the bus of `spi`, an `embedded_hal(_async)::spi::SpiDevice` (use a DMA-capable async one to overlap transfers with rendering) |
+//! | `CS` | the chip select owned by `spi` |
+//! | `DC`/`RS` | `dc`, any `OutputPin` |
+//! | `RESET` | `rst`: `Some(OutputPin)`, or `None` when it is tied to the MCU reset (a software reset is sent instead) |
+//! | `LED`/`BL` | not driven by the driver: switch it (or PWM it) from your firmware |
+//!
 //! ```
 //! use twine_drivers::ili9342;
 //! use twine_drivers::testkit::Recorder;
@@ -40,6 +50,8 @@ pub static ILI9342C: PanelSpec = PanelSpec {
     offset_y: 0,
     madctl: standard_madctl(Madctl::BGR),
     colmod: 0x55,
+    align: 1,
+    sw_rotation: false,
     invert: true,
     init: &ILI9342_INIT,
 };
