@@ -7,7 +7,7 @@ use core::cell::{Cell, RefCell};
 
 use twine_anim::{Anim, AnimId, Easing, Interpolate, TimerId};
 use twine_core::Duration;
-use twine_engine::{DisplayId, Engine, ThemeHook, Widget};
+use twine_engine::{DisplayId, Engine, NodeId, ThemeHook, Widget};
 use twine_reactive::{ReadSignal, Scope, batch, defer_current_effect, dispose_current_effect, untrack};
 
 use crate::access::EngineAccess;
@@ -18,6 +18,29 @@ use crate::view::View;
 /// The display a `Ui` runs on, provided as context in its root scope.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct UiDisplay(pub(crate) DisplayId);
+
+/// The root node of the view that owns a scope — the `Ui`'s app view, a navigator screen's
+/// view or a modal's view — provided as context. A modal inherits its text style (font,
+/// color, base direction) from it, although its nodes live on the top layer.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct StyleAnchor(Rc<Cell<Option<NodeId>>>);
+
+impl StyleAnchor {
+    /// An anchor at `node`.
+    pub(crate) fn new(node: NodeId) -> Self {
+        Self(Rc::new(Cell::new(Some(node))))
+    }
+
+    /// The anchor node (`None` before the view is built).
+    pub(crate) fn get(&self) -> Option<NodeId> {
+        self.0.get()
+    }
+
+    /// Sets the anchor node once the view is built.
+    pub(crate) fn set(&self, node: NodeId) {
+        self.0.set(Some(node));
+    }
+}
 
 /// The display of the `Ui` that owns `cx` (or the engine's default display).
 pub(crate) fn display_of(cx: Scope, e: &Engine) -> Option<DisplayId> {
@@ -252,6 +275,10 @@ pub trait ScopeExt: Copy {
 
     /// The theme switcher of the `Ui` (same as [`use_theme`]).
     fn use_theme(self) -> ThemeHandle;
+
+    /// An empty menu page reference, filled by `menu_page(..).page_ref(r)` (rows can load
+    /// pages defined after them).
+    fn menu_page_ref(self) -> crate::MenuPageRef;
 }
 
 impl ScopeExt for Scope {
@@ -366,6 +393,10 @@ impl ScopeExt for Scope {
 
     fn use_theme(self) -> ThemeHandle {
         use_theme(self)
+    }
+
+    fn menu_page_ref(self) -> crate::MenuPageRef {
+        crate::MenuPageRef::new(self)
     }
 }
 

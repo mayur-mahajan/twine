@@ -6,11 +6,11 @@ use alloc::vec::Vec;
 use twine_core::{Rect, Transform};
 use twine_render::Painter;
 
-use crate::draw::{PainterVectorExt, VectorDsc, union_rect};
+use crate::draw::{DrawParams, PainterVectorExt, VectorDsc, union_rect};
 use crate::path::Path;
 
-// NOTE(P23.S06): the `VectorView` widget (twine-widgets-ext) and the `vector_canvas` view draw a
-// `VectorScene` and invalidate `bounds_with` of the old and new scene.
+// NOTE(P20.S09): the `Canvas` widget's `with_painter` draws scenes and single paths into its
+// buffer through `PainterVectorExt` (`p.vector(path, dsc)`), like `VectorView` does on screen.
 
 /// Paths with their descriptors, drawn in order.
 ///
@@ -122,18 +122,16 @@ impl VectorScene {
     }
 
     /// Draws every item, with `t` applied after each item's own transform. Items outside the
-    /// painter's clip are skipped cheaply.
+    /// painter's clip are skipped cheaply; nothing is allocated once the painter's
+    /// [`VectorCaches`](crate::VectorCaches) have grown.
     pub fn draw(&self, p: &mut Painter<'_>, t: &Transform) {
+        self.draw_with(p, &DrawParams::transform(*t));
+    }
+
+    /// Draws every item with scene-wide `params` (transform, opacity, recolor).
+    pub fn draw_with(&self, p: &mut Painter<'_>, params: &DrawParams) {
         for (path, dsc) in self.items() {
-            if t.is_identity() {
-                p.vector(path, dsc);
-            } else {
-                let d = VectorDsc {
-                    transform: dsc.transform.then(*t),
-                    ..dsc.clone()
-                };
-                p.vector(path, &d);
-            }
+            p.vector_params(path, dsc, params);
         }
     }
 }

@@ -12,6 +12,10 @@
 //! | [`thermostat`] | messages from another task or interrupt ([`thermostat::SENSOR`]), tweens, memos |
 //! | [`controls`] | every basic control; value widgets sharing signals (two-way bindings) |
 //! | [`text_input`] | text fields, the on-screen keyboard, a spinbox and a rich-text preview |
+//! | [`selection`] | dropdown, roller, list, menu, tabview, tileview, window and message box |
+//! | `lottie` | Lottie animations with play/pause, loop and a two-way frame scrubber (feature `lottie`) |
+//! | `vector` | paths, gradients, strokes, SVG icons, an animated path (feature `vector`) |
+//! | `multilang` | translations (`tr!`), right-to-left and Arabic text, font fallback, a file image (feature `multilang`) |
 #![no_std]
 
 extern crate alloc;
@@ -20,5 +24,12 @@ mod assets;
 pub mod calibration;
 pub mod controls;
 pub mod counter;
+#[cfg(feature = "lottie")]
+pub mod lottie;
+#[cfg(feature = "multilang")]
+pub mod multilang;
+pub mod selection;
 pub mod text_input;
 pub mod thermostat;
+#[cfg(feature = "vector")]
+pub mod vector;

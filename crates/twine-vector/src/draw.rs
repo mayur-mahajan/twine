@@ -8,7 +8,7 @@ use twine_core::{Fx, Opa, Rect, Transform};
 use twine_render::{BlendMode, FillRule, Painter, SpanSource};
 
 use crate::flatten::{DEFAULT_TOLERANCE, Line, Polylines, flatten, flatten_for_stroke};
-use crate::geom::hypot;
+use crate::geom::{FxRect, hypot};
 use crate::paint::{Paint, Sampler, load_lut};
 use crate::path::Path;
 use crate::raster::{RasterScratch, fill_lines};
@@ -81,8 +81,28 @@ impl VectorDsc {
     /// included; conservative).
     #[must_use]
     pub fn bounds(&self, path: &Path) -> Rect {
+        self.bounds_with(path, &self.transform)
+    }
+
+    /// Like [`bounds`](Self::bounds) with `t` instead of the descriptor's transform.
+    #[must_use]
+    pub fn bounds_with(&self, path: &Path, t: &Transform) -> Rect {
         if path.is_empty() {
             return Rect::ZERO;
+        }
+        if let (None, Some(p0)) = (&self.stroke, path.points().first())
+            && !t.is_translation_only()
+        {
+            // The transformed control points: tight for rotated shapes (curves stay inside
+            // their control polygon).
+            let first = p0.transformed(t);
+            let b = path
+                .points()
+                .iter()
+                .fold(FxRect::from_points(first, first), |r, p| {
+                    r.include(p.transformed(t))
+                });
+            return b.to_rect_out().expand(1);
         }
         let mut b = path.bounds();
         if let Some((_, s)) = &self.stroke {
@@ -94,7 +114,40 @@ impl VectorDsc {
             };
             b = b.outset(hw * k);
         }
-        b.transformed_bounds(&self.transform).to_rect_out().expand(1)
+        b.transformed_bounds(t).to_rect_out().expand(1)
+    }
+}
+
+/// Parameters applied on top of every [`VectorDsc`] of a draw (a scene placed, faded or
+/// recolored as a whole, e.g. an SVG image): no descriptor is copied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DrawParams {
+    /// Applied after each item's own transform.
+    pub transform: Transform,
+    /// Multiplied into each item's opacity.
+    pub opa: Opa,
+    /// Replaces every paint (fills and strokes) with this color when set.
+    pub recolor: Option<twine_core::Color>,
+}
+
+impl Default for DrawParams {
+    fn default() -> Self {
+        Self {
+            transform: Transform::IDENTITY,
+            opa: Opa::COVER,
+            recolor: None,
+        }
+    }
+}
+
+impl DrawParams {
+    /// Only a transform.
+    #[must_use]
+    pub fn transform(t: Transform) -> Self {
+        Self {
+            transform: t,
+            ..Self::default()
+        }
     }
 }
 
@@ -191,6 +244,10 @@ pub trait PainterVectorExt {
 
     /// Draws `path` with `dsc` using explicit `caches`.
     fn vector_with(&mut self, caches: &mut VectorCaches, path: &Path, dsc: &VectorDsc);
+
+    /// Draws `path` with `dsc` and the scene-wide `params` (extra transform, opacity,
+    /// recolor), using the painter's [`VectorCaches`].
+    fn vector_params(&mut self, path: &Path, dsc: &VectorDsc, params: &DrawParams);
 }
 
 impl PainterVectorExt for Painter<'_> {
@@ -201,43 +258,81 @@ impl PainterVectorExt for Painter<'_> {
     }
 
     fn vector_with(&mut self, caches: &mut VectorCaches, path: &Path, dsc: &VectorDsc) {
-        if !dsc.is_visible() || path.is_empty() {
-            return;
-        }
-        let clip = self.clip();
-        if clip.is_empty() || !dsc.bounds(path).intersects(&clip) {
-            return;
-        }
-        twine_core::trace!(
-            target: "twine::vector",
-            "vector: {} verbs, fill {}, stroke {}",
-            path.verbs().len(),
-            dsc.fill.is_some(),
-            dsc.stroke.is_some()
+        draw_vector(self, caches, path, dsc, &DrawParams::default());
+    }
+
+    fn vector_params(&mut self, path: &Path, dsc: &VectorDsc, params: &DrawParams) {
+        let mut c = self.caches().take_extension::<VectorCaches>().unwrap_or_default();
+        draw_vector(self, &mut c, path, dsc, params);
+        self.caches().put_extension(c);
+    }
+}
+
+fn draw_vector(
+    p: &mut Painter<'_>,
+    caches: &mut VectorCaches,
+    path: &Path,
+    dsc: &VectorDsc,
+    params: &DrawParams,
+) {
+    if !dsc.is_visible() || path.is_empty() || params.opa.is_transparent() {
+        return;
+    }
+    let t = if params.transform.is_identity() {
+        dsc.transform
+    } else {
+        dsc.transform.then(params.transform)
+    };
+    let clip = p.clip();
+    if clip.is_empty() || !dsc.bounds_with(path, &t).intersects(&clip) {
+        return;
+    }
+    twine_core::trace!(
+        target: "twine::vector",
+        "vector: {} verbs, fill {}, stroke {}",
+        path.verbs().len(),
+        dsc.fill.is_some(),
+        dsc.stroke.is_some()
+    );
+    let recolored = params.recolor.map(Paint::Solid);
+    if let Some((paint, rule)) = &dsc.fill {
+        caches.lines.clear();
+        flatten(path, &t, DEFAULT_TOLERANCE, &mut caches.lines);
+        let opa = mul_opa(mul_opa(dsc.opa, dsc.fill_opa), params.opa);
+        paint_lines(
+            p,
+            caches,
+            recolored.as_ref().unwrap_or(paint),
+            *rule,
+            opa,
+            &t,
+            dsc.blend_mode,
         );
-        if let Some((paint, rule)) = &dsc.fill {
-            caches.lines.clear();
-            flatten(path, &dsc.transform, DEFAULT_TOLERANCE, &mut caches.lines);
-            let opa = mul_opa(dsc.opa, dsc.fill_opa);
-            paint_lines(self, caches, paint, *rule, opa, dsc);
-        }
-        if let Some((paint, stroke)) = &dsc.stroke {
-            // Stroke in path space (the width is in path units), then map the outline.
-            let tol = user_tolerance(&dsc.transform);
-            caches.polys.clear();
-            flatten_for_stroke(path, &Transform::IDENTITY, tol, &mut caches.polys);
-            caches.lines.clear();
-            stroke_polylines(
-                &caches.polys,
-                stroke,
-                tol,
-                &dsc.transform,
-                &mut caches.dashed,
-                &mut caches.lines,
-            );
-            let opa = mul_opa(dsc.opa, dsc.stroke_opa);
-            paint_lines(self, caches, paint, FillRule::NonZero, opa, dsc);
-        }
+    }
+    if let Some((paint, stroke)) = &dsc.stroke {
+        // Stroke in path space (the width is in path units), then map the outline.
+        let tol = user_tolerance(&t);
+        caches.polys.clear();
+        flatten_for_stroke(path, &Transform::IDENTITY, tol, &mut caches.polys);
+        caches.lines.clear();
+        stroke_polylines(
+            &caches.polys,
+            stroke,
+            tol,
+            &t,
+            &mut caches.dashed,
+            &mut caches.lines,
+        );
+        let opa = mul_opa(mul_opa(dsc.opa, dsc.stroke_opa), params.opa);
+        paint_lines(
+            p,
+            caches,
+            recolored.as_ref().unwrap_or(paint),
+            FillRule::NonZero,
+            opa,
+            &t,
+            dsc.blend_mode,
+        );
     }
 }
 
@@ -257,7 +352,8 @@ fn paint_lines(
     paint: &Paint,
     rule: FillRule,
     opa: Opa,
-    dsc: &VectorDsc,
+    transform: &Transform,
+    blend_mode: BlendMode,
 ) {
     if opa.is_transparent() || caches.lines.is_empty() {
         return;
@@ -267,45 +363,24 @@ fn paint_lines(
     } = caches;
     match paint {
         Paint::Solid(c) => {
-            fill_lines(
-                p,
-                raster,
-                lines,
-                rule,
-                &SpanSource::Solid(*c, opa),
-                dsc.blend_mode,
-            );
+            fill_lines(p, raster, lines, rule, &SpanSource::Solid(*c, opa), blend_mode);
         }
         Paint::Linear { stops, .. } | Paint::Radial { stops, .. } => {
-            let Some(s) = Sampler::new(paint, &dsc.transform) else {
+            let Some(s) = Sampler::new(paint, transform) else {
                 return;
             };
             load_lut(p, stops.as_slice(), lut);
             let lut: &[u32; 256] = lut;
             let f = |y: i32, x0: i32, out: &mut [u8]| s.fill(lut, y, x0, out);
-            fill_lines(
-                p,
-                raster,
-                lines,
-                rule,
-                &SpanSource::Pixels(&f, opa),
-                dsc.blend_mode,
-            );
+            fill_lines(p, raster, lines, rule, &SpanSource::Pixels(&f, opa), blend_mode);
         }
         Paint::Image { .. } => {
-            let Some(s) = Sampler::new(paint, &dsc.transform) else {
+            let Some(s) = Sampler::new(paint, transform) else {
                 return;
             };
             let lut: &[u32; 256] = lut;
             let f = |y: i32, x0: i32, out: &mut [u8]| s.fill(lut, y, x0, out);
-            fill_lines(
-                p,
-                raster,
-                lines,
-                rule,
-                &SpanSource::Pixels(&f, opa),
-                dsc.blend_mode,
-            );
+            fill_lines(p, raster, lines, rule, &SpanSource::Pixels(&f, opa), blend_mode);
         }
     }
 }

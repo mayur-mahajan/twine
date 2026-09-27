@@ -1,0 +1,15 @@
+# Headless tour of the vector demo (cargo xtask sim-smoke): one screenshot per tab, two of
+# the animated one. The tab buttons are at the top.
+wait 100
+shot shapes
+tap 180 20
+wait 400
+shot gradients
+tap 300 20
+wait 400
+shot strokes
+tap 420 20
+wait 400
+shot motion
+wait 500
+shot motion_later

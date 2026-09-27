@@ -224,8 +224,20 @@ impl ThemeHook for MonoTheme {
             return;
         }
         match class.name {
-            "obj" => {
-                // NOTE(P19.S04): tabview and window children branch here, as in LVGL.
+            // Lines 300-313: tabview pages (the bar and the content have no style).
+            "obj" if cx.grandparent_class().is_some_and(|c| c.name == "tabview") => {
+                cx.add_style(Selector::MAIN, s.card.clone());
+                cx.add_style(Selector::MAIN, s.no_radius.clone());
+                cx.add_style(Selector::part(Part::Scrollbar), s.scrollbar.clone());
+            }
+            // Lines 315-329 (a window's header: LVGL compares it with `0`, never true, so it
+            // gets the plain object styles below).
+            "win_content" => {
+                cx.add_style(Selector::MAIN, s.card.clone());
+                cx.add_style(Selector::MAIN, s.no_radius.clone());
+                cx.add_style(Selector::part(Part::Scrollbar), s.scrollbar.clone());
+            }
+            "obj" | "win_header" | "list" => {
                 cx.add_style(Selector::MAIN, s.card.clone());
                 cx.add_style(Selector::part(Part::Scrollbar), s.scrollbar.clone());
             }
@@ -293,8 +305,29 @@ impl ThemeHook for MonoTheme {
             // Lines 492-496.
             "spinner" => cx.add_style(Selector::part(Part::Indicator), s.spinner_indic.clone()),
             // Lines 344-375.
+            // Lines 346-356.
+            "buttonmatrix" if cx.parent_class().is_some_and(|c| c.name == "msgbox") => {
+                let items = Selector::part(Part::Items);
+                cx.add_style(Selector::MAIN, s.pad_gap.clone());
+                cx.add_style(items, s.card.clone());
+                cx.add_style(items.with_state(State::PRESSED), s.pr.clone());
+                cx.add_style(items.with_state(State::DISABLED), s.disabled.clone());
+                cx.add_style(items.with_state(State::FOCUS_KEY), s.underline.clone());
+                cx.add_style(items.with_state(State::FOCUS_KEY), s.large_border.clone());
+            }
+            // Lines 357-368.
+            "buttonmatrix" if cx.parent_class().is_some_and(|c| c.name == "tabview") => {
+                let items = Selector::part(Part::Items);
+                cx.add_style(Selector::MAIN, s.pad_gap.clone());
+                cx.add_style(items, s.card.clone());
+                cx.add_style(items.with_state(State::PRESSED), s.pr.clone());
+                cx.add_style(items.with_state(State::CHECKED), s.inv.clone());
+                cx.add_style(items.with_state(State::DISABLED), s.disabled.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.focus.clone());
+                cx.add_style(items.with_state(State::FOCUS_KEY), s.underline.clone());
+                cx.add_style(items.with_state(State::FOCUS_KEY), s.large_border.clone());
+            }
             "buttonmatrix" => {
-                // NOTE(P19.S04): message box and tabview button matrices branch here.
                 let items = Selector::part(Part::Items);
                 cx.add_style(Selector::MAIN, s.card.clone());
                 cx.add_style(Selector::state(State::FOCUS_KEY), s.focus.clone());
@@ -334,11 +367,57 @@ impl ThemeHook for MonoTheme {
                 cx.add_style(Selector::state(State::FOCUS_KEY), s.focus.clone());
                 cx.add_style(Selector::state(State::EDITED), s.edit.clone());
             }
-            // Lines 573-577.
-            "led" => cx.add_style(Selector::MAIN, s.card.clone()),
-            // LVGL's mono theme has no line, image button or animated image branch.
-            "label" | "image" | "line" | "imagebutton" | "animimg" | "spangroup" | "buttonmatrix_popover" => {
+            // Lines 452-460.
+            "roller" => {
+                cx.add_style(Selector::MAIN, s.card.clone());
+                cx.add_style(Selector::MAIN, s.large_line_space.clone());
+                cx.add_style(Selector::part(Part::Selected), s.inv.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.focus.clone());
+                cx.add_style(Selector::state(State::EDITED), s.edit.clone());
             }
+            // Lines 462-477.
+            "dropdown" => {
+                cx.add_style(Selector::MAIN, s.card.clone());
+                cx.add_style(Selector::state(State::PRESSED), s.pr.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.focus.clone());
+                cx.add_style(Selector::state(State::EDITED), s.edit.clone());
+            }
+            "dropdown_list" => {
+                let sel = Selector::part(Part::Selected);
+                cx.add_style(Selector::MAIN, s.card.clone());
+                cx.add_style(Selector::MAIN, s.large_line_space.clone());
+                cx.add_style(Selector::part(Part::Scrollbar), s.scrollbar.clone());
+                cx.add_style(sel.with_state(State::CHECKED), s.inv.clone());
+                cx.add_style(sel.with_state(State::PRESSED), s.pr.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.focus.clone());
+                cx.add_style(Selector::state(State::EDITED), s.edit.clone());
+            }
+            // Lines 532-546 (the list itself is a plain object above).
+            "list_button" => {
+                cx.add_style(Selector::MAIN, s.card.clone());
+                cx.add_style(Selector::state(State::PRESSED), s.pr.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.focus.clone());
+                cx.add_style(Selector::state(State::EDITED), s.large_border.clone());
+            }
+            // Lines 563-571.
+            "tileview" => {
+                cx.add_style(Selector::MAIN, s.scr.clone());
+                cx.add_style(Selector::part(Part::Scrollbar), s.scrollbar.clone());
+            }
+            "tileview_tile" => cx.add_style(Selector::part(Part::Scrollbar), s.scrollbar.clone()),
+            // Lines 548-553 (msgbox) and 573-577 (led).
+            "msgbox" | "led" => cx.add_style(Selector::MAIN, s.card.clone()),
+            // LVGL's mono theme has no line, image button or animated image branch.
+            "label"
+            | "image"
+            | "line"
+            | "imagebutton"
+            | "animimg"
+            | "spangroup"
+            | "buttonmatrix_popover"
+            | "list_text"
+            | "tabview_tab_bar"
+            | "tabview_content" => {}
             other => {
                 twine_core::trace!(target: "twine::style", "mono theme: no styles for class {}", other);
             }

@@ -1,8 +1,9 @@
 //! Example firmware: Twine on an ESP32-C6 (RISC-V) with an SPI display (JD9853, ILI9341,
-//! ST7789) and a touch controller (AXS5106L, FT6x36 or XPT2046). A template to copy, not board
-//! support: every pin, the rotation and the bus clocks are in the wiring block at the top of
-//! `main`; cargo features pick the panel (`panel-*`), the touch driver (`touch-*`) and the demo
-//! (`demo-counter`, `demo-controls`, `demo-calibrate`).
+//! ILI9342, ST7789, ST7796) and a touch controller (AXS5106L, FT6x36, GT911, CST816S or
+//! XPT2046), or a mono SSD1306 I2C OLED. A template to copy, not board support: every pin, the
+//! rotation and the bus clocks are in the wiring block at the top of `main`; cargo features pick
+//! the display (`panel-*`, `oled-ssd1306`), the touch driver (`touch-*`, or none) and the demo
+//! (`demo-counter`, `demo-controls`, `demo-selection`, `demo-calibrate`).
 //!
 //! The default pins and features fit a 1.47" 172 × 320 JD9853 IPS panel with AXS5106L touch
 //! (the wiring of Waveshare's ESP32-C6-Touch-LCD-1.47). The display is flushed with SPI DMA
@@ -13,15 +14,23 @@
 #![no_std]
 #![no_main]
 
+#[cfg(feature = "spi-panel")]
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+#[cfg(feature = "spi-panel")]
 use embassy_sync::mutex::Mutex;
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
-use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+#[cfg(feature = "touch")]
+use esp_hal::gpio::{Input, InputConfig, Pull};
+#[cfg(feature = "spi-panel")]
+use esp_hal::gpio::{Level, Output, OutputConfig};
+#[cfg(feature = "spi-panel")]
 use esp_hal::spi::master::{Config as SpiConfig, Spi, SpiDma};
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
-use static_cell::{ConstStaticCell, StaticCell};
+use static_cell::ConstStaticCell;
+#[cfg(feature = "spi-panel")]
+use static_cell::StaticCell;
 use twine::core::Rotation;
 use twine::engine::{EngineConfig, MemInfo};
 use twine::hal::AsyncDisplayDriver;
@@ -32,25 +41,56 @@ use twine_embassy::UiBuilderExt;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-/// Exactly one `panel-*` feature must be enabled (use `--no-default-features` to switch).
-const _: () = assert!(
-    cfg!(feature = "panel-jd9853") as u8
-        + cfg!(feature = "panel-ili9341") as u8
-        + cfg!(feature = "panel-st7789") as u8
-        == 1,
-    "enable exactly one panel-* feature"
-);
+// Feature groups (use `--no-default-features` to switch, or `cargo xtask firmware <board>
+// --features …`, which replaces the default of the same group): exactly one display, at most one
+// touch controller, at most one demo.
+#[cfg(not(any(
+    feature = "panel-jd9853",
+    feature = "panel-ili9341",
+    feature = "panel-ili9342",
+    feature = "panel-st7789",
+    feature = "panel-st7796",
+    feature = "oled-ssd1306"
+)))]
+compile_error!("enable one display feature: panel-jd9853, panel-ili9341, panel-ili9342, panel-st7789, panel-st7796, oled-ssd1306");
+#[cfg(any(
+    all(feature = "panel-jd9853", any(feature = "panel-ili9341", feature = "panel-ili9342", feature = "panel-st7789", feature = "panel-st7796", feature = "oled-ssd1306")),
+    all(feature = "panel-ili9341", any(feature = "panel-ili9342", feature = "panel-st7789", feature = "panel-st7796", feature = "oled-ssd1306")),
+    all(feature = "panel-ili9342", any(feature = "panel-st7789", feature = "panel-st7796", feature = "oled-ssd1306")),
+    all(feature = "panel-st7789", any(feature = "panel-st7796", feature = "oled-ssd1306")),
+    all(feature = "panel-st7796", feature = "oled-ssd1306"),
+))]
+compile_error!("enable only one display feature (panel-* / oled-*)");
+#[cfg(any(
+    all(feature = "touch-axs5106l", any(feature = "touch-ft6x36", feature = "touch-gt911", feature = "touch-cst816s", feature = "touch-xpt2046")),
+    all(feature = "touch-ft6x36", any(feature = "touch-gt911", feature = "touch-cst816s", feature = "touch-xpt2046")),
+    all(feature = "touch-gt911", any(feature = "touch-cst816s", feature = "touch-xpt2046")),
+    all(feature = "touch-cst816s", feature = "touch-xpt2046"),
+))]
+compile_error!("enable at most one touch-* feature");
+#[cfg(all(feature = "oled-ssd1306", feature = "touch"))]
+compile_error!("oled-ssd1306 uses the touch I2C pins: disable the touch-* feature");
+#[cfg(any(
+    all(feature = "demo-counter", any(feature = "demo-controls", feature = "demo-selection", feature = "demo-calibrate")),
+    all(feature = "demo-controls", any(feature = "demo-selection", feature = "demo-calibrate")),
+    all(feature = "demo-selection", feature = "demo-calibrate"),
+))]
+compile_error!("enable at most one demo-* feature");
+#[cfg(all(feature = "demo-calibrate", not(feature = "touch")))]
+compile_error!("demo-calibrate needs a touch-* feature");
 
-/// Exactly one `touch-*` feature must be enabled.
-const _: () = assert!(
-    cfg!(feature = "touch-axs5106l") as u8
-        + cfg!(feature = "touch-ft6x36") as u8
-        + cfg!(feature = "touch-xpt2046") as u8
-        == 1,
-    "enable exactly one touch-* feature"
-);
+/// Display rotation: portrait 172 × 320 on the 1.47" JD9853 panel.
+#[cfg(feature = "panel-jd9853")]
+const ROTATION: Rotation = Rotation::Deg0;
+/// Display rotation: the other SPI panels turned to landscape (320 × 240, ST7796: 480 × 320).
+#[cfg(any(feature = "panel-ili9341", feature = "panel-st7789", feature = "panel-st7796"))]
+const ROTATION: Rotation = Rotation::Deg90;
+/// Display rotation: the ILI9342C and the OLED are landscape natively.
+#[cfg(any(feature = "panel-ili9342", feature = "oled-ssd1306"))]
+const ROTATION: Rotation = Rotation::Deg0;
 
 /// The shared SPI bus.
+#[cfg(feature = "spi-panel")]
 type Bus = Mutex<NoopRawMutex, SpiDma<'static, esp_hal::Async>>;
 
 #[esp_rtos::main]
@@ -67,19 +107,26 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     // SPI2 with DMA. Defaults: Waveshare ESP32-C6-Touch-LCD-1.47 (pins from its demo's
     // `bsp_spi.h`, `bsp_display.h`, `bsp_i2c.h`, `bsp_touch.h`; the SD card slot shares SCK/MOSI/
     // MISO with its own CS on GPIO4). Avoid GPIO24–30 (flash) and GPIO12/13 (USB).
+    // Every `panel-*` feature uses these pins.
+    #[cfg(feature = "spi-panel")]
     let (spi_sck, spi_mosi, spi_miso) = (p.GPIO1, p.GPIO2, p.GPIO3);
+    #[cfg(feature = "spi-panel")]
     let (lcd_cs, lcd_dc, lcd_rst, lcd_backlight) = (p.GPIO14, p.GPIO15, p.GPIO22, p.GPIO23);
     // The vendor demo clocks the JD9853 at 80 MHz; hand-wired modules are safer at 40.
+    #[cfg(feature = "spi-panel")]
     const LCD_MHZ: u32 = if cfg!(feature = "panel-jd9853") { 80 } else { 40 };
-    const ROTATION: Rotation = Rotation::Deg0; // portrait: 172 × 320 on the 1.47" panel
-    // AXS5106L (feature `touch-axs5106l`) or FT6x36 (feature `touch-ft6x36`) on I2C0.
-    #[cfg(any(feature = "touch-axs5106l", feature = "touch-ft6x36"))]
+    // Capacitive touch on I2C0: AXS5106L, FT6x36, GT911 or CST816S (SDA GPIO18, SCL GPIO19,
+    // INT GPIO21).
+    #[cfg(feature = "i2c-touch")]
     let (touch_sda, touch_scl, touch_irq) = (p.GPIO18, p.GPIO19, p.GPIO21);
+    // SSD1306 OLED on the same I2C0 pins (feature `oled-ssd1306`, address 0x3C, 400 kHz).
+    #[cfg(feature = "oled-ssd1306")]
+    let (oled_sda, oled_scl) = (p.GPIO18, p.GPIO19);
     #[cfg(feature = "touch-axs5106l")]
     let touch_rst = p.GPIO20;
     /// The touch panel's raw X axis runs opposite to the display columns (true on the
     /// Waveshare 1.47" board, whose demo mirrors touch X at rotation 0).
-    #[cfg(any(feature = "touch-axs5106l", feature = "touch-ft6x36"))]
+    #[cfg(feature = "i2c-touch")]
     const TOUCH_MIRROR_RAW_X: bool = cfg!(feature = "touch-axs5106l");
     // XPT2046 on the same SPI bus (feature `touch-xpt2046`), T_IRQ idles high.
     #[cfg(feature = "touch-xpt2046")]
@@ -92,12 +139,17 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     const TOUCH_CAL: Calibration = Calibration::DEFAULT_320X240_ROT90;
     // ============================================================================================
 
+    #[cfg(feature = "spi-panel")]
     let delay = &mut embassy_time::Delay;
+    #[cfg(feature = "spi-panel")]
     let _backlight = Output::new(lcd_backlight, Level::High, OutputConfig::default());
+    #[cfg(feature = "spi-panel")]
     let lcd_config = SpiConfig::default().with_frequency(Rate::from_mhz(LCD_MHZ));
 
     // The bus: SPI2 + DMA (the display writes its buffers in place, without a copy).
+    #[cfg(feature = "spi-panel")]
     static BUS: StaticCell<Bus> = StaticCell::new();
+    #[cfg(feature = "spi-panel")]
     let spi = Spi::new(p.SPI2, lcd_config)
         .unwrap()
         .with_sck(spi_sck)
@@ -105,9 +157,11 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
         .with_miso(spi_miso)
         .with_dma(p.DMA_CH0)
         .into_async();
+    #[cfg(feature = "spi-panel")]
     let bus: &'static Bus = BUS.init(Mutex::new(spi));
 
     // Display: async `SpiDevice` with its own clock (re-applied per transaction).
+    #[cfg(feature = "spi-panel")]
     let display = {
         use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
         let spi = SpiDeviceWithConfig::new(
@@ -129,6 +183,10 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
         .await;
         #[cfg(feature = "panel-ili9341")]
         let d = twine_drivers::ili9341::new_async(spi, dc, Some(rst), ROTATION, delay).await;
+        #[cfg(feature = "panel-ili9342")]
+        let d = twine_drivers::ili9342::new_async(spi, dc, Some(rst), ROTATION, delay).await;
+        #[cfg(feature = "panel-st7796")]
+        let d = twine_drivers::st7796::new_async(spi, dc, Some(rst), ROTATION, delay).await;
         #[cfg(feature = "panel-st7789")]
         let d = twine_drivers::st7789::new_async(
             spi,
@@ -140,6 +198,19 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
         )
         .await;
         d.unwrap_or_else(|e| panic!("display init failed: {e:?}"))
+    };
+    #[cfg(feature = "oled-ssd1306")]
+    let display = {
+        let cfg = esp_hal::i2c::master::Config::default().with_frequency(Rate::from_khz(400));
+        let i2c = esp_hal::i2c::master::I2c::new(p.I2C0, cfg)
+            .unwrap()
+            .with_sda(oled_sda)
+            .with_scl(oled_scl)
+            .into_async();
+        let iface = twine_drivers::interface::I2cInterface::new(i2c, 0x3C);
+        twine_drivers::ssd1306::AsyncSsd1306::new(iface, twine_drivers::ssd1306::Ssd1306Size::Size128x64, ROTATION)
+            .await
+            .unwrap_or_else(|e| panic!("display init failed: {e:?}"))
     };
     let info = display.info();
 
@@ -164,7 +235,7 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
                 if CALIBRATE { 4096 } else { info.height },
             )
     };
-    #[cfg(any(feature = "touch-axs5106l", feature = "touch-ft6x36"))]
+    #[cfg(feature = "i2c-touch")]
     let touch = {
         use esp_hal::i2c::master::{Config as I2cConfig, I2c};
         let i2c = I2c::new(p.I2C0, I2cConfig::default().with_frequency(Rate::from_khz(400)))
@@ -194,6 +265,10 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
         };
         #[cfg(feature = "touch-ft6x36")]
         let t = twine_drivers::touch::Ft6x36::new(i2c, Some(irq), transform);
+        #[cfg(feature = "touch-gt911")]
+        let t = twine_drivers::touch::Gt911::new(i2c, Some(irq), transform);
+        #[cfg(feature = "touch-cst816s")]
+        let t = twine_drivers::touch::Cst816s::new(i2c, Some(irq), transform);
         t
     };
 
@@ -201,7 +276,8 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     #[cfg(feature = "demo-calibrate")]
     let touch = twine_demos::calibration::RawTouchInput::new(touch);
 
-    // The UI: two DMA-pipelined partial buffers of 40 rows.
+    // The UI: two DMA-pipelined partial buffers (SPI panels: 40 rows of 320 px; OLED: the
+    // whole 128 × 64 × 1 bpp frame).
     static BUF_A: ConstStaticCell<DrawBuffer> = ConstStaticCell::new(DrawBuffer([0; BUFFER_BYTES]));
     static BUF_B: ConstStaticCell<DrawBuffer> = ConstStaticCell::new(DrawBuffer([0; BUFFER_BYTES]));
     let config = EngineConfig {
@@ -213,16 +289,15 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     // touched from an interrupt handler or another executor; other contexts only use channels
     // and the UI waker.
     let builder = unsafe { Ui::builder_async(display).bind_to_current_context() };
-    let ui = builder
-        .buffers(BufferMode::partial_double(
-            &mut BUF_A.take().0,
-            &mut BUF_B.take().0,
-        ))
-        .input_wait(touch)
-        .config(config)
-        .theme(DefaultTheme::light())
-        .with_embassy_clock()
-        .build(demo::app);
+    let builder = builder.buffers(BufferMode::partial_double(&mut BUF_A.take().0, &mut BUF_B.take().0));
+    #[cfg(feature = "touch")]
+    let builder = builder.input_wait(touch);
+    #[cfg(feature = "spi-panel")]
+    let theme = DefaultTheme::light();
+    // White on black: lit OLED pixels are the foreground.
+    #[cfg(feature = "oled-ssd1306")]
+    let theme = MonoTheme::new(true, &twine::assets::fonts::MONTSERRAT_14);
+    let ui = builder.config(config).theme(theme).with_embassy_clock().build(demo::app);
     log::info!("twine: {} demo on {}x{}", demo::NAME, info.width, info.height);
     twine_embassy::run(ui).await
 }
@@ -294,7 +369,11 @@ mod shared {
 }
 
 /// Bytes of one partial draw buffer: 40 rows of 320 px (RGB565).
+#[cfg(feature = "spi-panel")]
 const BUFFER_BYTES: usize = 320 * 40 * 2;
+/// Bytes of one draw buffer: the whole 128 × 64 OLED at 1 bpp.
+#[cfg(feature = "oled-ssd1306")]
+const BUFFER_BYTES: usize = 128 * 64 / 8;
 
 /// A 4-byte aligned draw buffer (the engine needs word-aligned buffers).
 #[repr(C, align(4))]
@@ -304,13 +383,15 @@ struct DrawBuffer([u8; BUFFER_BYTES]);
 #[cfg(feature = "touch-xpt2046")]
 const CALIBRATE: bool = cfg!(feature = "demo-calibrate");
 
-/// The demo selected by cargo feature.
+/// The demo selected by cargo feature (the counter without a `demo-*` feature).
 mod demo {
     #[cfg(feature = "demo-calibrate")]
     pub use twine_demos::calibration::app;
-    #[cfg(all(feature = "demo-controls", not(feature = "demo-calibrate")))]
+    #[cfg(feature = "demo-controls")]
     pub use twine_demos::controls::app;
-    #[cfg(not(any(feature = "demo-controls", feature = "demo-calibrate")))]
+    #[cfg(feature = "demo-selection")]
+    pub use twine_demos::selection::app;
+    #[cfg(not(any(feature = "demo-controls", feature = "demo-calibrate", feature = "demo-selection")))]
     pub use twine_demos::counter::app;
 
     /// Name of the demo (for the log).
@@ -318,6 +399,8 @@ mod demo {
         "calibrate"
     } else if cfg!(feature = "demo-controls") {
         "controls"
+    } else if cfg!(feature = "demo-selection") {
+        "selection"
     } else {
         "counter"
     };

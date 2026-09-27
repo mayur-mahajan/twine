@@ -8,6 +8,7 @@ enabled cost nothing.
 |------|----------|---------|
 | Montserrat Medium 8–48 px (even sizes) | `montserrat-8` … `montserrat-48` | ASCII, `°`, `•`, symbols |
 | Montserrat Medium 14 px, RGB subpixel | `montserrat-14-subpx` | same |
+| Montserrat Medium 16 px, Latin extension | `montserrat-16-latin-ext` | Latin-1 supplement, Latin Extended-A, `–—‘’‚“”„…€` (no ASCII: a fallback of `montserrat-16`) |
 | unscii 8 / 16 px (1 bpp) | `unscii-8`, `unscii-16` | ASCII |
 | DejaVu Sans 16 px | `dejavu-16-persian-hebrew` | ASCII, Hebrew, Arabic, Persian, Arabic presentation forms, symbols |
 | Source Han Sans SC 14 / 16 px | `source-han-sans-sc-14-cjk`, `source-han-sans-sc-16-cjk` | ASCII, CJK punctuation, kana, full-width forms, ~1 300 common CJK characters, symbols |
@@ -44,6 +45,7 @@ Static data per font (bitmaps, glyph descriptors, cmaps, kerning), in bytes:
 | `montserrat-46` | 157 | 57 | 46113 |
 | `montserrat-48` | 157 | 60 | 46977 |
 | `montserrat-14-subpx` | 157 | 18 | 40998 |
+| `montserrat-16-latin-ext` | 233 | 21 | 14541 |
 | `unscii-8` | 96 | 8 | 1849 |
 | `unscii-16` | 96 | 16 | 2114 |
 | `dejavu-16-persian-hebrew` | 625 | 19 | 37983 |

@@ -36,6 +36,10 @@ pub struct AllocStats {
     /// Live heap bytes: allocated minus freed (a difference of two snapshots is the growth
     /// of the heap in between).
     pub live: i64,
+    /// The highest `live` reached (the heap high-water mark). In the statistics of
+    /// [`count_allocs`]: the highest growth of the heap during the call, transient
+    /// allocations included.
+    pub peak: i64,
 }
 
 impl AllocStats {
@@ -46,6 +50,7 @@ impl AllocStats {
             reallocs: self.reallocs - before.reallocs,
             bytes: self.bytes - before.bytes,
             live: self.live - before.live,
+            peak: self.peak - before.live,
         }
     }
 }
@@ -54,7 +59,7 @@ thread_local! {
     // `const` initialisation: no lazy-init allocation and no destructor, so accessing it from
     // inside the allocator cannot recurse.
     static STATS: Cell<AllocStats> = const {
-        Cell::new(AllocStats { allocs: 0, deallocs: 0, reallocs: 0, bytes: 0, live: 0 })
+        Cell::new(AllocStats { allocs: 0, deallocs: 0, reallocs: 0, bytes: 0, live: 0, peak: 0 })
     };
 }
 
@@ -63,6 +68,7 @@ fn record(f: impl FnOnce(&mut AllocStats)) {
     let _ = STATS.try_with(|s| {
         let mut v = s.get();
         f(&mut v);
+        v.peak = v.peak.max(v.live);
         s.set(v);
     });
 }
@@ -73,8 +79,15 @@ pub fn current() -> AllocStats {
     STATS.try_with(Cell::get).unwrap_or_default()
 }
 
-/// Runs `f` and returns its result with the allocations it made on this thread.
+/// Runs `f` and returns its result with the allocations it made on this thread (`peak`: the
+/// highest heap growth during `f`; it restarts the thread's high-water mark, so nested calls
+/// report the outer peak from the inner call on).
 pub fn count_allocs<R>(f: impl FnOnce() -> R) -> (R, AllocStats) {
+    let _ = STATS.try_with(|s| {
+        let mut v = s.get();
+        v.peak = v.live;
+        s.set(v);
+    });
     let before = current();
     let r = f();
     (r, current().since(before))

@@ -21,6 +21,7 @@ std = [
     "twine-engine/std",
     "twine-theme/std",
     "twine-widgets/std",
+    "twine-widgets-ext/std",
     "twine-text/std",
     "twine-image/std",
     "twine-render/std",
@@ -29,6 +30,10 @@ std = [
 ## rendered chunk by chunk while the previous chunk is transferred (DMA). Run it with
 ## `twine-embassy`.
 async = ["twine-hal/async"]
+## `vector_canvas`: vector graphics redrawn from signals (`twine-vector`).
+vector = ["dep:twine-vector", "twine-widgets-ext/vector"]
+## SVG images (`image(ImageSource::Svg(..))`, `.svg_cache`).
+svg = ["twine-widgets/svg"]
 ## Log through the `log` crate.
 log = [
     "twine-core/log",
@@ -39,6 +44,7 @@ log = [
     "twine-engine/log",
     "twine-theme/log",
     "twine-widgets/log",
+    "twine-widgets-ext/log",
     "twine-text/log",
     "twine-image/log",
     "twine-render/log",
@@ -54,12 +60,14 @@ defmt = [
     "twine-engine/defmt",
     "twine-theme/defmt",
     "twine-widgets/defmt",
+    "twine-widgets-ext/defmt",
     "twine-text/defmt",
     "twine-image/defmt",
     "twine-render/defmt",
 ]
 
 [dependencies]
+twine-vector = { path = "../twine-vector", optional = true }
 twine-core = { path = "../twine-core" }
 twine-hal = { path = "../twine-hal" }
 twine-reactive = { path = "../twine-reactive" }
@@ -76,7 +84,7 @@ hashbrown = { version = "0.15", default-features = false, features = ["default-h
 defmt = { version = "1", optional = true }
 
 [dev-dependencies]
-twine-view = { path = ".", features = ["std", "log"] }
+twine-view = { path = ".", features = ["std", "log", "vector"] }
 twine-engine = { path = "../twine-engine", features = ["std", "debug-checks", "color-rgb565"] }
 twine-testing = { path = "../twine-testing", features = ["debug-checks"] }
 twine-theme = { path = "../twine-theme" }
@@ -84,3 +92,4 @@ twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montser
 critical-section = { version = "1", features = ["std"] }
 proptest = "1"
 log = "0.4"
+twine-vector = { path = "../twine-vector" }

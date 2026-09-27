@@ -54,6 +54,18 @@ img-jpeg = ["twine-image/img-jpeg"]
 img-gif = ["twine-image/img-gif"]
 img-bmp = ["twine-image/img-bmp"]
 img-lz4 = ["twine-image/img-lz4"]
+## Bidirectional (mixed LTR/RTL) text in every widget.
+bidi = ["twine-widgets/bidi", "twine-widgets-ext/bidi"]
+## Arabic/Persian contextual forms in labels.
+arabic-shaping = ["twine-widgets/arabic-shaping", "twine-widgets-ext/arabic-shaping"]
+## Vector graphics: `vector_canvas`, `twine::vector` (paths, fills, strokes, gradients).
+vector = ["dep:twine-vector", "twine-view/vector"]
+## SVG images: `image(ImageSource::Svg(include_bytes!(..)))` drawn as vectors.
+svg = ["vector", "twine-view/svg"]
+## Runtime TrueType fonts (`twine::text::TtfFont`).
+ttf = ["twine-text/ttf"]
+## File system (`twine::fs`) and file images (`Engine::set_vfs`).
+fs = ["dep:twine-fs", "twine-engine/fs"]
 ## Built-in fonts (`twine::fonts`).
 montserrat-8 = ["twine-assets/montserrat-8"]
 montserrat-10 = ["twine-assets/montserrat-10"]
@@ -79,6 +91,7 @@ montserrat-48 = ["twine-assets/montserrat-48"]
 montserrat-14-subpx = ["twine-assets/montserrat-14-subpx"]
 unscii-8 = ["twine-assets/unscii-8"]
 unscii-16 = ["twine-assets/unscii-16"]
+montserrat-16-latin-ext = ["twine-assets/montserrat-16-latin-ext"]
 dejavu-16-persian-hebrew = ["twine-assets/dejavu-16-persian-hebrew"]
 source-han-sans-sc-14-cjk = ["twine-assets/source-han-sans-sc-14-cjk"]
 source-han-sans-sc-16-cjk = ["twine-assets/source-han-sans-sc-16-cjk"]
@@ -101,6 +114,8 @@ twine-widgets = { path = "../twine-widgets" }
 twine-widgets-ext = { path = "../twine-widgets-ext" }
 twine-view = { path = "../twine-view" }
 twine-assets = { path = "../twine-assets" }
+twine-fs = { path = "../twine-fs", optional = true }
+twine-vector = { path = "../twine-vector", optional = true }
 
 [dev-dependencies]
 twine = { path = ".", features = ["std", "montserrat-20"] }

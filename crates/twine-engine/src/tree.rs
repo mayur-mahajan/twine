@@ -46,6 +46,8 @@ pub struct Node {
     pub(crate) ext_draw: u16,
     /// The widget's own `ext_draw_size` as last computed (used while the widget is detached).
     pub(crate) widget_ext: core::cell::Cell<u16>,
+    /// The widget's own content size as last measured (used while the widget is detached).
+    pub(crate) widget_size: core::cell::Cell<twine_core::Size>,
     pub(crate) layout_dirty: LayoutDirty,
     /// `Engine::align_to` relation.
     pub(crate) align_to: Option<twine_layout::AlignTo<NodeId>>,
@@ -94,6 +96,7 @@ impl Node {
             scroll: Point::ZERO,
             scroll_attrs: crate::scroll::ScrollAttrs::DEFAULT,
             children_bbox: core::cell::Cell::new(None),
+            widget_size: core::cell::Cell::new(twine_core::Size::ZERO),
             ext_draw: 0,
             widget_ext: core::cell::Cell::new(0),
             layout_dirty: LayoutDirty::empty(),
@@ -224,6 +227,10 @@ pub struct Tree {
     nodes: Arena<Node>,
     roots: Vec<NodeId>,
     pub(crate) epoch: u32,
+    /// `(node, style parent)` for nodes that inherit styles from another node than their
+    /// parent (see [`style_parent`](Self::style_parent)). Usually empty: one entry per open
+    /// popup or modal.
+    style_links: Vec<(NodeId, NodeId)>,
 }
 
 impl Tree {
@@ -292,6 +299,11 @@ impl Tree {
         for &n in &order {
             self.nodes.remove(n);
         }
+        if !self.style_links.is_empty() {
+            let nodes = &self.nodes;
+            self.style_links
+                .retain(|&(n, p)| nodes.get(n).is_some() && nodes.get(p).is_some());
+        }
         twine_core::trace!(target: "twine::engine", "delete {} ({} nodes)", fmt_node_id(id), order.len());
         self.debug_check();
         Ok(order)
@@ -324,6 +336,7 @@ impl Tree {
         }
         self.detach(id);
         self.attach(id, new_parent, index);
+        self.drop_cyclic_style_links();
         twine_core::trace!(
             target: "twine::engine",
             "move {} to parent={:?} index={:?}",
@@ -384,6 +397,7 @@ impl Tree {
         }
         self.detach(id);
         self.attach_before(id, parent, before);
+        self.drop_cyclic_style_links();
         twine_core::trace!(
             target: "twine::engine",
             "move {} under {} before {:?}",
@@ -479,6 +493,90 @@ impl Tree {
     #[must_use]
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
         self.node(id)?.parent
+    }
+
+    /// The node `id` inherits style properties from: its style link when one is set (see
+    /// [`Engine::set_style_parent`](crate::Engine::set_style_parent)), else its parent.
+    /// O(links), usually 0 or 1.
+    #[must_use]
+    pub fn style_parent(&self, id: NodeId) -> Option<NodeId> {
+        if !self.style_links.is_empty() {
+            if let Some(&(_, p)) = self.style_links.iter().find(|(n, _)| *n == id) {
+                return Some(p);
+            }
+        }
+        self.parent(id)
+    }
+
+    /// The style link of `id` (`None`: it inherits from its parent).
+    #[must_use]
+    pub fn style_link(&self, id: NodeId) -> Option<NodeId> {
+        self.style_links.iter().find(|(n, _)| *n == id).map(|&(_, p)| p)
+    }
+
+    /// The `i`-th style link `(node, style parent)`.
+    pub(crate) fn style_link_at(&self, i: usize) -> Option<(NodeId, NodeId)> {
+        self.style_links.get(i).copied()
+    }
+
+    /// Makes `id` inherit styles from `to` (`None`: from its parent again). Returns whether
+    /// the link changed. A link that would make the style chain cyclic (`to` inherits from
+    /// `id`) is rejected with `InvalidConfig("cycle")`.
+    pub(crate) fn set_style_link(&mut self, id: NodeId, to: Option<NodeId>) -> Result<bool, EngineError> {
+        if !self.contains(id) {
+            return Err(EngineError::NodeNotFound(id));
+        }
+        let old = self.style_links.iter().position(|(n, _)| *n == id);
+        let Some(to) = to else {
+            return Ok(old.map(|i| self.style_links.swap_remove(i)).is_some());
+        };
+        if !self.contains(to) {
+            return Err(EngineError::NodeNotFound(to));
+        }
+        if old.is_some_and(|i| self.style_links[i].1 == to) {
+            return Ok(false);
+        }
+        if self.style_chain_reaches(to, id) {
+            return Err(EngineError::InvalidConfig("cycle"));
+        }
+        match old {
+            Some(i) => self.style_links[i].1 = to,
+            None => self.style_links.push((id, to)),
+        }
+        Ok(true)
+    }
+
+    /// Whether `target` is `from` or one of the nodes `from` inherits styles from. A chain
+    /// longer than the tree (a cycle) counts as reaching.
+    pub(crate) fn style_chain_reaches(&self, from: NodeId, target: NodeId) -> bool {
+        let mut cur = Some(from);
+        for _ in 0..=self.nodes.len() {
+            match cur {
+                Some(c) if c == target => return true,
+                Some(c) => cur = self.style_parent(c),
+                None => return false,
+            }
+        }
+        true
+    }
+
+    /// Drops the style links a move made cyclic (the moved subtree now holds the node a
+    /// link inherits from), logging each.
+    fn drop_cyclic_style_links(&mut self) {
+        let mut i = 0;
+        while let Some(&(n, p)) = self.style_links.get(i) {
+            if self.style_chain_reaches(p, n) {
+                twine_core::warn!(
+                    target: "twine::engine",
+                    "style link {} -> {} dropped: cyclic after a move",
+                    fmt_node_id(n),
+                    fmt_node_id(p)
+                );
+                self.style_links.swap_remove(i);
+            } else {
+                i += 1;
+            }
+        }
     }
 
     /// Children of `id`, first to last (paint order). No allocation.
@@ -670,8 +768,8 @@ impl Tree {
     }
 
     /// Checks every structural invariant: parent/child links are consistent, `child_count`
-    /// matches, `prev`/`next` are symmetric, there are no cycles, roots have no parent and every
-    /// parentless node is a root.
+    /// matches, `prev`/`next` are symmetric, there are no cycles, roots have no parent, every
+    /// parentless node is a root, and style links join live nodes without a cycle.
     pub fn check_invariants(&self) -> Result<(), InvariantError> {
         let limit = self.nodes.len() + 1;
         let err = |node, what, other| Err(InvariantError { node, what, other });
@@ -741,6 +839,17 @@ impl Tree {
                 "node count differs from linked nodes",
                 None,
             );
+        }
+        for (i, &(n, p)) in self.style_links.iter().enumerate() {
+            if !self.contains(n) || !self.contains(p) {
+                return err(n, "style link to a dead node", Some(p));
+            }
+            if self.style_links[..i].iter().any(|(m, _)| *m == n) {
+                return err(n, "duplicate style link", Some(p));
+            }
+            if self.style_chain_reaches(p, n) {
+                return err(n, "cycle in style chain", Some(p));
+            }
         }
         Ok(())
     }

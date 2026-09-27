@@ -179,16 +179,22 @@ impl Engine {
 
     /// Padding plus border width of the `Main` part (LVGL `space_*`), as
     /// `(left, top, right, bottom)`.
-    fn space(&self, id: NodeId) -> (i32, i32, i32, i32) {
-        let m = self.cached_main(id);
-        let b = m.border_width.max(0);
-        (m.pad.left + b, m.pad.top + b, m.pad.right + b, m.pad.bottom + b)
+    fn space_ltrb(&self, id: NodeId) -> (i32, i32, i32, i32) {
+        let s = self.space(id);
+        (s.left, s.top, s.right, s.bottom)
     }
 
-    /// The widget's own content size (LVGL `lv_obj_get_self_width/height`).
-    fn self_size(&self, id: NodeId) -> twine_core::Size {
+    /// The widget's own content size (LVGL `lv_obj_get_self_width/height`). A widget taken
+    /// out of its node (its `event` or a setter is running and asked for a layout) cannot be
+    /// measured: its last measured size is used (zero would shrink it for a frame).
+    pub(crate) fn self_size(&self, id: NodeId) -> twine_core::Size {
         self.tree.node(id).map_or(twine_core::Size::ZERO, |n| {
-            n.widget.content_size(&MeasureCx::new(self, id))
+            if n.widget.is::<crate::obj::Detached>() {
+                return n.widget_size.get();
+            }
+            let s = n.widget.content_size(&MeasureCx::new(self, id));
+            n.widget_size.set(s);
+            s
         })
     }
 
@@ -248,7 +254,7 @@ impl Engine {
             return 0;
         };
         let c = n.coords;
-        let (_, st, _, sb) = self.space(id);
+        let (_, st, _, sb) = self.space_ltrb(id);
         let child = self
             .scroll_children_box(id)
             .map_or(COORD_MIN, |b| b.y1 - (c.y1 - sb));
@@ -268,7 +274,7 @@ impl Engine {
             return n.scroll.x;
         }
         let c = n.coords;
-        let (sl, _, sr, _) = self.space(id);
+        let (sl, _, sr, _) = self.space_ltrb(id);
         let child = self
             .scroll_children_box(id)
             .map_or(COORD_MIN, |b| (c.x0 + sl) - b.x0);
@@ -287,7 +293,7 @@ impl Engine {
             return -n.scroll.x;
         }
         let c = n.coords;
-        let (sl, _, sr, _) = self.space(id);
+        let (sl, _, sr, _) = self.space_ltrb(id);
         let child = self
             .scroll_children_box(id)
             .map_or(COORD_MIN, |b| b.x1 - (c.x1 - sr));
@@ -593,7 +599,7 @@ impl Engine {
         let attrs = self.scroll_attrs(parent);
         let pc = self.coords(parent);
         let cc = self.coords(child);
-        let (sleft, stop, sright, sbottom) = self.space(parent);
+        let (sleft, stop, sright, sbottom) = self.space_ltrb(parent);
 
         let a = if attrs.snap_y == ScrollSnap::None {
             area

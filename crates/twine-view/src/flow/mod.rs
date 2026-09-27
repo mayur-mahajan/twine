@@ -24,8 +24,13 @@ pub use for_each::{ForEach, for_each};
 pub use virtual_list::{VirtualList, virtual_list};
 pub use when::{When, WhenElse, when};
 
-/// Flags of a region wrapper.
-const WRAPPER_FLAGS: ObjFlags = ObjFlags::LAYOUT_PASSTHROUGH;
+/// Flags of a region wrapper: transparent to the layout, and passing drags (scroll chain),
+/// gestures and bubbling events on to its parent, as if its children were the parent's.
+const WRAPPER_FLAGS: ObjFlags = ObjFlags::LAYOUT_PASSTHROUGH
+    .union(ObjFlags::SCROLL_CHAIN_HOR)
+    .union(ObjFlags::SCROLL_CHAIN_VER)
+    .union(ObjFlags::GESTURE_BUBBLE)
+    .union(ObjFlags::EVENT_BUBBLE);
 
 /// Class of the [`when`] wrapper.
 pub static WHEN_CLASS: WidgetClass = wrapper_class("when");

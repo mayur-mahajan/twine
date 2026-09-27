@@ -166,6 +166,9 @@ impl_into_prop!(
     twine_anim::Repeat,
     core::ops::RangeInclusive<i32>,
     alloc::vec::Vec<Point>,
+    alloc::vec::Vec<String>,
+    twine_widgets_ext::roller::RollerMode,
+    twine_widgets_ext::menu::MenuHeaderMode,
 );
 
 impl<T: 'static> IntoProp<Option<T>> for Option<T> {

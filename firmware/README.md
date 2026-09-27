@@ -11,6 +11,7 @@ cargo feature per driver) and work with any board.
 | [`rp2040`](rp2040) | RP2040 (Pico) | `thumbv6m-none-eabi` | stable | SPI0 + DMA, async | `probe-rs` |
 | [`rp2350`](rp2350) | RP2350A (Pico 2) | `thumbv8m.main-none-eabihf` | stable | SPI0 + DMA, async | `probe-rs` |
 | [`stm32f411`](stm32f411) | STM32F411CE (BlackPill) | `thumbv7em-none-eabihf` | stable | SPI1 + DMA2, async | `probe-rs` |
+| [`stm32f429i-disco`](stm32f429i-disco) | STM32F429ZI (STM32F429I-DISC1) | `thumbv7em-none-eabihf` | stable | LTDC, 2 framebuffers in SDRAM, DMA2D (`BufferMode::Full`) | `probe-rs` |
 | [`esp32c3`](esp32c3) | ESP32-C3 | `riscv32imc-unknown-none-elf` | stable | SPI2 + DMA, touch on the same bus | `espflash` |
 | [`esp32c6`](esp32c6) | ESP32-C6 | `riscv32imac-unknown-none-elf` | stable | SPI2 + DMA, touch on I2C0 (or the same bus) | `espflash` |
 | [`esp32s3`](esp32s3) | ESP32-S3 | `xtensa-esp32s3-none-elf` | `esp` | SPI2 + DMA, or QSPI AMOLED (`twine-esp`) | `espflash` |
@@ -25,16 +26,27 @@ time and the heap.
 
 | Feature | Meaning |
 |---------|---------|
-| `panel-ili9341` (default), `panel-st7789`, `panel-jd9853` (`esp32c6`, its default) | SPI panel driver |
+| `panel-ili9341` (default), `panel-ili9342`, `panel-st7789`, `panel-st7796`, `panel-jd9853` (`esp32c6`, its default) | SPI panel driver (all SPI panels share the pins of the wiring block) |
 | `panel-co5300`, `panel-sh8601`, `panel-rm67162` (`esp32s3`) | QSPI AMOLED driver |
-| `touch-xpt2046` (default), `touch-ft6x36`, `touch-cst816s` (`esp32s3`), `touch-axs5106l` (`esp32c6`, its default) | touch driver |
-| `demo-counter` (default), `demo-controls`, `demo-calibrate` | the demo |
+| `oled-ssd1306` | SSD1306 128 × 64 mono OLED at I2C address `0x3C`, on the capacitive touch's I2C pins (so no touch feature), mono theme, whole-frame 1 KiB buffers |
+| `touch-xpt2046` (default), `touch-ft6x36`, `touch-gt911`, `touch-cst816s`, `touch-axs5106l` (`esp32c6`, its default) | touch driver; the capacitive ones share one set of I2C pins |
+| `demo-counter` (default), `demo-controls`, `demo-selection`, `demo-calibrate` | the demo (`demo-selection` needs ~130 KB of heap: the RP2040 example then uses a 160 KiB heap; it does not fit the STM32F411's 128 KiB of RAM; `demo-calibrate` needs a touch feature) |
 
-Exactly one `panel-*` and one `touch-*` feature: switch with `--no-default-features`, e.g.
+Feature groups are checked with `compile_error!`: exactly one display (`panel-*` or `oled-*`), at
+most one `touch-*` (none: no input) and at most one `demo-*`. Switch with
+`--no-default-features`, e.g.
 
 ```sh
 cargo run --release --no-default-features --features panel-st7789,touch-ft6x36,demo-controls
 ```
+
+`cargo xtask firmware <example> --features <list>` builds one set without repeating the
+defaults: each listed feature replaces the default of its group, so `cargo xtask firmware rp2040
+--features panel-st7789` builds the ST7789 with the default XPT2046 and counter demo.
+
+The pins of every feature are in the wiring block at the top of each example's `main.rs`.
+Rotation follows the panel: ILI9341, ST7789 and ST7796 are turned to landscape (`Deg90`: 320 ×
+240, ST7796 480 × 320); the ILI9342C and the SSD1306 are landscape natively (`Deg0`).
 
 ## Building and flashing
 
@@ -55,7 +67,8 @@ cd firmware/esp32s3 && cargo run --release       # flashes and opens the serial 
 The ESP32-C3 and ESP32-C6 build with the stable toolchain (`rustup target add
 riscv32imc-unknown-none-elf` / `riscv32imac-unknown-none-elf`).
 `cargo xtask firmware [example|all]` builds every example for its feature sets (listed under
-`[package.metadata.twine]` in each `Cargo.toml`) and prints the flash and static RAM sizes.
+`[package.metadata.twine]` in each `Cargo.toml`, including an alternative panel, touch
+controller and the OLED to catch bit-rot) and prints the flash and static RAM sizes.
 
 | Example | Flash, counter / controls | Static RAM (incl. heap and draw buffers) |
 |---------|---------------------------|------------------------------------------|

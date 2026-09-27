@@ -142,3 +142,30 @@ proptest! {
         prop_assert_eq!(n, p.points().len());
     }
 }
+
+/// Regression (fuzz target `path_raster`): arcs with tiny radii between far-apart points once
+/// overflowed the center and unit-vector arithmetic.
+#[test]
+fn arc_tiny_radii_far_points_do_not_overflow() {
+    use twine_core::{Angle, Fx};
+    use twine_vector::{FxPoint, Path};
+    for (r, rot) in [(1, 0), (3, 450), (1, -1200), (255, 1)] {
+        let mut p = Path::new();
+        p.move_to(FxPoint::new(Fx(i32::MIN / 2), Fx(i32::MAX / 2)));
+        p.arc_to(
+            FxPoint::new(Fx(r), Fx(r)),
+            Angle(rot),
+            true,
+            false,
+            FxPoint::new(Fx(i32::MAX / 2), Fx(-7)),
+        );
+        p.arc_to(
+            FxPoint::new(Fx(r), Fx(1)),
+            Angle(rot),
+            false,
+            true,
+            FxPoint::new(Fx(0), Fx(i32::MIN / 3)),
+        );
+        let _ = p.bounds();
+    }
+}

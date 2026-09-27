@@ -13,7 +13,7 @@ use twine_engine::{
     ObjFlags, Widget, WidgetClass, WidgetCx,
 };
 use twine_style::{COORD_MAX, Length, Part, PropId, TextAlign};
-use twine_text::{LongMode, TextDrawFlags, TextFlags, TextLayout};
+use twine_text::{LongMode, TextDir, TextDrawFlags, TextFlags, TextLayout};
 
 use crate::log_set;
 pub use long::{ANIM_OFS_X, ANIM_OFS_Y, LABEL_DEF_SCROLL_SPEED, LABEL_SCROLL_DELAY};
@@ -114,6 +114,7 @@ fn text_hash(s: &str) -> u32 {
 /// ```
 #[derive(Debug)]
 pub struct Label {
+    class: &'static WidgetClass,
     text: LabelText,
     /// Second buffer of [`write_text`](Self::write_text) (swapped with the text).
     scratch: String,
@@ -127,6 +128,16 @@ pub struct Label {
     layout_cache: Cell<Option<LayoutCache>>,
     /// Password masking (see [`set_mask`](Self::set_mask)).
     mask: Option<Mask>,
+    /// The text with Arabic/Persian contextual forms, drawn instead of it when `shaped` is
+    /// set (feature `arabic-shaping`; capacity reused).
+    #[cfg(feature = "arabic-shaping")]
+    shaped_text: String,
+    #[cfg(feature = "arabic-shaping")]
+    shaped: bool,
+    /// Whether Arabic/Persian text is shaped (off for a textarea's label, whose byte cursor
+    /// indexes the logical text).
+    #[cfg(feature = "arabic-shaping")]
+    shaping: bool,
 }
 
 /// The masked form of a label's text (a textarea in password mode).
@@ -164,7 +175,9 @@ impl Label {
     /// A label showing `text` (a `'static` string, stored without copying).
     #[must_use]
     pub fn new(text: &'static str) -> Self {
-        Self {
+        #[cfg_attr(not(feature = "arabic-shaping"), allow(unused_mut))]
+        let mut label = Self {
+            class: &LABEL_CLASS,
             text: LabelText::Static(text),
             scratch: String::new(),
             long_mode: LongMode::Wrap,
@@ -175,7 +188,37 @@ impl Label {
             text_size: Size::ZERO,
             layout_cache: Cell::new(None),
             mask: None,
+            #[cfg(feature = "arabic-shaping")]
+            shaped_text: String::new(),
+            #[cfg(feature = "arabic-shaping")]
+            shaped: false,
+            #[cfg(feature = "arabic-shaping")]
+            shaping: true,
+        };
+        #[cfg(feature = "arabic-shaping")]
+        if twine_text::needs_shaping(text) {
+            label.shaped = true;
+            twine_text::shape_into(text, &mut label.shaped_text);
         }
+        label
+    }
+
+    /// The label as a widget of another class: an LVGL subclass of the label that only
+    /// changes the class (its name for themes and queries, flags), e.g. a list's text
+    /// (`"list_text"`).
+    ///
+    /// ```
+    /// use twine_engine::{Widget, WidgetClass};
+    /// use twine_widgets::label::{LABEL_CLASS, Label};
+    /// static LIST_TEXT: WidgetClass = WidgetClass::new("list_text")
+    ///     .parts(LABEL_CLASS.parts)
+    ///     .default_flags(LABEL_CLASS.default_flags);
+    /// assert_eq!(Label::new("Hi").with_class(&LIST_TEXT).class().name, "list_text");
+    /// ```
+    #[must_use]
+    pub fn with_class(mut self, class: &'static WidgetClass) -> Self {
+        self.class = class;
+        self
     }
 
     /// The text.
@@ -197,8 +240,23 @@ impl Label {
     pub fn shown_text(&self) -> &str {
         match &self.mask {
             Some(m) => &m.shown,
+            #[cfg(feature = "arabic-shaping")]
+            None if self.shaped => &self.shaped_text,
             None => self.text.as_str(),
         }
+    }
+
+    /// Turns Arabic/Persian shaping of the drawn text on or off (feature `arabic-shaping`;
+    /// default on, like LVGL's `LV_USE_ARABIC_PERSIAN_CHARS` labels). A textarea turns it off
+    /// for its label. Idempotent.
+    #[cfg(feature = "arabic-shaping")]
+    pub fn set_shaping(&mut self, cx: &mut WidgetCx<'_>, on: bool) {
+        if self.shaping == on {
+            return;
+        }
+        log_set(LABEL_CLASS.name, cx.node(), "shaping");
+        self.shaping = on;
+        self.text_changed(cx);
     }
 
     /// Whether the text is masked.
@@ -429,17 +487,36 @@ impl Label {
     /// Position of the character at byte `byte_idx` relative to the top-left corner of the
     /// content area (LVGL `lv_label_get_letter_pos`).
     #[must_use]
+    ///
+    /// With the `bidi` feature the position is visual: in a right-to-left run the cursor
+    /// before a character is at its right edge.
     pub fn letter_pos(&self, cx: &MeasureCx<'_>, byte_idx: usize) -> Point {
-        let (layout, align, w) = self.draw_layout(cx);
-        layout.pos_of(byte_idx, align, w)
+        let (layout, align, w, base) = self.draw_layout(cx);
+        #[cfg(feature = "bidi")]
+        {
+            layout.pos_of_bidi(byte_idx, align, w, base)
+        }
+        #[cfg(not(feature = "bidi"))]
+        {
+            let _ = base;
+            layout.pos_of(byte_idx, align, w)
+        }
     }
 
     /// Byte index of the character at `p` (relative to the top-left corner of the content
     /// area; LVGL `lv_label_get_letter_on`).
     #[must_use]
     pub fn letter_on(&self, cx: &MeasureCx<'_>, p: Point) -> usize {
-        let (layout, align, w) = self.draw_layout(cx);
-        layout.char_at(p, align, w)
+        let (layout, align, w, base) = self.draw_layout(cx);
+        #[cfg(feature = "bidi")]
+        {
+            layout.char_at_bidi(p, align, w, base)
+        }
+        #[cfg(not(feature = "bidi"))]
+        {
+            let _ = base;
+            layout.char_at(p, align, w)
+        }
     }
 
     /// Whether the text is laid out on one line only (no wrapping): `Scroll`,
@@ -452,7 +529,7 @@ impl Label {
     }
 
     /// The layout as drawn in the current content area, with the alignment.
-    fn draw_layout(&self, cx: &MeasureCx<'_>) -> (TextLayout<'_>, TextAlign, i32) {
+    fn draw_layout(&self, cx: &MeasureCx<'_>) -> (TextLayout<'_>, TextAlign, i32, TextDir) {
         let c = cx.content_area();
         let d = cx.text_dsc(Part::Main);
         let mut layout = TextLayout::new(self.shown_text(), d.font);
@@ -462,16 +539,15 @@ impl Label {
         if self.expand() {
             layout.flags |= TextFlags::EXPAND;
         }
-        (layout, self.draw_align(d.align, c.width()), c.width())
+        let align = self.draw_align(d.align, d.base_dir, c.width());
+        (layout, align, c.width(), d.base_dir)
     }
 
-    /// LVGL: in the scrolling modes, center and right alignment make no sense for text wider
-    /// than the area, so it is drawn left-aligned.
-    fn draw_align(&self, align: TextAlign, w: i32) -> TextAlign {
-        let align = match align {
-            TextAlign::Auto => TextAlign::Left,
-            a => a,
-        };
+    /// `Auto` follows the base direction of the text (right for right-to-left). LVGL: in the
+    /// scrolling modes, center and right alignment make no sense for text wider than the
+    /// area, so it is drawn left-aligned.
+    fn draw_align(&self, align: TextAlign, base: TextDir, w: i32) -> TextAlign {
+        let align = align.resolve(base.resolved(self.shown_text()));
         if matches!(self.long_mode, LongMode::Scroll | LongMode::ScrollCircular)
             && matches!(align, TextAlign::Center | TextAlign::Right)
             && self.text_size.w > w
@@ -486,6 +562,14 @@ impl Label {
     fn text_changed(&mut self, cx: &mut WidgetCx<'_>) {
         if let Some(m) = &mut self.mask {
             m.update(self.text.as_str());
+        }
+        #[cfg(feature = "arabic-shaping")]
+        {
+            self.shaped = self.shaping && twine_text::needs_shaping(self.text.as_str());
+            if self.shaped {
+                self.shaped_text.clear();
+                twine_text::shape_into(self.text.as_str(), &mut self.shaped_text);
+            }
         }
         if let Some((_, b)) = self.sel {
             if b > self.shown_text().len() {
@@ -527,7 +611,7 @@ pub fn create_with(engine: &mut Engine, parent: NodeId, text: &'static str) -> R
 
 impl Widget for Label {
     fn class(&self) -> &'static WidgetClass {
-        &LABEL_CLASS
+        self.class
     }
 
     fn init(&mut self, cx: &mut WidgetCx<'_>) {
@@ -585,7 +669,7 @@ impl Widget for Label {
             return;
         }
         let mut dsc = cx.text_dsc(Part::Main);
-        dsc.align = self.draw_align(dsc.align, content.width());
+        dsc.align = self.draw_align(dsc.align, dsc.base_dir, content.width());
         if self.expand() {
             dsc.flags |= TextDrawFlags::EXPAND;
         }

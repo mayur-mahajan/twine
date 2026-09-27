@@ -161,6 +161,10 @@ pub mod fonts {
     mod montserrat_14_subpx;
     #[cfg(feature = "montserrat-14-subpx")]
     pub use montserrat_14_subpx::MONTSERRAT_14_SUBPX;
+    #[cfg(feature = "montserrat-16-latin-ext")]
+    mod montserrat_16_latin_ext;
+    #[cfg(feature = "montserrat-16-latin-ext")]
+    pub use montserrat_16_latin_ext::MONTSERRAT_16_LATIN_EXT;
     #[cfg(feature = "unscii-8")]
     mod unscii_8;
     #[cfg(feature = "unscii-8")]

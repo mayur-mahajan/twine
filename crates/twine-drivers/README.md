@@ -56,11 +56,39 @@ IRQ-capable input drivers perform no bus traffic while idle.
 the engine's software rotation alike; a test checks every panel's `MADCTL` table against the
 software rotation.
 
-## Verification
+## Driver matrix
 
-All drivers are verified on the host against recording mock buses (exact command and data
-bytes, see the `testkit` feature). None has been verified on hardware yet; the example firmware
-in the repository's `firmware/` directory contains a hardware checklist.
+"Tested board" is hardware on which the driver was run; no driver has been run on hardware
+yet. All are verified on the host against recording mock buses (exact command and data bytes,
+see the `testkit` feature). "Firmware feature" names the cargo feature of the example firmware in
+the repository's `firmware/` directory that builds the driver for every example board (RP2040,
+RP2350, STM32F411, ESP32, ESP32-C3, ESP32-C6, ESP32-S3), so `cargo xtask firmware` catches
+bit-rot. Max clock is the datasheet write clock; what modules run in practice is in the notes.
+
+| Device | Interface | Tested board | Max clock | Firmware feature | Notes |
+|--------|-----------|--------------|-----------|------------------|-------|
+| ILI9341 | SPI, i80 | — (not tested on hardware) | 10 MHz | `panel-ili9341` (default) | modules routinely run at 40–62.5 MHz |
+| ILI9342C | SPI, i80 | — (not tested on hardware) | 10 MHz | `panel-ili9342` | boards run it at 40 MHz |
+| ILI9488 | SPI (RGB666) | — (not tested on hardware) | 20 MHz | — | 3 bytes/pixel; modules often run at 40 MHz |
+| ST7789 | SPI, i80 | — (not tested on hardware) | 15 MHz | `panel-st7789` | modules usually run at 40–80 MHz |
+| ST7735R/S | SPI | — (not tested on hardware) | 15 MHz | — | modules usually work at 20–40 MHz |
+| ST7796S | SPI, i80 | — (not tested on hardware) | 15 MHz | `panel-st7796` | modules commonly run at 40 MHz |
+| GC9A01 | SPI | — (not tested on hardware) | 100 MHz | — | modules typically 40–80 MHz |
+| JD9853 | SPI | — (not tested on hardware) | 80 MHz (vendor demo) | `panel-jd9853` (ESP32-C6 only) | |
+| CO5300, SH8601 | QSPI | — (not tested on hardware) | 80 MHz on ESP32-S3 | `panel-co5300`, `panel-sh8601` (ESP32-S3 only) | |
+| RM67162 | QSPI | — (not tested on hardware) | 75 MHz (vendor) | `panel-rm67162` (ESP32-S3 only) | |
+| SSD1306 | I2C, SPI | — (not tested on hardware) | I2C 400 kHz, SPI 10 MHz | `oled-ssd1306` (I2C, no touch) | `I1`, mono theme |
+| SH1106 | I2C, SPI | — (not tested on hardware) | I2C 400 kHz, SPI 4 MHz | — | |
+| XPT2046 | SPI | — (not tested on hardware) | 2.5 MHz (use ≤ 2 MHz) | `touch-xpt2046` (default) | may share the display bus with its own CS |
+| FT6x36 / FT5x06 / FT3168 | I2C | — (not tested on hardware) | 400 kHz | `touch-ft6x36` | |
+| GT911 | I2C | — (not tested on hardware) | 400 kHz | `touch-gt911` | |
+| CST816S | I2C | — (not tested on hardware) | 400 kHz | `touch-cst816s` | |
+| AXS5106L | I2C | — (not tested on hardware) | 400 kHz | `touch-axs5106l` (ESP32-C6 only) | |
+| STMPE811 | I2C | — (not tested on hardware) | 400 kHz | — | used by the STM32F429I-DISC1 |
+| rotary encoder | GPIO / interrupt | — (not tested on hardware) | — | — | quadrature decoder usable from an ISR |
+| key matrix | GPIO | — (not tested on hardware) | — | — | debounced, 8-event queue |
+
+The example firmware's hardware checklist lists what to verify when a board is first brought up.
 
 ## Init sequences
 

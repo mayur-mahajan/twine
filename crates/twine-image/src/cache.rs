@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 
 use twine_render::ImagePixels;
 
-use crate::{Error, ImageHeader, MAX_PATH_LEN, pixels_of};
+use crate::{Error, ImageHeader, ImageSource, MAX_PATH_LEN, pixels_of};
 
 /// Identity of an image source in the caches.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -21,6 +21,24 @@ impl SourceKey {
     #[must_use]
     pub fn of_ptr<T: ?Sized>(p: &'static T) -> Self {
         SourceKey::Ptr(core::ptr::from_ref(p).cast::<u8>() as usize)
+    }
+
+    /// The cache key of `src` (`None` for symbols, which are text).
+    ///
+    /// ```
+    /// use twine_image::{ImageSource, SourceKey};
+    /// let a = ImageSource::File("A:/a.qoi".try_into().unwrap());
+    /// assert_eq!(SourceKey::of_source(&a), Some(SourceKey::File("A:/a.qoi".try_into().unwrap())));
+    /// assert_eq!(SourceKey::of_source(&ImageSource::Symbol("x")), None);
+    /// ```
+    #[must_use]
+    pub fn of_source(src: &ImageSource) -> Option<Self> {
+        match src {
+            ImageSource::Static(img) => Some(Self::of_ptr(*img)),
+            ImageSource::Encoded(b) | ImageSource::Svg(b) => Some(Self::of_ptr(*b)),
+            ImageSource::File(p) => Some(SourceKey::File(p.clone())),
+            ImageSource::Symbol(_) => None,
+        }
     }
 }
 
@@ -91,9 +109,12 @@ pub struct ImageCache {
     entries: Vec<Entry>,
     clock: u32,
     transient: Option<Entry>,
-    warned: heapless::Vec<SourceKey, 8>,
+    warned: heapless::Vec<SourceKey, WARNED_SOURCES>,
     stats: CacheStats,
 }
+
+/// Sources remembered by [`ImageCache::warn_once`]; later warnings are not suppressed.
+const WARNED_SOURCES: usize = 16;
 
 impl ImageCache {
     /// A cache holding at most `max_entries` images and `budget_bytes` bytes of pixels.
@@ -147,9 +168,8 @@ impl ImageCache {
             last_use: self.clock,
         };
         if size > self.budget || self.max_entries == 0 {
-            if !self.warned.contains(&entry.key) {
+            if self.warn_once(&entry.key) {
                 twine_core::warn!(target: "twine::image", "image larger than cache budget; decoding every frame (slow) ({} > {} bytes)", size, self.budget);
-                let _ = self.warned.push(entry.key.clone());
             }
             let e = self.transient.insert(entry);
             return Ok(CachedImage {
@@ -168,6 +188,28 @@ impl ImageCache {
             header: e.header,
             data: &e.data,
         })
+    }
+
+    /// Changes the byte budget (LVGL `lv_image_cache_resize`), evicting least recently used
+    /// images until the cached ones fit.
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_image::{ImageCache, ImageHeader, SourceKey};
+    ///
+    /// let mut cache = ImageCache::new(0, 4);
+    /// cache.set_budget(64);
+    /// let decode = |out: &mut Vec<u8>| { out.resize(16, 0); Ok(ImageHeader::new(ColorFormat::L8, 4, 4)) };
+    /// cache.get_or_decode(SourceKey::Ptr(1), decode).unwrap();
+    /// assert!(cache.contains(&SourceKey::Ptr(1)));
+    /// cache.set_budget(8);
+    /// assert!(!cache.contains(&SourceKey::Ptr(1)));
+    /// ```
+    pub fn set_budget(&mut self, budget_bytes: usize) {
+        self.budget = budget_bytes;
+        while self.used > self.budget && !self.entries.is_empty() {
+            self.evict_lru();
+        }
     }
 
     fn evict_lru(&mut self) {
@@ -196,6 +238,17 @@ impl ImageCache {
             self.used -= e.data.len();
             self.stats.bytes_used = self.used;
         }
+    }
+
+    /// `true` the first time it is called for `key` (then `false`): lets callers log one
+    /// warning per source (missing files, oversize images). Once 16 sources are remembered,
+    /// every call returns `true` again for new sources.
+    pub fn warn_once(&mut self, key: &SourceKey) -> bool {
+        if self.warned.contains(key) {
+            return false;
+        }
+        let _ = self.warned.push(key.clone());
+        true
     }
 
     /// Drops every entry.
@@ -257,6 +310,14 @@ impl ImageHeaderCache {
         if let Err(e) = self.entries.push((key, header)) {
             self.entries[self.next] = e;
             self.next = (self.next + 1) % HEADER_CACHE_ENTRIES;
+        }
+    }
+
+    /// Drops the header of `key`.
+    pub fn remove(&mut self, key: &SourceKey) {
+        if let Some(i) = self.entries.iter().position(|(k, _)| k == key) {
+            self.entries.swap_remove(i);
+            self.next = 0;
         }
     }
 

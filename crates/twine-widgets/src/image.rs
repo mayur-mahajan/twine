@@ -4,14 +4,15 @@
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use twine_core::Color;
 use twine_core::{Angle, Point, Rect, Scale, Size};
 use twine_engine::{
     DrawCx, Engine, EngineError, Event, EventCode, EventCx, EventResult, MeasureCx, NodeId, OBJ_FLAGS,
     ObjFlags, Widget, WidgetClass, WidgetCx,
 };
 use twine_image::{ImageHeader, ImageSource, with_pixels};
-use twine_render::{BlendMode, transformed_area};
-use twine_style::{Part, PropId};
+use twine_render::{BlendMode, RectDsc, transformed_area};
+use twine_style::{Part, PropId, TextAlign};
 use twine_text::TextLayout;
 
 use crate::log_set;
@@ -116,7 +117,15 @@ pub struct Image {
     align: ImageAlign,
     offset: Point,
     blend: BlendMode,
+    /// The file source could not be read: a placeholder is drawn instead.
+    missing: bool,
+    /// Draw an SVG source from a rasterized copy in the image cache (feature `svg`).
+    #[cfg(feature = "svg")]
+    svg_cache: bool,
 }
+
+/// Side of the placeholder drawn for a missing file (grey box with the image symbol).
+pub const MISSING_PLACEHOLDER_SIZE: i32 = 32;
 
 impl Default for Image {
     fn default() -> Self {
@@ -137,6 +146,33 @@ pub(crate) fn same_source(a: &ImageSource, b: &ImageSource) -> bool {
         (ImageSource::Symbol(x), ImageSource::Symbol(y)) => x == y,
         _ => false,
     }
+}
+
+/// The placeholder of a missing file: a grey box with the image symbol in the widget's font.
+fn draw_missing(cx: &mut DrawCx<'_, '_>, area: Rect) {
+    let opa = cx.opa();
+    cx.painter().rect(
+        area,
+        &RectDsc {
+            radius: 2,
+            bg_color: Color::hex(0x00D0_D0D0),
+            bg_opa: opa,
+            border_color: Color::hex(0x0090_9090),
+            border_width: 1,
+            border_opa: opa,
+            ..RectDsc::default()
+        },
+    );
+    let mut dsc = cx.text_dsc(Part::Main);
+    dsc.color = Color::hex(0x0060_6060);
+    dsc.align = TextAlign::Center;
+    let h = i32::from(dsc.font.line_height);
+    let y = area.y0 + (area.height() - h) / 2;
+    cx.draw_text(
+        Rect::new(area.x0, y, area.x1, y + h),
+        twine_text::symbols::IMAGE,
+        &dsc,
+    );
 }
 
 /// LVGL `lv_area_align` of a `size` box inside `base` for the inner alignments.
@@ -172,6 +208,9 @@ impl Image {
             align: ImageAlign::Center,
             offset: Point::ZERO,
             blend: BlendMode::Normal,
+            missing: false,
+            #[cfg(feature = "svg")]
+            svg_cache: false,
         }
     }
 
@@ -278,6 +317,57 @@ impl Image {
         cx.invalidate_area(r);
     }
 
+    /// Draws the SVG document `bytes` into the untransformed image `area`: the vector paths
+    /// through the image transform (crisp at any scale), or the cached raster.
+    #[cfg(feature = "svg")]
+    fn draw_svg(
+        &self,
+        cx: &mut DrawCx<'_, '_>,
+        bytes: &'static [u8],
+        area: Rect,
+        clip: Rect,
+        dsc: &twine_render::ImageDsc<'_>,
+    ) {
+        use twine_core::Transform;
+        use twine_vector::DrawParams;
+        let natural = Rect::from_xywh(area.x0, area.y0, self.size.w, self.size.h);
+        let pivot = Point::new(area.x0 + dsc.pivot.x, area.y0 + dsc.pivot.y);
+        let transformed = dsc.angle.0 != 0 || dsc.scale_x != Scale::ONE || dsc.scale_y != Scale::ONE;
+        let r = cx.with_clip(clip, |cx| {
+            if self.svg_cache {
+                cx.with_svg_images(bytes, |p, doc, icx| {
+                    let (w, h) = (self.size.w, self.size.h);
+                    let key = twine_image::SourceKey::of_ptr(bytes);
+                    let cached = icx.cache.get_or_decode(key, |out| rasterize_svg(p, doc, w, h, out));
+                    match cached.map(|c| c.pixels()) {
+                        Ok(Some(px)) => p.image(area, &px, dsc),
+                        _ => twine_core::warn!(target: "twine::image", "svg: cannot rasterize (ARGB8888 support missing?)"),
+                    }
+                })
+            } else {
+                cx.with_svg(bytes, |p, doc| {
+                    let base = doc.transform_for(natural);
+                    let t = if transformed {
+                        base.then(Transform::from_rotate_scale(dsc.angle, dsc.scale_x, dsc.scale_y, pivot))
+                    } else {
+                        base
+                    };
+                    let params = DrawParams {
+                        transform: t,
+                        opa: dsc.opa,
+                        recolor: (dsc.recolor_opa.0 > 0).then_some(dsc.recolor),
+                    };
+                    doc.scene.draw_with(p, &params);
+                })
+            }
+        });
+        if let Some(Err(e)) = r {
+            if !WARN_DRAW.swap(true, Ordering::Relaxed) {
+                twine_core::warn!(target: "twine::image", "svg image not drawn: {}", e);
+            }
+        }
+    }
+
     /// Changes a transform parameter with `f`: invalidates the old transformed area,
     /// updates the extra draw size, invalidates the new area (LVGL `lv_image_set_rotation`).
     fn update_transform(&mut self, cx: &mut WidgetCx<'_>, f: impl FnOnce(&mut Self)) {
@@ -313,6 +403,19 @@ impl Image {
             }
             other => match cx.engine_mut().image_header(other) {
                 Ok(h) => (Some(h), Size::new(i32::from(h.w), i32::from(h.h))),
+                Err(e) if matches!(other, ImageSource::File(_) | ImageSource::Svg(_)) => {
+                    // LVGL draws a placeholder for files it cannot open; so do we (also for
+                    // SVG without the `svg` feature or with a malformed document).
+                    if cx.engine_mut().image_warn_once(other) {
+                        twine_core::warn!(target: "twine::image", "image: cannot read {}: {:?}; drawing a placeholder", other, e);
+                    }
+                    self.src = Some(src);
+                    self.header = None;
+                    self.missing = true;
+                    let s = MISSING_PLACEHOLDER_SIZE;
+                    self.size_changed(cx, Size::new(s, s));
+                    return;
+                }
                 Err(e) => {
                     twine_core::warn!(target: "twine::image", "image: cannot read {}: {:?}", other, e);
                     self.src = None;
@@ -324,6 +427,7 @@ impl Image {
         };
         self.src = Some(src);
         self.header = header;
+        self.missing = false;
         self.size_changed(cx, size);
         if self.align.transforms() {
             self.update_align(cx);
@@ -409,6 +513,26 @@ impl Image {
         log_set(IMAGE_CLASS.name, cx.node(), "antialias");
         self.antialias = on;
         cx.invalidate_for("image.set_antialias");
+    }
+
+    /// Draws an SVG source from a copy rasterized once (at the source size) into the image
+    /// cache instead of from the vector paths every time (faster redraws of static icons;
+    /// scaling and rotating then resample the bitmap), feature `svg`. Idempotent.
+    #[cfg(feature = "svg")]
+    pub fn set_svg_cache(&mut self, cx: &mut WidgetCx<'_>, on: bool) {
+        if self.svg_cache == on {
+            return;
+        }
+        log_set(IMAGE_CLASS.name, cx.node(), "svg_cache");
+        self.svg_cache = on;
+        cx.invalidate_for("image.set_svg_cache");
+    }
+
+    /// Whether SVG sources are drawn from a cached raster.
+    #[cfg(feature = "svg")]
+    #[must_use]
+    pub fn svg_cache(&self) -> bool {
+        self.svg_cache
     }
 
     /// Sets the inner alignment. `Stretch`, `Contain`, `Cover` and `Tile` set the scale
@@ -578,6 +702,10 @@ impl Widget for Image {
             return;
         }
         let c = cx.coords();
+        if self.missing {
+            draw_missing(cx, align_in(c, self.size, self.align, self.offset));
+            return;
+        }
         if let ImageSource::Symbol(s) = src {
             let dsc = cx.text_dsc(Part::Main);
             let area = if self.align.transforms()
@@ -627,6 +755,11 @@ impl Widget for Image {
             ),
             a => (align_in(c, size, a, self.offset), cx.clip()),
         };
+        #[cfg(feature = "svg")]
+        if let ImageSource::Svg(bytes) = src {
+            self.draw_svg(cx, bytes, area, clip, &dsc);
+            return;
+        }
         let r = cx.with_clip(clip, |cx| {
             cx.with_images(|painter, icx| with_pixels(src, icx, |px| painter.image(area, px, &dsc)))
         });
@@ -650,4 +783,31 @@ impl Widget for Image {
             self.set_scale(cx, s);
         }
     }
+}
+
+/// Renders `doc` at `w` × `h` into `out` as transparent-background `Argb8888` pixels, with a
+/// painter sharing `p`'s render caches.
+#[cfg(feature = "svg")]
+fn rasterize_svg(
+    p: &mut twine_render::Painter<'_>,
+    doc: &twine_vector::SvgDocument,
+    w: i32,
+    h: i32,
+    out: &mut alloc::vec::Vec<u8>,
+) -> Result<ImageHeader, twine_image::Error> {
+    use twine_core::ColorFormat;
+    let (wu, hu) = (u16::try_from(w).unwrap_or(0), u16::try_from(h).unwrap_or(0));
+    let header = ImageHeader::new(ColorFormat::Argb8888, wu, hu);
+    let n = header.data_size();
+    out.clear();
+    out.try_reserve_exact(n)
+        .map_err(|_| twine_image::Error::Decode("out of memory"))?;
+    out.resize(n, 0);
+    let dst = Rect::from_xywh(0, 0, w, h);
+    let buf = twine_render::DrawBuf::new_packed(out, ColorFormat::Argb8888, dst)
+        .map_err(|_| twine_image::Error::Unsupported(ColorFormat::Argb8888))?;
+    let mut painter = twine_render::Painter::new(buf, p.caches());
+    doc.render(&mut painter, dst);
+    drop(painter);
+    Ok(header)
 }

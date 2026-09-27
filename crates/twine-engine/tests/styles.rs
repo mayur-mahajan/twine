@@ -272,3 +272,174 @@ proptest! {
         }
     }
 }
+
+// ---- Style links (`set_style_parent`) ------------------------------------------------------
+
+/// A screen with an owner box (10,10 20×20) and a popup box (40,40 10×10) on the top layer.
+fn harness_popup() -> (EngineHarness, NodeId, NodeId) {
+    let mut ids = None;
+    let mut h = EngineHarness::new(64, 64).no_theme().mount_engine(|e| {
+        let s = common::white_screen(e);
+        let owner = common::boxed(e, s, Rect::from_xywh(10, 10, 20, 20), Color::RED);
+        let top = e.top_layer(e.default_display().unwrap()).unwrap();
+        let popup = common::boxed(e, top, Rect::from_xywh(40, 40, 10, 10), Color::BLUE);
+        ids = Some((owner, popup));
+    });
+    h.run_until_idle();
+    let (owner, popup) = ids.unwrap();
+    (h, owner, popup)
+}
+
+fn text_color(e: &Engine, n: NodeId) -> Color {
+    e.style_color(n, Part::Main, PropId::TextColor)
+}
+
+#[test]
+fn style_parent_link_inherits_from_owner() {
+    let (mut e, root) = engine_with_node();
+    let owner = e.create(root, Box::new(Obj)).unwrap();
+    let popup_root = e.create_root(Box::new(Obj)).unwrap();
+    let popup = e.create(popup_root, Box::new(Obj)).unwrap();
+    let inner = e.create(popup, Box::new(Obj)).unwrap();
+    e.set_local_prop(root, Selector::MAIN, StyleProp::TextColor(Color::RED));
+    e.set_local_prop(root, Selector::MAIN, StyleProp::BgColor(Color::GREEN));
+    assert_eq!(text_color(&e, inner), Color::BLACK);
+
+    e.set_style_parent(popup, Some(owner));
+    assert_eq!(e.tree().style_link(popup), Some(owner));
+    assert_eq!(e.tree().style_parent(popup), Some(owner));
+    assert_eq!(e.tree().parent(popup), Some(popup_root), "the tree is unchanged");
+    assert_eq!(text_color(&e, popup), Color::RED);
+    assert_eq!(
+        e.cached_main(inner).text_color,
+        Color::RED,
+        "descendants of the popup too"
+    );
+    assert_eq!(
+        bg(&e, popup),
+        Color::WHITE,
+        "non-inherited properties are not inherited"
+    );
+
+    // A change above the owner reaches the popup.
+    e.set_local_prop(root, Selector::MAIN, StyleProp::TextColor(Color::BLUE));
+    assert_eq!(e.cached_main(inner).text_color, Color::BLUE);
+
+    e.set_style_parent(popup, None);
+    assert_eq!(e.tree().style_link(popup), None);
+    assert_eq!(e.cached_main(inner).text_color, Color::BLACK);
+    e.tree().check_invariants().unwrap();
+}
+
+#[test]
+fn style_parent_same_link_is_noop() {
+    let (mut h, owner, popup) = harness_popup();
+    h.engine_mut().set_style_parent(popup, Some(owner));
+    h.run_until_idle();
+    let epoch = h.engine().tree().style_epoch();
+    h.engine_mut().set_style_parent(popup, Some(owner));
+    assert_eq!(h.engine().tree().style_epoch(), epoch);
+    assert!(h.engine().invalidation_log().is_empty());
+    h.assert_idle();
+    // Clearing a link that is not set does nothing either.
+    h.engine_mut().set_style_parent(owner, None);
+    assert_eq!(h.engine().tree().style_epoch(), epoch);
+    h.assert_idle();
+}
+
+#[test]
+fn inherited_change_on_owner_redraws_linked_popup() {
+    let (mut h, owner, popup) = harness_popup();
+    h.engine_mut().set_style_parent(popup, Some(owner));
+    h.run_until_idle();
+    h.engine_mut()
+        .set_local_prop(owner, Selector::MAIN, StyleProp::TextColor(Color::RED));
+    let log = h.engine().invalidation_log();
+    assert!(
+        log.iter().any(|(r, _)| *r == Rect::from_xywh(40, 40, 10, 10)),
+        "{log:?}"
+    );
+    assert_eq!(h.engine().cached_main(popup).text_color, Color::RED);
+    // A non-inherited change does not touch the popup.
+    h.run_until_idle();
+    h.engine_mut()
+        .set_local_prop(owner, Selector::MAIN, StyleProp::BgColor(Color::GREEN));
+    let log = h.engine().invalidation_log();
+    assert!(
+        log.iter().all(|(r, _)| *r == Rect::from_xywh(10, 10, 20, 20)),
+        "{log:?}"
+    );
+}
+
+#[test]
+fn inherited_state_change_on_owner_reaches_linked_popup() {
+    static RED_TEXT: Style = Style::new(&[StyleProp::TextColor(Color::RED)]);
+    let (mut h, owner, popup) = harness_popup();
+    h.engine_mut().set_style_parent(popup, Some(owner));
+    h.engine_mut()
+        .add_style(owner, &RED_TEXT, Selector::state(State::CHECKED));
+    h.run_until_idle();
+    assert_eq!(h.engine().cached_main(popup).text_color, Color::BLACK);
+    h.engine_mut().add_state(owner, State::CHECKED);
+    assert_eq!(h.engine().cached_main(popup).text_color, Color::RED);
+    assert!(
+        h.engine()
+            .invalidation_log()
+            .iter()
+            .any(|(r, _)| *r == Rect::from_xywh(40, 40, 10, 10))
+    );
+}
+
+#[test]
+fn style_link_ends_when_a_node_is_deleted() {
+    let (mut e, root) = engine_with_node();
+    let owner = e.create(root, Box::new(Obj)).unwrap();
+    let popup_root = e.create_root(Box::new(Obj)).unwrap();
+    let popup = e.create(popup_root, Box::new(Obj)).unwrap();
+    e.set_local_prop(owner, Selector::MAIN, StyleProp::TextColor(Color::RED));
+    e.set_local_prop(popup_root, Selector::MAIN, StyleProp::TextColor(Color::GREEN));
+    e.set_style_parent(popup, Some(owner));
+    assert_eq!(text_color(&e, popup), Color::RED);
+    e.delete(owner).unwrap();
+    assert_eq!(e.tree().style_link(popup), None);
+    assert_eq!(text_color(&e, popup), Color::GREEN, "back to the parent");
+    e.tree().check_invariants().unwrap();
+    // Deleting the linked node drops its link as well.
+    let owner2 = e.create(root, Box::new(Obj)).unwrap();
+    e.set_style_parent(popup, Some(owner2));
+    e.delete(popup).unwrap();
+    e.tree().check_invariants().unwrap();
+    assert_eq!(e.tree().style_parent(owner2), Some(root));
+}
+
+#[test]
+fn cyclic_style_links_are_rejected() {
+    let (mut e, root) = engine_with_node();
+    let child = e.create(root, Box::new(Obj)).unwrap();
+    // `child` inherits from `root`: `root` cannot inherit from `child`.
+    e.set_style_parent(root, Some(child));
+    assert_eq!(e.tree().style_link(root), None);
+    e.set_style_parent(child, Some(child));
+    assert_eq!(e.tree().style_link(child), None);
+    // Missing nodes are ignored.
+    let dead = e.create(root, Box::new(Obj)).unwrap();
+    e.delete(dead).unwrap();
+    e.set_style_parent(child, Some(dead));
+    assert_eq!(e.tree().style_link(child), None);
+    e.tree().check_invariants().unwrap();
+}
+
+#[test]
+fn move_that_makes_a_style_link_cyclic_drops_it() {
+    let (mut e, root) = engine_with_node();
+    let owner = e.create(root, Box::new(Obj)).unwrap();
+    let popup_root = e.create_root(Box::new(Obj)).unwrap();
+    let popup = e.create(popup_root, Box::new(Obj)).unwrap();
+    e.set_style_parent(popup, Some(owner));
+    // The owner moves into the popup: owner → popup → owner would loop.
+    e.move_node(owner, popup, None).unwrap();
+    assert_eq!(e.tree().style_link(popup), None);
+    e.tree().check_invariants().unwrap();
+    // Resolution terminates.
+    assert_eq!(text_color(&e, owner), Color::BLACK);
+}

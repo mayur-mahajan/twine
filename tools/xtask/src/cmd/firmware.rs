@@ -8,6 +8,11 @@
 //! (else the workspace's). An example whose target or toolchain is missing is skipped with a
 //! warning, or fails the command with `--strict`.
 //!
+//! `--features <list>` builds one feature set instead: the example's default features with each
+//! listed feature replacing the defaults of its group (display: `panel-*`/`oled-*`, `touch-*`,
+//! `demo-*`); features outside these groups are added. `cargo xtask firmware rp2040 --features
+//! panel-st7789` builds the ST7789 with the default touch controller and demo.
+//!
 //! Xtensa examples (toolchain `esp`) need Espressif's linker on `PATH`: when it is not, the
 //! variables of `~/export-esp.sh` (written by `espup install`) are applied to the build.
 
@@ -165,6 +170,39 @@ pub struct Example {
     pub toolchain: Option<String>,
     /// Feature sets (`""` = defaults).
     pub feature_sets: Vec<String>,
+    /// The `default` features of the manifest.
+    pub default_features: Vec<String>,
+}
+
+/// The feature group of a firmware feature (at most one feature per group is enabled).
+fn feature_group(feature: &str) -> Option<&'static str> {
+    if feature.starts_with("panel-") || feature.starts_with("oled-") {
+        Some("display")
+    } else if feature.starts_with("touch-") {
+        Some("touch")
+    } else if feature.starts_with("demo-") {
+        Some("demo")
+    } else {
+        None
+    }
+}
+
+/// `defaults` with each of `requested` replacing the defaults of its group (see the module
+/// docs), as a `--features` list.
+#[must_use]
+pub fn merge_features(defaults: &[String], requested: &[&str]) -> String {
+    let replaced: Vec<&str> = requested.iter().filter_map(|f| feature_group(f)).collect();
+    let mut out: Vec<&str> = defaults
+        .iter()
+        .map(String::as_str)
+        .filter(|d| feature_group(d).is_none_or(|g| !replaced.contains(&g)))
+        .collect();
+    for f in requested {
+        if !out.contains(f) {
+            out.push(f);
+        }
+    }
+    out.join(",")
 }
 
 /// Reads an example directory.
@@ -192,6 +230,12 @@ pub fn read_example(dir: &Path) -> Result<Example, String> {
             || vec![String::new()],
             |a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
         );
+    let default_features = manifest
+        .get("features")
+        .and_then(|f| f.get("default"))
+        .and_then(toml::Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
     let config: toml::Table = toml::from_str(&read(&dir.join(".cargo/config.toml"))?)
         .map_err(|e| format!("{name}/.cargo/config.toml: {e}"))?;
     let target = config
@@ -213,6 +257,7 @@ pub fn read_example(dir: &Path) -> Result<Example, String> {
         target,
         toolchain,
         feature_sets,
+        default_features,
     })
 }
 
@@ -389,8 +434,9 @@ pub fn size_table(rows: &[SizeRow]) -> String {
     s
 }
 
-/// Builds the examples (`which`: one name, `all` or `None` = all).
-pub fn run(which_example: Option<&str>, strict: bool) -> R {
+/// Builds the examples (`which`: one name, `all` or `None` = all); with `features`, only that
+/// feature set merged into each example's defaults (see the module docs).
+pub fn run(which_example: Option<&str>, strict: bool, features: Option<&str>) -> R {
     let all = examples()?;
     let selected: Vec<&Example> = match which_example {
         None | Some("all") => all.iter().collect(),
@@ -421,7 +467,16 @@ pub fn run(which_example: Option<&str>, strict: bool) -> R {
             skipped.push(ex.name.clone());
             continue;
         }
-        rows.extend(build_example(ex, &env)?);
+        if let Some(list) = features {
+            let requested: Vec<&str> = list.split(',').map(str::trim).filter(|f| !f.is_empty()).collect();
+            let one = Example {
+                feature_sets: vec![merge_features(&ex.default_features, &requested)],
+                ..ex.clone()
+            };
+            rows.extend(build_example(&one, &env)?);
+        } else {
+            rows.extend(build_example(ex, &env)?);
+        }
     }
     let table = size_table(&rows);
     println!("{table}");
@@ -442,6 +497,29 @@ pub fn run(which_example: Option<&str>, strict: bool) -> R {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_features_replaces_the_group_of_each_requested_feature() {
+        let defaults: Vec<String> = ["panel-ili9341", "touch-xpt2046", "demo-counter"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(
+            merge_features(&defaults, &["panel-st7789"]),
+            "touch-xpt2046,demo-counter,panel-st7789"
+        );
+        assert_eq!(
+            merge_features(&defaults, &["oled-ssd1306", "touch-gt911", "demo-controls"]),
+            "oled-ssd1306,touch-gt911,demo-controls"
+        );
+        assert_eq!(
+            merge_features(&defaults, &["extra"]),
+            "panel-ili9341,touch-xpt2046,demo-counter,extra"
+        );
+        assert_eq!(
+            merge_features(&defaults, &[]),
+            "panel-ili9341,touch-xpt2046,demo-counter"
+        );
+    }
 
     /// A minimal ELF32 with three sections: `.text` (AX), `.data` (WA), `.bss` (WA, NOBITS),
     /// plus a non-allocated `.comment`.

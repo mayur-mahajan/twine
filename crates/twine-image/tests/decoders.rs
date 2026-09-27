@@ -394,7 +394,7 @@ mod decoders {
         let mut r = DecoderRegistry::with_defaults();
         assert_eq!(
             r.names().collect::<Vec<_>>(),
-            ["qoi", "png", "jpeg", "bmp", "gif"]
+            ["tbin", "qoi", "png", "jpeg", "bmp", "gif"]
         );
         r.register(&FAKE_A).unwrap();
         r.register(&FAKE_B).unwrap();
@@ -421,5 +421,86 @@ mod decoders {
             r.register(&FAKE_A).unwrap();
         }
         assert_eq!(r.register(&FAKE_B), Err(Error::CacheFull));
+    }
+}
+
+mod tbin {
+    use twine_core::ColorFormat;
+    use twine_image::decoders::tbin::{BinDecoder, TBIN_HEADER_LEN, encode_tbin};
+    use twine_image::{Compression, Decoder, Error, ImageFlags, ImageHeader, rle_block_size, rle_compress};
+
+    /// Deterministic pixel bytes with runs (so RLE has something to do).
+    fn pixels(n: usize) -> Vec<u8> {
+        (0..n).map(|i| ((i / 7) * 31 % 251) as u8).collect()
+    }
+
+    #[test]
+    fn tbin_roundtrip_every_format_and_compression() {
+        for format in ColorFormat::ALL {
+            let mut h = ImageHeader::new(format, 13, 5);
+            h.stride += 2; // padded rows survive
+            let raw = pixels(h.data_size());
+            let mut stored = vec![
+                (None, raw.clone()),
+                (Some(Compression::Rle), rle_compress(&raw, rle_block_size(format))),
+            ];
+            stored.push((Some(Compression::Lz4), lz4_flex::block::compress(&raw)));
+            for (c, data) in stored {
+                let file = encode_tbin(h, c, &data);
+                assert_eq!(BinDecoder.probe(&file), Some(h), "{format:?} {c:?}");
+                let mut out = Vec::new();
+                assert_eq!(BinDecoder.decode(&file, &mut out), Ok(h), "{format:?} {c:?}");
+                assert_eq!(out, raw, "{format:?} {c:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn tbin_keeps_premultiplied_flag() {
+        let mut h = ImageHeader::new(ColorFormat::Argb8888, 1, 1);
+        h.flags |= ImageFlags::PREMULTIPLIED;
+        let file = encode_tbin(h, None, &[1, 2, 3, 4]);
+        assert!(
+            BinDecoder
+                .probe(&file)
+                .unwrap()
+                .flags
+                .contains(ImageFlags::PREMULTIPLIED)
+        );
+    }
+
+    #[test]
+    fn tbin_rejects_bad_headers_and_truncation() {
+        let h = ImageHeader::new(ColorFormat::L8, 4, 4);
+        let file = encode_tbin(h, None, &[9; 16]);
+        assert!(BinDecoder.probe(&file[..TBIN_HEADER_LEN - 1]).is_none());
+        let mut bad = file.clone();
+        bad[0] = b'X';
+        assert!(BinDecoder.probe(&bad).is_none());
+        let mut bad = file.clone();
+        bad[4] = 2; // unknown version
+        assert!(BinDecoder.probe(&bad).is_none());
+        let mut bad = file.clone();
+        bad[5] = 0xEE; // unknown format
+        assert!(BinDecoder.probe(&bad).is_none());
+        let mut bad = file.clone();
+        bad[10] = 1; // stride below the minimum
+        assert!(BinDecoder.probe(&bad).is_none());
+        let short = &file[..file.len() - 1];
+        assert!(matches!(
+            BinDecoder.decode(short, &mut Vec::new()),
+            Err(Error::SizeMismatch { .. })
+        ));
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn tbin_arbitrary_bytes_never_panic(mut bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..64)) {
+            if bytes.len() >= 5 {
+                bytes[..4].copy_from_slice(b"TWIN");
+            }
+            let _ = BinDecoder.probe(&bytes);
+            let _ = BinDecoder.decode(&bytes, &mut Vec::new());
+        }
     }
 }

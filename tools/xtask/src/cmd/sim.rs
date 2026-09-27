@@ -22,6 +22,36 @@ pub fn examples() -> Vec<String> {
     names
 }
 
+/// Examples that run in another simulator (`embedded-graphics-simulator`, SDL2) behind the
+/// `twine-examples` feature of the same name: `(example, feature)`. They have no headless mode,
+/// so `sim-smoke` skips them (CI builds them in the `eg-sim` stage when SDL2 is installed).
+pub const FEATURE_EXAMPLES: &[(&str, &str)] = &[("eg_simulator", "eg-sim")];
+
+/// The directory of the SDL2 library (`sdl2-config --prefix`/lib), if SDL2 is installed.
+#[must_use]
+pub fn sdl2_lib_dir() -> Option<PathBuf> {
+    let out = std::process::Command::new("sdl2-config")
+        .arg("--prefix")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let prefix = String::from_utf8(out.stdout).ok()?;
+    Some(PathBuf::from(prefix.trim()).join("lib"))
+}
+
+/// Points the linker at SDL2 (Homebrew installs it outside the default search path).
+pub fn add_sdl2_env(cmd: &mut std::process::Command, lib: &std::path::Path) {
+    let mut paths = vec![lib.to_path_buf()];
+    if let Some(old) = std::env::var_os("LIBRARY_PATH") {
+        paths.extend(std::env::split_paths(&old));
+    }
+    if let Ok(joined) = std::env::join_paths(paths) {
+        cmd.env("LIBRARY_PATH", joined);
+    }
+}
+
 /// The headless script of `example`, if `examples/scripts/<example>.twinescript` exists.
 #[must_use]
 pub fn smoke_script(example: &str) -> Option<PathBuf> {
@@ -55,6 +85,16 @@ pub fn run(example: &str, opts: &SimOptions, args: &[String]) -> R {
     }
     let mut cmd = cargo();
     cmd.args(["run", "-p", "twine-examples", "--bin", example]);
+    if let Some((_, feature)) = FEATURE_EXAMPLES.iter().find(|(e, _)| *e == example) {
+        let Some(lib) = sdl2_lib_dir() else {
+            return Err(format!(
+                "sim: `{example}` needs SDL2 (`brew install sdl2` / `apt install libsdl2-dev`)"
+            )
+            .into());
+        };
+        cmd.args(["--features", feature]);
+        add_sdl2_env(&mut cmd, &lib);
+    }
     if opts.release {
         cmd.arg("--release");
     }
@@ -88,7 +128,10 @@ pub fn smoke() -> R {
     // Build once so the per-example runs only execute.
     run_cmd(cargo().args(["build", "-p", "twine-examples", "--bins"]))?;
     let mut failed = Vec::new();
-    for ex in &all {
+    for ex in all
+        .iter()
+        .filter(|e| !FEATURE_EXAMPLES.iter().any(|(f, _)| f == e))
+    {
         let opts = SimOptions {
             release: false,
             headless: true,

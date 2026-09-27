@@ -10,12 +10,16 @@ pub use crate::{
     scroll_view, spacer, stack, use_navigator, use_theme, virtual_list, when, widget_view,
 };
 pub use crate::{
-    SpanView, animimg, arc, bar, buttonmatrix, checkbox, image_button, keyboard, led, line, line_static,
-    slider, span, spangroup, spinbox, spinner, switch, textarea,
+    MenuPageRef, MenuPageView, SpanView, TabView, TileView, animimg, arc, bar, buttonmatrix, checkbox,
+    dropdown, dropdown_static, image_button, keyboard, led, line, line_static, list, list_button, list_text,
+    menu, menu_cont, menu_page, menu_section, menu_separator, msgbox, roller, roller_static, slider, span,
+    spangroup, spinbox, spinner, switch, tab, tabview, textarea, tile, tileview, window, window_button,
 };
 
 #[cfg(feature = "async")]
 pub use crate::{AsyncUi, AsyncUiBuilder};
+#[cfg(feature = "vector")]
+pub use crate::{VectorCanvas, vector_canvas};
 pub use twine_anim::{Anim, Easing, Interpolate, Repeat};
 pub use twine_core::{Angle, Color, Duration, Insets, Instant, Opa, Point, Rect, Scale, Size};
 pub use twine_engine::{
@@ -34,6 +38,8 @@ pub use twine_style::{
 };
 pub use twine_text::{Font, LongMode, TextAlign, TextDecor, symbols};
 pub use twine_theme::{DefaultTheme, MonoTheme, Palette, SimpleTheme, Theme, ThemeMode};
+#[cfg(feature = "vector")]
+pub use twine_vector::{FxPoint, Path, VectorDsc, VectorScene};
 pub use twine_widgets::Orientation;
 pub use twine_widgets::arc::ArcMode;
 pub use twine_widgets::bar::BarMode;
@@ -47,3 +53,11 @@ pub use twine_widgets::slider::SliderMode;
 pub use twine_widgets::spangroup::{SpanMode, SpanOverflow};
 pub use twine_widgets::spinbox::Spinbox;
 pub use twine_widgets::textarea::Textarea;
+pub use twine_widgets_ext::dropdown::Dropdown;
+pub use twine_widgets_ext::list::List;
+pub use twine_widgets_ext::menu::{Menu, MenuHeaderMode, MenuPage};
+pub use twine_widgets_ext::msgbox::Msgbox;
+pub use twine_widgets_ext::roller::{Roller, RollerMode};
+pub use twine_widgets_ext::tabview::Tabview;
+pub use twine_widgets_ext::tileview::{Tile, Tileview};
+pub use twine_widgets_ext::window::Window;

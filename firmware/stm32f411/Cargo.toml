@@ -11,24 +11,40 @@ publish = false
 
 # Feature sets `cargo xtask firmware` builds ("" = the defaults).
 [package.metadata.twine]
-feature-sets = ["", "panel-st7789,touch-ft6x36,demo-controls", "panel-ili9341,touch-xpt2046,demo-calibrate"]
+feature-sets = ["", "panel-st7789,touch-ft6x36,demo-controls", "panel-ili9341,touch-xpt2046,demo-calibrate", "panel-ili9341,touch-xpt2046,demo-selection", "panel-ili9342,touch-gt911,demo-counter", "panel-st7796,touch-cst816s,demo-counter", "oled-ssd1306,demo-counter"]
 
 [features]
 default = ["panel-ili9341", "touch-xpt2046", "demo-counter"]
-## ILI9341 240 × 320 SPI panel.
-panel-ili9341 = ["twine-drivers/ili9341"]
-## ST7789 240 × 320 SPI panel.
-panel-st7789 = ["twine-drivers/st7789"]
+## ILI9341 240 × 320 SPI panel (turned to 320 × 240).
+panel-ili9341 = ["spi-panel", "twine-drivers/ili9341"]
+## ILI9342C 320 × 240 SPI panel (landscape native).
+panel-ili9342 = ["spi-panel", "twine-drivers/ili9342"]
+## ST7789 240 × 320 SPI panel (turned to 320 × 240).
+panel-st7789 = ["spi-panel", "twine-drivers/st7789"]
+## ST7796S 320 × 480 SPI panel (turned to 480 × 320).
+panel-st7796 = ["spi-panel", "twine-drivers/st7796"]
+## SSD1306 128 × 64 mono OLED on the I2C pins of the capacitive touch (no touch; mono theme).
+oled-ssd1306 = ["twine-drivers/ssd1306", "twine-drivers/i2c", "twine/color-i1"]
 ## XPT2046 resistive touch on its own SPI bus.
-touch-xpt2046 = ["twine-drivers/xpt2046"]
+touch-xpt2046 = ["touch", "twine-drivers/xpt2046"]
 ## FT6x36 capacitive touch on I2C.
-touch-ft6x36 = ["twine-drivers/ft6x36"]
+touch-ft6x36 = ["touch", "i2c-touch", "twine-drivers/ft6x36"]
+## GT911 capacitive touch on I2C.
+touch-gt911 = ["touch", "i2c-touch", "twine-drivers/gt911"]
+## CST816S capacitive touch on I2C.
+touch-cst816s = ["touch", "i2c-touch", "twine-drivers/cst816s"]
 ## The counter demo.
 demo-counter = []
 ## The controls demo (sliders, switches, arcs, spinner).
 demo-controls = []
-## Touch calibration (resistive touch): logs a `Calibration { .. }` to paste into the wiring block.
+## The selection demo (dropdown, roller, list, menu, tabview, tileview, window, message box).
+demo-selection = []
+## Touch calibration: logs a `Calibration { .. }` to paste into the wiring block.
 demo-calibrate = []
+# Internal: set by the features above (do not enable directly).
+spi-panel = []
+touch = []
+i2c-touch = []
 
 [dependencies]
 twine = { path = "../../crates/twine", default-features = false, features = ["defmt", "color-rgb565-swapped", "perf-monitor", "montserrat-20"] }

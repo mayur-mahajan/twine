@@ -12,6 +12,43 @@ workspace = true
 
 [features]
 default = []
+## Arabic/Persian contextual forms in dropdown and roller options.
+arabic-shaping = ["twine-text/arabic-shaping", "twine-widgets/arabic-shaping"]
+## `VectorView`: a widget drawing `twine-vector` scenes.
+vector = ["dep:twine-vector"]
+## Bidirectional text (forwarded to `twine-widgets`).
+bidi = ["twine-text/bidi", "twine-widgets/bidi"]
+## std-only conveniences.
+std = [
+    "twine-core/std",
+    "twine-engine/std",
+    "twine-style/std",
+    "twine-text/std",
+    "twine-image/std",
+    "twine-render/std",
+    "twine-widgets/std",
+]
+## Log through the `log` crate.
+log = [
+    "twine-core/log",
+    "twine-engine/log",
+    "twine-style/log",
+    "twine-text/log",
+    "twine-image/log",
+    "twine-render/log",
+    "twine-widgets/log",
+]
+## Log through `defmt` and derive `defmt::Format` on public types.
+defmt = [
+    "dep:defmt",
+    "twine-core/defmt",
+    "twine-engine/defmt",
+    "twine-style/defmt",
+    "twine-text/defmt",
+    "twine-image/defmt",
+    "twine-render/defmt",
+    "twine-widgets/defmt",
+]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
@@ -23,3 +60,14 @@ twine-anim = { path = "../twine-anim" }
 twine-render = { path = "../twine-render" }
 twine-theme = { path = "../twine-theme" }
 twine-widgets = { path = "../twine-widgets" }
+twine-vector = { path = "../twine-vector", optional = true }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+twine-widgets-ext = { path = ".", features = ["std", "log", "arabic-shaping", "bidi", "vector"] }
+twine-engine = { path = "../twine-engine", features = ["std", "debug-checks", "color-rgb565"] }
+twine-testing = { path = "../twine-testing", default-features = false, features = ["engine", "debug-checks"] }
+twine-theme = { path = "../twine-theme" }
+twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-20"] }
+twine-hal = { path = "../twine-hal" }
+log = "0.4"

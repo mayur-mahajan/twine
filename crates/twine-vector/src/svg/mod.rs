@@ -55,9 +55,6 @@ use crate::path::Path;
 use crate::scene::VectorScene;
 use crate::stroke::{Dash, LineCap, LineJoin, MAX_DASHES, Stroke};
 
-// NOTE(P23.S08): the engine's `ImageSource::Svg` parses once into an `SvgDocument` (cached) and
-// draws it with `render`, composing the image widget's scale/rotation into `transform_for`.
-
 /// Deepest element nesting accepted.
 pub const MAX_DEPTH: usize = 32;
 

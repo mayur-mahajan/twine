@@ -233,3 +233,73 @@ fn navigation_back_and_forth_leaks_nothing() {
     assert_eq!(twine_reactive::debug_stats().scopes, reactive.scopes);
     assert!(stats.live.abs() <= 256, "heap changed by {} bytes", stats.live);
 }
+
+// ---- Text style of screens and modals ------------------------------------------------------
+
+use twine_assets::fonts::{MONTSERRAT_14, MONTSERRAT_20};
+
+/// Whether the node found by `id` is drawn with `font`.
+fn font_is(t: &TestUi, id: &'static str, font: &'static twine_text::Font) -> bool {
+    let n = t.find(by_id(id)).id();
+    core::ptr::eq(t.engine().style_font(n, twine_style::Part::Main), font)
+}
+
+fn styled_nav_app(cx: Scope) -> impl View {
+    column((navigator(cx, styled_home),)).font(&MONTSERRAT_20)
+}
+
+fn styled_home(cx: Scope) -> impl View {
+    let nav = use_navigator(cx);
+    column((
+        label("Home").test_id("home_title"),
+        button(label("Next")).on_click(move || nav.push(styled_next, ScreenAnim::None)),
+        button(label("Modal")).on_click(move || {
+            let _ = cx.show_modal(|_| label("Hello").test_id("modal_label"));
+        }),
+    ))
+}
+
+fn styled_next(_cx: Scope) -> impl View {
+    label("Next").test_id("next_title")
+}
+
+#[test]
+fn navigator_screens_inherit_text_style_around_the_navigator() {
+    let mut t = TestUi::new(240, 160).mount(styled_nav_app);
+    t.run_until_idle();
+    assert!(font_is(&t, "home_title", &MONTSERRAT_20));
+    t.find(by_text("Next")).click();
+    t.run_until_idle();
+    assert!(font_is(&t, "next_title", &MONTSERRAT_20), "a pushed screen too");
+    t.engine().tree().check_invariants().unwrap();
+}
+
+#[test]
+fn modal_inherits_text_style_of_the_view_that_opened_it() {
+    let mut t = TestUi::new(240, 160).mount(styled_nav_app);
+    t.run_until_idle();
+    t.find(by_text("Modal")).click();
+    t.run_until_idle();
+    assert!(font_is(&t, "modal_label", &MONTSERRAT_20));
+    let n = t.find(by_id("modal_label")).id();
+    let e = t.engine();
+    let top = e.top_layer(e.default_display().unwrap()).unwrap();
+    assert!(
+        e.tree().ancestors(n).any(|a| a == top),
+        "the modal is on the top layer"
+    );
+}
+
+#[test]
+fn modal_without_font_around_uses_theme_font() {
+    fn app(cx: Scope) -> impl View {
+        button(label("Modal")).on_click(move || {
+            let _ = cx.show_modal(|_| label("Hello").test_id("modal_label"));
+        })
+    }
+    let mut t = TestUi::new(240, 160).mount(app);
+    t.run_until_idle();
+    t.find(by_text("Modal")).click();
+    t.run_until_idle();
+    assert!(font_is(&t, "modal_label", &MONTSERRAT_14));
+}

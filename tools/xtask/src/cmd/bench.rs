@@ -14,6 +14,7 @@ use crate::util::{R, cargo, output, run as run_cmd, warn, workspace_root};
 pub const BENCHES: &[(&str, &str, &str)] = &[
     ("twine-render", "render", "iai"),
     ("twine-text", "text", "text_iai"),
+    ("twine-vector", "vector", "vector_iai"),
 ];
 
 /// Allowed instruction-count growth before `--iai` fails.

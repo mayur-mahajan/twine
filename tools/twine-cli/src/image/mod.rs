@@ -108,9 +108,14 @@ pub struct ImageArgs {
     #[arg(long)]
     pub premultiply: bool,
     /// Name of the generated static (e.g. `LOGO`).
-    #[arg(long, required_unless_present = "info")]
+    #[arg(long, required_unless_present_any = ["info", "bin"])]
     pub name: Option<String>,
-    /// Output `.rs` file; the pixel data goes to a `.bin` file next to it.
+    /// Write one raw twine binary file (`.tbin`: 12-byte header + pixel data, loaded at run
+    /// time as `ImageSource::File`) to `--out` instead of Rust source.
+    #[arg(long)]
+    pub bin: bool,
+    /// Output `.rs` file; the pixel data goes to a `.bin` file next to it (with `--bin`: the
+    /// `.tbin` file).
     #[arg(long, value_name = "FILE", required_unless_present = "info")]
     pub out: Option<PathBuf>,
     /// Path of the crate that defines `Image` in the generated code.
@@ -140,6 +145,8 @@ pub struct ImageOptions {
     pub out: PathBuf,
     /// Crate path used in the generated code.
     pub crate_path: String,
+    /// Write a `.tbin` file instead of Rust source.
+    pub bin: bool,
 }
 
 impl ImageOptions {
@@ -148,15 +155,21 @@ impl ImageOptions {
         fn need<T>(v: Option<T>, what: &str) -> std::result::Result<T, String> {
             v.ok_or_else(|| format!("missing --{what}"))
         }
+        let name = match (&a.name, a.bin) {
+            (Some(n), _) => n.clone(),
+            (None, true) => "IMAGE".to_string(),
+            (None, false) => need(None, "name")?,
+        };
         Ok(Self {
             input: need(a.input.clone(), "in")?,
             format: need(a.format, "format")?,
             compress: a.compress,
             dither: a.dither,
             premultiply: a.premultiply,
-            name: need(a.name.clone(), "name")?,
+            name,
             out: need(a.out.clone(), "out")?,
             crate_path: a.crate_path.clone(),
+            bin: a.bin,
         })
     }
 
@@ -176,6 +189,10 @@ impl ImageOptions {
         }
         if self.premultiply {
             s += " --premultiply";
+        }
+        if self.bin {
+            let _ = write!(s, " --bin --out {}", self.out.display());
+            return s;
         }
         let _ = write!(s, " --name {} --out {}", self.name, self.out.display());
         if self.crate_path != "twine_image" {
@@ -284,6 +301,17 @@ pub fn write(g: &Generated, out: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The `.tbin` file of a conversion (`twine image --bin`).
+#[must_use]
+pub fn tbin(g: &Generated, method: CompressArg) -> Vec<u8> {
+    let compression = match method {
+        CompressArg::None => None,
+        CompressArg::Rle => Some(twine_image::Compression::Rle),
+        CompressArg::Lz4 => Some(twine_image::Compression::Lz4),
+    };
+    twine_image::decoders::tbin::encode_tbin(g.header, compression, &g.bin)
+}
+
 /// `twine image --info`: the summary line of a converted image and its file sizes.
 pub fn info(path: &Path) -> Result<String> {
     let rs = if path.extension().is_some_and(|e| e == "bin") {
@@ -317,6 +345,22 @@ pub fn run(args: &ImageArgs) -> Result<()> {
     }
     let opts = ImageOptions::from_args(args)?;
     let g = generate(&opts, Path::new("."))?;
+    if opts.bin {
+        let file = tbin(&g, opts.compress);
+        if let Some(dir) = opts.out.parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&opts.out, &file)?;
+        println!(
+            "image: wrote {} ({}×{} {}, {} bytes)",
+            opts.out.display(),
+            g.header.w,
+            g.header.h,
+            g.header.format.name(),
+            file.len()
+        );
+        return Ok(());
+    }
     write(&g, &opts.out)?;
     println!(
         "image: wrote {} and {} ({}×{} {}, {} bytes)",

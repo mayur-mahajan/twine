@@ -33,16 +33,6 @@ impl core::fmt::Debug for dyn Decoder {
 }
 
 /// Clears `out` and reserves exactly `n` bytes (zero-filled).
-#[cfg_attr(
-    not(any(
-        feature = "img-qoi",
-        feature = "img-png",
-        feature = "img-jpeg",
-        feature = "img-bmp",
-        feature = "img-gif"
-    )),
-    allow(dead_code)
-)]
 pub(crate) fn prepare_out(out: &mut Vec<u8>, n: usize) -> Result<(), Error> {
     out.clear();
     out.try_reserve_exact(n)
@@ -97,8 +87,7 @@ pub(crate) fn log_decoded(name: &str, h: ImageHeader, len: usize) {
 /// use twine_image::DecoderRegistry;
 /// let reg = DecoderRegistry::with_defaults();
 /// assert!(reg.probe(b"not an image").is_none());
-/// # #[cfg(feature = "img-qoi")]
-/// assert_eq!(reg.names().next(), Some("qoi"));
+/// assert_eq!(reg.names().next(), Some("tbin"));
 /// ```
 #[derive(Debug, Default)]
 pub struct DecoderRegistry {
@@ -114,11 +103,13 @@ impl DecoderRegistry {
         }
     }
 
-    /// Every decoder enabled by features, in the order qoi, png, jpeg, bmp, gif.
+    /// The `.tbin` decoder, then every decoder enabled by features, in the order qoi, png,
+    /// jpeg, bmp, gif.
     #[must_use]
     pub fn with_defaults() -> Self {
         let mut r = Self::new();
         let all: &[&'static dyn Decoder] = &[
+            &crate::decoders::tbin::BinDecoder,
             #[cfg(feature = "img-qoi")]
             &crate::decoders::qoi::QoiDecoder,
             #[cfg(feature = "img-png")]
@@ -131,7 +122,7 @@ impl DecoderRegistry {
             &crate::decoders::gif::GifDecoder,
         ];
         for d in all {
-            // At most five built-in decoders: always fits.
+            // At most six built-in decoders: always fits.
             let _ = r.register(*d);
         }
         r

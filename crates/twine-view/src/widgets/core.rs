@@ -200,6 +200,14 @@ impl WidgetView<Image> {
         self.bind(a, |i: &mut Image, cx, a| i.set_inner_align(cx, a))
     }
 
+    /// Draws an SVG source from a raster cached once instead of from its vector paths
+    /// (feature `svg`; faster redraws of static icons).
+    #[cfg(feature = "svg")]
+    #[must_use]
+    pub fn svg_cache(self, on: impl IntoProp<bool>) -> Self {
+        self.bind(on, |i: &mut Image, cx, on| i.set_svg_cache(cx, on))
+    }
+
     /// Recolors the image pixels (`ImageRecolor` / `ImageRecolorOpa`).
     #[must_use]
     pub fn recolor(self, color: impl IntoProp<Color>, opa: impl IntoProp<Opa>) -> Self {

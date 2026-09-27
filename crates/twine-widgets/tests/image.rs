@@ -169,7 +169,7 @@ fn image_covers_only_when_opaque() {
 }
 
 #[test]
-fn missing_file_logs_and_is_empty() {
+fn missing_file_logs_and_draws_placeholder() {
     let (mut h, i) = scene(Mode::Light, stat(&logo_rgb565::LOGO_RGB565));
     h.run_until_idle();
     let ((), logs) = capture_logs(|| {
@@ -183,9 +183,9 @@ fn missing_file_logs_and_is_empty() {
             && l.message.contains("missing.png")),
         "{logs:?}"
     );
-    assert!(get::<Image>(&h, i).src().is_none());
+    assert!(get::<Image>(&h, i).src().is_some(), "the source is kept");
     h.run_until_idle();
-    assert_eq!(h.engine().coords(i).width(), 0);
+    assert_eq!(h.engine().coords(i).width(), image::MISSING_PLACEHOLDER_SIZE);
     h.assert_idle();
 }
 

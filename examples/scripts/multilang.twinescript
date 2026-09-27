@@ -1,0 +1,29 @@
+# Headless tour of the multilang demo (cargo xtask sim-smoke): one screenshot per language.
+# The ▶ button is at the top right in left-to-right languages and at the top left in
+# right-to-left ones.
+wait 100
+shot en
+tap 451 36
+wait 100
+shot de
+tap 451 36
+wait 100
+shot fr
+tap 451 36
+wait 100
+shot zh
+tap 451 36
+wait 100
+shot ja
+tap 451 36
+wait 100
+shot he
+tap 29 32
+wait 100
+shot ar
+tap 29 32
+wait 100
+shot fa
+tap 29 32
+wait 100
+shot en_again

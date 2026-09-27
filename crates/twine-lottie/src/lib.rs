@@ -25,6 +25,13 @@
 //! `warn!(target: "twine::lottie", "lottie: unsupported {}", what)` and listed in
 //! [`Composition::unsupported`](model::Composition::unsupported).
 //!
+//! ## Widget
+//!
+//! [`widget::Lottie`] plays a composition in the engine: an animation drives the frame, and
+//! the widget re-renders its own `Argb8888` buffer only when the integer frame changes.
+//! [`view::lottie`] is its declarative view (`.playing`, `.looping`, `.frame`, `.speed`,
+//! `.on_complete`).
+//!
 //! ## Floating point
 //!
 //! Lottie data is float-based, so this crate uses `f32` (it is the documented exception to
@@ -86,11 +93,10 @@ mod load;
 pub mod model;
 mod modifier;
 mod render;
+pub mod view;
+pub mod widget;
 
 pub use error::LottieError;
 pub use load::load;
 pub use model::Composition;
 pub use render::{LottiePlayer, MAX_LAYER_DRAWS, MAX_OFFSCREEN_DEPTH, MAX_PRECOMP_DEPTH};
-
-// NOTE(P24.S06): the `Lottie` widget (own render buffer, frame-change-only redraw, `Anim`
-// playback) builds on `LottiePlayer` once the engine exists.

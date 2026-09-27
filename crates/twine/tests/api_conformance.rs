@@ -2,8 +2,8 @@
 //! programs, wrapped in functions where they are fragments. If one of these stops compiling,
 //! the public API changed.
 //!
-//! NOTE(P19.S01): msgbox (§6 modal example), chart (§8) and the other complex widgets of §3.5
-//! (dropdown, roller, list, menu, tabview, …) are added with their views.
+//! NOTE(P20.S01): the data widgets of §3.5 (table, calendar, chart, scale, canvas) and chart
+//! (§8) are added with their views.
 // The guide's code is kept verbatim: public items without docs, unused parameters.
 #![allow(
     missing_docs,
@@ -323,6 +323,78 @@ fn s3_5_widgets() {
     t.advance(Duration::ms(100));
 }
 
+// ---- §3.5 Widgets: selection and containers ------------------------------------------------
+
+fn selection_widgets(cx: Scope) -> impl View {
+    let city = cx.signal(0usize);
+    let names = cx.signal(vec![String::from("Oslo"), String::from("Rome")]);
+    let tab_idx = cx.signal(0usize);
+    let at = cx.signal((0u8, 0u8));
+    let page = cx.menu_page_ref();
+    column((
+        dropdown(names, city)
+            .dir(Dir::BOTTOM)
+            .symbol(ImageSource::Symbol(symbols::DOWN))
+            .text("City")
+            .highlight(true)
+            .on_change(|i: usize| {}),
+        dropdown_static("a\nb\nc", 1usize),
+        roller(names, city)
+            .mode(RollerMode::Infinite)
+            .visible_rows(3)
+            .on_change(|i: usize| {}),
+        roller_static("x\ny", 0usize).mode(RollerMode::Normal),
+        list((
+            list_text("Section"),
+            list_button(Some(ImageSource::Symbol(symbols::FILE)), "Open").on_click(|| {}),
+        ))
+        .height(100),
+        menu(menu_page(None, menu_cont(label("More")).loads(page)))
+            .sidebar(menu_page(Some("Side"), menu_section(menu_cont(label("x")))))
+            .pages(menu_page(Some("More"), (label("page"), menu_separator())).page_ref(page))
+            .header_mode(MenuHeaderMode::TopFixed)
+            .root_back_button(false)
+            .height(120),
+        tabview(tab_idx, (tab("A", label("a")), tab("B", label("b"))))
+            .bar_position(Dir::TOP)
+            .bar_size(30)
+            .animated(true)
+            .height(100),
+        tileview(
+            at,
+            (
+                tile(0, 0, Dir::RIGHT, label("1")),
+                tile(1, 0, Dir::LEFT, label("2")),
+            ),
+        )
+        .height(80),
+        window(
+            "Window",
+            window_button(ImageSource::Symbol(symbols::CLOSE), 30),
+            label("content"),
+        )
+        .header_height(30)
+        .height(100),
+    ))
+}
+
+#[test]
+fn s3_5_selection_widgets() {
+    let mut t = TestUi::new(320, 960).mount(selection_widgets);
+    t.run_until_idle();
+    let t = TestUi::new(240, 160).mount(|cx| {
+        let m = cx.show_modal(|_| {
+            msgbox("Title", "Text")
+                .buttons(&["OK"])
+                .close_button(true)
+                .on_button(|i: usize| {})
+                .on_close(|| {})
+        });
+        label("x")
+    });
+    drop(t);
+}
+
 // ---- §3.3 Containers and §3.4 control flow ------------------------------------------------
 
 static COLS: [GridTrack; 2] = [GridTrack::Px(40), GridTrack::Fr(1)];
@@ -444,9 +516,8 @@ mod navigation {
         ))
     }
 
-    /// NOTE(P19.S01): the guide's modal shows a `msgbox`; any view works.
     pub fn modal(cx: Scope) {
-        let modal = cx.show_modal(|cx| label("This cannot be undone"));
+        let modal = cx.show_modal(|cx| msgbox("Delete?", "This cannot be undone").buttons(&["Yes", "No"]));
         modal.close();
     }
 }

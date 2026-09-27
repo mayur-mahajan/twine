@@ -22,6 +22,7 @@ use crate::{DisplayId, EngineConfig, EngineError, InvalidateReason, NodeId, Perf
 pub(crate) struct RenderRes {
     pub(crate) caches: RenderCaches,
     pub(crate) aux: AuxRes,
+    pub(crate) accel: crate::accel::AccelSlot,
 }
 
 /// The engine: the widget tree, up to [`MAX_DISPLAYS`](crate::MAX_DISPLAYS) displays with their
@@ -81,6 +82,8 @@ pub struct Engine {
     pub(crate) trans: crate::transition::TransState,
     /// Posted events and event texts.
     pub(crate) events: crate::handlers::EventQueues,
+    /// Pending [`Engine::on_outside_press`] callbacks.
+    pub(crate) outside_presses: Vec<(NodeId, crate::outside::OutsideCb)>,
     #[cfg(feature = "debug-checks")]
     pub(crate) invalidations: Vec<(Rect, InvalidateReason)>,
     /// The invalidations rendered by the last frame that started.
@@ -113,8 +116,11 @@ impl Engine {
                 images: ImageCache::new(config.image_cache_bytes, 8),
                 headers: ImageHeaderCache::new(),
                 registry: DecoderRegistry::with_defaults(),
-                fs: None,
+                fs: crate::files::Files::None,
+                #[cfg(feature = "svg")]
+                svgs: crate::svg::SvgCache::default(),
             },
+            accel: crate::accel::AccelSlot::default(),
         };
         twine_core::info!(
             target: "twine::engine",
@@ -151,6 +157,7 @@ impl Engine {
             anim: crate::anim::AnimState::default(),
             trans: crate::transition::TransState::default(),
             events: crate::handlers::EventQueues::default(),
+            outside_presses: Vec::new(),
             // Both logs are swapped at every frame start: allocated once, up front.
             #[cfg(feature = "debug-checks")]
             invalidations: Vec::with_capacity(64),
@@ -189,8 +196,69 @@ impl Engine {
     /// over its virtual file system; any [`FileSource`](twine_image::FileSource) works.
     pub fn set_file_source(&mut self, fs: Option<alloc::boxed::Box<dyn twine_image::FileSource>>) {
         if let Some(r) = self.res.as_mut() {
-            r.aux.fs = fs;
+            r.aux.fs = fs.map_or(crate::files::Files::None, crate::files::Files::Custom);
             r.aux.headers.clear();
+        }
+    }
+
+    /// Reads [`ImageSource::File`](twine_image::ImageSource::File) images from `vfs` (paths
+    /// like `"A:/img/logo.qoi"`), replacing any file source (feature `fs`). Headers are probed
+    /// from the first [`HEADER_PROBE_BYTES`](twine_image::HEADER_PROBE_BYTES) of a file; pixels
+    /// are decoded on first draw into the image cache (`EngineConfig::image_cache_bytes`).
+    #[cfg(feature = "fs")]
+    pub fn set_vfs(&mut self, vfs: twine_fs::Vfs) {
+        if let Some(r) = self.res.as_mut() {
+            r.aux.fs = crate::files::Files::Vfs(crate::files::VfsFileSource(vfs));
+            r.aux.headers.clear();
+            r.aux.images.clear();
+        }
+    }
+
+    /// The virtual file system installed with [`set_vfs`](Self::set_vfs) (e.g. to mount more
+    /// drives), feature `fs`.
+    #[cfg(feature = "fs")]
+    pub fn vfs_mut(&mut self) -> Option<&mut twine_fs::Vfs> {
+        match &mut self.res.as_mut()?.aux.fs {
+            crate::files::Files::Vfs(v) => Some(&mut v.0),
+            _ => None,
+        }
+    }
+
+    /// Drops the decoded pixels and the cached header of `src` (LVGL `lv_image_cache_drop`),
+    /// e.g. after the file changed: the next draw reads and decodes it again. Widgets showing
+    /// `src` are not invalidated (invalidate them to redraw).
+    pub fn image_cache_invalidate(&mut self, src: &twine_image::ImageSource) {
+        let (Some(r), Some(key)) = (self.res.as_mut(), twine_image::SourceKey::of_source(src)) else {
+            return;
+        };
+        r.aux.images.invalidate(&key);
+        r.aux.headers.remove(&key);
+        twine_core::debug!(target: "twine::image", "image cache: dropped {}", src);
+    }
+
+    /// Changes the image cache budget (`EngineConfig::image_cache_bytes` at creation; LVGL
+    /// `lv_image_cache_resize`), evicting least recently used images that no longer fit.
+    pub fn set_image_cache_budget(&mut self, bytes: usize) {
+        self.config.image_cache_bytes = bytes;
+        if let Some(r) = self.res.as_mut() {
+            r.aux.images.set_budget(bytes);
+        }
+    }
+
+    /// How many SVG documents were parsed so far (feature `svg`; a cached document is not
+    /// parsed again).
+    #[cfg(feature = "svg")]
+    #[must_use]
+    pub fn svg_parse_count(&self) -> u32 {
+        self.res.as_ref().map_or(0, |r| r.aux.svgs.parses())
+    }
+
+    /// `true` the first time it is called for `src`: lets widgets log one warning per source
+    /// (e.g. a missing file) instead of one per frame.
+    pub fn image_warn_once(&mut self, src: &twine_image::ImageSource) -> bool {
+        match (self.res.as_mut(), twine_image::SourceKey::of_source(src)) {
+            (Some(r), Some(key)) => r.aux.images.warn_once(&key),
+            _ => true,
         }
     }
 
@@ -208,6 +276,15 @@ impl Engine {
         let Some(r) = self.res.as_mut() else {
             return Err(twine_image::Error::UnsupportedSource("engine is rendering"));
         };
+        #[cfg(feature = "svg")]
+        if let twine_image::ImageSource::Svg(bytes) = src {
+            let doc = r
+                .aux
+                .svgs
+                .get(bytes)
+                .map_err(|_| twine_image::Error::Decode("invalid SVG"))?;
+            return Ok(svg_header(doc));
+        }
         let crate::draw_cx::AuxRes {
             images,
             headers,
@@ -219,7 +296,7 @@ impl Engine {
             cache: images,
             header_cache: headers,
             registry,
-            fs: fs.as_deref_mut().map(|f| f as &mut dyn twine_image::FileSource),
+            fs: fs.source(),
         };
         twine_image::header_of(src, &mut icx)
     }
@@ -319,4 +396,21 @@ impl Engine {
             self.last_perf_log = Some(now);
         }
     }
+}
+
+/// The image header of an SVG document: its `width` × `height` (the view box size when they
+/// are missing), rounded up, as `Argb8888` (the format of a rasterized copy).
+#[cfg(feature = "svg")]
+pub(crate) fn svg_header(doc: &twine_vector::SvgDocument) -> twine_image::ImageHeader {
+    let px = |v: twine_core::Fx| {
+        u16::try_from(v.0.saturating_add(0xFFFF) >> 16)
+            .unwrap_or(u16::MAX)
+            .max(1)
+    };
+    let (w, h) = if doc.size.w.0 > 0 && doc.size.h.0 > 0 {
+        (doc.size.w, doc.size.h)
+    } else {
+        (doc.view_box.width(), doc.view_box.height())
+    };
+    twine_image::ImageHeader::new(twine_core::ColorFormat::Argb8888, px(w), px(h))
 }

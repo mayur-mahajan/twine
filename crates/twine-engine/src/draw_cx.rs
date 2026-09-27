@@ -4,9 +4,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use twine_core::{Opa, Rect};
-use twine_image::{
-    DecoderRegistry, FileSource, ImageCache, ImageContext, ImageHeaderCache, ImageSource, with_pixels,
-};
+use twine_image::{DecoderRegistry, ImageCache, ImageContext, ImageHeaderCache, ImageSource, with_pixels};
 use twine_render::{ArcDsc, ImageDsc, LineDsc, Painter, RectDsc, ShadowDsc};
 use twine_style::{Part, PropId, State, StyleValue, TextAlign};
 use twine_text::{GlyphCache, TextDsc};
@@ -20,8 +18,12 @@ pub(crate) struct AuxRes {
     pub images: ImageCache,
     pub headers: ImageHeaderCache,
     pub registry: DecoderRegistry,
-    /// Where `ImageSource::File` images are read from (`Engine::set_file_source`).
-    pub fs: Option<alloc::boxed::Box<dyn FileSource>>,
+    /// Where `ImageSource::File` images are read from (`Engine::set_file_source` /
+    /// `Engine::set_vfs`).
+    pub fs: crate::files::Files,
+    /// Parsed `ImageSource::Svg` documents.
+    #[cfg(feature = "svg")]
+    pub svgs: crate::svg::SvgCache,
 }
 
 impl core::fmt::Debug for AuxRes {
@@ -204,9 +206,53 @@ impl<'a, 'p> DrawCx<'a, 'p> {
             cache: images,
             header_cache: headers,
             registry,
-            fs: fs.as_deref_mut().map(|f| f as &mut dyn FileSource),
+            fs: fs.source(),
         };
         f(self.painter, &mut icx)
+    }
+
+    /// Calls `f` with the painter and the parsed SVG document of `bytes` (parsed once and
+    /// cached; `ImageSource::Svg`), feature `svg`.
+    ///
+    /// # Errors
+    /// The parse error of a malformed document (logged once when parsed).
+    #[cfg(feature = "svg")]
+    pub fn with_svg<R>(
+        &mut self,
+        bytes: &'static [u8],
+        f: impl FnOnce(&mut Painter<'p>, &twine_vector::SvgDocument) -> R,
+    ) -> Result<R, twine_vector::SvgError> {
+        let doc = self.aux.svgs.get(bytes)?;
+        Ok(f(self.painter, doc))
+    }
+
+    /// Calls `f` with the painter, the parsed SVG document of `bytes` and the image context
+    /// (to cache a rasterized copy), feature `svg`.
+    ///
+    /// # Errors
+    /// The parse error of a malformed document.
+    #[cfg(feature = "svg")]
+    pub fn with_svg_images<R>(
+        &mut self,
+        bytes: &'static [u8],
+        f: impl FnOnce(&mut Painter<'p>, &twine_vector::SvgDocument, &mut ImageContext<'_>) -> R,
+    ) -> Result<R, twine_vector::SvgError> {
+        let AuxRes {
+            images,
+            headers,
+            registry,
+            fs,
+            svgs,
+            ..
+        } = &mut *self.aux;
+        let doc = svgs.get(bytes)?;
+        let mut icx = ImageContext {
+            cache: images,
+            header_cache: headers,
+            registry,
+            fs: fs.source(),
+        };
+        Ok(f(self.painter, doc, &mut icx))
     }
 
     /// Runs `f` with the clip narrowed to `area` (intersected with the current clip).
@@ -302,7 +348,7 @@ impl<'a, 'p> DrawCx<'a, 'p> {
             cache: images,
             header_cache: headers,
             registry,
-            fs: fs.as_deref_mut().map(|f| f as &mut dyn FileSource),
+            fs: fs.source(),
         };
         let painter = &mut *self.painter;
         let r = with_pixels(src, &mut icx, |px| {

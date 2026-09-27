@@ -13,16 +13,17 @@ workspace = true
 [features]
 default = []
 ## std-only conveniences.
-std = ["twine-core/std", "twine-render/std", "twine-vector/std"]
+std = ["twine-core/std", "twine-render/std", "twine-vector/std", "twine-engine/std", "twine-view/std"]
 ## Log through the `log` crate.
-log = ["twine-core/log", "twine-render/log", "twine-vector/log"]
+log = ["twine-core/log", "twine-render/log", "twine-vector/log", "twine-engine/log", "twine-view/log"]
 ## Log through `defmt`.
-defmt = ["dep:defmt", "twine-core/defmt", "twine-render/defmt", "twine-vector/defmt"]
+defmt = ["dep:defmt", "twine-core/defmt", "twine-render/defmt", "twine-vector/defmt", "twine-engine/defmt", "twine-view/defmt"]
 
-# NOTE(P24.S06): the `Lottie` widget adds twine-anim, twine-engine and twine-view (allowed by the
-# layering rules) once the engine and view layers exist.
 [dependencies]
 twine-core = { path = "../twine-core" }
+twine-engine = { path = "../twine-engine" }
+twine-view = { path = "../twine-view" }
+twine-style = { path = "../twine-style" }
 twine-render = { path = "../twine-render" }
 twine-vector = { path = "../twine-vector" }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
@@ -31,5 +32,9 @@ defmt = { version = "1", optional = true }
 [dev-dependencies]
 twine-lottie = { path = ".", features = ["std", "log"] }
 twine-render = { path = "../twine-render", features = ["color-rgb565", "color-argb8888", "color-l8"] }
-twine-testing = { path = "../twine-testing", default-features = false, features = ["render"] }
+twine-testing = { path = "../twine-testing", features = ["render", "engine"] }
+twine-reactive = { path = "../twine-reactive", features = ["std"] }
+critical-section = { version = "1", features = ["std"] }
+twine-engine = { path = "../twine-engine", features = ["std", "color-rgb565", "color-argb8888"] }
 proptest = "1"
+log = "0.4"

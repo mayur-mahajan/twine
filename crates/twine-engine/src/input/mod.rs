@@ -487,6 +487,23 @@ impl Engine {
         self.input_active.map(|(i, _)| i)
     }
 
+    /// The node pointer `id` is scrolling (dragging or throwing) since its press turned into
+    /// a scroll, if any (LVGL `lv_indev_get_scroll_obj`). Widgets check it on `Released` to
+    /// tell a tap from the end of a drag.
+    #[must_use]
+    pub fn input_scroll_obj(&self, id: InputId) -> Option<NodeId> {
+        self.indev_scroll_of(id)
+    }
+
+    /// Whether device `id` is pressed in its last sample (a pointer touching, a key or the
+    /// encoder button down; LVGL `indev->state == LV_INDEV_STATE_PRESSED`).
+    #[must_use]
+    pub fn input_pressed(&self, id: InputId) -> bool {
+        self.input_state(id)
+            .and_then(|s| s.last_data.as_ref())
+            .is_some_and(data_active)
+    }
+
     /// The kind of the device being processed.
     pub(crate) fn active_input_kind(&self) -> Option<InputKind> {
         self.input_active.map(|(_, k)| k)

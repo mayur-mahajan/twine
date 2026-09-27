@@ -14,6 +14,13 @@ workspace = true
 default = []
 ## Animated GIFs in `AnimImg::from_gif` (the GIF decoder of `twine-image`).
 gif = ["twine-image/img-gif"]
+## Bidirectional text: mixed LTR/RTL lines drawn in visual order, textarea cursors mapped
+## between logical and visual positions (`twine-text/bidi`).
+bidi = ["twine-text/bidi"]
+## SVG sources of the image widget (`ImageSource::Svg`), drawn as vectors.
+svg = ["twine-engine/svg", "dep:twine-vector"]
+## Arabic/Persian contextual forms in labels (`twine-text/arabic-shaping`).
+arabic-shaping = ["twine-text/arabic-shaping"]
 ## std-only conveniences.
 std = ["twine-core/std", "twine-engine/std", "twine-style/std", "twine-text/std", "twine-image/std", "twine-render/std"]
 ## Log through the `log` crate.
@@ -36,16 +43,18 @@ twine-style = { path = "../twine-style" }
 twine-text = { path = "../twine-text" }
 twine-image = { path = "../twine-image" }
 twine-render = { path = "../twine-render" }
+twine-vector = { path = "../twine-vector", optional = true }
 bitflags = { version = "2", default-features = false }
 defmt = { version = "1", optional = true }
 
 [dev-dependencies]
-twine-widgets = { path = ".", features = ["std", "log", "gif"] }
-twine-engine = { path = "../twine-engine", features = ["std", "debug-checks", "color-rgb565", "color-i1"] }
+twine-widgets = { path = ".", features = ["std", "log", "gif", "bidi", "arabic-shaping"] }
+twine-engine = { path = "../twine-engine", features = ["std", "debug-checks", "color-rgb565", "color-argb8888", "color-i1", "fs"] }
+twine-fs = { path = "../twine-fs" }
 twine-image = { path = "../twine-image", features = ["img-qoi"] }
 twine-testing = { path = "../twine-testing", default-features = false, features = ["engine", "debug-checks"] }
 twine-theme = { path = "../twine-theme" }
-twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-20"] }
+twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-20", "dejavu-16-persian-hebrew"] }
 twine-hal = { path = "../twine-hal" }
 proptest = "1"
 log = "0.4"

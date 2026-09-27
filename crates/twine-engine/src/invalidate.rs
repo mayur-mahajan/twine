@@ -3,7 +3,7 @@
 
 use twine_core::{Insets, Rect};
 use twine_render::{LayerTransform, ShadowDsc, shadow_ext_size, transformed_bounds};
-use twine_style::{BlendMode, GradDir, Part, PropId};
+use twine_style::{BlendMode, BorderSide, GradDir, Part, PropId};
 
 use crate::style_list::length_px;
 use crate::{Engine, LayoutDirty, MeasureCx, NodeId, ObjFlags, fmt_node_id};
@@ -199,14 +199,28 @@ impl Engine {
     /// Coordinates minus padding and border width of `Part::Main`.
     #[must_use]
     pub fn content_area(&self, id: NodeId) -> Rect {
+        self.coords(id).inset(self.space(id))
+    }
+
+    /// Padding plus border width of the `Main` part on each side; the border counts only on
+    /// the sides of its `BorderSide` (LVGL `lv_obj_get_style_space_*`, as the layout).
+    pub(crate) fn space(&self, id: NodeId) -> Insets {
         let m = self.cached_main(id);
         let b = m.border_width.max(0);
-        self.coords(id).inset(Insets::new(
-            m.pad.left + b,
-            m.pad.top + b,
-            m.pad.right + b,
-            m.pad.bottom + b,
-        ))
+        let side = if b == 0 {
+            BorderSide::FULL
+        } else {
+            self.style_prop(id, Part::Main, PropId::BorderSide)
+                .get::<BorderSide>()
+                .unwrap_or(BorderSide::FULL)
+        };
+        let w = |s: BorderSide| if side.contains(s) { b } else { 0 };
+        Insets::new(
+            m.pad.left + w(BorderSide::LEFT),
+            m.pad.top + w(BorderSide::TOP),
+            m.pad.right + w(BorderSide::RIGHT),
+            m.pad.bottom + w(BorderSide::BOTTOM),
+        )
     }
 
     /// Places `id` at the absolute rectangle `rect` right away (low-level placement). The

@@ -3,7 +3,10 @@
 //! Pages: (1) the Twine logo in every color format on a checkerboard; (2) opacity, recolor,
 //! chroma key, tiling and clip radius; (3) a rotating, pulsing image with and without
 //! anti-aliasing; (4) the same photo decoded from QOI, PNG, BMP and JPEG; (5) an animated GIF;
-//! (6) RLE- and LZ4-compressed images with the image cache statistics. Switch pages with ←/→ or
+//! (6) RLE- and LZ4-compressed images with the image cache statistics; (7) images read from
+//! files (`assets/images` mounted as drive `A:` with `StdFs`), including a missing one; (8) SVG
+//! icons drawn as vectors at 1×, 2× and rotating (crisp at any scale). Switch
+//! pages with ←/→ or
 //! by clicking the left/right third of the screen; pages also advance every 3 s. The page title
 //! is drawn at the top and logged with what to look at.
 //!
@@ -12,15 +15,19 @@
 
 use twine_assets::fonts::{MONTSERRAT_10, MONTSERRAT_12, MONTSERRAT_16};
 use twine_core::{Angle, Color, ColorFormat, Duration, Instant, Opa, Point, Rect, Scale};
+use twine_engine::VfsFileSource;
 use twine_examples::assets as img;
+use twine_fs::{StdFs, Vfs};
 use twine_hal::Key;
 use twine_image::decoders::gif::GifPlayer;
 use twine_image::{
-    DecoderRegistry, Image, ImageCache, ImageContext, ImageHeaderCache, ImageSource, with_pixels,
+    DecoderRegistry, FileSource, Image, ImageCache, ImageContext, ImageHeaderCache, ImageSource, header_of,
+    with_pixels,
 };
 use twine_render::{DrawBuf, ImageDsc, ImagePixels, Painter, RenderCaches, RenderConfig};
 use twine_sim::{SimConfig, SimFrame, show_framebuffer_with_input};
 use twine_text::{GlyphCache, TextAlign, TextDsc, draw_text, symbols};
+use twine_vector::{SvgDocument, parse_svg};
 
 const W: i32 = 480;
 const H: i32 = 320;
@@ -79,22 +86,30 @@ struct Images {
     gif: Option<GifPlayer<'static>>,
     /// When the GIF's next frame is due.
     gif_due: Instant,
+    /// Drive `A:` = `assets/images`.
+    files: VfsFileSource,
+    /// The SVG icons of the SVG page, parsed once.
+    svgs: Vec<(&'static str, SvgDocument)>,
 }
 
 impl Images {
     /// Draws `src` at `(x, y)` (decoding through the cache when needed).
     fn draw(&mut self, p: &mut Painter<'_>, src: &ImageSource, x: i32, y: i32, dsc: &ImageDsc<'_>) {
-        let mut cx = ImageContext {
-            cache: &mut self.cache,
-            header_cache: &mut self.headers,
-            registry: &self.registry,
-            fs: None,
-        };
+        let mut cx = self.context();
         let r = with_pixels(src, &mut cx, |px| {
             p.image(Rect::from_xywh(x, y, i32::from(px.w), i32::from(px.h)), px, dsc);
         });
         if let Err(e) = r {
             twine_core::warn!(target: "twine::image", "cannot draw {}: {}", src, e);
+        }
+    }
+
+    fn context(&mut self) -> ImageContext<'_> {
+        ImageContext {
+            cache: &mut self.cache,
+            header_cache: &mut self.headers,
+            registry: &self.registry,
+            fs: Some(&mut self.files as &mut dyn FileSource),
         }
     }
 }
@@ -135,6 +150,16 @@ const PAGES: &[Page] = &[
         title: "Compressed images & cache",
         hint: "RLE and LZ4 images decompressed into the image cache; the counters below",
         draw: page_compressed,
+    },
+    Page {
+        title: "SVG",
+        hint: "SVG icons (paths, gradients, strokes, dashes) parsed once and drawn as vectors: 1x, 2x and rotating, crisp at any scale",
+        draw: page_svg,
+    },
+    Page {
+        title: "From file",
+        hint: "images read from drive A: (assets/images via StdFs): decoded once into the cache, then no file reads; a missing file logs one warning",
+        draw: page_files,
     },
 ];
 
@@ -436,6 +461,82 @@ fn page_compressed(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
     draw_text(p, Rect::from_xywh(0, H - 30, W, 16), &line, &d, cx.glyphs);
 }
 
+fn page_svg(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
+    let spin = Angle(((cx.frame.index * 30) % 3600) as i32);
+    let n = cx.images.svgs.len() as i32;
+    for (i, (name, doc)) in cx.images.svgs.iter().enumerate() {
+        let x = 16 + i as i32 * (W - 32) / n;
+        let (w, h) = (doc.size.w.0 >> 16, doc.size.h.0 >> 16);
+        doc.render(p, Rect::from_xywh(x, TOP + 16, w, h));
+        doc.render(p, Rect::from_xywh(x, TOP + 76, w * 2, h * 2));
+        // Rotating: the document transform, then a rotation around the icon center.
+        let dst = Rect::from_xywh(x, TOP + 190, w, h);
+        let t = doc
+            .transform_for(dst)
+            .then(twine_core::Transform::rotate(spin).around(Point::new(x + w / 2, TOP + 190 + h / 2)));
+        doc.scene.draw(p, &t);
+        text(
+            p,
+            cx.glyphs,
+            Rect::from_xywh(x, TOP + 250, 100, 16),
+            name,
+            TextAlign::Left,
+        );
+    }
+}
+
+fn page_files(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
+    checker(p, Rect::new(0, TOP, W, H - 40));
+    let paths = [
+        "A:/twine_logo.qoi",
+        "A:/twine_logo.png",
+        "A:/photo.qoi",
+        "A:/missing.qoi",
+    ];
+    for (i, path) in paths.into_iter().enumerate() {
+        let Some(src) = ImageSource::file(path) else {
+            continue;
+        };
+        let x = 16 + i as i32 * 116;
+        let header = header_of(&src, &mut cx.images.context());
+        let label = match header {
+            Ok(h) => {
+                let y = TOP + 40 + (96 - i32::from(h.h)).max(0) / 2;
+                cx.images.draw(
+                    p,
+                    &src,
+                    x + (96 - i32::from(h.w)).max(0) / 2,
+                    y,
+                    &ImageDsc::default(),
+                );
+                format!("{}\n{}x{}", &path[3..], h.w, h.h)
+            }
+            Err(e) => format!("{}\n{e}", &path[3..]),
+        };
+        p.fill(
+            Rect::from_xywh(x - 8, TOP + 150, 112, 34),
+            Color::WHITE,
+            Opa::COVER,
+        );
+        text(
+            p,
+            cx.glyphs,
+            Rect::from_xywh(x - 8, TOP + 151, 112, 34),
+            &label,
+            TextAlign::Center,
+        );
+    }
+    let s = cx.images.cache.stats();
+    let line = format!(
+        "image cache: {} hits, {} misses, {} bytes used",
+        s.hits, s.misses, s.bytes_used
+    );
+    let mut d = TextDsc::new(&MONTSERRAT_10);
+    d.color = INK;
+    d.align = TextAlign::Center;
+    draw_text(p, Rect::from_xywh(0, H - 30, W, 16), &line, &d, cx.glyphs);
+}
+
 struct Gallery {
     page: usize,
     since: u32,
@@ -523,6 +624,42 @@ impl Gallery {
     }
 }
 
+/// The SVG icons of `assets/images/svg`, parsed.
+fn svg_icons() -> Vec<(&'static str, SvgDocument)> {
+    let files: [(&str, &[u8]); 4] = [
+        ("home.svg", include_bytes!("../../../assets/images/svg/home.svg")),
+        ("star.svg", include_bytes!("../../../assets/images/svg/star.svg")),
+        (
+            "badge.svg",
+            include_bytes!("../../../assets/images/svg/badge.svg"),
+        ),
+        (
+            "chart.svg",
+            include_bytes!("../../../assets/images/svg/chart.svg"),
+        ),
+    ];
+    files
+        .into_iter()
+        .filter_map(|(name, bytes)| match parse_svg(bytes) {
+            Ok(d) => Some((name, d)),
+            Err(e) => {
+                twine_core::warn!(target: "twine::image", "{}: {}", name, e);
+                None
+            }
+        })
+        .collect()
+}
+
+/// `assets/images` of the workspace as drive `A:`.
+fn assets_drive() -> Vfs {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/images");
+    let mut vfs = Vfs::new();
+    if let Err(e) = vfs.mount('A', Box::new(StdFs::new(dir))) {
+        twine_core::warn!(target: "twine::image", "cannot mount A:: {}", e);
+    }
+    vfs
+}
+
 fn main() {
     let cfg = SimConfig::new(W as u16, H as u16).title("image_gallery").scale(2);
     let gif = match GifPlayer::new(SPINNER_GIF) {
@@ -543,6 +680,8 @@ fn main() {
             registry: DecoderRegistry::with_defaults(),
             gif,
             gif_due: Instant::ZERO,
+            files: VfsFileSource(assets_drive()),
+            svgs: svg_icons(),
         },
         announced: false,
     };

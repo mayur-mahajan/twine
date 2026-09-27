@@ -212,12 +212,21 @@ impl TextLayout<'_> {
         }
     }
 
+    /// Left-to-right text without right-to-left characters: hit testing needs no reordering
+    /// (and no allocation).
+    fn plain_ltr(&self, base: TextDir) -> bool {
+        base != TextDir::Rtl && !has_rtl(self.text)
+    }
+
     /// Like [`pos_of`](Self::pos_of) for bidirectional text laid out with base direction
     /// `base`: the cursor before logical byte `byte_index` is at the left edge of its glyph in
     /// an LTR run and at the right edge in an RTL run; the end of a line is at the line's
     /// right end (LTR base) or left end (RTL base). [`TextAlign::Auto`] follows the base.
     #[must_use]
     pub fn pos_of_bidi(&self, byte_index: usize, align: TextAlign, area_w: i32, base: TextDir) -> Point {
+        if self.plain_ltr(base) {
+            return self.pos_of(byte_index, align.resolve(TextDir::Ltr), area_w);
+        }
         let i = floor_boundary(self.text, byte_index);
         let k = self.line_of(i);
         let line = self.lines().nth(k).unwrap_or_default();
@@ -241,6 +250,9 @@ impl TextLayout<'_> {
     /// character and the right half before it).
     #[must_use]
     pub fn char_at_bidi(&self, p: Point, align: TextAlign, area_w: i32, base: TextDir) -> usize {
+        if self.plain_ltr(base) {
+            return self.char_at(p, align.resolve(TextDir::Ltr), area_w);
+        }
         let lh = self.line_height();
         let idx = if p.y <= 0 || lh <= 0 {
             0

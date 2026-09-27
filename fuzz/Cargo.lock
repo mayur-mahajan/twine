@@ -45,10 +45,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "critical-section"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef25905e51abafe4dcea6c15fec58c57b601cdbd0ee53d22ea1d3016c587d39b"
+
+[[package]]
+name = "foldhash"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "getrandom"
@@ -68,6 +80,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
 dependencies = [
  "byteorder",
+]
+
+[[package]]
+name = "hashbrown"
+version = "0.15.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
+dependencies = [
+ "foldhash",
 ]
 
 [[package]]
@@ -132,6 +153,12 @@ checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
 dependencies = [
  "adler2",
 ]
+
+[[package]]
+name = "portable-atomic"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
 
 [[package]]
 name = "proc-macro2"
@@ -243,6 +270,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "twine-anim"
+version = "0.1.0"
+dependencies = [
+ "twine-core",
+]
+
+[[package]]
+name = "twine-assets"
+version = "0.1.0"
+dependencies = [
+ "twine-text",
+]
+
+[[package]]
 name = "twine-core"
 version = "0.1.0"
 dependencies = [
@@ -250,15 +291,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "twine-engine"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "heapless",
+ "thiserror",
+ "twine-anim",
+ "twine-core",
+ "twine-fs",
+ "twine-hal",
+ "twine-image",
+ "twine-layout",
+ "twine-render",
+ "twine-style",
+ "twine-text",
+ "twine-vector",
+]
+
+[[package]]
+name = "twine-fs"
+version = "0.1.0"
+dependencies = [
+ "heapless",
+ "thiserror",
+ "twine-core",
+]
+
+[[package]]
 name = "twine-fuzz"
 version = "0.0.0"
 dependencies = [
+ "critical-section",
  "libfuzzer-sys",
  "twine-core",
  "twine-image",
  "twine-lottie",
  "twine-render",
  "twine-vector",
+]
+
+[[package]]
+name = "twine-hal"
+version = "0.1.0"
+dependencies = [
+ "twine-core",
 ]
 
 [[package]]
@@ -277,13 +354,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "twine-layout"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "twine-core",
+ "twine-style",
+]
+
+[[package]]
 name = "twine-lottie"
 version = "0.1.0"
 dependencies = [
  "serde_json",
  "twine-core",
+ "twine-engine",
  "twine-render",
+ "twine-style",
  "twine-vector",
+ "twine-view",
+]
+
+[[package]]
+name = "twine-reactive"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "heapless",
+ "portable-atomic",
+ "twine-core",
 ]
 
 [[package]]
@@ -295,6 +394,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "twine-style"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "twine-anim",
+ "twine-core",
+ "twine-image",
+ "twine-render",
+ "twine-text",
+]
+
+[[package]]
+name = "twine-text"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "twine-core",
+ "twine-render",
+]
+
+[[package]]
+name = "twine-theme"
+version = "0.1.0"
+dependencies = [
+ "twine-assets",
+ "twine-core",
+ "twine-engine",
+ "twine-image",
+ "twine-style",
+ "twine-text",
+]
+
+[[package]]
 name = "twine-vector"
 version = "0.1.0"
 dependencies = [
@@ -302,6 +434,53 @@ dependencies = [
  "thiserror",
  "twine-core",
  "twine-render",
+]
+
+[[package]]
+name = "twine-view"
+version = "0.1.0"
+dependencies = [
+ "hashbrown",
+ "twine-anim",
+ "twine-core",
+ "twine-engine",
+ "twine-hal",
+ "twine-image",
+ "twine-reactive",
+ "twine-render",
+ "twine-style",
+ "twine-text",
+ "twine-theme",
+ "twine-widgets",
+ "twine-widgets-ext",
+]
+
+[[package]]
+name = "twine-widgets"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "twine-core",
+ "twine-engine",
+ "twine-image",
+ "twine-render",
+ "twine-style",
+ "twine-text",
+]
+
+[[package]]
+name = "twine-widgets-ext"
+version = "0.1.0"
+dependencies = [
+ "twine-anim",
+ "twine-core",
+ "twine-engine",
+ "twine-image",
+ "twine-render",
+ "twine-style",
+ "twine-text",
+ "twine-theme",
+ "twine-widgets",
 ]
 
 [[package]]

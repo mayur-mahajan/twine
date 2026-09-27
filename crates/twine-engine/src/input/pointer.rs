@@ -182,6 +182,16 @@ impl PointerProc {
         if stopped_any(e, id) {
             return;
         }
+        // A new press: popups watching for presses outside them close first.
+        let found = if searched && !self.pressed {
+            e.fire_outside_presses(display, found);
+            if stopped_any(e, id) {
+                return;
+            }
+            found.filter(|f| e.tree.contains(*f))
+        } else {
+            found
+        };
         // A new press during a throw stops it (LVGL stops the throw animation).
         if searched && self.scroll_obj.is_some() {
             self.scroll_throw_vect = Point::ZERO;

@@ -34,6 +34,8 @@
 //! | [`label`], [`button`], [`image`], [`image_button`], [`animimg`] | core widget views |
 //! | [`bar`], [`slider`], [`switch`], [`checkbox`], [`arc`], [`led`], [`line()`], [`spinner`] | basic controls (value widgets take an [`IntoModel`]: two-way with a signal) |
 //! | [`textarea`], [`keyboard`], [`spinbox`], [`buttonmatrix`], [`spangroup`] + [`span`] | text and number entry, rich text |
+//! | [`dropdown`], [`dropdown_static`], [`roller`], [`roller_static`] | selection widgets (`twine-widgets-ext`) |
+//! | [`list`], [`menu`], [`tabview`], [`tileview`], [`window`], [`msgbox`] | containers (`twine-widgets-ext`) |
 //! | [`when`], [`dynamic`], [`for_each`], [`virtual_list`] | structural reactivity limited to one region |
 //! | [`NodeRef`], [`ScopeExt`] | the imperative escape hatch, tweens, animations, timers, modals |
 //! | [`Ui`], [`UiBuilder`], [`UiCore`] | the runtime: the update cycle and [`Wake`] |
@@ -93,7 +95,7 @@ pub use build::{BuildCx, BuildOp, WidgetView, widget_view};
 pub use containers::{Container, Flex, Grid, column, container, flex, grid, row, scroll_view, spacer, stack};
 pub use flow::{Dynamic, ForEach, VirtualList, When, WhenElse, dynamic, for_each, virtual_list, when};
 pub use hooks::{AnimController, ScopeExt, ThemeHandle, use_theme};
-pub use model::{IntoModel, Model};
+pub use model::{IntoModel, Model, bind_model, event_value};
 pub use modifiers::ViewExt;
 pub use nav::{ModalHandle, Navigator, navigator, use_navigator};
 pub use node_ref::NodeRef;
@@ -102,9 +104,14 @@ pub use text::{IntoText, TextFn, TextProp};
 pub use ui::{DisplaySetup, Framebuffer, Partial, Ui, UiBuilder, UiCore};
 pub use view::{AnyView, IntoAnyView, View, ViewSeq};
 pub use widgets::{
-    SpanView, animimg, arc, bar, button, buttonmatrix, checkbox, image, image_button, keyboard, label, led,
-    line, line_static, slider, span, spangroup, spinbox, spinner, switch, textarea,
+    MenuPageRef, MenuPageView, SpanView, TabView, TileView, animimg, arc, bar, button, buttonmatrix,
+    checkbox, dropdown, dropdown_static, image, image_button, keyboard, label, led, line, line_static, list,
+    list_button, list_text, menu, menu_cont, menu_page, menu_section, menu_separator, msgbox, roller,
+    roller_static, slider, span, spangroup, spinbox, spinner, switch, tab, tabview, textarea, tile, tileview,
+    window, window_button,
 };
+#[cfg(feature = "vector")]
+pub use widgets::{VectorCanvas, vector_canvas};
 
 /// When `Ui::update` must be called again (defined by the engine, re-exported here).
 pub use twine_engine::Wake;

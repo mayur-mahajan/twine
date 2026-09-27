@@ -411,11 +411,24 @@ fn arc_segments(
     let cxp = muldiv(muldiv(coef, rx, 1 << 16), yp, ry);
     let cyp = -muldiv(muldiv(coef, ry, 1 << 16), xp, rx);
     // Step 4: center in user space.
-    let cx = ((c * cxp - s * cyp) >> 16) + (x0 + x1) / 2;
-    let cy = ((s * cxp + c * cyp) >> 16) + (y0 + y1) / 2;
+    let wide = |a: i64, b: i64, d: i64, e: i64| {
+        let v = (i128::from(a) * i128::from(b) + i128::from(d) * i128::from(e)) >> 16;
+        v.clamp(i128::from(i64::MIN / 4), i128::from(i64::MAX / 4)) as i64
+    };
+    let cx = wide(c, cxp, -s, cyp) + (x0 + x1) / 2;
+    let cy = wide(s, cxp, c, cyp) + (y0 + y1) / 2;
     // Unit vectors (16.16) of the start and end points on the unit circle.
-    let u = (muldiv(xp - cxp, 1 << 16, rx), muldiv(yp - cyp, 1 << 16, ry));
-    let v = (muldiv(-xp - cxp, 1 << 16, rx), muldiv(-yp - cyp, 1 << 16, ry));
+    // Unit vectors: |u| = |v| = 1 up to rounding, which tiny radii amplify; clamping to ±2
+    // keeps the products below in range (degenerate arcs stay degenerate, never overflow).
+    let unit = |v: i64| v.clamp(-(2 << 16), 2 << 16);
+    let u = (
+        unit(muldiv(xp - cxp, 1 << 16, rx)),
+        unit(muldiv(yp - cyp, 1 << 16, ry)),
+    );
+    let v = (
+        unit(muldiv(-xp - cxp, 1 << 16, rx)),
+        unit(muldiv(-yp - cyp, 1 << 16, ry)),
+    );
     let th1 = atan2(sat(u.1), sat(u.0)).0;
     let th2 = atan2(sat(v.1), sat(v.0)).0;
     let mut dth = (th2 - th1).rem_euclid(3600);
@@ -430,9 +443,14 @@ fn arc_segments(
     let delta = dth / n;
     // Maps a unit-circle point to user space.
     let map = |ux: i64, uy: i64| -> FxPoint {
-        let ex = (rx * ux) >> 16;
-        let ey = (ry * uy) >> 16;
-        fxp(((c * ex - s * ey) >> 16) + cx, ((s * ex + c * ey) >> 16) + cy)
+        let w = |v: i128| v.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
+        let (c, s) = (i128::from(c), i128::from(s));
+        let ex = (i128::from(rx) * i128::from(ux)) >> 16;
+        let ey = (i128::from(ry) * i128::from(uy)) >> 16;
+        fxp(
+            w(((c * ex - s * ey) >> 16) + i128::from(cx)),
+            w(((s * ex + c * ey) >> 16) + i128::from(cy)),
+        )
     };
     // k = 4/3 · tan(δ/4), signed.
     let q = Angle(delta / 4);

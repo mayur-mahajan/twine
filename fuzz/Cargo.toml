@@ -19,6 +19,8 @@ twine-vector = { path = "../crates/twine-vector", features = ["std", "svg"] }
 twine-lottie = { path = "../crates/twine-lottie", features = ["std"] }
 twine-render = { path = "../crates/twine-render", features = ["color-rgb565"] }
 twine-core = { path = "../crates/twine-core" }
+# Host implementation of `critical-section` (twine-lottie's widget pulls in twine-reactive).
+critical-section = { version = "1", features = ["std"] }
 
 [[bin]]
 name = "fuzz_qoi"
@@ -79,6 +81,13 @@ bench = false
 [[bin]]
 name = "lottie_load"
 path = "fuzz_targets/lottie_load.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "path_raster"
+path = "fuzz_targets/path_raster.rs"
 test = false
 doc = false
 bench = false

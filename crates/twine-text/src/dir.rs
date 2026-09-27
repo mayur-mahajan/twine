@@ -16,6 +16,32 @@ pub enum TextDir {
     Auto,
 }
 
+impl TextDir {
+    /// The direction `text` is laid out in: [`TextDir::Auto`] detects it from the first strong
+    /// character with the `bidi` feature and means left to right without it.
+    ///
+    /// ```
+    /// use twine_text::TextDir;
+    /// assert_eq!(TextDir::Rtl.resolved("abc"), TextDir::Rtl);
+    /// assert_eq!(TextDir::Auto.resolved("abc"), TextDir::Ltr);
+    /// ```
+    #[must_use]
+    pub fn resolved(self, text: &str) -> TextDir {
+        #[cfg(feature = "bidi")]
+        {
+            crate::bidi::resolve_dir(self, text)
+        }
+        #[cfg(not(feature = "bidi"))]
+        {
+            let _ = text;
+            match self {
+                TextDir::Rtl => TextDir::Rtl,
+                TextDir::Ltr | TextDir::Auto => TextDir::Ltr,
+            }
+        }
+    }
+}
+
 impl TextAlign {
     /// Resolves [`TextAlign::Auto`] for base direction `dir`: right for right-to-left text,
     /// left otherwise. Other alignments are returned unchanged.

@@ -15,13 +15,36 @@ default = []
 ## `AsyncInputWait` for `calibration::RawTouchInput` (async runtimes).
 async = ["twine/async"]
 ## Log through `defmt` (enable it when the firmware logs with defmt: the calibration demo logs).
-defmt = ["dep:defmt", "twine/defmt"]
+defmt = ["dep:defmt", "twine/defmt", "twine-extra?/defmt", "twine-lottie?/defmt"]
+## The `multilang` demo: translations, right-to-left and Arabic text, a file image, emoji.
+multilang = [
+    "dep:twine-extra",
+    "twine-extra/i18n",
+    "twine/fs",
+    "twine/bidi",
+    "twine/arabic-shaping",
+    "twine/img-qoi",
+    "twine/montserrat-16-latin-ext",
+    "twine/dejavu-16-persian-hebrew",
+]
+## Chinese and Japanese in the `multilang` demo (Source Han Sans 16, ~165 KB of flash).
+multilang-cjk = ["multilang", "twine/source-han-sans-sc-16-cjk"]
+## The `vector` demo: shapes, gradients, strokes, SVG icons and an animated path.
+vector = ["twine/vector", "twine/svg"]
+## The `lottie` demo: three Lottie animations with play/pause, loop and a frame scrubber.
+lottie = ["dep:twine-lottie", "twine/color-argb8888"]
+## The `multilang` heading as a runtime TrueType font (~200 KB TTF in flash, glyph cache).
+ttf = ["twine/ttf"]
 
 [dependencies]
 defmt = { version = "1", optional = true }
 twine = { path = "../twine", default-features = false, features = ["montserrat-16", "montserrat-20"] }
+twine-extra = { path = "../twine-extra", optional = true }
+twine-lottie = { path = "../twine-lottie", optional = true }
 
 [dev-dependencies]
 twine = { path = "../twine", features = ["std"] }
+twine-demos = { path = ".", features = ["multilang-cjk", "ttf", "vector", "lottie"] }
 twine-testing = { path = "../twine-testing" }
 critical-section = { version = "1", features = ["std"] }
+log = "0.4"

@@ -12,9 +12,7 @@ use twine_style::{
     StyleValue,
 };
 
-use crate::{
-    Engine, EventCode, EventParam, InvalidateReason, LayoutDirty, MeasureCx, NodeId, ObjFlags, fmt_node_id,
-};
+use crate::{Engine, EventCode, EventParam, InvalidateReason, LayoutDirty, NodeId, ObjFlags, fmt_node_id};
 
 /// How many times [`Engine::update_layout`] lays out again when event handlers changed the
 /// layout (LVGL's limit as well).
@@ -103,9 +101,7 @@ impl LayoutTree for EngineLayout<'_> {
     }
 
     fn content_size(&self, id: NodeId) -> Size {
-        self.engine.tree.node(id).map_or(Size::ZERO, |n| {
-            n.widget.content_size(&MeasureCx::new(self.engine, id))
-        })
+        self.engine.self_size(id)
     }
 
     fn flags(&self, id: NodeId) -> LayoutFlags {

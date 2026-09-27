@@ -199,7 +199,7 @@ pub(crate) fn render_into(
     clip: Rect,
     frame: u32,
 ) {
-    let crate::engine::RenderRes { caches, aux } = res;
+    let crate::engine::RenderRes { caches, aux, accel } = res;
     let db = match DrawBuf::new(buf, format, stride, buf_area) {
         Ok(b) => b,
         Err(e) => {
@@ -208,6 +208,9 @@ pub(crate) fn render_into(
         }
     };
     let mut p = Painter::new(db, caches);
+    if let Some(a) = accel.0.as_deref_mut() {
+        p = p.with_accel(a);
+    }
     p.with_clip(clip, |p| {
         traverse::draw_area(engine, p, aux, d, clip);
         if engine.config.debug_refresh {

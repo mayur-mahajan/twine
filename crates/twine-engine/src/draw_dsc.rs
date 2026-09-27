@@ -11,9 +11,10 @@ use twine_render::{
     ArcDsc, BlendMode, BorderSide, GradKind, GradStop, Gradient, ImageDsc, LineDsc, RectDsc, ShadowDsc,
 };
 use twine_style::{
-    GradDir, Length, Part, PropId, ResolveOptions, State, StyleValue, TextAlign, TextDecor, resolve_with,
+    BaseDir, GradDir, Length, Part, PropId, ResolveOptions, State, StyleValue, TextAlign, TextDecor,
+    resolve_with,
 };
-use twine_text::{Font, TextDsc};
+use twine_text::{Font, TextDir, TextDsc};
 
 use crate::style_list::length_px;
 use crate::{Engine, NodeId};
@@ -454,6 +455,13 @@ impl Engine {
             .unwrap_or_default();
         d.letter_space = props.i32(part, PropId::TextLetterSpace);
         d.line_space = props.i32(part, PropId::TextLineSpace);
+        // The inherited base direction (LVGL `lv_obj_get_style_base_dir`); the neutral and
+        // weak values are resolved from the text like `Auto`.
+        d.base_dir = match props.get(part, PropId::BaseDir).get::<BaseDir>() {
+            Some(BaseDir::Rtl) => TextDir::Rtl,
+            Some(BaseDir::Auto | BaseDir::Neutral | BaseDir::Weak) => TextDir::Auto,
+            _ => TextDir::Ltr,
+        };
         d
     }
 

@@ -33,3 +33,13 @@ twine-vector = { path = ".", features = ["svg", "std", "log"] }
 twine-render = { path = "../twine-render", features = ["color-rgb565", "color-argb8888", "color-l8"] }
 twine-testing = { path = "../twine-testing", default-features = false, features = ["render"] }
 proptest = "1"
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+iai-callgrind = "0.16"
+
+[[bench]]
+name = "vector"
+harness = false
+
+[[bench]]
+name = "vector_iai"
+harness = false

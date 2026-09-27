@@ -68,6 +68,21 @@ symbols = "fa"
 compress = false
 kerning = true
 
+# Latin-1 supplement, Latin Extended-A and typographic punctuation for European languages
+# (German, French, Polish, …): a fallback of MONTSERRAT_16 (`Font { fallback: .. }`), so the
+# ASCII fonts stay small.
+[[font]]
+name = "MONTSERRAT_16_LATIN_EXT"
+feature = "montserrat-16-latin-ext"
+file = "montserrat_16_latin_ext.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 16
+bpp = 4
+ranges = ["0xA0-0xAC", "0xAE-0x17F", "0x2013-0x2014", "0x2018-0x201A", "0x201C-0x201E", "0x2026", "0x20AC"]
+symbols = "none"
+compress = true
+kerning = false
+
 [[font]]
 name = "MONTSERRAT_18"
 feature = "montserrat-18"

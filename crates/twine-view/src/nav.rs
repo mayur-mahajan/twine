@@ -14,7 +14,7 @@ use twine_style::{Align, Length, Selector, StyleProp};
 use crate::access::EngineAccess;
 use crate::build::{BuildCx, on_delete};
 use crate::flow::{NAVIGATOR_CLASS, Wrapper, dispose_with};
-use crate::hooks::display_of;
+use crate::hooks::{StyleAnchor, display_of};
 use crate::view::{AnyView, IntoAnyView, View};
 
 /// A screen constructor queued for the next flush.
@@ -36,6 +36,9 @@ struct NavState {
     queue: Vec<NavOp>,
     /// Bumped to wake the navigation effect.
     tick: Signal<u32>,
+    /// The navigator's anchor node: the screens' views inherit their text style from it (and
+    /// so from the views around the navigator), although each is on a screen of its own.
+    anchor: Option<NodeId>,
 }
 
 /// One screen of the stack.
@@ -193,7 +196,10 @@ impl Navigator {
     /// `own_group` the screen gets a focus group of its own, which becomes the default group
     /// and the keypads' and encoders' group.
     fn build_screen(&self, e: &mut Engine, f: ScreenFn, own_group: bool) -> Option<Entry> {
-        let parent = self.inner.borrow().scope;
+        let (parent, anchor) = {
+            let s = self.inner.borrow();
+            (s.scope, s.anchor)
+        };
         let display = display_of(parent, e)?;
         let Ok(screen) = e.create_screen(display) else {
             twine_core::warn!(target: "twine::view", "navigator: cannot create a screen");
@@ -207,10 +213,14 @@ impl Navigator {
         };
         let child = parent.child();
         let view = EngineAccess::provide(e, || untrack(|| f(child)));
-        {
+        let root = {
             let mut bcx = BuildCx::new(e, screen, child);
-            view.build(&mut bcx);
+            view.build(&mut bcx)
+        };
+        if let Some(a) = anchor.filter(|a| e.tree().contains(*a)) {
+            e.set_style_parent(root, Some(a));
         }
+        child.provide(StyleAnchor::new(root));
         on_delete(e, screen, move || child.dispose());
         twine_core::debug!(target: "twine::view", "navigator: screen {} built", fmt_node_id(screen));
         Some(Entry {
@@ -247,6 +257,7 @@ pub fn navigator<V: View>(cx: Scope, initial: fn(Scope) -> V) -> impl View {
             stack: Vec::new(),
             queue: Vec::new(),
             tick: cx.signal(0),
+            anchor: None,
         })),
     };
     cx.provide(nav.clone());
@@ -266,6 +277,7 @@ impl View for NavigatorView {
     fn build(self, cx: &mut BuildCx<'_>) -> NodeId {
         let anchor = cx.create(Wrapper(&NAVIGATOR_CLASS));
         let nav = self.nav;
+        nav.inner.borrow_mut().anchor = Some(anchor);
         let e = cx.engine();
         if let Some(entry) = nav.build_screen(e, self.initial, false) {
             e.load_screen(entry.node);
@@ -372,6 +384,8 @@ pub(crate) fn show_modal<V: View>(cx: Scope, view: impl FnOnce(Scope) -> V + 'st
         open,
         node: Cell::new(None),
     });
+    // The views inside can close their modal (a message box's close button).
+    content.provide(ModalHandle { inner: state.clone() });
     let mut view = Some(view);
     // `(modal group, previous default group)` while open.
     let groups: ModalGroups = Rc::default();
@@ -396,6 +410,7 @@ pub(crate) fn show_modal<V: View>(cx: Scope, view: impl FnOnce(Scope) -> V + 'st
                     return;
                 };
                 let Some(top) = e.top_layer(display) else { return };
+                let anchor = cx.use_context::<StyleAnchor>().and_then(|a| a.get());
                 let Ok(backdrop) = e.create(top, Box::new(Obj)) else {
                     return;
                 };
@@ -428,6 +443,12 @@ pub(crate) fn show_modal<V: View>(cx: Scope, view: impl FnOnce(Scope) -> V + 'st
                     v.build(&mut bcx)
                 };
                 e.set_align(root, Align::Center);
+                // The modal takes the text style of the view that opened it (a nested modal:
+                // of the outer modal).
+                if let Some(a) = anchor.filter(|a| e.tree().contains(*a)) {
+                    e.set_style_parent(root, Some(a));
+                }
+                content.provide(StyleAnchor::new(root));
                 if let Some((_, prev)) = groups.get() {
                     e.set_default_group(prev);
                 }

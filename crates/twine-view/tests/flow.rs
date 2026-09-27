@@ -165,3 +165,28 @@ impl Bounded for TestUi {
         self.advance(Duration::ms(250));
     }
 }
+
+#[test]
+fn wrappers_pass_drags_and_events_to_their_parent() {
+    // A drag on a row built by `for_each` (inside its wrapper) scrolls the column around it.
+    let mut t = TestUi::new(200, 120).mount(|cx| {
+        let items = cx.signal((0..30u32).collect::<Vec<_>>());
+        scroll_view(
+            Dir::VER,
+            for_each(move || items.get(), |i| *i, |_, i| label(format!("Row {i}"))),
+        )
+        .size(200, 120)
+        .test_id("col")
+    });
+    t.run_until_idle();
+    let col = t.find(twine_testing::by_id("col")).id();
+    t.drag(Point::new(100, 100), Point::new(100, 30), Duration::ms(200));
+    t.run_until_idle();
+    assert!(t.engine().scroll_offset(col).y > 0, "the drag reached the column");
+    // Wrappers pass chaining and bubbling on.
+    let e = t.engine();
+    let wrapper = e.tree().children(col).next().unwrap();
+    assert!(e.has_flag(wrapper, ObjFlags::SCROLL_CHAIN_VER));
+    assert!(e.has_flag(wrapper, ObjFlags::EVENT_BUBBLE));
+    assert!(e.has_flag(wrapper, ObjFlags::GESTURE_BUBBLE));
+}

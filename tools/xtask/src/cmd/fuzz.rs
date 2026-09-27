@@ -14,6 +14,7 @@ pub const TARGETS: &[&str] = &[
     "fuzz_rle",
     "fuzz_lz4",
     "svg_parse",
+    "path_raster",
     "lottie_load",
 ];
 

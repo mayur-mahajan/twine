@@ -140,7 +140,7 @@ struct Slot<T> {
 ///
 /// Freed slots are reused (LIFO) with a bumped generation, so stale ids are detected. A slot
 /// whose generation would wrap past `u16::MAX` is **retired** (never reused) to rule out ABA.
-/// Insert and remove are O(1).
+/// Insert and remove are O(1) (amortized: the slot storage grows by a quarter at a time).
 ///
 /// ```
 /// use twine_core::Arena;
@@ -205,6 +205,13 @@ impl<T> Arena<T> {
             return Err(Error::CapacityExceeded);
         }
         let index = self.slots.len() as u16;
+        if self.slots.len() == self.slots.capacity() {
+            // Grow by a quarter (at least 8 slots), not by doubling: slots can be large (the
+            // engine's nodes) and an arena half empty after a doubling wastes RAM on small
+            // devices. Still geometric, so pushes stay amortized O(1).
+            let grow = (self.slots.len() / 4).max(8);
+            self.slots.reserve_exact(grow);
+        }
         self.slots.push(Slot {
             gen_: 1,
             value: Some(v),

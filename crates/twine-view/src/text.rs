@@ -6,7 +6,7 @@ use alloc::string::String;
 use core::fmt::Write;
 
 use twine_engine::NodeId;
-use twine_reactive::{Memo, ReadSignal, Signal};
+use twine_reactive::{Memo, ReadSignal, Scope, Signal};
 use twine_widgets::label::Label;
 
 use crate::bind::bind_effect;
@@ -26,6 +26,12 @@ pub enum TextProp {
     /// A writer formatting the text in place ([`text!`](crate::text!)); no allocation once the
     /// widget's buffers are large enough.
     Write(Box<TextWriter>),
+    /// A closure choosing one of several `'static` texts (re-run when a signal it reads
+    /// changes); the widget stores the chosen text without copying (e.g. a translation).
+    StaticFn(Box<dyn Fn() -> &'static str>),
+    /// A text that depends on the scope the widget is built in (resolved once at build time,
+    /// e.g. to look up a context such as the translations of `tr!`).
+    Scoped(Box<dyn FnOnce(Scope) -> TextProp>),
 }
 
 impl core::fmt::Debug for TextProp {
@@ -35,6 +41,8 @@ impl core::fmt::Debug for TextProp {
             TextProp::Owned(s) => f.debug_tuple("Owned").field(s).finish(),
             TextProp::Fn(_) => f.write_str("Fn"),
             TextProp::Write(_) => f.write_str("Write"),
+            TextProp::StaticFn(_) => f.write_str("StaticFn"),
+            TextProp::Scoped(_) => f.write_str("Scoped"),
         }
     }
 }
@@ -162,6 +170,18 @@ macro_rules! text {
 /// static text already: `Static` is then a no-op).
 pub(crate) fn bind_label_text(cx: &mut BuildCx<'_>, node: NodeId, text: TextProp) {
     match text {
+        TextProp::Scoped(f) => {
+            let t = f(cx.scope());
+            bind_label_text(cx, node, t);
+        }
+        TextProp::StaticFn(f) => {
+            let scope = cx.scope();
+            cx.provide(|| {
+                bind_effect(scope, node, f, |e, n, s: &'static str| {
+                    e.with_widget_mut(n, |l: &mut Label, wcx| l.set_text_static(wcx, s));
+                });
+            });
+        }
         TextProp::Static(s) => {
             cx.engine()
                 .with_widget_mut(node, |l: &mut Label, wcx| l.set_text_static(wcx, s));
@@ -210,6 +230,14 @@ pub(crate) fn bind_str(
     set: impl Fn(&mut twine_engine::Engine, NodeId, &str) + 'static,
 ) {
     match text {
+        TextProp::Scoped(f) => {
+            let t = f(cx.scope());
+            bind_str(cx, node, t, set_static, set);
+        }
+        TextProp::StaticFn(f) => {
+            let scope = cx.scope();
+            cx.provide(|| bind_effect(scope, node, f, move |e, n, s: &'static str| set_static(e, n, s)));
+        }
         TextProp::Static(s) => set_static(cx.engine(), node, s),
         TextProp::Owned(s) => set(cx.engine(), node, &s),
         TextProp::Fn(f) => {

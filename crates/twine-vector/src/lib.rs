@@ -79,7 +79,7 @@ mod stroke;
 #[cfg(feature = "svg")]
 pub mod svg;
 
-pub use draw::{PainterVectorExt, VectorCaches, VectorDsc};
+pub use draw::{DrawParams, PainterVectorExt, VectorCaches, VectorDsc};
 pub use flatten::{
     DEFAULT_TOLERANCE, Line, MAX_CURVE_SEGMENTS, Polyline, Polylines, flatten, flatten_for_stroke,
 };

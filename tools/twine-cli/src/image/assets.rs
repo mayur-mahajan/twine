@@ -83,6 +83,49 @@ pub fn photo() -> RgbaImage {
     })
 }
 
+/// Avatar colors of the multilang demo, one per language.
+pub const AVATARS: [(&str, [u8; 3]); 8] = [
+    ("en", [0x1E, 0x88, 0xE5]),
+    ("de", [0xE5, 0x39, 0x35]),
+    ("fr", [0x43, 0xA0, 0x47]),
+    ("zh", [0xFB, 0x8C, 0x00]),
+    ("ja", [0x8E, 0x24, 0xAA]),
+    ("he", [0x00, 0x89, 0x7B]),
+    ("ar", [0x6D, 0x4C, 0x41]),
+    ("fa", [0x39, 0x49, 0xAB]),
+];
+
+/// A 40 × 40 avatar: a `color` disc with a lighter head-and-shoulders silhouette, transparent
+/// outside the disc.
+#[must_use]
+pub fn avatar(color: [u8; 3]) -> RgbaImage {
+    let cov = |d: f32| (0.5 - d).clamp(0.0, 1.0);
+    RgbaImage::from_fn(40, 40, |x, y| {
+        let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+        let disc = cov(((fx - 20.0).powi(2) + (fy - 20.0).powi(2)).sqrt() - 19.5);
+        if disc <= 0.0 {
+            return Rgba([0, 0, 0, 0]);
+        }
+        let head = cov(((fx - 20.0).powi(2) + (fy - 16.0).powi(2)).sqrt() - 7.0);
+        let body = if fy > 26.0 {
+            cov((((fx - 20.0) / 1.25).powi(2) + (fy - 38.0).powi(2)).sqrt() - 11.0)
+        } else {
+            0.0
+        };
+        let s = head.max(body);
+        let ch = |c: u8| {
+            let c = f32::from(c);
+            lerp(c, lerp(c, 255.0, 0.75), s).round() as u8
+        };
+        Rgba([
+            ch(color[0]),
+            ch(color[1]),
+            ch(color[2]),
+            (disc * 255.0).round() as u8,
+        ])
+    })
+}
+
 /// Frame `i` of 8 of a 48 × 48 spinner: 8 dots on a ring, the head dot bright, a fading tail;
 /// transparent background.
 #[must_use]
@@ -147,6 +190,14 @@ pub fn all() -> Result<Vec<(&'static str, Vec<u8>)>> {
         ("photo.bmp", encode(&photo, ImageFormat::Bmp)?),
         ("photo.jpg", encode(&photo, ImageFormat::Jpeg)?),
         ("spinner.gif", spinner_gif()?),
+        ("avatars/en.qoi", encode(&avatar(AVATARS[0].1), ImageFormat::Qoi)?),
+        ("avatars/de.qoi", encode(&avatar(AVATARS[1].1), ImageFormat::Qoi)?),
+        ("avatars/fr.qoi", encode(&avatar(AVATARS[2].1), ImageFormat::Qoi)?),
+        ("avatars/zh.qoi", encode(&avatar(AVATARS[3].1), ImageFormat::Qoi)?),
+        ("avatars/ja.qoi", encode(&avatar(AVATARS[4].1), ImageFormat::Qoi)?),
+        ("avatars/he.qoi", encode(&avatar(AVATARS[5].1), ImageFormat::Qoi)?),
+        ("avatars/ar.qoi", encode(&avatar(AVATARS[6].1), ImageFormat::Qoi)?),
+        ("avatars/fa.qoi", encode(&avatar(AVATARS[7].1), ImageFormat::Qoi)?),
     ])
 }
 
@@ -157,7 +208,9 @@ pub fn write_all(dir: &Path, check: bool) -> Result<Vec<PathBuf>> {
         let path = dir.join(name);
         if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
             if !check {
-                std::fs::create_dir_all(dir)?;
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
                 std::fs::write(&path, &bytes)?;
             }
             stale.push(path);

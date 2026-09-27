@@ -26,3 +26,11 @@ wait 16
 key Right
 wait 20
 shot page6
+wait 16
+key Right
+wait 20
+shot page7
+wait 16
+key Right
+wait 20
+shot page8

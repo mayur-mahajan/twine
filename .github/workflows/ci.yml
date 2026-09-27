@@ -48,10 +48,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install winit build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev
+      - name: Install winit and SDL2 build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libsdl2-dev
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask sim-smoke
+      # `eg_simulator` (embedded-graphics-simulator, SDL2): build + clippy only.
+      - run: cargo xtask ci --only eg-sim
 
   nostd:
     runs-on: ubuntu-latest
@@ -139,7 +141,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [rp2040, rp2350, stm32f411, esp32c3, esp32c6]
+        example: [rp2040, rp2350, stm32f411, stm32f429i-disco, esp32c3, esp32c6]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

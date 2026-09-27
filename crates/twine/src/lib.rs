@@ -32,12 +32,17 @@
 //! - `std` (host, simulator, tests), `log`, `defmt`, `debug-checks`, `test-ids`.
 //! - `color-*`: pixel formats; `img-*`: image decoders; `montserrat-*`, `unscii-*`, …: the
 //!   built-in fonts of [`fonts`].
+//! - `bidi`, `arabic-shaping`: right-to-left and Arabic/Persian text; `ttf`: runtime TrueType
+//!   fonts; `fs`: the file system (`fs` module) and file images; `vector`: vector graphics
+//!   (`vector` module, `vector_canvas`).
 #![no_std]
 
 pub use twine_anim as anim;
 pub use twine_assets as assets;
 pub use twine_core as core;
 pub use twine_engine as engine;
+#[cfg(feature = "fs")]
+pub use twine_fs as fs;
 pub use twine_hal as hal;
 pub use twine_image as image;
 pub use twine_layout as layout;
@@ -46,6 +51,8 @@ pub use twine_render as render;
 pub use twine_style as style;
 pub use twine_text as text;
 pub use twine_theme as theme;
+#[cfg(feature = "vector")]
+pub use twine_vector as vector;
 pub use twine_view as view;
 pub use twine_widgets as widgets;
 pub use twine_widgets_ext as widgets_ext;

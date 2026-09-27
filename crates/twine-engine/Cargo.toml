@@ -21,6 +21,8 @@ std = [
     "twine-image/std",
     "twine-style/std",
     "twine-layout/std",
+    "twine-fs?/std",
+    "twine-vector?/std",
 ]
 ## Log through the `log` crate.
 log = [
@@ -32,6 +34,8 @@ log = [
     "twine-image/log",
     "twine-style/log",
     "twine-layout/log",
+    "twine-fs?/log",
+    "twine-vector?/log",
 ]
 ## Log through `defmt` and derive `defmt::Format` on public types.
 defmt = [
@@ -44,6 +48,8 @@ defmt = [
     "twine-image/defmt",
     "twine-style/defmt",
     "twine-layout/defmt",
+    "twine-fs?/defmt",
+    "twine-vector?/defmt",
 ]
 ## Expensive invariant checks (tree invariants after every mutation, style cache verification,
 ## invalidation log, render hook). Enabled in tests.
@@ -52,6 +58,10 @@ debug-checks = []
 perf-monitor = []
 ## Keep `test_id`s on nodes in release builds (always on with `debug_assertions`).
 test-ids = []
+## `Engine::set_vfs`: file images (`ImageSource::File`) read through `twine-fs`.
+fs = ["dep:twine-fs"]
+## `ImageSource::Svg`: SVG images parsed once (cached) and drawn through `twine-vector`.
+svg = ["dep:twine-vector", "twine-vector/svg"]
 ## Pixel formats the renderer is compiled for (forwarded to `twine-render`).
 color-rgb565 = ["twine-render/color-rgb565"]
 color-rgb565-swapped = ["twine-render/color-rgb565-swapped"]
@@ -70,6 +80,8 @@ twine-text = { path = "../twine-text" }
 twine-image = { path = "../twine-image" }
 twine-style = { path = "../twine-style" }
 twine-layout = { path = "../twine-layout" }
+twine-fs = { path = "../twine-fs", optional = true }
+twine-vector = { path = "../twine-vector", optional = true }
 bitflags = { version = "2", default-features = false }
 heapless = { version = "0.8", default-features = false }
 thiserror = { version = "2", default-features = false }
@@ -87,7 +99,9 @@ twine-engine = { path = ".", features = [
     "color-argb8888",
     "color-l8",
     "color-i1",
+    "fs",
 ] }
+twine-fs = { path = "../twine-fs" }
 twine-testing = { path = "../twine-testing", default-features = false, features = ["engine", "debug-checks"] }
 twine-assets = { path = "../twine-assets", features = ["montserrat-14"] }
 proptest = "1"

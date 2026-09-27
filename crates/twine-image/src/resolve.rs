@@ -15,7 +15,20 @@ pub trait FileSource {
     /// Replaces the contents of `out` with the file at `path`; [`Error::NotFound`] when it
     /// does not exist.
     fn read_all(&mut self, path: &str, out: &mut Vec<u8>) -> Result<(), Error>;
+
+    /// Replaces the contents of `out` with at most the first `max` bytes of the file at
+    /// `path` (fewer for shorter files), used to probe headers without reading whole files.
+    /// The default reads the whole file and truncates it; file systems override it.
+    fn read_prefix(&mut self, path: &str, max: usize, out: &mut Vec<u8>) -> Result<(), Error> {
+        self.read_all(path, out)?;
+        out.truncate(max);
+        Ok(())
+    }
 }
+
+/// Bytes read to probe the header of a file image (enough for every built-in format but
+/// JPEG, whose size can come after metadata: then the whole file is probed).
+pub const HEADER_PROBE_BYTES: usize = 64;
 
 /// Everything needed to resolve image sources.
 pub struct ImageContext<'a> {
@@ -146,7 +159,18 @@ pub fn header_of(src: &ImageSource, cx: &mut ImageContext<'_>) -> Result<ImageHe
             if let Some(h) = cx.header_cache.get(&key) {
                 return Ok(h);
             }
-            (key, Some(read_file(cx.fs.as_deref_mut(), path)?))
+            let fs = cx.fs.as_deref_mut().ok_or_else(no_fs)?;
+            let mut head = Vec::new();
+            fs.read_prefix(path, HEADER_PROBE_BYTES, &mut head)?;
+            if let Some((_, h)) = cx.registry.probe(&head) {
+                cx.header_cache.insert(key, h);
+                return Ok(h);
+            }
+            if head.len() < HEADER_PROBE_BYTES {
+                return Err(Error::InvalidHeader); // the whole file was read
+            }
+            fs.read_all(path, &mut head)?;
+            (key, Some(head))
         }
         ImageSource::Symbol(_) => return Err(Error::UnsupportedSource("symbol")),
         ImageSource::Svg(_) => return Err(Error::UnsupportedSource("svg")),

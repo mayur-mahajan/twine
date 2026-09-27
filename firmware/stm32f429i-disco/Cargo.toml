@@ -1,0 +1,72 @@
+[package]
+name = "twine-example-stm32f429i-disco"
+description = "Example firmware: Twine on the STM32F429I-DISC1 (LTDC double framebuffer in SDRAM, DMA2D, STMPE811 touch)"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+default-run = "twine-example-stm32f429i-disco"
+
+# Standalone firmware project (not a member of the library workspace).
+[workspace]
+
+# Feature sets `cargo xtask firmware` builds ("" = the defaults).
+[package.metadata.twine]
+feature-sets = ["", "demo-controls", "demo-controls,no-dma2d"]
+
+# Board support shared by the two binaries; nothing here runs on the host.
+[lib]
+test = false
+bench = false
+
+[[bin]]
+name = "twine-example-stm32f429i-disco"
+path = "src/main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
+test = false
+bench = false
+
+[features]
+default = ["demo-counter"]
+## The counter demo.
+demo-counter = []
+## The controls demo (sliders, switches, arcs, spinner).
+demo-controls = []
+## Render in software only (no DMA2D), to compare frame times.
+no-dma2d = []
+# NOTE(P20.S10): `demo-data-widgets` is added once the data_widgets demo exists (Phase 20).
+
+[dependencies]
+twine = { path = "../../crates/twine", default-features = false, features = ["defmt", "color-rgb565", "perf-monitor", "montserrat-20"] }
+twine-drivers = { path = "../../crates/twine-drivers", features = ["stmpe811", "defmt"] }
+twine-accel-stm32 = { path = "../../crates/twine-accel-stm32", features = ["stm32f429zi", "defmt"] }
+twine-embassy = { path = "../../crates/twine-embassy", features = ["defmt"] }
+twine-demos = { path = "../../crates/twine-demos", features = ["defmt"] }
+
+embassy-stm32 = { version = "0.6", features = ["stm32f429zi", "time-driver-any", "exti", "unstable-pac", "defmt"] }
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread", "defmt"] }
+embassy-time = { version = "0.5", features = ["defmt", "defmt-timestamp-uptime"] }
+embassy-futures = "0.1"
+cortex-m = { version = "0.7", features = ["critical-section-single-core", "inline-asm"] }
+cortex-m-rt = "0.7"
+embedded-hal = "1"
+embedded-alloc = "0.7"
+# Same version as embassy-stm32 0.6 (SDRAM chip definitions).
+stm32-fmc = "0.4"
+defmt = "1"
+defmt-rtt = "1"
+panic-probe = { version = "1", features = ["print-defmt"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+debug = 2
+codegen-units = 1
+
+[profile.dev]
+opt-level = "s"

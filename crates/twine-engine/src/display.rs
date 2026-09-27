@@ -516,6 +516,11 @@ impl Engine {
         // LVGL `lv_obj_class_init_obj`: the theme first, then the constructor.
         self.apply_theme_on_create(id);
         self.init_widget(id);
+        // The theme's and the constructor's style entries are all there: release the list's
+        // growth slack (a node lives long; RAM is scarce on small devices).
+        if let Some(n) = self.tree.node_mut(id) {
+            n.styles.shrink_to_fit();
+        }
         self.invalidate(id, InvalidateReason::Create);
         self.group_auto_add(id);
         if self.tree.contains(id) {
@@ -635,6 +640,7 @@ impl Engine {
         let deleted = self.tree.delete(id)?;
         self.anims_forget_nodes(&deleted);
         self.screen_anims_forget(&deleted);
+        self.forget_outside_presses();
         for d in &mut self.displays {
             d.screens.retain(|s| *s != id);
             if d.prev_screen == Some(id) {

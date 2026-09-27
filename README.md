@@ -125,6 +125,16 @@ Logging: `RUST_LOG=twine=debug` enables logs in the simulator and tests
 emulates the panel's pixel format, bus speed and input devices. Debug hotkeys (refresh areas,
 layout bounds, perf monitor, slow motion, screenshots) are listed with `F1`.
 
+`twine-sim` is the primary simulator: it also runs headless with scripts (CI smoke runs and
+snapshot tests), controls time (pause, slow motion, single step) and emulates bus bandwidth.
+For projects already built on [embedded-graphics], `cargo xtask sim eg_simulator` runs the
+counter demo inside `embedded-graphics-simulator` through the `twine-embedded-graphics`
+adapter. It needs SDL2 (`brew install sdl2` on macOS, `apt install libsdl2-dev` on Linux) and
+the `twine-examples` feature `eg-sim`, which the xtask enables. `cargo xtask ci` skips it with
+a warning when SDL2 is missing.
+
+[embedded-graphics]: https://docs.rs/embedded-graphics
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or

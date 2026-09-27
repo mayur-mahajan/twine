@@ -2,7 +2,8 @@
 //!
 //! Images for the Twine GUI library: the [`Image`] data model (every [`ColorFormat`] of the
 //! renderer, palettes, `Rgb565A8` alpha planes, premultiplied alpha), compressed images (LVGL
-//! RLE, LZ4), decoders for encoded files (QOI, PNG, JPEG, BMP, GIF), a byte-budgeted
+//! RLE, LZ4), decoders for encoded files (QOI, PNG, JPEG, BMP, GIF and the raw `.tbin`
+//! format of [`decoders::tbin`]), a byte-budgeted
 //! [`ImageCache`] and the resolution of any [`ImageSource`] to drawable
 //! [`ImagePixels`](twine_render::ImagePixels).
 //!
@@ -42,5 +43,5 @@ pub use error::Error;
 pub use image::{
     Compression, Image, ImageData, ImageFlags, ImageHeader, ImageSource, MAX_PATH_LEN, pixels_of,
 };
-pub use resolve::{FileSource, ImageContext, header_of, with_pixels};
+pub use resolve::{FileSource, HEADER_PROBE_BYTES, ImageContext, header_of, with_pixels};
 pub use twine_core::ColorFormat;

@@ -1,0 +1,5 @@
+# Headless tour of the lottie demo (cargo xtask sim-smoke): playing, paused, scrubbed.
+wait 300
+shot playing
+wait 400
+shot playing_later

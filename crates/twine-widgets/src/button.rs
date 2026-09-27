@@ -45,14 +45,55 @@ pub static BUTTON_CLASS: WidgetClass = WidgetClass::new("button")
 /// h.engine_mut().with_widget_mut(b, |w: &mut Button, cx| w.set_checkable(cx, true));
 /// assert!(h.engine().has_flag(b, ObjFlags::CHECKABLE));
 /// ```
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct Button;
+///
+/// Widgets that LVGL derives from the button (a list button, a message box footer button)
+/// are buttons with their own class: [`Button::with_class`].
+#[derive(Clone, Copy, Debug)]
+pub struct Button {
+    class: &'static WidgetClass,
+}
+
+impl Default for Button {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for Button {
+    fn eq(&self, other: &Self) -> bool {
+        core::ptr::eq(self.class, other.class)
+    }
+}
+
+impl Eq for Button {}
+
+impl core::hash::Hash for Button {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        core::ptr::hash(self.class, state);
+    }
+}
 
 impl Button {
     /// A button widget (insert it with `Engine::create` or use [`create`]).
     #[must_use]
     pub const fn new() -> Self {
-        Button
+        Self::with_class(&BUTTON_CLASS)
+    }
+
+    /// A button of another class: an LVGL subclass of the button that only changes the class
+    /// (its name for themes and queries, flags, focus group default), e.g. `"list_button"`.
+    ///
+    /// ```
+    /// use twine_engine::{Widget, WidgetClass};
+    /// use twine_widgets::button::{BUTTON_CLASS, Button};
+    /// static LIST_BUTTON: WidgetClass = WidgetClass::new("list_button")
+    ///     .parts(BUTTON_CLASS.parts)
+    ///     .default_flags(BUTTON_CLASS.default_flags);
+    /// assert_eq!(Button::with_class(&LIST_BUTTON).class().name, "list_button");
+    /// ```
+    #[must_use]
+    pub const fn with_class(class: &'static WidgetClass) -> Self {
+        Self { class }
     }
 
     /// Makes the button toggle `State::CHECKED` on click (the `CHECKABLE` flag). Idempotent.
@@ -74,7 +115,7 @@ impl Button {
 
 impl Widget for Button {
     fn class(&self) -> &'static WidgetClass {
-        &BUTTON_CLASS
+        self.class
     }
 }
 
@@ -84,5 +125,5 @@ impl Widget for Button {
 /// # Errors
 /// [`EngineError::NodeNotFound`] if `parent` does not exist (logged).
 pub fn create(engine: &mut Engine, parent: NodeId) -> Result<NodeId, EngineError> {
-    engine.create(parent, Box::new(Button))
+    engine.create(parent, Box::new(Button::new()))
 }

@@ -248,15 +248,30 @@ impl ThemeHook for DefaultTheme {
             return;
         }
         match class.name {
+            // Lines 758-808: tabview pages (the content and the bar have their own classes).
+            "obj" if cx.grandparent_class().is_some_and(|c| c.name == "tabview") => {
+                cx.add_style(Selector::MAIN, s.pad_normal.clone());
+                cx.add_style(Selector::MAIN, s.rotary_scroll.clone());
+                cx.add_style(scrollbar, s.scrollbar.clone());
+                cx.add_style(scrolled, s.scrollbar_scrolled.clone());
+            }
             "obj" => {
-                // NOTE(P19.S04): tabview content/pages, window header/content and calendar
-                // children branch before the card styles here, as in LVGL.
+                // NOTE(P20.S03): calendar children branch before the card styles here, as in
+                // LVGL.
                 cx.add_style(Selector::MAIN, s.card.clone());
                 cx.add_style(scrollbar, s.scrollbar.clone());
                 cx.add_style(scrolled, s.scrollbar_scrolled.clone());
             }
+            // Lines 815-826: a button in a tabview's bar.
+            "button" if cx.parent_class().is_some_and(|c| c.name == "tabview_tab_bar") => {
+                cx.add_style(Selector::state(State::PRESSED), s.pressed.clone());
+                cx.add_style(Selector::state(State::CHECKED), s.bg_color_primary_muted.clone());
+                cx.add_style(Selector::state(State::CHECKED), s.tab_btn.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.outline_primary.clone());
+                cx.add_style(Selector::state(State::EDITED), s.outline_secondary.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.tab_bg_focus.clone());
+            }
             "button" => {
-                // NOTE(P19.S04): tabview header buttons and menu header buttons branch here.
                 cx.add_style(Selector::MAIN, s.btn.clone());
                 cx.add_style(Selector::MAIN, s.bg_color_primary.clone());
                 cx.add_style(Selector::MAIN, s.transition_delayed.clone());
@@ -267,6 +282,130 @@ impl ThemeHook for DefaultTheme {
                 cx.add_style(Selector::state(State::PRESSED), s.grow.clone());
                 cx.add_style(Selector::state(State::CHECKED), s.bg_color_secondary.clone());
                 cx.add_style(Selector::state(State::DISABLED), s.disabled.clone());
+                // Lines 840-845: the back buttons of a menu's headers.
+                let menu_header = cx.parent_class().is_some_and(|c| {
+                    matches!(
+                        c.name,
+                        "menu_sidebar_header_container" | "menu_main_header_container"
+                    )
+                });
+                if menu_header {
+                    cx.add_style(Selector::MAIN, s.menu_header_btn.clone());
+                    cx.add_style(Selector::state(State::PRESSED), s.menu_pressed.clone());
+                }
+            }
+            // Lines 1092-1111.
+            "list" => {
+                cx.add_style(Selector::MAIN, s.card.clone());
+                cx.add_style(Selector::MAIN, s.list_bg.clone());
+                cx.add_style(scrollbar, s.scrollbar.clone());
+                cx.add_style(scrolled, s.scrollbar_scrolled.clone());
+            }
+            "list_text" => {
+                cx.add_style(Selector::MAIN, s.bg_color_grey.clone());
+                cx.add_style(Selector::MAIN, s.list_item_grow.clone());
+            }
+            "list_button" => {
+                cx.add_style(Selector::MAIN, s.bg_color_white.clone());
+                cx.add_style(Selector::MAIN, s.list_btn.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.bg_color_primary.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.list_item_grow.clone());
+                cx.add_style(Selector::state(State::PRESSED), s.list_item_grow.clone());
+                cx.add_style(Selector::state(State::PRESSED), s.pressed.clone());
+            }
+            // Lines 1113-1149.
+            "menu" => {
+                cx.add_style(Selector::MAIN, s.card.clone());
+                cx.add_style(Selector::MAIN, s.menu_bg.clone());
+            }
+            "menu_sidebar_container" => {
+                cx.add_style(Selector::MAIN, s.menu_sidebar_cont.clone());
+                cx.add_style(scrollbar, s.scrollbar.clone());
+                cx.add_style(scrolled, s.scrollbar_scrolled.clone());
+            }
+            "menu_main_container" => {
+                cx.add_style(Selector::MAIN, s.menu_main_cont.clone());
+                cx.add_style(scrollbar, s.scrollbar.clone());
+                cx.add_style(scrolled, s.scrollbar_scrolled.clone());
+            }
+            "menu_cont" => {
+                cx.add_style(Selector::MAIN, s.menu_cont.clone());
+                cx.add_style(Selector::state(State::PRESSED), s.menu_pressed.clone());
+                cx.add_style(
+                    Selector::state(State::PRESSED | State::CHECKED),
+                    s.bg_color_primary_muted.clone(),
+                );
+                cx.add_style(Selector::state(State::CHECKED), s.bg_color_primary_muted.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.bg_color_primary.clone());
+            }
+            "menu_sidebar_header_container" | "menu_main_header_container" => {
+                cx.add_style(Selector::MAIN, s.menu_header_cont.clone());
+            }
+            "menu_page" => {
+                cx.add_style(Selector::MAIN, s.menu_page.clone());
+                cx.add_style(scrollbar, s.scrollbar.clone());
+                cx.add_style(scrolled, s.scrollbar_scrolled.clone());
+            }
+            "menu_section" => cx.add_style(Selector::MAIN, s.menu_section.clone()),
+            "menu_separator" => cx.add_style(Selector::MAIN, s.menu_separator.clone()),
+            // Lines 1151-1189.
+            "msgbox" => {
+                cx.add_style(Selector::MAIN, s.card.clone());
+                cx.add_style(Selector::MAIN, s.pad_zero.clone());
+                cx.add_style(Selector::MAIN, s.clip_corner.clone());
+            }
+            "msgbox_backdrop" => cx.add_style(Selector::MAIN, s.msgbox_backdrop_bg.clone()),
+            "msgbox_header" => {
+                cx.add_style(Selector::MAIN, s.pad_small.clone());
+                cx.add_style(Selector::MAIN, s.bg_color_grey.clone());
+            }
+            "msgbox_footer" => cx.add_style(Selector::MAIN, s.pad_small.clone()),
+            "msgbox_content" => {
+                cx.add_style(scrollbar, s.scrollbar.clone());
+                cx.add_style(scrolled, s.scrollbar_scrolled.clone());
+                cx.add_style(Selector::MAIN, s.pad_small.clone());
+            }
+            "msgbox_header_button" | "msgbox_footer_button" => {
+                cx.add_style(Selector::MAIN, s.btn.clone());
+                cx.add_style(Selector::MAIN, s.bg_color_primary.clone());
+                cx.add_style(Selector::MAIN, s.transition_delayed.clone());
+                cx.add_style(Selector::state(State::PRESSED), s.pressed.clone());
+                cx.add_style(Selector::state(State::PRESSED), s.transition_normal.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.outline_primary.clone());
+                cx.add_style(Selector::state(State::CHECKED), s.bg_color_secondary.clone());
+                cx.add_style(Selector::state(State::DISABLED), s.disabled.clone());
+            }
+            // Lines 1200-1210.
+            "tileview" => {
+                cx.add_style(Selector::MAIN, s.scr.clone());
+                cx.add_style(scrollbar, s.scrollbar.clone());
+                cx.add_style(scrolled, s.scrollbar_scrolled.clone());
+            }
+            "tileview_tile" => {
+                cx.add_style(scrollbar, s.scrollbar.clone());
+                cx.add_style(scrolled, s.scrollbar_scrolled.clone());
+            }
+            // Lines 1212-1217 and 760-771: the tabview, its bar (the content has no style).
+            "tabview" => {
+                cx.add_style(Selector::MAIN, s.scr.clone());
+                cx.add_style(Selector::MAIN, s.pad_zero.clone());
+            }
+            "tabview_tab_bar" => {
+                cx.add_style(Selector::MAIN, s.bg_color_white.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.outline_primary.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.tab_bg_focus.clone());
+            }
+            // Lines 783-797 and 1219-1223: the window, its header and content.
+            "win" => cx.add_style(Selector::MAIN, s.clip_corner.clone()),
+            "win_header" => {
+                cx.add_style(Selector::MAIN, s.bg_color_grey.clone());
+                cx.add_style(Selector::MAIN, s.pad_tiny.clone());
+            }
+            "win_content" => {
+                cx.add_style(Selector::MAIN, s.scr.clone());
+                cx.add_style(Selector::MAIN, s.pad_normal.clone());
+                cx.add_style(scrollbar, s.scrollbar.clone());
+                cx.add_style(scrolled, s.scrollbar_scrolled.clone());
             }
             // Lines 850-854.
             "line" => cx.add_style(Selector::MAIN, s.line.clone()),
@@ -345,7 +484,7 @@ impl ThemeHook for DefaultTheme {
             "led" => cx.add_style(Selector::MAIN, s.led.clone()),
             // Lines 856-883.
             "buttonmatrix" => {
-                // NOTE(P19.S04): calendar button matrices branch here, as in LVGL.
+                // NOTE(P20.S03): calendar button matrices branch here, as in LVGL.
                 let items = Selector::part(Part::Items);
                 cx.add_style(Selector::MAIN, s.card.clone());
                 cx.add_style(Selector::state(State::FOCUS_KEY), s.outline_primary.clone());
@@ -408,12 +547,53 @@ impl ThemeHook for DefaultTheme {
                 cx.add_style(Selector::state(State::EDITED), s.outline_secondary.clone());
                 cx.add_style(Selector::part(Part::Cursor), s.bg_color_primary.clone());
             }
+            // Lines 978-988.
+            "roller" => {
+                cx.add_style(Selector::MAIN, s.card.clone());
+                cx.add_style(Selector::MAIN, s.anim.clone());
+                cx.add_style(Selector::MAIN, s.line_space_large.clone());
+                cx.add_style(Selector::MAIN, s.text_align_center.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.outline_primary.clone());
+                cx.add_style(Selector::state(State::EDITED), s.outline_secondary.clone());
+                cx.add_style(Selector::part(Part::Selected), s.bg_color_primary.clone());
+            }
+            // Lines 990-1004.
+            "dropdown" => {
+                cx.add_style(Selector::MAIN, s.card.clone());
+                cx.add_style(Selector::MAIN, s.pad_small.clone());
+                cx.add_style(Selector::MAIN, s.transition_delayed.clone());
+                cx.add_style(Selector::state(State::PRESSED), s.transition_normal.clone());
+                cx.add_style(Selector::state(State::PRESSED), s.pressed.clone());
+                cx.add_style(Selector::state(State::FOCUS_KEY), s.outline_primary.clone());
+                cx.add_style(Selector::state(State::EDITED), s.outline_secondary.clone());
+                cx.add_style(Selector::part(Part::Indicator), s.transition_normal.clone());
+                cx.add_style(Selector::state(State::DISABLED), s.disabled.clone());
+            }
+            // Lines 1001-1012.
+            "dropdown_list" => {
+                let sel = Selector::part(Part::Selected);
+                cx.add_style(Selector::MAIN, s.card.clone());
+                cx.add_style(Selector::MAIN, s.clip_corner.clone());
+                cx.add_style(Selector::MAIN, s.line_space_large.clone());
+                cx.add_style(Selector::MAIN, s.dropdown_list.clone());
+                cx.add_style(scrollbar, s.scrollbar.clone());
+                cx.add_style(scrolled, s.scrollbar_scrolled.clone());
+                cx.add_style(sel, s.bg_color_white.clone());
+                cx.add_style(sel.with_state(State::CHECKED), s.bg_color_primary.clone());
+                cx.add_style(sel.with_state(State::PRESSED), s.pressed.clone());
+            }
             // Lines 1086-1090: a label inside a textarea (an exact type check: not a spinbox's).
             "label" if cx.parent_class().is_some_and(|c| c.name == "textarea") => {
                 cx.add_style(Selector::part(Part::Selected), s.bg_color_primary.clone());
             }
             // LVGL styles neither image buttons, animated images nor span groups.
-            "label" | "image" | "imagebutton" | "animimg" | "spangroup" | "buttonmatrix_popover" => {}
+            "label"
+            | "image"
+            | "imagebutton"
+            | "animimg"
+            | "spangroup"
+            | "buttonmatrix_popover"
+            | "tabview_content" => {}
             other => {
                 twine_core::trace!(target: "twine::style", "default theme: no styles for class {}", other);
             }

@@ -17,7 +17,7 @@ use twine_reactive::{
 
 use crate::access::{EffectCx, EngineAccess};
 use crate::build::BuildCx;
-use crate::hooks::UiDisplay;
+use crate::hooks::{StyleAnchor, UiDisplay};
 use crate::view::View;
 
 /// Messages delivered per channel per update (the rest waits for the next update, which is
@@ -100,6 +100,8 @@ impl UiCore {
     pub fn mount<V: View>(engine: &mut Engine, display: DisplayId, app: impl FnOnce(Scope) -> V) -> UiCore {
         let root = create_root();
         root.provide(UiDisplay(display));
+        let anchor = StyleAnchor::default();
+        root.provide(anchor.clone());
         let parent = engine.active_screen(display);
         EngineAccess::provide(engine, || {
             batch(|| {
@@ -115,7 +117,7 @@ impl UiCore {
                         r
                     };
                     let mut cx = BuildCx::new(e, parent, root);
-                    view.build(&mut cx);
+                    anchor.set(view.build(&mut cx));
                 });
             });
         });

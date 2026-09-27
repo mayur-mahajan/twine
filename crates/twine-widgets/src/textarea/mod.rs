@@ -12,7 +12,7 @@ use twine_engine::{
     WidgetCx,
 };
 use twine_style::{Align, Length, Part, PropId, Selector, StyleProp, TextAlign};
-use twine_text::{TextDrawFlags, symbols};
+use twine_text::{TextDir, TextDrawFlags, symbols};
 
 use crate::label::{self, Label, LabelText};
 use crate::spinbox::Spinbox;
@@ -681,7 +681,9 @@ impl Textarea {
         let mut letter_w = font.advance_px(printable(letter), None);
         let mut pos = l.letter_pos(&lm, byte);
         let label_c = e.content_area(self.label);
-        let align = lm.text_dsc(Part::Main).align;
+        let dsc = lm.text_dsc(Part::Main);
+        let rtl = dsc.base_dir.resolved(shown) == TextDir::Rtl;
+        let align = dsc.align.resolve(if rtl { TextDir::Rtl } else { TextDir::Ltr });
         // The cursor out of the text on the right is drawn at the start of the next line.
         if label_c.x0 + pos.x + letter_w > label_c.x1 - 1 && !self.one_line && align != TextAlign::Right {
             pos.x = 0;
@@ -696,10 +698,12 @@ impl Textarea {
         let (top, bottom) = (pad.top + bw, pad.bottom + bw);
         let (left, right) = (pad.left + bw, pad.right + bw);
         let ls = lm.style_i32(Part::Main, PropId::TextLetterSpace);
+        // In right-to-left text the character after the cursor is on its left.
+        let x0 = if rtl { pos.x - letter_w } else { pos.x };
         let area = Rect::new(
-            pos.x - left - ls / 2,
+            x0 - left - ls / 2,
             pos.y - top,
-            pos.x + right + letter_w + (ls + 1) / 2,
+            x0 + right + letter_w + (ls + 1) / 2,
             pos.y + bottom + letter_h,
         );
         self.cursor.shown_byte = byte;
@@ -753,10 +757,18 @@ impl Textarea {
         let lc = e.content_area(self.label);
         let rel = Point::new(p.x - lc.x0, p.y - lc.y0);
         let shown = l.shown_text();
+        // Left of the text is its start in left-to-right text and its end in right-to-left.
+        let mcx = MeasureCx::new(e, self.label);
+        let rtl = mcx.text_dsc(Part::Main).base_dir.resolved(shown) == TextDir::Rtl;
+        let (left, right) = if rtl {
+            (shown.chars().count(), 0)
+        } else {
+            (0, shown.chars().count())
+        };
         if rel.x < 0 {
-            (0, true)
+            (left, true)
         } else if rel.x >= lc.width() {
-            (shown.chars().count(), true)
+            (right, true)
         } else {
             let b = l.letter_on(&MeasureCx::new(e, self.label), rel);
             let outside = rel.y < 0 || rel.y >= lc.height();
@@ -900,6 +912,11 @@ impl Textarea {
         };
         e.set_width(label, Length::Pct(100));
         e.align(label, Align::TopLeft, 0, 0);
+        // The cursor indexes the logical text: no contextual forms (as LVGL's textarea).
+        #[cfg(feature = "arabic-shaping")]
+        e.with_widget_mut(label, |l: &mut crate::label::Label, lcx| {
+            l.set_shaping(lcx, false);
+        });
         for code in [EventCode::SizeChanged, EventCode::StyleChanged] {
             e.add_event_handler(label, EventFilter::Code(code), move |cx, ev| {
                 if ev.target == cx.node() {

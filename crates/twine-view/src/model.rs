@@ -85,7 +85,9 @@ impl<T: 'static> IntoModel<Option<T>> for Option<T> {
 /// event handler carry the new value in its parameter) and writes it back with
 /// `set_if_changed`. The widget setter's
 /// idempotency ends the round trip (the binding re-runs once and changes nothing).
-pub(crate) fn bind_model<T: PartialEq + Clone + 'static>(
+///
+/// Public for widget crates outside this one (e.g. `twine-lottie`'s `.frame(..)`).
+pub fn bind_model<T: PartialEq + Clone + 'static>(
     cx: &mut BuildCx<'_>,
     node: NodeId,
     model: Model<T>,
@@ -176,7 +178,8 @@ pub(crate) fn bind_model_synced<T: PartialEq + Clone + 'static>(
 }
 
 /// The value an event carries as [`EventParam::Value`](twine_engine::EventParam::Value).
-pub(crate) fn event_value(ev: &Event) -> Option<i32> {
+#[must_use]
+pub fn event_value(ev: &Event) -> Option<i32> {
     match ev.param {
         twine_engine::EventParam::Value(v) => Some(v),
         _ => None,

@@ -10,7 +10,7 @@ use twine_engine::{
 use twine_image::ImageSource;
 use twine_render::{BlendMode, BorderSide, Gradient, ShadowDsc};
 use twine_style::{
-    Align, Dir, GridAlign, Length, ScrollSnap, ScrollbarMode, Selector, Style, StyleProp, StyleRef,
+    Align, BaseDir, Dir, GridAlign, Length, ScrollSnap, ScrollbarMode, Selector, Style, StyleProp, StyleRef,
     TransitionDsc,
 };
 use twine_text::{Font, TextAlign, TextDecor};
@@ -451,6 +451,9 @@ pub trait ViewExt: View + Sized {
         line_space: i32 => TextLineSpace;
         /// Underline / strikethrough (inherited).
         text_decor: TextDecor => TextDecor;
+        /// Base direction (inherited): `Rtl` right-aligns and reorders text (feature `bidi`)
+        /// and mirrors flex rows and grid columns.
+        base_dir: BaseDir => BaseDir;
     }
 
     // ---- Visual -------------------------------------------------------------------------

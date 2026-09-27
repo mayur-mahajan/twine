@@ -71,6 +71,7 @@ impl ImageEntry {
             name: self.name.clone(),
             out: PathBuf::from(OUT_DIR).join(format!("{}.rs", self.file)),
             crate_path: "twine_image".into(),
+            bin: false,
         })
     }
 }

@@ -1,0 +1,23 @@
+# Headless tour of selection (cargo xtask sim-smoke): open the dropdown and pick "Cairo" (the
+# roller spins to it), swipe to the Lists tab and on to the Tiles tab, then open the About box
+# with the "i" button and close it with its close button.
+wait 300
+shot pickers
+tap 73 112
+wait 300
+shot dropdown_open
+tap 73 185
+wait 500
+shot city_picked
+drag 260 200 40 200 250
+wait 800
+shot lists
+drag 260 200 40 200 250
+wait 800
+shot tiles
+tap 298 20
+wait 400
+shot about_open
+tap 258 63
+wait 400
+shot about_closed

@@ -15,6 +15,7 @@ instead of panicking.
 | `fuzz_rle` | LVGL RLE decompression (block size and output size from the first byte) |
 | `fuzz_lz4` | LZ4 block decompression |
 | `svg_parse` | SVG parser (`parse_svg`); documents that parse are rendered into a 32 × 32 buffer |
+| `path_raster` | path building (lines, curves, arcs, circles with extreme coordinates), transforms, strokes (joins, caps, dashes) and both fill rules, rasterized into 64 × 64 whole and in two chunks (the chunks must match the whole draw) |
 | `lottie_load` | Lottie loader (`load`); compositions that load are rendered (3 frames) into a 32 × 32 buffer |
 
 This directory is its own Cargo workspace (fuzzing needs nightly Rust and sanitizers).

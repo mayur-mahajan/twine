@@ -97,6 +97,7 @@ extern crate alloc;
 #[cfg(any(test, feature = "std"))]
 extern crate std;
 
+mod accel;
 mod anim;
 mod config;
 mod display;
@@ -105,6 +106,7 @@ mod draw_dsc;
 mod engine;
 mod error;
 mod event;
+mod files;
 mod flags;
 pub mod gridnav;
 mod group;
@@ -114,6 +116,7 @@ mod input;
 mod invalidate;
 mod layout;
 mod obj;
+mod outside;
 #[cfg(feature = "perf-monitor")]
 mod perf_overlay;
 mod refresh;
@@ -125,6 +128,8 @@ mod scrollbar;
 mod stats;
 mod style_cache;
 mod style_list;
+#[cfg(feature = "svg")]
+mod svg;
 mod theme_hook;
 mod transition;
 mod tree;
@@ -139,6 +144,8 @@ pub use draw_dsc::RectStyle;
 pub use engine::Engine;
 pub use error::{EngineError, InvariantError};
 pub use event::{Event, EventCode, EventCx, EventParam, EventResult, EventText};
+#[cfg(feature = "fs")]
+pub use files::VfsFileSource;
 pub use flags::{LayoutDirty, ObjFlags, flag_names};
 pub use gridnav::GridnavCtrl;
 pub use group::{EdgeCb, FocusCb, GroupId, MAX_GROUPS, RefocusPolicy};

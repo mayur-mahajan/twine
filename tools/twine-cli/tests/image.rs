@@ -44,6 +44,7 @@ fn opts(format: ColorFormat, compress: CompressArg) -> ImageOptions {
         name: "TEST".into(),
         out: "test.rs".into(),
         crate_path: "twine_image".into(),
+        bin: false,
     }
 }
 
@@ -242,5 +243,55 @@ fn cli_writes_files_and_info_reads_them() {
         .output()
         .unwrap();
     assert!(!bad.status.success());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `twine image --bin` writes a `.tbin` file; decoded by the registry (as the engine does for
+/// `ImageSource::File`) it renders exactly like the static image of the same conversion.
+#[test]
+fn tbin_roundtrip_via_cli_output() {
+    let dir = std::env::temp_dir().join(format!("twine-image-tbin-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let png = dir.join("in.png");
+    image::RgbaImage::from_raw(W, H, pattern(8))
+        .unwrap()
+        .save(&png)
+        .unwrap();
+    let registry = twine_image::DecoderRegistry::with_defaults();
+    for (format, compress) in [
+        ("rgb565", "none"),
+        ("argb8888", "rle"),
+        ("rgb565a8", "lz4"),
+        ("i4", "rle"),
+    ] {
+        let out = dir.join(format!("{format}-{compress}.tbin"));
+        let st = std::process::Command::new(env!("CARGO_BIN_EXE_twine"))
+            .args(["image", "--in"])
+            .arg(&png)
+            .args(["--format", format, "--compress", compress, "--bin", "--out"])
+            .arg(&out)
+            .status()
+            .unwrap();
+        assert!(st.success(), "{format} {compress}");
+        let file = std::fs::read(&out).unwrap();
+        assert_eq!(&file[..4], b"TWIN");
+        let mut decoded = Vec::new();
+        let header = registry.decode(&file, &mut decoded).unwrap();
+        let method = match compress {
+            "rle" => CompressArg::Rle,
+            "lz4" => CompressArg::Lz4,
+            _ => CompressArg::None,
+        };
+        let cf = twine_cli::image::parse_format(format).unwrap();
+        let g = generate_rgba(&pattern(8), W, H, "", &opts(cf, method)).unwrap();
+        let mut static_header = g.header;
+        static_header.flags.remove(ImageFlags::COMPRESSED);
+        assert_eq!(header, static_header, "{format} {compress}");
+        assert_eq!(
+            render(header, &decoded),
+            render(static_header, &g.data),
+            "{format} {compress}"
+        );
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

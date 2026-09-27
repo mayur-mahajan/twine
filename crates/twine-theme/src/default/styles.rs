@@ -10,7 +10,7 @@ use twine_style::{BorderSide, PropId, RADIUS_CIRCLE, StyleBuf, TextAlign, Transi
 use twine_text::Font;
 
 use super::{DisplaySize, ThemeMode, colors};
-use crate::{Palette, dpx};
+use crate::{DPI_DEF, Palette, dpx};
 
 /// `LV_THEME_DEFAULT_TRANSITION_TIME` (80 ms in `lv_conf_template.h`).
 pub const TRANSITION_TIME: Duration = Duration::ms(80);
@@ -100,6 +100,23 @@ pub struct Styles {
     pub ta_cursor: Rc<StyleBuf>,
     pub ta_placeholder: Rc<StyleBuf>,
     pub keyboard_button_bg: Rc<StyleBuf>,
+    pub dropdown_list: Rc<StyleBuf>,
+    pub menu_bg: Rc<StyleBuf>,
+    pub menu_section: Rc<StyleBuf>,
+    pub menu_cont: Rc<StyleBuf>,
+    pub menu_sidebar_cont: Rc<StyleBuf>,
+    pub menu_main_cont: Rc<StyleBuf>,
+    pub menu_header_cont: Rc<StyleBuf>,
+    pub menu_header_btn: Rc<StyleBuf>,
+    pub menu_page: Rc<StyleBuf>,
+    pub menu_pressed: Rc<StyleBuf>,
+    pub menu_separator: Rc<StyleBuf>,
+    pub msgbox_backdrop_bg: Rc<StyleBuf>,
+    pub tab_btn: Rc<StyleBuf>,
+    pub tab_bg_focus: Rc<StyleBuf>,
+    pub list_bg: Rc<StyleBuf>,
+    pub list_btn: Rc<StyleBuf>,
+    pub list_item_grow: Rc<StyleBuf>,
 }
 
 fn pad_all(s: StyleBuf, v: i32) -> StyleBuf {
@@ -400,6 +417,84 @@ impl Styles {
                 radius_default
             });
 
+        // #if LV_USE_DROPDOWN (lines 408-411)
+        // lv_style_set_max_height(&dropdown_list, LV_DPI_DEF * 2): a constant, not scaled
+        let dropdown_list = StyleBuf::new().max_height(i32::from(DPI_DEF) * 2);
+
+        // #if LV_USE_MENU (lines 460-519)
+        let menu_bg = pad_gap(pad_all(StyleBuf::new(), 0), 0) // lv_style_set_pad_all / pad_gap(&menu_bg, 0)
+            .radius(0) // lv_style_set_radius(&menu_bg, 0)
+            .clip_corner(true) // lv_style_set_clip_corner(&menu_bg, true)
+            .border_side(BorderSide::NONE); // lv_style_set_border_side(&menu_bg, LV_BORDER_SIDE_NONE)
+        let menu_section = StyleBuf::new()
+            .radius(radius_default) // lv_style_set_radius(&menu_section, RADIUS_DEFAULT)
+            .clip_corner(true) // lv_style_set_clip_corner(&menu_section, true)
+            .bg_opa(Opa::COVER) // lv_style_set_bg_opa(&menu_section, LV_OPA_COVER)
+            .bg_color(color_card) // lv_style_set_bg_color(&menu_section, theme->color_card)
+            .text_color(color_text); // lv_style_set_text_color(&menu_section, theme->color_text)
+        // lv_style_set_pad_hor / pad_ver / pad_gap(&menu_cont, PAD_SMALL)
+        let menu_cont = pad_gap(pad_all(StyleBuf::new(), pad_small_v), pad_small_v)
+            .border_width(d(1)) // lv_style_set_border_width(&menu_cont, LV_DPX_CALC(dpi, 1))
+            .border_opa(Opa::P10) // lv_style_set_border_opa(&menu_cont, LV_OPA_10)
+            .border_color(color_text) // lv_style_set_border_color(&menu_cont, theme->color_text)
+            .border_side(BorderSide::NONE); // lv_style_set_border_side(&menu_cont, LV_BORDER_SIDE_NONE)
+        let menu_sidebar_cont = pad_gap(pad_all(StyleBuf::new(), 0), 0) // pad_all / pad_gap 0
+            .border_width(d(1)) // lv_style_set_border_width(&menu_sidebar_cont, LV_DPX_CALC(dpi, 1))
+            .border_opa(Opa::P10) // lv_style_set_border_opa(&menu_sidebar_cont, LV_OPA_10)
+            .border_color(color_text) // lv_style_set_border_color(&menu_sidebar_cont, theme->color_text)
+            .border_side(BorderSide::RIGHT); // lv_style_set_border_side(&menu_sidebar_cont, LV_BORDER_SIDE_RIGHT)
+        // lv_style_set_pad_all / pad_gap(&menu_main_cont, 0)
+        let menu_main_cont = pad_gap(pad_all(StyleBuf::new(), 0), 0);
+        // lv_style_set_pad_hor(&menu_header_cont, PAD_SMALL), pad_ver(PAD_TINY), pad_gap(PAD_SMALL)
+        let menu_header_cont = pad_gap(StyleBuf::new(), pad_small_v)
+            .pad_left(pad_small_v)
+            .pad_right(pad_small_v)
+            .pad_top(pad_tiny_v)
+            .pad_bottom(pad_tiny_v);
+        // lv_style_set_pad_hor / pad_ver(&menu_header_btn, PAD_TINY)
+        let menu_header_btn = pad_all(StyleBuf::new(), pad_tiny_v)
+            .shadow_opa(Opa::TRANSP) // lv_style_set_shadow_opa(&menu_header_btn, LV_OPA_TRANSP)
+            .bg_opa(Opa::TRANSP) // lv_style_set_bg_opa(&menu_header_btn, LV_OPA_TRANSP)
+            .text_color(color_text); // lv_style_set_text_color(&menu_header_btn, theme->color_text)
+        // lv_style_set_pad_hor(&menu_page, 0), pad_gap(0)
+        let menu_page = pad_gap(StyleBuf::new(), 0).pad_left(0).pad_right(0);
+        let menu_pressed = StyleBuf::new()
+            .bg_opa(Opa::P20) // lv_style_set_bg_opa(&menu_pressed, LV_OPA_20)
+            .bg_color(Palette::Grey.main()); // lv_style_set_bg_color(&menu_pressed, lv_palette_main(GREY))
+        let menu_separator = StyleBuf::new()
+            .bg_opa(Opa::TRANSP) // lv_style_set_bg_opa(&menu_separator, LV_OPA_TRANSP)
+            .pad_top(pad_tiny_v) // lv_style_set_pad_ver(&menu_separator, PAD_TINY)
+            .pad_bottom(pad_tiny_v);
+
+        // #if LV_USE_MSGBOX (lines 560-564)
+        let msgbox_backdrop_bg = StyleBuf::new()
+            .bg_color(Palette::Grey.main()) // lv_style_set_bg_color(&msgbox_backdrop_bg, lv_palette_main(GREY))
+            .bg_opa(Opa::P50); // lv_style_set_bg_opa(&msgbox_backdrop_bg, LV_OPA_50)
+
+        // #if LV_USE_TABVIEW (lines 572-581)
+        let tab_btn = StyleBuf::new()
+            .border_color(p.primary) // lv_style_set_border_color(&tab_btn, color_primary)
+            .border_width(border_width * 2) // lv_style_set_border_width(&tab_btn, BORDER_WIDTH * 2)
+            .border_side(BorderSide::BOTTOM) // lv_style_set_border_side(&tab_btn, LV_BORDER_SIDE_BOTTOM)
+            .pad_top(border_width * 2); // lv_style_set_pad_top(&tab_btn, BORDER_WIDTH * 2)
+        // lv_style_set_outline_pad(&tab_bg_focus, -BORDER_WIDTH)
+        let tab_bg_focus = StyleBuf::new().outline_pad(-border_width);
+
+        // #if LV_USE_LIST (lines 583-598)
+        let list_bg = pad_gap(StyleBuf::new(), 0) // lv_style_set_pad_gap(&list_bg, 0)
+            .pad_left(pad_def) // lv_style_set_pad_hor(&list_bg, PAD_DEF)
+            .pad_right(pad_def)
+            .pad_top(0) // lv_style_set_pad_ver(&list_bg, 0)
+            .pad_bottom(0)
+            .clip_corner(true); // lv_style_set_clip_corner(&list_bg, true)
+        let list_btn = pad_all(StyleBuf::new(), pad_small_v) // lv_style_set_pad_all(&list_btn, PAD_SMALL)
+            .border_width(d(1)) // lv_style_set_border_width(&list_btn, LV_DPX_CALC(dpi, 1))
+            .border_color(color_grey) // lv_style_set_border_color(&list_btn, theme->color_grey)
+            .border_side(BorderSide::BOTTOM) // lv_style_set_border_side(&list_btn, LV_BORDER_SIDE_BOTTOM)
+            .pad_column(pad_small_v); // lv_style_set_pad_column(&list_btn, PAD_SMALL)
+        // lv_style_set_transform_width(&list_item_grow, PAD_DEF)
+        let list_item_grow = StyleBuf::new().transform_width(pad_def);
+
         Self {
             scr: rc(scr),
             scrollbar: rc(scrollbar),
@@ -443,6 +538,23 @@ impl Styles {
             ta_cursor: rc(ta_cursor),
             ta_placeholder: rc(ta_placeholder),
             keyboard_button_bg: rc(keyboard_button_bg),
+            dropdown_list: rc(dropdown_list),
+            menu_bg: rc(menu_bg),
+            menu_section: rc(menu_section),
+            menu_cont: rc(menu_cont),
+            menu_sidebar_cont: rc(menu_sidebar_cont),
+            menu_main_cont: rc(menu_main_cont),
+            menu_header_cont: rc(menu_header_cont),
+            menu_header_btn: rc(menu_header_btn),
+            menu_page: rc(menu_page),
+            menu_pressed: rc(menu_pressed),
+            menu_separator: rc(menu_separator),
+            msgbox_backdrop_bg: rc(msgbox_backdrop_bg),
+            tab_btn: rc(tab_btn),
+            tab_bg_focus: rc(tab_bg_focus),
+            list_bg: rc(list_bg),
+            list_btn: rc(list_btn),
+            list_item_grow: rc(list_item_grow),
         }
     }
 }

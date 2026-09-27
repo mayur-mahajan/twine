@@ -73,6 +73,10 @@ enum Cmd {
         /// Fail instead of skipping an example whose target or toolchain is missing.
         #[arg(long)]
         strict: bool,
+        /// Build only this feature set: the defaults with each listed feature replacing the
+        /// default of its group (`panel-*`/`oled-*`, `touch-*`, `demo-*`).
+        #[arg(long)]
+        features: Option<String>,
     },
     /// Per-crate line coverage with thresholds (needs cargo-llvm-cov).
     Coverage,
@@ -147,7 +151,11 @@ fn main() {
             &args,
         ),
         Cmd::SimSmoke => cmd::sim::smoke(),
-        Cmd::Firmware { example, strict } => cmd::firmware::run(example.as_deref(), strict),
+        Cmd::Firmware {
+            example,
+            strict,
+            features,
+        } => cmd::firmware::run(example.as_deref(), strict, features.as_deref()),
         Cmd::Coverage => cmd::coverage::run(),
         Cmd::Bench { iai, save_baseline } => cmd::bench::run(iai, save_baseline),
         Cmd::Fonts { check } => cmd::fonts::run(check),

@@ -163,12 +163,18 @@ impl ThemeHook for SimpleTheme {
             return;
         }
         match class.name {
+            // Lines 234-247: tabview pages (the bar and the content have their own classes).
+            "obj" if cx.grandparent_class().is_some_and(|c| c.name == "tabview") => {
+                cx.add_style(Selector::MAIN, s.scr.clone());
+                cx.add_style(Selector::part(Part::Scrollbar), s.scrollbar.clone());
+            }
+            "tabview_tab_bar" | "tabview_content" => cx.add_style(Selector::MAIN, s.scr.clone()),
             "obj" => {
-                // NOTE(P19.S04): tabview and window children branch here, as in LVGL.
                 cx.add_style(Selector::MAIN, s.white.clone());
                 cx.add_style(Selector::part(Part::Scrollbar), s.scrollbar.clone());
             }
-            "button" => cx.add_style(Selector::MAIN, s.dark.clone()),
+            // Lines 398-409 (list buttons).
+            "button" | "list_button" => cx.add_style(Selector::MAIN, s.dark.clone()),
             // Lines 290-295.
             "bar" => {
                 cx.add_style(Selector::MAIN, s.light.clone());
@@ -210,8 +216,14 @@ impl ThemeHook for SimpleTheme {
                 cx.add_style(Selector::part(Part::Indicator), s.arc_line.clone());
             }
             // Lines 271-288.
+            "buttonmatrix"
+                if cx
+                    .parent_class()
+                    .is_some_and(|c| matches!(c.name, "msgbox" | "tabview")) =>
+            {
+                cx.add_style(Selector::part(Part::Items), s.light.clone());
+            }
             "buttonmatrix" => {
-                // NOTE(P19.S04): message box and tabview button matrices branch here.
                 cx.add_style(Selector::MAIN, s.white.clone());
                 cx.add_style(Selector::part(Part::Items), s.light.clone());
             }
@@ -238,11 +250,44 @@ impl ThemeHook for SimpleTheme {
                 cx.add_style(Selector::MAIN, s.light.clone());
                 cx.add_style(Selector::part(Part::Cursor), s.dark.clone());
             }
-            // Lines 434-437.
-            "led" => cx.add_style(Selector::MAIN, s.light.clone()),
-            // LVGL's simple theme has no line, image button or animated image branch.
-            "label" | "image" | "line" | "imagebutton" | "animimg" | "spangroup" | "buttonmatrix_popover" => {
+            // Lines 335-340.
+            "roller" => {
+                cx.add_style(Selector::MAIN, s.light.clone());
+                cx.add_style(Selector::part(Part::Selected), s.dark.clone());
             }
+            // Lines 342-352.
+            "dropdown" => cx.add_style(Selector::MAIN, s.white.clone()),
+            "dropdown_list" => {
+                cx.add_style(Selector::MAIN, s.white.clone());
+                cx.add_style(Selector::part(Part::Scrollbar), s.scrollbar.clone());
+                cx.add_style(Selector::part(Part::Selected), s.light.clone());
+                cx.add_style(
+                    Selector::part(Part::Selected).with_state(State::CHECKED),
+                    s.dark.clone(),
+                );
+            }
+            // Lines 398-409 (list) and 249-260 (a window's content).
+            "list" | "win_content" => {
+                cx.add_style(Selector::MAIN, s.light.clone());
+                cx.add_style(Selector::part(Part::Scrollbar), s.scrollbar.clone());
+            }
+            // Lines 411-416 (msgbox), 249-260 (a window's header) and 434-437 (led).
+            "msgbox" | "win_header" | "led" => cx.add_style(Selector::MAIN, s.light.clone()),
+            // Lines 424-432.
+            "tileview" => {
+                cx.add_style(Selector::MAIN, s.scr.clone());
+                cx.add_style(Selector::part(Part::Scrollbar), s.scrollbar.clone());
+            }
+            "tileview_tile" => cx.add_style(Selector::part(Part::Scrollbar), s.scrollbar.clone()),
+            // LVGL's simple theme has no line, image button or animated image branch.
+            "label"
+            | "image"
+            | "line"
+            | "imagebutton"
+            | "animimg"
+            | "spangroup"
+            | "buttonmatrix_popover"
+            | "list_text" => {}
             other => {
                 twine_core::trace!(target: "twine::style", "simple theme: no styles for class {}", other);
             }

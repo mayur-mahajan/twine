@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::cmd::{firmware, fonts, images, layers, miri, nostd, snapshots, style_props, todo};
+use crate::cmd::{firmware, fonts, images, layers, miri, nostd, sim, snapshots, style_props, todo};
 use crate::util::{R, cargo, output, run as run_cmd, warn};
 
 /// `(crate, feature)` pairs left out of the all-features clippy pass because they cannot be
@@ -33,6 +33,7 @@ pub const CLIPPY_ALL_FEATURES_EXCLUDE: &[(&str, &str)] = &[
     ("twine-engine", "defmt"),
     ("twine-theme", "defmt"),
     ("twine-widgets", "defmt"),
+    ("twine-widgets-ext", "defmt"),
     ("twine-fs", "defmt"),
     ("twine-lottie", "defmt"),
     ("twine-extra", "defmt"),
@@ -41,6 +42,8 @@ pub const CLIPPY_ALL_FEATURES_EXCLUDE: &[(&str, &str)] = &[
     // `stm32-metapac` accepts exactly one chip feature; the all-features pass keeps `stm32f429zi`.
     ("twine-accel-stm32", "stm32f746ng"),
     ("twine-accel-stm32", "stm32h743zi"),
+    // Needs SDL2; checked by the `eg-sim` stage when it is installed.
+    ("twine-examples", "eg-sim"),
 ];
 
 /// Outcome of one stage.
@@ -129,6 +132,17 @@ fn test_features() -> Result<Outcome, Box<dyn std::error::Error>> {
     run_cmd(cargo().args(["test", "-p", "twine-core", "--features", "log"]))?;
     // Layout warnings (invalid grid cells) captured through `log`.
     run_cmd(cargo().args(["test", "-p", "twine-layout", "--features", "log"]))?;
+    // SVG images: vectors with `svg`, the placeholder without it.
+    run_cmd(cargo().args(["test", "-p", "twine-widgets", "--test", "svg_image"]))?;
+    run_cmd(cargo().args([
+        "test",
+        "-p",
+        "twine-widgets",
+        "--features",
+        "svg",
+        "--test",
+        "svg_image",
+    ]))?;
     // DMA2D bit layout cross-checked against the chip PAC (DMA2D v1 and v2).
     for chip in ["stm32f429zi", "stm32h743zi"] {
         run_cmd(cargo().args(["test", "-p", "twine-accel-stm32", "--lib", "--features", chip]))?;
@@ -187,6 +201,44 @@ fn bench_build() -> Result<Outcome, Box<dyn std::error::Error>> {
     ok(run_cmd(cargo().args(["bench", "--workspace", "--no-run"])))
 }
 
+/// Builds (and lints) the examples that need SDL2; skipped with a warning without SDL2.
+fn eg_sim() -> Result<Outcome, Box<dyn std::error::Error>> {
+    let Some(lib) = sim::sdl2_lib_dir() else {
+        return Ok(Outcome::Skipped(
+            "SDL2 not found (`brew install sdl2` / `apt install libsdl2-dev`)".into(),
+        ));
+    };
+    for (example, feature) in sim::FEATURE_EXAMPLES {
+        let mut build = cargo();
+        build.args([
+            "build",
+            "-p",
+            "twine-examples",
+            "--bin",
+            example,
+            "--features",
+            feature,
+        ]);
+        sim::add_sdl2_env(&mut build, &lib);
+        run_cmd(&mut build)?;
+        let mut lint = cargo();
+        lint.args([
+            "clippy",
+            "-p",
+            "twine-examples",
+            "--bin",
+            example,
+            "--features",
+            feature,
+            "--",
+            "-D",
+            "warnings",
+        ]);
+        run_cmd(&mut lint)?;
+    }
+    Ok(Outcome::Ok)
+}
+
 fn snapshot_check() -> Result<Outcome, Box<dyn std::error::Error>> {
     if TESTS_RAN.load(Ordering::Relaxed) {
         return Ok(Outcome::Skipped("covered by the `test` stage".into()));
@@ -195,7 +247,7 @@ fn snapshot_check() -> Result<Outcome, Box<dyn std::error::Error>> {
 }
 
 fn firmware_build() -> Result<Outcome, Box<dyn std::error::Error>> {
-    ok(firmware::run(None, false))
+    ok(firmware::run(None, false, None))
 }
 
 /// `(name, runs in --quick mode, stage)`.
@@ -214,6 +266,7 @@ const STAGES: &[(&str, bool, StageFn)] = &[
     ("doc", false, doc),
     ("bench-build", false, bench_build),
     ("miri", false, miri_check),
+    ("eg-sim", true, eg_sim),
     ("snapshots", true, snapshot_check),
     ("firmware", false, firmware_build),
 ];

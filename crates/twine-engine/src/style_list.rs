@@ -11,7 +11,7 @@ use twine_style::{
 };
 use twine_text::Font;
 
-use crate::{Engine, InvalidateReason, LayoutDirty, MainStyle, NodeId, Tree, fmt_node_id};
+use crate::{Engine, EngineError, InvalidateReason, LayoutDirty, MainStyle, NodeId, Tree, fmt_node_id};
 
 /// The style entries of a node, kept sorted by priority (highest first): transitions, local
 /// styles (one per selector), normal styles (latest added first), theme styles (latest added
@@ -51,6 +51,14 @@ impl StyleList {
     #[must_use]
     pub fn entries(&self) -> &[StyleEntry] {
         &self.0
+    }
+
+    /// Releases the unused capacity, keeping room for the local-style entry when there is
+    /// none yet (local properties usually follow a node's creation).
+    pub(crate) fn shrink_to_fit(&mut self) {
+        let has_local = self.0.iter().any(|e| e.kind == EntryKind::Local);
+        let keep = self.0.len() + usize::from(!has_local);
+        self.0.shrink_to(keep);
     }
 
     /// The entries, mutably (the order must be kept).
@@ -121,8 +129,9 @@ impl StyleSource for Tree {
         self.node(id).map_or(State::DEFAULT, crate::Node::state)
     }
 
+    /// The style parent: inheritance follows [`Tree::style_parent`] links.
     fn parent(&self, id: NodeId) -> Option<NodeId> {
-        Tree::parent(self, id)
+        Tree::style_parent(self, id)
     }
 }
 
@@ -458,6 +467,42 @@ impl Engine {
         while let Some(c) = next {
             self.invalidate_subtree(c, InvalidateReason::StyleChange);
             next = self.tree.node(c).and_then(crate::Node::next_sibling);
+        }
+        // Nodes linked to `id` or below it inherit the change too (no allocation: the links
+        // are indexed; refreshing a linked node never adds or removes links).
+        let mut i = 0;
+        while let Some((n, p)) = self.tree.style_link_at(i) {
+            i += 1;
+            if self.tree.style_chain_reaches(p, id) {
+                self.refresh_style(n, Part::Any, None);
+            }
+        }
+    }
+
+    /// Makes `id` inherit style properties (text font and color, base direction, …) from
+    /// `from` instead of its parent; `None` inherits from the parent again. For nodes created
+    /// on a display layer on behalf of a widget elsewhere: a dropdown's list inherits from
+    /// its dropdown, so a font set on the dropdown's ancestors reaches the list.
+    ///
+    /// Only style inheritance follows the link; drawing, clipping, opacity, events and layout
+    /// still use the parent. The link ends when either node is deleted. Unchanged links do
+    /// nothing; a missing node or a link that would make the chain cyclic is logged and
+    /// ignored (a move that makes a link cyclic drops it).
+    pub fn set_style_parent(&mut self, id: NodeId, from: Option<NodeId>) {
+        match self.tree.set_style_link(id, from) {
+            Ok(false) => {}
+            Ok(true) => {
+                twine_core::debug!(target: "twine::style", "{} style parent {:?}", fmt_node_id(id), from);
+                self.refresh_style(id, Part::Any, None);
+            }
+            Err(err) => {
+                let why = if matches!(err, EngineError::NodeNotFound(_)) {
+                    "missing node"
+                } else {
+                    "cyclic link"
+                };
+                twine_core::warn!(target: "twine::style", "set_style_parent({}, {:?}): {}", fmt_node_id(id), from, why);
+            }
         }
     }
 
