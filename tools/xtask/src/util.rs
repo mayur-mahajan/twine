@@ -74,6 +74,21 @@ pub fn cargo() -> Command {
     cmd
 }
 
+/// A [`cargo`] command for builds that only CI runs (feature combinations, `no_std` targets,
+/// firmware, docs, Miri, benchmarks, coverage): incremental compilation is off, because nobody
+/// edits and rebuilds these configurations repeatedly, and each keeps its own multi-GB cache.
+#[must_use]
+pub fn cargo_ci() -> Command {
+    let mut cmd = cargo();
+    no_incremental(&mut cmd);
+    cmd
+}
+
+/// Turns incremental compilation off for `cmd` (see [`cargo_ci`]).
+pub fn no_incremental(cmd: &mut Command) {
+    cmd.env("CARGO_INCREMENTAL", "0");
+}
+
 /// Whether the rustup target `t` is installed for the active toolchain.
 #[must_use]
 pub fn has_target(t: &str) -> bool {

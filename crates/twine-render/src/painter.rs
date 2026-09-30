@@ -324,7 +324,7 @@ impl<'a> Painter<'a> {
             if s.is_row_constant() {
                 let v = s.sample(map, a0, y);
                 let c = Color::hex(v);
-                let o = Opa((v >> 24) as u8).mul(opa);
+                let o = Opa::from_raw((v >> 24) as u8).mul(opa);
                 return self.span(sc, y, a0, a1, &Paint::Solid(c), o, mode, cov);
             }
         }
@@ -374,7 +374,7 @@ impl<'a> Painter<'a> {
         let Some(a) = area.intersection(&self.clip) else {
             return;
         };
-        twine_core::trace!(target: "twine::render", "fill {} {} opa {}", a, color, opa.0);
+        twine_core::trace!(target: "twine::render", "fill {} {} opa {}", a, color, opa.raw());
         if mode == BlendMode::Normal
             && self.masks.is_empty()
             && a.area() >= ACCEL_MIN_PX

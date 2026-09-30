@@ -246,6 +246,15 @@ impl Tree {
         self.nodes.len()
     }
 
+    /// Number of retired node slots: slots that used up their 65 535 generations and are
+    /// never reused ([`Arena::retired`]). Stays 0 unless the tree's working set is tiny
+    /// compared to its create/delete churn (see the arena's generation budget); a growing
+    /// value means node memory is slowly being lost to wear.
+    #[must_use]
+    pub fn retired_slots(&self) -> usize {
+        self.nodes.retired()
+    }
+
     /// Whether the tree has no nodes.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -1013,6 +1022,25 @@ mod tests {
         assert_eq!(t.parent(kids[1]), Some(root));
         assert_eq!(t.roots().collect::<Vec<_>>(), vec![root]);
         assert!(t.node(kids[0]).unwrap().flags().contains(ObjFlags::CLICKABLE));
+        t.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn retired_slots_counts_worn_out_node_slots() {
+        // A lone child churned in a tree with no other free slot reuses one slot until its
+        // generations run out; that slot then retires and the next node gets a new one.
+        let (mut t, root, mut kids) = tree_with(1);
+        let slot = kids[0].index();
+        while kids[0].generation() < u16::MAX {
+            t.delete(kids[0]).unwrap();
+            kids[0] = t.create(Some(root), obj()).unwrap();
+            assert_eq!(kids[0].index(), slot);
+        }
+        assert_eq!(t.retired_slots(), 0);
+        t.delete(kids[0]).unwrap();
+        assert_eq!(t.retired_slots(), 1);
+        let next = t.create(Some(root), obj()).unwrap();
+        assert_ne!(next.index(), slot);
         t.check_invariants().unwrap();
     }
 

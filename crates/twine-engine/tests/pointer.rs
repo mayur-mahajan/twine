@@ -301,7 +301,7 @@ fn pressed_state_redraws_only_node() {
         StyleProp::BgColor(Color::RED),
     );
     h.engine_mut()
-        .set_local_prop(b, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+        .set_local_prop(b, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
     // Focus changes from the tap do not change the look (no FOCUSED style).
     h.run_until_idle();
     h.clock().advance(Duration::ms(20));

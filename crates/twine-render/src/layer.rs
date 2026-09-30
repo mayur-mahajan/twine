@@ -39,11 +39,11 @@ pub struct LayerTransform {
 impl Default for LayerTransform {
     fn default() -> Self {
         Self {
-            rotation: Angle(0),
+            rotation: Angle::deci_deg(0),
             scale_x: Scale::ONE,
             scale_y: Scale::ONE,
-            skew_x: Angle(0),
-            skew_y: Angle(0),
+            skew_x: Angle::deci_deg(0),
+            skew_y: Angle::deci_deg(0),
             pivot: Point::ZERO,
             antialias: true,
         }
@@ -73,11 +73,11 @@ impl LayerTransform {
     /// Whether the transform changes nothing.
     #[must_use]
     pub fn is_identity(&self) -> bool {
-        self.rotation.0.rem_euclid(3600) == 0
+        self.rotation.as_deci_deg().rem_euclid(3600) == 0
             && self.scale_x == Scale::ONE
             && self.scale_y == Scale::ONE
-            && self.skew_x.0 == 0
-            && self.skew_y.0 == 0
+            && self.skew_x.as_deci_deg() == 0
+            && self.skew_y.as_deci_deg() == 0
     }
 }
 
@@ -132,7 +132,7 @@ impl Painter<'_> {
     /// let mut data = vec![0u8; 4 * 4];
     /// let buf = DrawBuf::new_packed(&mut data, ColorFormat::L8, Rect::from_xywh(0, 0, 4, 4)).unwrap();
     /// let mut p = Painter::new(buf, &mut caches);
-    /// let dsc = LayerDsc { opa: Opa(128), ..LayerDsc::default() };
+    /// let dsc = LayerDsc { opa: Opa::from_raw(128), ..LayerDsc::default() };
     /// p.layer(Rect::from_xywh(0, 0, 4, 4), &dsc, |p| {
     ///     p.fill(Rect::from_xywh(0, 0, 4, 4), Color::WHITE, Opa::COVER);
     ///     p.fill(Rect::from_xywh(0, 0, 2, 4), Color::WHITE, Opa::COVER); // overlap: not brighter

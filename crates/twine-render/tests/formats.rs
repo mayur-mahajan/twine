@@ -148,7 +148,7 @@ fn i1_buffer_thresholds_luminance() {
     h.clear(Color::BLACK);
     h.paint(|p| {
         p.fill(Rect::from_xywh(0, 0, 8, 4), Color::WHITE, Opa::COVER);
-        p.fill(Rect::from_xywh(8, 0, 8, 4), Color::WHITE, Opa(100)); // too dark: stays black
+        p.fill(Rect::from_xywh(8, 0, 8, 4), Color::WHITE, Opa::from_raw(100)); // too dark: stays black
         p.arc(
             Point::new(8, 2),
             2,

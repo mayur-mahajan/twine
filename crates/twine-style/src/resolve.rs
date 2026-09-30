@@ -182,7 +182,7 @@ fn own_value(
 }
 
 fn default_value(prop: PropId, defaults: StyleDefaults) -> StyleValue {
-    if prop == PropId::TextFont {
+    if prop == PropId::Font {
         StyleValue::Font(defaults.font)
     } else {
         prop.meta().default
@@ -432,9 +432,25 @@ macro_rules! typed_resolvers {
     )*};
 }
 
+/// [`resolve`] for integer and pixel-length properties such as paddings (`0` if unset). A
+/// density-independent length counts at the reference DPI (1 dp = 1 px); the engine converts
+/// it with the display's DPI instead.
+#[must_use]
+pub fn resolve_i32<S: StyleSource>(
+    src: &S,
+    id: S::Id,
+    part: Part,
+    prop: PropId,
+    defaults: &StyleDefaults,
+) -> i32 {
+    let v = resolve(src, id, part, prop, defaults);
+    match v.with_dpi(crate::REFERENCE_DPI).as_px() {
+        Some(px) => px,
+        None => typed(prop, v, *defaults).unwrap_or(0),
+    }
+}
+
 typed_resolvers! {
-    /// [`resolve`] for integer properties (`0` if unset).
-    resolve_i32 -> i32 = 0;
     /// [`resolve`] for length properties.
     resolve_length -> Length = Length::Px(0);
     /// [`resolve`] for color properties.
@@ -442,7 +458,7 @@ typed_resolvers! {
     /// [`resolve`] for opacity properties.
     resolve_opa -> Opa = Opa::COVER;
     /// [`resolve`] for angle properties.
-    resolve_angle -> Angle = Angle(0);
+    resolve_angle -> Angle = Angle::deci_deg(0);
     /// [`resolve`] for scale properties.
     resolve_scale -> Scale = Scale::ONE;
     /// [`resolve`] for boolean properties.
@@ -458,8 +474,8 @@ pub fn resolve_font<S: StyleSource>(
     defaults: &StyleDefaults,
 ) -> &'static Font {
     typed(
-        PropId::TextFont,
-        resolve(src, id, part, PropId::TextFont, defaults),
+        PropId::Font,
+        resolve(src, id, part, PropId::Font, defaults),
         *defaults,
     )
     .unwrap_or(defaults.font)
@@ -648,17 +664,23 @@ mod tests {
                 entry(
                     EntryKind::Normal,
                     Selector::state(*s),
-                    &[StyleProp::Radius(i as i32)],
+                    &[StyleProp::Radius(crate::Radius::Px(i as i32))],
                 )
             })
             .collect();
         let all = singles.iter().fold(State::DEFAULT, |a, s| a | *s);
         let (t, n) = one(all, entries.clone());
-        assert_eq!(resolve(&t, n, Part::Main, PropId::Radius, &D), StyleValue::Int(8));
+        assert_eq!(
+            resolve(&t, n, Part::Main, PropId::Radius, &D),
+            StyleValue::Length(Length::Px(8))
+        );
         // Order of entries does not matter.
         let rev: Vec<_> = entries.into_iter().rev().collect();
         let (t, n) = one(all, rev);
-        assert_eq!(resolve(&t, n, Part::Main, PropId::Radius, &D), StyleValue::Int(8));
+        assert_eq!(
+            resolve(&t, n, Part::Main, PropId::Radius, &D),
+            StyleValue::Length(Length::Px(8))
+        );
         // DISABLED alone beats PRESSED|CHECKED together.
         let (t, n) = one(
             State::DISABLED | State::PRESSED | State::CHECKED,
@@ -785,14 +807,14 @@ mod tests {
                 entry(
                     EntryKind::Theme,
                     Selector::MAIN,
-                    &[StyleProp::BgColor(BLUE), StyleProp::Radius(8)],
+                    &[StyleProp::BgColor(BLUE), StyleProp::Radius(crate::Radius::Px(8))],
                 ),
             ],
         );
         assert_eq!(bg(&t, n), StyleValue::Color(RED));
         assert_eq!(
             resolve(&t, n, Part::Main, PropId::Radius, &D),
-            StyleValue::Int(8),
+            StyleValue::Length(Length::Px(8)),
             "theme fills gaps"
         );
     }
@@ -804,11 +826,17 @@ mod tests {
             vec![entry(
                 EntryKind::Normal,
                 Selector::part(Part::Knob),
-                &[StyleProp::Radius(5)],
+                &[StyleProp::Radius(crate::Radius::Px(5))],
             )],
         );
-        assert_eq!(resolve(&t, n, Part::Main, PropId::Radius, &D), StyleValue::Int(0));
-        assert_eq!(resolve(&t, n, Part::Knob, PropId::Radius, &D), StyleValue::Int(5));
+        assert_eq!(
+            resolve(&t, n, Part::Main, PropId::Radius, &D),
+            StyleValue::Length(Length::Px(0))
+        );
+        assert_eq!(
+            resolve(&t, n, Part::Knob, PropId::Radius, &D),
+            StyleValue::Length(Length::Px(5))
+        );
     }
 
     #[test]
@@ -818,13 +846,13 @@ mod tests {
             vec![entry(
                 EntryKind::Normal,
                 Selector::part(Part::Any),
-                &[StyleProp::Radius(5)],
+                &[StyleProp::Radius(crate::Radius::Px(5))],
             )],
         );
         for part in [Part::Main, Part::Knob, Part::Items, Part::CustomFirst] {
             assert_eq!(
                 resolve(&t, n, part, PropId::Radius, &D),
-                StyleValue::Int(5),
+                StyleValue::Length(Length::Px(5)),
                 "{part:?}"
             );
         }
@@ -837,10 +865,13 @@ mod tests {
             vec![entry(
                 EntryKind::Normal,
                 Selector::state(State::PRESSED | State::FOCUSED),
-                &[StyleProp::Radius(5)],
+                &[StyleProp::Radius(crate::Radius::Px(5))],
             )],
         );
-        assert_eq!(resolve(&t, n, Part::Main, PropId::Radius, &D), StyleValue::Int(0));
+        assert_eq!(
+            resolve(&t, n, Part::Main, PropId::Radius, &D),
+            StyleValue::Length(Length::Px(0))
+        );
         assert_eq!(resolve_local_only(&t, n, Part::Main, PropId::Radius), None);
     }
 
@@ -929,7 +960,7 @@ mod tests {
         let d = StyleDefaults { font: &THEME_FONT };
         let (t, n) = one(State::DEFAULT, vec![]);
         assert_eq!(
-            resolve(&t, n, Part::Main, PropId::TextFont, &d),
+            resolve(&t, n, Part::Main, PropId::Font, &d),
             StyleValue::Font(&THEME_FONT)
         );
         assert!(core::ptr::eq(
@@ -978,7 +1009,7 @@ mod tests {
                 EntryKind::Normal,
                 Selector::MAIN,
                 &[
-                    StyleProp::Radius(4),
+                    StyleProp::Radius(crate::Radius::Px(4)),
                     StyleProp::Width(Length::pct(50)),
                     StyleProp::ClipCorner(true),
                 ],
@@ -994,21 +1025,21 @@ mod tests {
             resolve_color(&t, n, Part::Main, PropId::BgColor, &D),
             Color::WHITE
         );
-        assert_eq!(resolve_opa(&t, n, Part::Main, PropId::BgOpa, &D), Opa::TRANSP);
+        assert_eq!(resolve_opa(&t, n, Part::Main, PropId::BgOpacity, &D), Opa::TRANSP);
         assert_eq!(
             resolve_scale(&t, n, Part::Main, PropId::TransformScaleX, &D),
-            Scale(256)
+            Scale::from_raw_256(256)
         );
         assert_eq!(
             resolve_angle(&t, n, Part::Main, PropId::TransformRotation, &D),
-            Angle(0)
+            Angle::deci_deg(0)
         );
         assert_eq!(
             resolve_as::<crate::Align, _>(&t, n, Part::Main, PropId::Align, &D),
             Some(crate::Align::Default)
         );
         assert_eq!(
-            resolve_as::<&crate::Gradient, _>(&t, n, Part::Main, PropId::BgGrad, &D),
+            resolve_as::<&crate::Gradient, _>(&t, n, Part::Main, PropId::BgGradient, &D),
             None
         );
     }
@@ -1036,7 +1067,11 @@ mod tests {
             Some(root),
             State::PRESSED,
             vec![
-                entry(EntryKind::Local, Selector::MAIN, &[StyleProp::BgOpa(Opa::COVER)]),
+                entry(
+                    EntryKind::Local,
+                    Selector::MAIN,
+                    &[StyleProp::BgOpacity(Opa::COVER)],
+                ),
                 entry(
                     EntryKind::Normal,
                     Selector::state(State::PRESSED),
@@ -1147,7 +1182,12 @@ mod tests {
         EntryKind::Normal,
         EntryKind::Theme,
     ];
-    const PROPS: [PropId; 4] = [PropId::BgColor, PropId::Radius, PropId::TextColor, PropId::PadTop];
+    const PROPS: [PropId; 4] = [
+        PropId::BgColor,
+        PropId::Radius,
+        PropId::TextColor,
+        PropId::PaddingTop,
+    ];
 
     fn arb_state() -> impl Strategy<Value = State> {
         (0u8..32, any::<bool>()).prop_map(|(bits, any)| {
@@ -1174,9 +1214,9 @@ mod tests {
                     .into_iter()
                     .map(|(which, v)| match PROPS[which] {
                         PropId::BgColor => StyleProp::BgColor(Color::new(v as u8, 0, 0)),
-                        PropId::Radius => StyleProp::Radius(v),
+                        PropId::Radius => StyleProp::Radius(crate::Radius::Px(v)),
                         PropId::TextColor => StyleProp::TextColor(Color::new(0, v as u8, 0)),
-                        _ => StyleProp::PadTop(v),
+                        _ => StyleProp::PaddingTop(Length::Px(v)),
                     })
                     .collect();
                 entry(KINDS[k], Selector::part(PARTS[p]).with_state(s), &props)

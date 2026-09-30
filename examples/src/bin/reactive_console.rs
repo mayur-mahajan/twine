@@ -146,7 +146,7 @@ fn main() {
     assert_eq!(a.get(), 10);
 
     root.dispose();
-    let stats = twine_reactive::debug_stats();
+    let stats = twine_reactive::runtime_stats();
     println!(
         "done: {} nodes and {} scopes left after disposing the root",
         stats.nodes, stats.scopes

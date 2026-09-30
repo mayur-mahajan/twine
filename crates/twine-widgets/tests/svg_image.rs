@@ -55,13 +55,13 @@ mod with_svg {
 
     #[test]
     fn svg_scaled_2x_crisp_snapshot() {
-        let (mut h, _) = scene(STAR, |w, cx| w.set_scale(cx, Scale(512)));
+        let (mut h, _) = scene(STAR, |w, cx| w.set_scale(cx, Scale::from_raw_256(512)));
         h.assert_snapshot("svg_scaled_2x");
     }
 
     #[test]
     fn svg_rotated_snapshot() {
-        let (mut h, _) = scene(STAR, |w, cx| w.set_rotation(cx, Angle(300)));
+        let (mut h, _) = scene(STAR, |w, cx| w.set_rotation(cx, Angle::deci_deg(300)));
         h.assert_snapshot("svg_rotated_30");
     }
 
@@ -124,7 +124,7 @@ mod with_svg {
         h.engine_mut().set_local_prop(
             i,
             twine_style::Selector::MAIN,
-            twine_style::StyleProp::ImageRecolorOpa(twine_core::Opa::COVER),
+            twine_style::StyleProp::ImageRecolorOpacity(twine_core::Opa::COVER),
         );
         h.run_until_idle();
         let after = h.pixel(x, y);

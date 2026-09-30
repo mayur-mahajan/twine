@@ -4,7 +4,7 @@
 use alloc::boxed::Box;
 use core::fmt;
 
-use twine_core::ColorFormat;
+use twine_core::{ColorFormat, Symbol};
 use twine_render::ImagePixels;
 
 use crate::Error;
@@ -254,7 +254,9 @@ pub enum ImageSource {
     Encoded(&'static [u8]),
     /// A file path read through a file source.
     File(heapless::String<MAX_PATH_LEN>),
-    /// A symbol drawn as text (with the symbol font).
+    /// Text drawn with the widget's font instead of an image: usually a built-in [`Symbol`]
+    /// (`ImageSource::from(Symbol::Ok)` or [`ImageSource::symbol`]), or any `'static` text,
+    /// e.g. a glyph of an application icon font.
     Symbol(&'static str),
     /// SVG bytes, rendered by the vector renderer when enabled.
     Svg(&'static [u8]),
@@ -265,6 +267,28 @@ impl ImageSource {
     #[must_use]
     pub fn file(path: &str) -> Option<Self> {
         heapless::String::try_from(path).ok().map(ImageSource::File)
+    }
+
+    /// A built-in symbol, drawn as text with the symbol font (`const`: usable in `static`s).
+    ///
+    /// ```
+    /// use twine_image::{ImageSource, Symbol};
+    /// static CHECK: ImageSource = ImageSource::symbol(Symbol::Ok);
+    /// assert_eq!(CHECK, ImageSource::from(Symbol::Ok));
+    /// assert_eq!(CHECK, ImageSource::Symbol("\u{F00C}"));
+    /// ```
+    #[must_use]
+    #[inline]
+    pub const fn symbol(s: Symbol) -> Self {
+        ImageSource::Symbol(s.as_str())
+    }
+}
+
+impl From<Symbol> for ImageSource {
+    /// A built-in symbol: `ImageSource::from(Symbol::Close)` (no allocation).
+    #[inline]
+    fn from(s: Symbol) -> Self {
+        ImageSource::symbol(s)
     }
 }
 

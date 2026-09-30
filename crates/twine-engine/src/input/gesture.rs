@@ -1,6 +1,6 @@
 //! Swipe gestures (LVGL `indev_gesture`).
 
-use twine_style::Dir;
+use twine_style::Side;
 
 use super::{InputId, PointerProc, Timing};
 use crate::{Engine, EventCode, EventParam, ObjFlags};
@@ -31,11 +31,11 @@ impl PointerProc {
         }
         self.gesture_sent = true;
         let dir = if s.x.abs() > s.y.abs() {
-            if s.x > 0 { Dir::RIGHT } else { Dir::LEFT }
+            if s.x > 0 { Side::Right } else { Side::Left }
         } else if s.y > 0 {
-            Dir::BOTTOM
+            Side::Bottom
         } else {
-            Dir::TOP
+            Side::Top
         };
         self.gesture_dir = Some(dir);
         twine_core::debug!(target: "twine::input", "{} gesture {:?}", id, dir);

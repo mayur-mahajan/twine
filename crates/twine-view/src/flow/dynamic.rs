@@ -46,6 +46,9 @@ impl core::fmt::Debug for Dynamic {
 impl View for Dynamic {
     fn build(self, cx: &mut BuildCx<'_>) -> NodeId {
         let wrapper = cx.create(Wrapper(&DYNAMIC_CLASS));
+        if wrapper == twine_engine::DEAD_NODE {
+            return wrapper; // not created (reported); nothing to keep up to date
+        }
         let scope = cx.scope();
         let f = self.f;
         let content: Rc<RefCell<Option<Scope>>> = Rc::default();

@@ -12,7 +12,7 @@
 //!
 //! | Item | Purpose |
 //! |------|---------|
-//! | [`run`], [`run_headless`] | declarative apps (`fn app(cx: Scope) -> impl View`) with the `Ui` update cycle |
+//! | [`run`], [`run_headless`] | declarative apps (`FnOnce(Scope) -> impl View`: a `fn app(cx: Scope) -> impl View` or a closure) with the `Ui` update cycle |
 //! | [`run_engine`], [`run_engine_headless`] | engine apps: an `Engine` on a simulated display, stepped only when it asks to be woken |
 //! | [`show_framebuffer`], [`show_framebuffer_with_input`] | draw raw frames without the engine (with per-frame input: [`SimFrame`]); window or headless |
 //! | [`run_headless_framebuffer`] | the same, headless, returning a [`HeadlessReport`] |
@@ -130,7 +130,7 @@ pub fn show_framebuffer_with_input(
 ///     engine.set_pos(b, 20, 20);
 ///     engine.set_size(b, 100, 60);
 ///     engine.set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::RED));
-///     engine.set_local_prop(b, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+///     engine.set_local_prop(b, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
 /// });
 /// ```
 pub fn run_engine(cfg: SimConfig, setup: impl FnOnce(&mut twine_engine::Engine)) -> ! {
@@ -149,7 +149,8 @@ pub fn run_engine(cfg: SimConfig, setup: impl FnOnce(&mut twine_engine::Engine))
 /// keypad and encoder of `cfg.input` and `cfg.theme` (default: LVGL's light default theme),
 /// then updates whenever the `Ui` asks to be woken — `Wake::Idle` leaves the event loop
 /// waiting, using no CPU, until an input or a channel message arrives (channel sends from
-/// other threads wake the window).
+/// other threads wake the window). `app` is any `FnOnce(Scope) -> V`: a `fn` item or a closure
+/// capturing its configuration; it is called once, when the UI is mounted.
 ///
 /// ```no_run
 /// use twine_sim::SimConfig;
@@ -161,7 +162,7 @@ pub fn run_engine(cfg: SimConfig, setup: impl FnOnce(&mut twine_engine::Engine))
 ///
 /// twine_sim::run(SimConfig::new(320, 240).title("hello"), hello);
 /// ```
-pub fn run<V: twine_view::View>(cfg: SimConfig, app: fn(twine_reactive::Scope) -> V) -> ! {
+pub fn run<V: twine_view::View>(cfg: SimConfig, app: impl FnOnce(twine_reactive::Scope) -> V) -> ! {
     init_logging();
     match build_ui_app(cfg.from_env(), app) {
         Ok(sim) => sim.run(),
@@ -173,10 +174,10 @@ pub fn run<V: twine_view::View>(cfg: SimConfig, app: fn(twine_reactive::Scope) -
 }
 
 /// Runs a declarative app headless (with `cfg.headless` or the defaults) and returns a
-/// report. The environment is **not** applied.
+/// report. The environment is **not** applied. `app` is called once, like in [`run`].
 pub fn run_headless<V: twine_view::View>(
     cfg: SimConfig,
-    app: fn(twine_reactive::Scope) -> V,
+    app: impl FnOnce(twine_reactive::Scope) -> V,
 ) -> Result<HeadlessReport, SimError> {
     let cfg = if cfg.headless.is_some() {
         cfg
@@ -189,7 +190,7 @@ pub fn run_headless<V: twine_view::View>(
 /// A [`SimApp`] running `app` through a `UiCore` (see [`run`]).
 fn build_ui_app<V: twine_view::View>(
     mut cfg: SimConfig,
-    app: fn(twine_reactive::Scope) -> V,
+    app: impl FnOnce(twine_reactive::Scope) -> V,
 ) -> Result<SimApp, SimError> {
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -199,11 +200,18 @@ fn build_ui_app<V: twine_view::View>(
     }
     let core: Rc<RefCell<Option<twine_view::UiCore>>> = Rc::default();
     let c = core.clone();
-    let mut sim = SimApp::engine(cfg, move |engine| {
+    let mut failed = None;
+    let mut sim = SimApp::engine(cfg, |engine| {
         if let Some(d) = engine.default_display() {
-            *c.borrow_mut() = Some(twine_view::UiCore::mount(engine, d, app));
+            match twine_view::UiCore::mount(engine, d, app) {
+                Ok(ui) => *c.borrow_mut() = Some(ui),
+                Err(e) => failed = Some(e),
+            }
         }
     })?;
+    if let Some(e) = failed {
+        return Err(e.into());
+    }
     let waker = core.borrow().as_ref().map(twine_view::UiCore::waker);
     if let Some(w) = waker {
         sim.on_waker(Box::new(move |std_waker| w.register(&std_waker)));

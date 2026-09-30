@@ -31,7 +31,7 @@ const fn stop(rgb: u32, frac: u8) -> GradStop {
     GradStop {
         color: Color::hex(rgb),
         opa: Opa::COVER,
-        frac,
+        frac: Fraction::from_raw(frac),
     }
 }
 
@@ -84,7 +84,7 @@ fn star(path: &mut Path, c: FxPoint, r: i32, pentagram: bool) {
         } else {
             (r * 2 / 5, 360)
         };
-        let (x, y) = Transform::rotate(Angle(k * step)).map(Fx::ZERO, fx(-radius));
+        let (x, y) = Transform::rotate(Angle::deci_deg(k * step)).map(Fx::ZERO, fx(-radius));
         let q = FxPoint::new(c.x + x, c.y + y);
         if k == 0 {
             path.move_to(q);
@@ -126,7 +126,7 @@ fn shapes(scene: &mut VectorScene) {
     *dsc = fill(0x00EF_5350);
     let (path, dsc) = scene.path_mut();
     path.move_to(p(270, 150));
-    path.arc_to(p(30, 20), Angle(300), true, true, p(320, 160));
+    path.arc_to(p(30, 20), Angle::deg(30), true, true, p(320, 160));
     path.line_to(p(295, 190));
     path.close();
     *dsc = fill(0x005C_6BC0);
@@ -260,7 +260,7 @@ fn motion(scene: &mut VectorScene, angle: i32, pulse: i32) {
             },
             FillRule::NonZero,
         )),
-        transform: Transform::rotate(Angle(angle)).around(Point::new(80, 80)),
+        transform: Transform::rotate(Angle::deci_deg(angle)).around(Point::new(80, 80)),
         ..VectorDsc::default()
     };
 }
@@ -316,8 +316,12 @@ pub fn app(cx: Scope) -> impl View {
                         ))
                         .gap(12),
                         row((
-                            image(ImageSource::Svg(ICONS[1])).scale(Scale(512)).size(96, 96),
-                            image(ImageSource::Svg(ICONS[2])).scale(Scale(512)).size(96, 96),
+                            image(ImageSource::Svg(ICONS[1]))
+                                .scale(Scale::from_raw_256(512))
+                                .size(96, 96),
+                            image(ImageSource::Svg(ICONS[2]))
+                                .scale(Scale::from_raw_256(512))
+                                .size(96, 96),
                         ))
                         .gap(12),
                     ))

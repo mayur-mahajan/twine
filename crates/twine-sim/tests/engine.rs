@@ -19,12 +19,12 @@ fn out_dir(tag: &str) -> PathBuf {
 fn scene(e: &mut Engine) -> NodeId {
     let screen = e.active_screen(e.default_display().unwrap()).unwrap();
     e.set_local_prop(screen, Selector::MAIN, StyleProp::BgColor(Color::WHITE));
-    e.set_local_prop(screen, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+    e.set_local_prop(screen, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
     let b = e.create(screen, Box::new(Obj)).unwrap();
     e.set_pos(b, 4, 2);
     e.set_size(b, 10, 6);
     e.set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::RED));
-    e.set_local_prop(b, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+    e.set_local_prop(b, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
     b
 }
 

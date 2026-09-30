@@ -13,6 +13,7 @@ use alloc::vec::Vec;
 use core::any::{Any, TypeId};
 use core::cell::RefCell;
 
+use twine_core::fault::{FaultCounts, FaultKind};
 use twine_core::log::{debug, error, trace};
 use twine_core::{Arena, Id, SmallVec};
 
@@ -107,15 +108,36 @@ pub(crate) struct ScopeData {
     pub(crate) contexts: Vec<(TypeId, Rc<dyn Any>)>,
 }
 
-/// Counters exposed through [`crate::debug_stats`].
+/// Counters exposed through [`crate::runtime_stats`].
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Counters {
     pub(crate) writes: u64,
     pub(crate) effect_runs: u64,
     pub(crate) memo_runs: u64,
-    pub(crate) depth_guard_hits: u64,
-    pub(crate) loop_cuts: u64,
 }
+
+/// Fault bookkeeping, touched only when a fault is recorded or read: kept out of [`Inner`]
+/// (in its own cell) so the hot runtime state stays compact.
+pub(crate) struct FaultState {
+    /// Faults since start-up.
+    pub(crate) total: FaultCounts,
+    /// Faults since the last [`crate::take_faults`].
+    pub(crate) new: FaultCounts,
+    pub(crate) hook: Option<FaultHook>,
+}
+
+impl FaultState {
+    const fn new() -> Self {
+        FaultState {
+            total: FaultCounts::new(),
+            new: FaultCounts::new(),
+            hook: None,
+        }
+    }
+}
+
+/// Called for every fault the runtime records: the kind and the number of occurrences.
+pub type FaultHook = fn(FaultKind, u32);
 
 /// All mutable runtime state.
 pub(crate) struct Inner {
@@ -144,9 +166,9 @@ pub(crate) struct Inner {
     /// The value lent by the innermost active [`provide_ambient`](crate::provide_ambient)
     /// (`None` outside one or while it is borrowed).
     pub(crate) ambient: Option<core::ptr::NonNull<dyn Any>>,
-    /// The UI task's waker ([`register_waker`](crate::register_waker)), also registered in
-    /// channels subscribed later.
-    pub(crate) ui_waker: Option<core::task::Waker>,
+    /// The waker of each root scope that has one ([`Scope::set_ui_waker`](crate::Scope::set_ui_waker));
+    /// one entry per `Ui`, so a linear search.
+    pub(crate) root_wakers: Vec<(ScopeKey, &'static crate::UiWaker)>,
 }
 
 impl Inner {
@@ -169,12 +191,10 @@ impl Inner {
                 writes: 0,
                 effect_runs: 0,
                 memo_runs: 0,
-                depth_guard_hits: 0,
-                loop_cuts: 0,
             },
             created_logged: false,
             ambient: None,
-            ui_waker: None,
+            root_wakers: Vec::new(),
         }
     }
 
@@ -259,6 +279,8 @@ impl Inner {
 /// The reactive runtime of one thread.
 pub(crate) struct Runtime {
     pub(crate) inner: RefCell<Inner>,
+    /// Cold fault state (never borrowed together with `inner` on a hot path).
+    pub(crate) faults: RefCell<FaultState>,
 }
 
 /// Restores `observer`/`running_effect` and clears `RUNNING` after a computation, also on
@@ -308,10 +330,28 @@ fn capacity_panic(what: &str) -> ! {
 }
 
 impl Runtime {
+    /// Records `n` occurrences of `kind` and calls the fault hook (without any borrow held:
+    /// the hook is foreign code, rule R1). Cold and out of line: faults are rare, and keeping
+    /// this out of `flush`/`update_if_necessary` keeps their hot paths compact.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn record_fault(&self, kind: FaultKind, n: u32) {
+        let hook = {
+            let mut f = self.faults.borrow_mut();
+            f.total.add(kind, n);
+            f.new.add(kind, n);
+            f.hook
+        };
+        if let Some(hook) = hook {
+            hook(kind, n);
+        }
+    }
+
     /// An empty runtime (usable in `static` and `const` thread-local initializers).
     pub(crate) const fn new() -> Self {
         Runtime {
             inner: RefCell::new(Inner::new()),
+            faults: RefCell::new(FaultState::new()),
         }
     }
 
@@ -399,6 +439,9 @@ impl Runtime {
             }
             inner.prune_queues();
             let channels = crate::channel::take_scope_channels(&mut inner, s);
+            if data.parent.is_none() && !inner.root_wakers.is_empty() {
+                inner.root_wakers.retain(|&(k, _)| k != s);
+            }
             drop(inner);
             (data, (garbage, channels))
         };
@@ -409,8 +452,11 @@ impl Runtime {
             garbage.0.len(),
             children_disposed
         );
-        // Drop user values and closures outside the borrow (R1): nodes, then contexts.
-        drop(garbage);
+        // Drop user values and closures outside the borrow (R1): nodes, channel handlers, then
+        // contexts.
+        let (nodes, channels) = garbage;
+        drop(nodes);
+        crate::channel::release_channels(channels);
         drop(data);
     }
 
@@ -558,11 +604,11 @@ impl Runtime {
         if state == NodeState::Check {
             if depth > MAX_CHECK_DEPTH {
                 let mut inner = self.inner.borrow_mut();
-                inner.counters.depth_guard_hits += 1;
                 if let Some(n) = inner.nodes.get_mut(k) {
                     n.state = NodeState::Dirty;
                 }
                 drop(inner);
+                self.record_fault(FaultKind::DepthGuard, 1);
                 error!(
                     target: "twine::reactive",
                     "memo chain deeper than {}: recomputing {:?} without checking its sources",
@@ -766,7 +812,6 @@ impl Runtime {
                     if rounds > inner.flush_iterations_limit {
                         let limit = inner.flush_iterations_limit;
                         let dropped = inner.pending.len();
-                        inner.counters.loop_cuts += 1;
                         let Inner { nodes, pending, .. } = &mut *inner;
                         for k in pending.drain(..) {
                             if let Some(n) = nodes.get_mut(k) {
@@ -775,6 +820,7 @@ impl Runtime {
                             }
                         }
                         drop(inner);
+                        self.record_fault(FaultKind::EffectLoopCut, 1);
                         error!(
                             target: "twine::reactive",
                             "effect loop exceeded {} iterations; dropping {} pending effects",
@@ -854,9 +900,13 @@ impl Runtime {
             inner.flush_iterations_limit = DEFAULT_FLUSH_LIMIT;
             inner.counters = Counters::default();
             inner.ambient = None;
-            let waker = inner.ui_waker.take();
-            (nodes, scopes, channels, waker)
+            inner.root_wakers.clear();
+            (nodes, scopes, channels)
         };
-        drop(garbage);
+        *self.faults.borrow_mut() = FaultState::new();
+        let (nodes, scopes, channels) = garbage;
+        drop(nodes);
+        crate::channel::release_channels(channels);
+        drop(scopes);
     }
 }

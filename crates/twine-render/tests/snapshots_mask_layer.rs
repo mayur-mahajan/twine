@@ -145,7 +145,7 @@ fn mask_stack_radius_and_fade() {
             y_top: 4,
             y_bottom: 60,
             opa_top: Opa::COVER,
-            opa_bottom: Opa(30),
+            opa_bottom: Opa::from_raw(30),
         });
         stripes(p, Rect::from_xywh(0, 0, 80, 64));
         // Masks apply to every primitive, not just fills.
@@ -203,11 +203,11 @@ fn pair(p: &mut Painter<'_>, opa: Opa) {
 fn layer_opa_group() {
     let mut h = RenderHarness::new(140, 56, ColorFormat::Rgb565);
     h.paint(|p| {
-        pair(p, Opa(128));
+        pair(p, Opa::from_raw(128));
         p.layer(
             Rect::from_xywh(70, 0, 70, 56),
             &LayerDsc {
-                opa: Opa(128),
+                opa: Opa::from_raw(128),
                 ..LayerDsc::default()
             },
             |p| {
@@ -234,7 +234,7 @@ fn layer_blend_modes() {
             p.layer(
                 a,
                 &LayerDsc {
-                    opa: Opa(230),
+                    opa: Opa::from_raw(230),
                     blend_mode: mode,
                     transform: None,
                 },
@@ -260,7 +260,7 @@ fn layer_scene(p: &mut Painter<'_>) {
     p.layer(
         Rect::from_xywh(10, 5, 80, 50),
         &LayerDsc {
-            opa: Opa(160),
+            opa: Opa::from_raw(160),
             ..LayerDsc::default()
         },
         |p| {
@@ -276,7 +276,7 @@ fn layer_scene(p: &mut Painter<'_>) {
                     ..RectDsc::default()
                 },
             );
-            p.fill(Rect::from_xywh(20, 20, 60, 10), PAL[5], Opa(200));
+            p.fill(Rect::from_xywh(20, 20, 60, 10), PAL[5], Opa::from_raw(200));
         },
     );
 }
@@ -318,7 +318,7 @@ fn layer_budget_too_small_falls_back() {
                 ..RectDsc::default()
             },
         );
-        p.fill(Rect::from_xywh(20, 20, 60, 10), PAL[5], Opa(200));
+        p.fill(Rect::from_xywh(20, 20, 60, 10), PAL[5], Opa::from_raw(200));
     });
     assert!(h.rgb888() == direct.rgb888());
 }
@@ -330,7 +330,7 @@ fn nested_layer_draws_into_outer() {
         p.layer(
             Rect::from_xywh(0, 0, 40, 20),
             &LayerDsc {
-                opa: Opa(128),
+                opa: Opa::from_raw(128),
                 ..LayerDsc::default()
             },
             |p| {

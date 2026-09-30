@@ -2,6 +2,8 @@
 
 use core::fmt::{self, Write};
 
+use twine_core::ColorFormat;
+
 use crate::{DisplayId, NodeId};
 
 /// Errors of the engine API.
@@ -46,14 +48,88 @@ pub enum EngineError {
     /// A configuration value or argument is invalid.
     #[error("invalid configuration: {0}")]
     InvalidConfig(&'static str),
-    /// A display driver reported an error (its `Debug` output, truncated to 64 bytes).
-    #[error("driver error: {0}")]
-    Driver(heapless::String<64>),
+    /// A display's pixels would have to be drawn in a colour format whose renderer is not
+    /// compiled in: its `color-*` feature (of `twine`, `twine-engine` or `twine-render`) is
+    /// disabled, or the format can never be a draw format (e.g. `A8`). Returned by
+    /// [`Engine::add_display`](crate::Engine::add_display),
+    /// [`add_framebuffer_display`](crate::Engine::add_framebuffer_display) and
+    /// [`add_chunked_display`](crate::Engine::add_chunked_display) instead of adding a display
+    /// that would stay blank; the display is not added, and
+    /// [`FaultKind::FormatDisabled`](twine_core::fault::FaultKind::FormatDisabled) is raised.
+    ///
+    /// The format is the one the engine draws in: the display's format, except for `I1`
+    /// panels behind partial or chunked buffers, which are drawn in `L8` and converted (the
+    /// engine's `color-i1` feature enables both).
+    #[error("drawing into {0} is not compiled in (enable its `color-*` feature)")]
+    FormatDisabled(ColorFormat),
+    /// A display driver reported an error.
+    #[error("driver error {code}: {message}")]
+    Driver {
+        /// The driver's code for the error (`DisplayDriver::error_code`, `0` = none).
+        code: DriverErrorCode,
+        /// The error's `Debug` output, truncated to 64 bytes.
+        message: heapless::String<64>,
+    },
+}
+
+/// A display driver's numeric error code (from `DisplayDriver::error_code` and the matching
+/// methods of the other driver traits; `0` means the driver gives none). Carried by
+/// [`EngineError::Driver`] and, for flush faults, by
+/// [`FaultRecord::code`](crate::FaultRecord::code).
+///
+/// ```
+/// use twine_engine::DriverErrorCode;
+/// let c = DriverErrorCode::new(0x2A);
+/// assert_eq!(c.get(), 42);
+/// assert_eq!(DriverErrorCode::default(), DriverErrorCode::NONE);
+/// assert_eq!(format!("{c}"), "0x0000002a");
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct DriverErrorCode(u32);
+
+impl DriverErrorCode {
+    /// No code (the driver does not classify its errors).
+    pub const NONE: DriverErrorCode = DriverErrorCode(0);
+
+    /// The code `code`.
+    #[must_use]
+    pub const fn new(code: u32) -> DriverErrorCode {
+        DriverErrorCode(code)
+    }
+
+    /// The numeric value.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl From<u32> for DriverErrorCode {
+    fn from(code: u32) -> Self {
+        DriverErrorCode(code)
+    }
+}
+
+impl fmt::Display for DriverErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:#010x}", self.0)
+    }
 }
 
 impl EngineError {
-    /// A [`EngineError::Driver`] from a driver error's `Debug` output (truncated).
-    pub fn driver(e: &dyn fmt::Debug) -> Self {
+    /// The driver's error code of an [`EngineError::Driver`] (`None` for other errors).
+    #[must_use]
+    pub fn driver_code(&self) -> Option<DriverErrorCode> {
+        match self {
+            EngineError::Driver { code, .. } => Some(*code),
+            _ => None,
+        }
+    }
+
+    /// An [`EngineError::Driver`] with `code` and the `Debug` output of the driver error `e`
+    /// (truncated; formatting allocates nothing).
+    pub fn driver(code: DriverErrorCode, e: &dyn fmt::Debug) -> Self {
         struct Trunc(heapless::String<64>);
         impl Write for Trunc {
             fn write_str(&mut self, s: &str) -> fmt::Result {
@@ -67,7 +143,7 @@ impl EngineError {
         }
         let mut t = Trunc(heapless::String::new());
         let _ = write!(t, "{e:?}");
-        EngineError::Driver(t.0)
+        EngineError::Driver { code, message: t.0 }
     }
 }
 
@@ -92,10 +168,12 @@ mod tests {
     #[test]
     fn driver_error_truncates() {
         let long = "x".repeat(200);
-        let EngineError::Driver(s) = EngineError::driver(&long) else {
+        let EngineError::Driver { code, message } = EngineError::driver(DriverErrorCode::new(3), &long)
+        else {
             panic!("variant");
         };
-        assert_eq!(s.len(), 64);
+        assert_eq!(message.len(), 64);
+        assert_eq!(code.get(), 3);
         assert!(EngineError::TooManyDisplays.to_string().contains("displays"));
     }
 }

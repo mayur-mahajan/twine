@@ -4,7 +4,7 @@ use std::hint::black_box;
 
 use twine_core::{Color, Opa};
 use twine_style::{
-    EntryKind, Length, Part, PropId, Selector, State, StyleBuf, StyleDefaults, StyleEntry, StyleProp,
+    EntryKind, Length, Part, PropId, Radius, Selector, State, StyleBuf, StyleDefaults, StyleEntry, StyleProp,
     StyleSource, StyleValue, resolve,
 };
 
@@ -44,11 +44,15 @@ pub const DEFAULTS: StyleDefaults = StyleDefaults {
     font: &twine_text::EMPTY_FONT,
 };
 
-/// A pressed button: local `bg_opa`, a `PRESSED` style and a theme style.
+/// A pressed button: local `bg_opacity`, a `PRESSED` style and a theme style.
 pub fn three_entries() -> Tree {
     Tree(vec![Node {
         entries: vec![
-            entry(EntryKind::Local, Selector::MAIN, &[StyleProp::BgOpa(Opa::COVER)]),
+            entry(
+                EntryKind::Local,
+                Selector::MAIN,
+                &[StyleProp::BgOpacity(Opa::COVER)],
+            ),
             entry(
                 EntryKind::Normal,
                 Selector::state(State::PRESSED),
@@ -57,7 +61,7 @@ pub fn three_entries() -> Tree {
             entry(
                 EntryKind::Theme,
                 Selector::MAIN,
-                &[StyleProp::BgColor(Color::BLUE), StyleProp::Radius(8)],
+                &[StyleProp::BgColor(Color::BLUE), StyleProp::Radius(Radius::Px(8))],
             ),
         ],
         state: State::PRESSED,
@@ -83,12 +87,15 @@ pub fn depth_5() -> Tree {
                 entry(
                     EntryKind::Normal,
                     Selector::MAIN,
-                    &[StyleProp::BgColor(Color::WHITE), StyleProp::Radius(4)],
+                    &[StyleProp::BgColor(Color::WHITE), StyleProp::Radius(Radius::Px(4))],
                 ),
                 entry(
                     EntryKind::Theme,
                     Selector::MAIN,
-                    &[StyleProp::PadTop(2), StyleProp::Width(Length::Px(10))],
+                    &[
+                        StyleProp::PaddingTop(Length::Px(2)),
+                        StyleProp::Width(Length::Px(10)),
+                    ],
                 ),
             ],
             state: State::DEFAULT,
@@ -142,7 +149,8 @@ pub fn set_20_props() -> StyleBuf {
     let mut s = StyleBuf::new();
     for i in 0..20 {
         let id = PropId::ALL[(i * 5) % PropId::ALL.len()];
-        let p = StyleProp::from_value(id, id.meta().default).unwrap_or(StyleProp::Radius(i as i32));
+        let p =
+            StyleProp::from_value(id, id.meta().default).unwrap_or(StyleProp::Radius(Radius::Px(i as i32)));
         s.set(black_box(p));
     }
     s

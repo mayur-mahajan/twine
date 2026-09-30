@@ -120,7 +120,7 @@ fn ok_hides_the_keyboard_and_the_form_idles() {
     assert_eq!(form.editing.get_untracked(), Some(2));
     tap_key(&mut t, "x");
     assert_eq!(form.notes.get_untracked(), "x");
-    tap_key(&mut t, symbols::OK);
+    tap_key(&mut t, Symbol::Ok.as_str());
     assert!(t.find_all(by_class("keyboard")).is_empty());
     assert_eq!(form.editing.get_untracked(), None);
     // Move the input focus off the fields: nothing blinks, the form is idle.

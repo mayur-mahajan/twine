@@ -137,7 +137,7 @@ fn nodes_without_theme_use_prop_defaults() {
     let d = h.display();
     let e = h.engine_mut();
     let n = e.create(s, Box::new(Obj)).unwrap();
-    for p in [PropId::BgColor, PropId::Radius, PropId::BgOpa] {
+    for p in [PropId::BgColor, PropId::Radius, PropId::BgOpacity] {
         assert_eq!(e.style_prop(n, Part::Main, p), p.meta().default);
         assert_eq!(e.style_prop(s, Part::Main, p), p.meta().default);
     }

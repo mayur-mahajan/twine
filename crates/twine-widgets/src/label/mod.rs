@@ -625,8 +625,8 @@ impl Widget for Label {
     fn content_size(&self, cx: &MeasureCx<'_>) -> Size {
         let m = Part::Main;
         let font = cx.font(m);
-        let letter_space = cx.style_i32(m, PropId::TextLetterSpace);
-        let line_space = cx.style_i32(m, PropId::TextLineSpace);
+        let letter_space = cx.style_i32(m, PropId::LetterSpacing);
+        let line_space = cx.style_i32(m, PropId::LineSpacing);
         let max_w = Self::max_width(cx);
         let key = LayoutKey {
             hash: text_hash(self.shown_text()),

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use crate::util::{R, cargo, run as run_cmd, which, workspace_root};
+use crate::util::{R, cargo_ci, run as run_cmd, which, workspace_root};
 
 /// Minimum line coverage (percent) per crate.
 pub const MIN: &[(&str, f64)] = &[
@@ -113,7 +113,7 @@ pub fn run() -> R {
         );
     }
     let out = workspace_root().join("target/coverage.json");
-    run_cmd(cargo().args([
+    run_cmd(cargo_ci().args([
         "llvm-cov",
         "--workspace",
         "--json",

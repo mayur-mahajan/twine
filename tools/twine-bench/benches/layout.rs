@@ -14,7 +14,7 @@ use twine_testing::EngineHarness;
 
 fn solid(e: &mut Engine, n: NodeId, c: u32) {
     e.set_local_prop(n, Selector::MAIN, StyleProp::BgColor(Color::hex(c)));
-    e.set_local_prop(n, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+    e.set_local_prop(n, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
 }
 
 /// A full-screen container with `layout`, returned with its children.
@@ -23,8 +23,8 @@ fn container(e: &mut Engine, layout: LayoutKind) -> NodeId {
     let c = e.create(s, Box::new(Obj)).unwrap();
     e.set_size(c, Length::pct(100), Length::pct(100));
     e.set_layout(c, layout);
-    e.set_local_prop(c, Selector::MAIN, StyleProp::PadRow(2));
-    e.set_local_prop(c, Selector::MAIN, StyleProp::PadColumn(2));
+    e.set_local_prop(c, Selector::MAIN, StyleProp::RowGap(Length::Px(2)));
+    e.set_local_prop(c, Selector::MAIN, StyleProp::ColumnGap(Length::Px(2)));
     c
 }
 
@@ -32,7 +32,7 @@ fn flex_200() -> (EngineHarness, NodeId, NodeId) {
     let mut ids = None;
     let mut h = EngineHarness::new(320, 240).no_theme().mount_engine(|e| {
         let c = container(e, LayoutKind::Flex);
-        e.set_flex_flow(c, FlexFlow::RowWrap);
+        e.set_flex_flow(c, FlexFlow::ROW.wrap(true));
         let mut first = None;
         for i in 0..200 {
             let n = e.create(c, Box::new(Obj)).unwrap();
@@ -79,17 +79,15 @@ fn grid_10x10_relayout(c: &mut Criterion) {
     let mut cont = None;
     let mut h = EngineHarness::new(320, 240).no_theme().mount_engine(|e| {
         let g = container(e, LayoutKind::Grid);
-        e.set_grid_dsc_array(g, &TRACKS, &TRACKS);
+        e.set_grid_tracks(g, TRACKS, TRACKS);
         for i in 0..100 {
             let n = e.create(g, Box::new(Obj)).unwrap();
             e.set_grid_cell(
                 n,
-                twine_style::GridAlign::Stretch,
                 i % 10,
-                1,
-                twine_style::GridAlign::Stretch,
                 i / 10,
-                1,
+                twine_style::GridAlign::Stretch,
+                twine_style::GridAlign::Stretch,
             );
             solid(e, n, 0x30_60_90 + i as u32 * 0x0201);
         }
@@ -102,7 +100,7 @@ fn grid_10x10_relayout(c: &mut Criterion) {
         b.iter(|| {
             gap = if gap == 2 { 3 } else { 2 };
             let e = h.engine_mut();
-            e.set_local_prop(g, Selector::MAIN, StyleProp::PadColumn(gap));
+            e.set_local_prop(g, Selector::MAIN, StyleProp::ColumnGap(Length::Px(gap)));
             e.update_layout();
             e.layout_stats().moved
         });

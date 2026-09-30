@@ -299,7 +299,7 @@ fn run(p: &Program) -> Result<(), TestCaseError> {
         w.check(&runs_before, &last_before, &written, memo_read_in_batch)?;
     }
     cx.dispose();
-    let st = twine_reactive::debug_stats();
+    let st = twine_reactive::runtime_stats();
     prop_assert_eq!((st.nodes, st.scopes, st.pending, st.deferred), (0, 0, 0, 0));
     Ok(())
 }

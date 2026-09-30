@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use twine_reactive::{create_root, debug_stats};
+use twine_reactive::{create_root, runtime_stats};
 
 type Log = Rc<RefCell<Vec<String>>>;
 
@@ -24,9 +24,9 @@ fn scope_dispose_removes_nodes_and_effects_stop() {
         r.set(r.get() + 1);
     });
     let m = child.memo(move || a.get());
-    assert_eq!(debug_stats().nodes, 3);
+    assert_eq!(runtime_stats().nodes, 3);
     child.dispose();
-    assert_eq!(debug_stats().nodes, 1);
+    assert_eq!(runtime_stats().nodes, 1);
     assert!(!m.is_alive());
     a.set(1);
     assert_eq!(runs.get(), 1);
@@ -41,7 +41,7 @@ fn scope_child_disposed_with_parent() {
     root.dispose();
     assert!(!c1.is_alive() && !c2.is_alive() && !root.is_alive());
     assert!(!s.is_alive());
-    let st = debug_stats();
+    let st = runtime_stats();
     assert_eq!((st.nodes, st.scopes), (0, 0));
 }
 
@@ -101,7 +101,7 @@ fn scope_cleanup_can_set_signals_and_create_scopes() {
     assert!(other.is_alive());
     root.dispose();
     assert!(!other.is_alive());
-    let st = debug_stats();
+    let st = runtime_stats();
     assert_eq!((st.nodes, st.scopes), (0, 0));
 }
 
@@ -224,7 +224,7 @@ fn scope_no_leaks_after_root_dispose() {
         c.on_cleanup(|| {});
     }
     root.dispose();
-    let st = debug_stats();
+    let st = runtime_stats();
     assert_eq!((st.nodes, st.scopes, st.pending, st.deferred), (0, 0, 0, 0));
 }
 
@@ -244,4 +244,24 @@ fn scope_values_and_closures_dropped_on_dispose() {
     assert_eq!(Rc::strong_count(&token), 5);
     root.dispose();
     assert_eq!(Rc::strong_count(&token), 1);
+}
+
+#[test]
+fn runtime_stats_reports_retired_slots() {
+    // A fresh runtime (one per test thread): the child scope's slot is the only free one, so
+    // it is reused until its 65 535 generations are spent, then retired.
+    let root = create_root();
+    assert_eq!(runtime_stats().retired_slots, 0);
+    for _ in 0..u16::MAX - 1 {
+        root.child().dispose();
+    }
+    assert_eq!(runtime_stats().retired_slots, 0);
+    root.child().dispose();
+    assert_eq!(runtime_stats().retired_slots, 1);
+    // A retired slot is replaced: scopes keep working.
+    let c = root.child();
+    let s = c.signal(1);
+    assert_eq!(s.get(), 1);
+    c.dispose();
+    assert_eq!(runtime_stats().scopes, 1);
 }

@@ -106,7 +106,7 @@ impl VectorDsc {
         }
         let mut b = path.bounds();
         if let Some((_, s)) = &self.stroke {
-            let hw = Fx(s.width.0.max(0) / 2);
+            let hw = Fx::from_raw(s.width.raw().max(0) / 2);
             let k = if s.join == LineJoin::Miter {
                 s.miter_limit.max(Fx::from_int(2))
             } else {
@@ -338,11 +338,11 @@ fn draw_vector(
 
 /// The flattening tolerance in path units for a device tolerance of 0.25 px under `t`.
 fn user_tolerance(t: &Transform) -> Fx {
-    let sx = hypot(i64::from(t.a.0), i64::from(t.b.0));
-    let sy = hypot(i64::from(t.c.0), i64::from(t.d.0));
+    let sx = hypot(i64::from(t.a.raw()), i64::from(t.b.raw()));
+    let sy = hypot(i64::from(t.c.raw()), i64::from(t.d.raw()));
     let s = sx.max(sy).max(1 << 8);
-    let tol = i64::from(DEFAULT_TOLERANCE.0) * 65_536 / s;
-    Fx(tol.clamp(64, i64::from(i32::MAX)) as i32)
+    let tol = i64::from(DEFAULT_TOLERANCE.raw()) * 65_536 / s;
+    Fx::from_raw(tol.clamp(64, i64::from(i32::MAX)) as i32)
 }
 
 /// Rasterizes `caches.lines` with `paint`.

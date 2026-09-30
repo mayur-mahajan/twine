@@ -109,7 +109,7 @@ fn imgfont_draws_image_glyph_snapshot() {
             &d,
             &mut cache,
         );
-        d.opa = twine_core::Opa(128);
+        d.opa = twine_core::Opa::from_raw(128);
         draw_text(p, Rect::from_xywh(4, 24, 192, 18), "Half 😀❤😀", &d, &mut cache);
     });
     assert_render_snapshot!(h, "imgfont_emoji");

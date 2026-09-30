@@ -30,9 +30,21 @@ fn transformed_area_rotation_90_swaps_wh() {
 #[test]
 fn transformed_area_scale_2x() {
     let a = Rect::from_xywh(0, 0, 40, 20);
-    let r = transformed_area(a, Angle(0), Scale(512), Scale(512), Point::new(20, 10));
+    let r = transformed_area(
+        a,
+        Angle::deci_deg(0),
+        Scale::from_raw_256(512),
+        Scale::from_raw_256(512),
+        Point::new(20, 10),
+    );
     assert_eq!(r, Rect::new(-20, -10, 60, 30));
-    let r = transformed_area(a, Angle(0), Scale(512), Scale(256), Point::new(0, 0));
+    let r = transformed_area(
+        a,
+        Angle::deci_deg(0),
+        Scale::from_raw_256(512),
+        Scale::from_raw_256(256),
+        Point::new(0, 0),
+    );
     assert_eq!(r, Rect::new(0, 0, 80, 20));
 }
 
@@ -57,7 +69,7 @@ fn rotate_0_equals_untransformed_blit() {
         let plain = draw(&ImageDsc::default(), f);
         let pivot = draw(
             &ImageDsc {
-                angle: Angle(0),
+                angle: Angle::deci_deg(0),
                 pivot: Point::new(3, 29),
                 ..ImageDsc::default()
             },
@@ -88,8 +100,8 @@ fn scale_256_identity() {
     let a = draw(&ImageDsc::default(), ColorFormat::Rgb565A8);
     let b = draw(
         &ImageDsc {
-            scale_x: Scale(256),
-            scale_y: Scale(256),
+            scale_x: Scale::from_raw_256(256),
+            scale_y: Scale::from_raw_256(256),
             pivot: Point::new(5, 7),
             ..ImageDsc::default()
         },
@@ -150,8 +162,8 @@ fn snap_rotate_30_nearest() {
 fn snap_zoom_150_pivot_center() {
     let h = draw(
         &ImageDsc {
-            scale_x: Scale::from_percent(150),
-            scale_y: Scale::from_percent(150),
+            scale_x: Scale::pct(150),
+            scale_y: Scale::pct(150),
             pivot: center(),
             ..ImageDsc::default()
         },
@@ -164,8 +176,8 @@ fn snap_zoom_150_pivot_center() {
 fn snap_zoom_50() {
     let h = draw(
         &ImageDsc {
-            scale_x: Scale::from_percent(50),
-            scale_y: Scale::from_percent(50),
+            scale_x: Scale::pct(50),
+            scale_y: Scale::pct(50),
             ..ImageDsc::default()
         },
         ColorFormat::Rgb565A8,
@@ -179,11 +191,11 @@ fn snap_rotate_recolor_clip_radius() {
     let h = draw(
         &ImageDsc {
             angle: Angle::deg(-20),
-            scale_x: Scale::from_percent(120),
-            scale_y: Scale::from_percent(80),
+            scale_x: Scale::pct(120),
+            scale_y: Scale::pct(80),
             pivot: center(),
             recolor: Color::hex(0x43A047),
-            recolor_opa: Opa(128),
+            recolor_opa: Opa::from_raw(128),
             clip_radius: 10,
             chroma_key: Some(Color::WHITE),
             ..ImageDsc::default()
@@ -205,8 +217,8 @@ fn transform_chunk_equivalence() {
                     &e.pixels(),
                     &ImageDsc {
                         angle: Angle::deg(deg),
-                        scale_x: Scale(200 + i as u16 * 60),
-                        scale_y: Scale(300 - i as u16 * 30),
+                        scale_x: Scale::from_raw_256(200 + i as u16 * 60),
+                        scale_y: Scale::from_raw_256(300 - i as u16 * 30),
                         pivot: Point::new(10, 20),
                         antialias: i != 1,
                         clip_radius: 6 * i as i32,
@@ -250,9 +262,9 @@ proptest! {
                     Rect::from_xywh(x, y, SIZE, SIZE),
                     &e.pixels(),
                     &ImageDsc {
-                        angle: Angle(angle),
-                        scale_x: Scale(sx),
-                        scale_y: Scale(sy),
+                        angle: Angle::deci_deg(angle),
+                        scale_x: Scale::from_raw_256(sx),
+                        scale_y: Scale::from_raw_256(sy),
                         pivot: Point::new(px, py),
                         antialias: aa,
                         ..ImageDsc::default()

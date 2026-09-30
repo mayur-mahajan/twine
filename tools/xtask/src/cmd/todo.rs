@@ -2,8 +2,9 @@
 //!
 //! Scans `crates/`, `tools/`, `examples/` and `firmware/` (`*.rs`, `*.toml`, skipping `target/`)
 //! and fails on `todo!(`, `unimplemented!(`, `TODO`, `FIXME`, `XXX`, `HACK`, `dbg!(` and on any
-//! `NOTE(` that is not followed by a step id `Pxx.Syy)`. The only allowed marker is
-//! `NOTE(Pxx.Syy): …`. This file is exempt (it has to spell the patterns).
+//! `NOTE(` that is not followed by a step id: `Pxx.Syy)` (original plan) or `Rn.Smm)` (the API
+//! evolution plan, `docs/plan/api-evolution.md`). The only allowed markers are
+//! `NOTE(Pxx.Syy): …` and `NOTE(Rn.Smm): …`. This file is exempt (it has to spell the patterns).
 
 use std::path::{Path, PathBuf};
 
@@ -33,10 +34,10 @@ pub struct Finding {
     pub text: String,
 }
 
-/// Whether `rest` (the text right after `NOTE(`) starts with `Pdd.Sdd)`.
+/// Whether `rest` (the text right after `NOTE(`) starts with `Pdd.Sdd)` or `Rd.Sdd)`.
 fn note_has_step_id(rest: &str) -> bool {
     let b = rest.as_bytes();
-    b.len() >= 8
+    let plan_p = b.len() >= 8
         && b[0] == b'P'
         && b[1].is_ascii_digit()
         && b[2].is_ascii_digit()
@@ -44,7 +45,16 @@ fn note_has_step_id(rest: &str) -> bool {
         && b[4] == b'S'
         && b[5].is_ascii_digit()
         && b[6].is_ascii_digit()
-        && b[7] == b')'
+        && b[7] == b')';
+    let plan_r = b.len() >= 7
+        && b[0] == b'R'
+        && b[1].is_ascii_digit()
+        && b[2] == b'.'
+        && b[3] == b'S'
+        && b[4].is_ascii_digit()
+        && b[5].is_ascii_digit()
+        && b[6] == b')';
+    plan_p || plan_r
 }
 
 /// Checks the content of one file.
@@ -124,7 +134,7 @@ pub fn run() -> R {
         Ok(())
     } else {
         Err(format!(
-            "todo-check: {count} forbidden marker(s); only `NOTE(Pxx.Syy): …` is allowed (plan README §1 rule 4)"
+            "todo-check: {count} forbidden marker(s); only `NOTE(Pxx.Syy): …` / `NOTE(Rn.Smm): …` are allowed (plan README §1 rule 4)"
         )
         .into())
     }
@@ -133,6 +143,13 @@ pub fn run() -> R {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_api_evolution_step_ids() {
+        assert!(check_source("// NOTE(R0.S04): later").is_empty());
+        assert_eq!(check_source("// NOTE(R0.4): bad").len(), 1);
+        assert_eq!(check_source("// NOTE(R10.S01): bad").len(), 1);
+    }
 
     #[test]
     fn flags_todo_macro() {

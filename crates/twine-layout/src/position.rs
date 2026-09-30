@@ -2,7 +2,7 @@
 //! alignments, translation and right-to-left mirroring.
 
 use twine_core::{Point, Rect, Size};
-use twine_style::{Align, Length, PropId};
+use twine_style::{Align, Anchor, Length, PropId};
 
 use crate::layout::Item;
 use crate::size::{offset_len, raw_size, translate};
@@ -10,67 +10,61 @@ use crate::tree::{
     AlignTo, Axis, LayoutFlags, LayoutTree, content_rect, end, is_rtl, length, spaces, start, style_enum, sum,
 };
 
-/// Whether `a` is one of the 12 `Out*` alignments.
-#[must_use]
-pub const fn is_outside(a: Align) -> bool {
-    a as u8 >= Align::OutTopLeft as u8
-}
-
-/// The top-left corner of a `child`-sized box aligned in `parent_content` (LVGL formulas,
-/// including their truncation: centering is `w / 2 - child_w / 2`).
+/// The top-left corner of a `child`-sized box placed at `anchor` relative to `rect` (LVGL
+/// formulas, including their truncation: centering is `w / 2 - child_w / 2`).
 ///
-/// Inner alignments place the box inside the rectangle; the `Out*` alignments place it next
-/// to the rectangle (as used by `align_to` with the base's outer rectangle). `Default` is
-/// `TopLeft` (right-to-left mirroring is applied by the caller).
+/// [`Anchor::Inside`] places the box inside the rectangle (a parent's content area, or the
+/// base's for `align_to`); the other anchors place it next to the rectangle (the base's outer
+/// rectangle). `Align::Default` is `TopLeft` (right-to-left mirroring is applied by the
+/// caller). An [`Align`] converts to `Anchor::Inside`.
 ///
 /// ```
 /// use twine_core::{Point, Rect, Size};
 /// use twine_layout::align_offset;
-/// use twine_style::Align;
+/// use twine_style::{Align, Anchor};
 ///
 /// let parent = Rect::from_xywh(0, 0, 300, 200);
 /// let child = Size::new(100, 50);
-/// assert_eq!(align_offset(Align::Center, parent, child), Point::new(100, 75));
-/// assert_eq!(align_offset(Align::OutBottomMid, parent, child), Point::new(100, 200));
+/// assert_eq!(align_offset(Align::Center.into(), parent, child), Point::new(100, 75));
+/// assert_eq!(align_offset(Anchor::BelowMid, parent, child), Point::new(100, 200));
 /// ```
 #[must_use]
-pub const fn align_offset(align: Align, parent_content: Rect, child: Size) -> Point {
-    let r = parent_content;
+pub const fn align_offset(anchor: Anchor, rect: Rect, child: Size) -> Point {
+    let r = rect;
     let (pw, ph) = (r.x1 - r.x0, r.y1 - r.y0);
     let (w, h) = (child.w, child.h);
     let (x0, y0) = (r.x0, r.y0);
     let mid_x = x0 + pw / 2 - w / 2;
     let mid_y = y0 + ph / 2 - h / 2;
-    let (x, y) = match align {
-        Align::Default | Align::TopLeft => (x0, y0),
-        Align::TopMid => (mid_x, y0),
-        Align::TopRight => (x0 + pw - w, y0),
-        Align::BottomLeft => (x0, y0 + ph - h),
-        Align::BottomMid => (mid_x, y0 + ph - h),
-        Align::BottomRight => (x0 + pw - w, y0 + ph - h),
-        Align::LeftMid => (x0, mid_y),
-        Align::RightMid => (x0 + pw - w, mid_y),
-        Align::Center => (mid_x, mid_y),
-        Align::OutTopLeft => (x0, y0 - h),
-        Align::OutTopMid => (mid_x, y0 - h),
-        Align::OutTopRight => (x0 + pw - w, y0 - h),
-        Align::OutBottomLeft => (x0, r.y1),
-        Align::OutBottomMid => (mid_x, r.y1),
-        Align::OutBottomRight => (x0 + pw - w, r.y1),
-        Align::OutLeftTop => (x0 - w, y0),
-        Align::OutLeftMid => (x0 - w, mid_y),
-        Align::OutLeftBottom => (x0 - w, y0 + ph - h),
-        Align::OutRightTop => (r.x1, y0),
-        Align::OutRightMid => (r.x1, mid_y),
-        Align::OutRightBottom => (r.x1, y0 + ph - h),
+    let (x, y) = match anchor {
+        Anchor::Inside(Align::Default | Align::TopLeft) => (x0, y0),
+        Anchor::Inside(Align::TopMid) => (mid_x, y0),
+        Anchor::Inside(Align::TopRight) => (x0 + pw - w, y0),
+        Anchor::Inside(Align::BottomLeft) => (x0, y0 + ph - h),
+        Anchor::Inside(Align::BottomMid) => (mid_x, y0 + ph - h),
+        Anchor::Inside(Align::BottomRight) => (x0 + pw - w, y0 + ph - h),
+        Anchor::Inside(Align::LeftMid) => (x0, mid_y),
+        Anchor::Inside(Align::RightMid) => (x0 + pw - w, mid_y),
+        Anchor::Inside(Align::Center) => (mid_x, mid_y),
+        Anchor::AboveLeft => (x0, y0 - h),
+        Anchor::AboveMid => (mid_x, y0 - h),
+        Anchor::AboveRight => (x0 + pw - w, y0 - h),
+        Anchor::BelowLeft => (x0, r.y1),
+        Anchor::BelowMid => (mid_x, r.y1),
+        Anchor::BelowRight => (x0 + pw - w, r.y1),
+        Anchor::LeftTop => (x0 - w, y0),
+        Anchor::LeftMid => (x0 - w, mid_y),
+        Anchor::LeftBottom => (x0 - w, y0 + ph - h),
+        Anchor::RightTop => (r.x1, y0),
+        Anchor::RightMid => (r.x1, mid_y),
+        Anchor::RightBottom => (r.x1, y0 + ph - h),
     };
     Point::new(x, y)
 }
 
 /// The alignment used to position a child in its parent (LVGL `lv_obj_refr_pos`): `Default`
-/// becomes `TopLeft`, the `Out*` values (meaningful only for `align_to`) act as `TopLeft`, and
-/// with a right-to-left parent the left and right variants are swapped (so `Default` is
-/// `TopRight`).
+/// becomes `TopLeft`, and with a right-to-left parent the left and right variants are swapped
+/// (so `Default` is `TopRight`).
 ///
 /// ```
 /// use twine_layout::resolve_align;
@@ -82,7 +76,7 @@ pub const fn align_offset(align: Align, parent_content: Rect, child: Size) -> Po
 /// ```
 #[must_use]
 pub const fn resolve_align(align: Align, rtl: bool) -> Align {
-    let a = if matches!(align, Align::Default) || is_outside(align) {
+    let a = if matches!(align, Align::Default) {
         Align::TopLeft
     } else {
         align
@@ -135,7 +129,7 @@ pub(crate) fn abs_rect<T: LayoutTree + ?Sized>(
     let x = pos_of(t, id, Axis::X, psize, sized) + tx;
     let y = pos_of(t, id, Axis::Y, psize, sized) + ty;
     let align = resolve_align(style_enum::<T, Align>(t, id, PropId::Align), rtl);
-    let base = align_offset(align, Rect::new(0, 0, psize.w, psize.h), size);
+    let base = align_offset(Anchor::Inside(align), Rect::new(0, 0, psize.w, psize.h), size);
     // LVGL negates the x offset in right-to-left parents except for left-anchored results.
     let dx = if rtl && !matches!(align, Align::TopLeft | Align::LeftMid | Align::BottomLeft) {
         -x
@@ -148,17 +142,16 @@ pub(crate) fn abs_rect<T: LayoutTree + ?Sized>(
 /// The rectangle of a node aligned to another one (LVGL `lv_obj_align_to`).
 pub(crate) fn align_to_rect<T: LayoutTree + ?Sized>(t: &T, id: T::Id, size: Size, a: AlignTo<T::Id>) -> Rect {
     let base = t.coords(a.base);
-    let align = match a.align {
-        Align::Default if is_rtl(t, a.base) => Align::TopRight,
-        Align::Default => Align::TopLeft,
+    let anchor = match a.anchor {
+        Anchor::Inside(Align::Default) if is_rtl(t, a.base) => Anchor::Inside(Align::TopRight),
         other => other,
     };
-    let reference = if is_outside(align) {
+    let reference = if anchor.is_outside() {
         base
     } else {
         content_rect(base, spaces(t, a.base))
     };
-    let p = align_offset(align, reference, size);
+    let p = align_offset(anchor, reference, size);
     let (tx, ty) = translate(t, id, size);
     Rect::from_xywh(p.x + a.x + tx, p.y + a.y + ty, size.w, size.h)
 }
@@ -232,7 +225,7 @@ pub(crate) fn abs_extent_all<T: LayoutTree + ?Sized>(
 #[cfg(test)]
 mod tests {
     use twine_core::{Point, Rect, Size};
-    use twine_style::{Align, BaseDir, Length, StyleBuf};
+    use twine_style::{Align, Anchor, BaseDir, Length, StyleBuf};
 
     use super::*;
     use crate::toy::ToyTree;
@@ -247,7 +240,7 @@ mod tests {
     fn align_all_21_values() {
         let p = Rect::from_xywh(0, 0, 300, 200);
         let c = Size::new(100, 50);
-        let table: [(Align, (i32, i32)); 22] = [
+        let inner: [(Align, (i32, i32)); 10] = [
             (Align::Default, (0, 0)),
             (Align::TopLeft, (0, 0)),
             (Align::TopMid, (100, 0)),
@@ -258,35 +251,39 @@ mod tests {
             (Align::LeftMid, (0, 75)),
             (Align::RightMid, (200, 75)),
             (Align::Center, (100, 75)),
-            (Align::OutTopLeft, (0, -50)),
-            (Align::OutTopMid, (100, -50)),
-            (Align::OutTopRight, (200, -50)),
-            (Align::OutBottomLeft, (0, 200)),
-            (Align::OutBottomMid, (100, 200)),
-            (Align::OutBottomRight, (200, 200)),
-            (Align::OutLeftTop, (-100, 0)),
-            (Align::OutLeftMid, (-100, 75)),
-            (Align::OutLeftBottom, (-100, 150)),
-            (Align::OutRightTop, (300, 0)),
-            (Align::OutRightMid, (300, 75)),
-            (Align::OutRightBottom, (300, 150)),
         ];
-        for (a, (x, y)) in table {
-            assert_eq!(align_offset(a, p, c), Point::new(x, y), "{a:?}");
-            // The same through a layout (inner alignments only; `Out*` act as `TopLeft`).
+        for (a, (x, y)) in inner {
+            assert_eq!(align_offset(a.into(), p, c), Point::new(x, y), "{a:?}");
+            // The same through a layout.
             let mut t = ToyTree::new(300, 200);
             let n = t.add(ToyTree::ROOT, StyleBuf::new().width(100).height(50).align(a));
             run(&mut t);
-            let expect = if is_outside(a) {
-                Point::new(0, 0)
-            } else {
-                Point::new(x, y)
-            };
-            assert_eq!(t.coords(n).origin(), expect, "{a:?}");
+            assert_eq!(t.coords(n).origin(), Point::new(x, y), "{a:?}");
+        }
+        let outer: [(Anchor, (i32, i32)); 12] = [
+            (Anchor::AboveLeft, (0, -50)),
+            (Anchor::AboveMid, (100, -50)),
+            (Anchor::AboveRight, (200, -50)),
+            (Anchor::BelowLeft, (0, 200)),
+            (Anchor::BelowMid, (100, 200)),
+            (Anchor::BelowRight, (200, 200)),
+            (Anchor::LeftTop, (-100, 0)),
+            (Anchor::LeftMid, (-100, 75)),
+            (Anchor::LeftBottom, (-100, 150)),
+            (Anchor::RightTop, (300, 0)),
+            (Anchor::RightMid, (300, 75)),
+            (Anchor::RightBottom, (300, 150)),
+        ];
+        for (a, (x, y)) in outer {
+            assert_eq!(align_offset(a, p, c), Point::new(x, y), "{a:?}");
         }
         // LVGL truncates each half separately: 301/2 - 100/2 = 100.
         assert_eq!(
-            align_offset(Align::Center, Rect::from_xywh(0, 0, 301, 11), Size::new(100, 4)),
+            align_offset(
+                Align::Center.into(),
+                Rect::from_xywh(0, 0, 301, 11),
+                Size::new(100, 4)
+            ),
             Point::new(100, 3)
         );
     }
@@ -361,7 +358,7 @@ mod tests {
             n,
             Some(AlignTo {
                 base,
-                align: Align::OutBottomMid,
+                anchor: Anchor::BelowMid,
                 x: 0,
                 y: 5,
             }),
@@ -369,12 +366,13 @@ mod tests {
         run(&mut t);
         assert_eq!(t.coords(n), Rect::from_xywh(20 + 50 - 25, 30 + 40 + 5, 50, 10));
         // Inner alignments use the base's content area.
-        t.style_mut(base).set(twine_style::StyleProp::PadLeft(10));
+        t.style_mut(base)
+            .set(twine_style::StyleProp::PaddingLeft(Length::Px(10)));
         t.set_align_to(
             n,
             Some(AlignTo {
                 base,
-                align: Align::TopLeft,
+                anchor: Anchor::Inside(Align::TopLeft),
                 x: 1,
                 y: 2,
             }),
@@ -395,7 +393,7 @@ mod tests {
             a,
             Some(AlignTo {
                 base: b,
-                align: Align::OutRightTop,
+                anchor: Anchor::RightTop,
                 x: 0,
                 y: 0,
             }),
@@ -404,7 +402,7 @@ mod tests {
             b,
             Some(AlignTo {
                 base,
-                align: Align::OutBottomLeft,
+                anchor: Anchor::BelowLeft,
                 x: 0,
                 y: 0,
             }),

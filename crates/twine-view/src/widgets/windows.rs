@@ -2,10 +2,10 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::cell::{Cell, RefCell};
+use core::cell::RefCell;
 
-use twine_engine::{EventCode, EventFilter, EventResult, NodeId};
-use twine_image::ImageSource;
+use twine_engine::{EventCode, EventFilter, EventResult, NodeId, ObjFlags};
+use twine_image::{ImageSource, Symbol};
 use twine_style::{Align, Length, Selector, StyleProp};
 use twine_widgets::button::Button;
 use twine_widgets::image::Image;
@@ -14,9 +14,11 @@ use twine_widgets_ext::msgbox::{self, Msgbox};
 use twine_widgets_ext::window::{self, Window};
 
 use crate::access::EngineAccess;
+use crate::bind::{bind_node, bind_prop};
 use crate::build::{WidgetView, widget_view};
+use crate::modifiers::ViewExt;
 use crate::nav::ModalHandle;
-use crate::prop::IntoProp;
+use crate::prop::{IntoProp, Prop};
 use crate::text::{IntoText, TextProp, bind_label_text};
 use crate::view::ViewSeq;
 
@@ -30,7 +32,7 @@ use crate::view::ViewSeq;
 ///
 /// let _v = window(
 ///     "Settings",
-///     window_button(ImageSource::Symbol(symbols::CLOSE), 40).on_click(|| {}),
+///     window_button(Symbol::Close, 40).on_click(|| {}),
 ///     column((label("Volume"), slider(50))),
 /// );
 /// ```
@@ -66,32 +68,39 @@ impl WidgetView<Window> {
     /// The padding of the content area on all sides (the theme's by default), e.g. 0 for a
     /// tabview filling the window.
     #[must_use]
-    pub fn content_padding(self, pad: i32) -> Self {
+    pub fn content_padding(self, pad: impl IntoProp<i32>) -> Self {
+        let pad = pad.into_prop();
         self.op(move |cx, node| {
             let Some(c) = cx.engine().widget::<Window>(node).map(Window::content) else {
                 return;
             };
-            for p in [
-                StyleProp::PadTop(pad),
-                StyleProp::PadBottom(pad),
-                StyleProp::PadLeft(pad),
-                StyleProp::PadRight(pad),
-            ] {
-                cx.engine().set_local_prop(c, Selector::MAIN, p);
-            }
+            bind_node(cx, c, pad, |e, c, pad| {
+                for p in [
+                    StyleProp::PaddingTop(Length::Px(pad)),
+                    StyleProp::PaddingBottom(Length::Px(pad)),
+                    StyleProp::PaddingLeft(Length::Px(pad)),
+                    StyleProp::PaddingRight(Length::Px(pad)),
+                ] {
+                    e.set_local_prop(c, Selector::MAIN, p);
+                }
+            });
         })
     }
 }
 
-/// A header button of a [`window()`]: `width` px wide, as high as the header, `icon` centered.
-pub fn window_button(icon: ImageSource, width: i32) -> WidgetView<Button> {
-    widget_view(Button::new).op(move |cx, b| {
-        cx.engine().set_size(b, width, Length::pct(100));
-        let img = cx.with_parent(b, |cx| cx.create(Image::new()));
-        let e = cx.engine();
-        e.with_widget_mut(img, |i: &mut Image, wcx| i.set_src(wcx, icon));
-        e.align(img, Align::Center, 0, 0);
-    })
+/// A header button of a [`window()`]: `width` px wide, as high as the header, `icon` (a
+/// [`Symbol`] or an image) centered.
+pub fn window_button(icon: impl IntoProp<ImageSource>, width: impl IntoProp<i32>) -> WidgetView<Button> {
+    let icon = icon.into_prop();
+    widget_view(Button::new)
+        .style_prop(width, |w: i32| StyleProp::Width(Length::Px(w)))
+        .op(move |cx, b| {
+            cx.engine()
+                .set_local_prop(b, Selector::MAIN, StyleProp::Height(Length::pct(100)));
+            let img = cx.with_parent(b, |cx| cx.create(Image::new()));
+            cx.engine().align(img, Align::Center, 0, 0);
+            bind_prop(cx, img, icon, |i: &mut Image, wcx, src| i.set_src(wcx, src));
+        })
 }
 
 // ---- Msgbox ---------------------------------------------------------------------------------
@@ -102,8 +111,8 @@ type ButtonFn = Box<dyn FnMut(usize)>;
 /// The builder settings of a [`msgbox`] view.
 #[derive(Default)]
 struct MsgboxSettings {
-    buttons: Cell<&'static [&'static str]>,
-    close_button: Cell<bool>,
+    buttons: RefCell<Vec<TextProp>>,
+    close_button: RefCell<Option<Prop<bool>>>,
     on_button: RefCell<Option<ButtonFn>>,
     on_close: RefCell<Option<Box<dyn FnMut()>>>,
 }
@@ -121,8 +130,8 @@ struct MsgboxSettings {
 ///
 /// fn app(cx: Scope) -> impl View {
 ///     button(label("Delete")).on_click(move || {
-///         let m = cx.show_modal(|_| {
-///             msgbox("Delete?", "This cannot be undone.").buttons(&["Yes", "No"]).close_button(true)
+///         let m = cx.show_modal(|_, _| {
+///             msgbox("Delete?", "This cannot be undone.").buttons(["Yes", "No"]).close_button(true)
 ///         });
 ///         let _ = m;
 ///     })
@@ -136,7 +145,12 @@ pub fn msgbox(title: impl IntoText, text: impl IntoText) -> WidgetView<Msgbox> {
     let settings = v.shared::<MsgboxSettings>();
     v.after_children(move |cx, node| {
         let modal = cx.scope().use_context::<ModalHandle>();
-        let has_header = settings.close_button.get() || !matches!(title, TextProp::Static(""));
+        // No close button for `false` (or none given); a hidden one for a dynamic value.
+        let close_button = match settings.close_button.borrow_mut().take() {
+            None | Some(Prop::Static(false)) => None,
+            Some(p) => Some(p),
+        };
+        let has_header = close_button.is_some() || !matches!(title, TextProp::Static(""));
         let e = cx.engine();
         if has_header {
             let t = e
@@ -153,16 +167,21 @@ pub fn msgbox(title: impl IntoText, text: impl IntoText) -> WidgetView<Msgbox> {
         if let Some(l) = l {
             bind_label_text(cx, l, text);
         }
-        let e = cx.engine();
         let mut buttons: Vec<NodeId> = Vec::new();
-        for label in settings.buttons.get() {
-            if let Some(b) = e
-                .with_widget_mut(node, |m: &mut Msgbox, wcx| m.add_footer_button(wcx, label))
+        for text in settings.buttons.borrow_mut().drain(..) {
+            let Some(b) = cx
+                .engine()
+                .with_widget_mut(node, |m: &mut Msgbox, wcx| m.add_footer_button(wcx, ""))
                 .flatten()
-            {
-                buttons.push(b);
-            }
+            else {
+                continue;
+            };
+            let l = cx.with_parent(b, |cx| cx.create(Label::new("")));
+            cx.engine().align(l, Align::Center, 0, 0);
+            bind_label_text(cx, l, text);
+            buttons.push(b);
         }
+        let e = cx.engine();
         for (idx, b) in buttons.into_iter().enumerate() {
             let s = settings.clone();
             e.add_event_handler(b, EventFilter::Code(EventCode::Clicked), move |ecx, ev| {
@@ -175,13 +194,17 @@ pub fn msgbox(title: impl IntoText, text: impl IntoText) -> WidgetView<Msgbox> {
                 EventResult::Continue
             });
         }
-        if settings.close_button.get() {
+        if let Some(shown) = close_button {
             let close = e
                 .with_widget_mut(node, |m: &mut Msgbox, wcx| {
-                    m.add_header_button(wcx, Some(ImageSource::Symbol(twine_text::symbols::CLOSE)))
+                    m.add_header_button(wcx, Some(ImageSource::symbol(Symbol::Close)))
                 })
                 .flatten();
             if let Some(c) = close {
+                if let Prop::Dynamic(_) = shown {
+                    bind_node(cx, c, shown, |e, c, on| e.set_flag(c, ObjFlags::HIDDEN, !on));
+                }
+                let e = cx.engine();
                 let s = settings.clone();
                 e.add_event_handler(c, EventFilter::Code(EventCode::Clicked), move |ecx, ev| {
                     if ev.target == ev.current_target {
@@ -202,17 +225,19 @@ pub fn msgbox(title: impl IntoText, text: impl IntoText) -> WidgetView<Msgbox> {
 }
 
 impl WidgetView<Msgbox> {
-    /// The footer buttons' texts.
+    /// The footer buttons' texts (each any [`IntoText`], e.g. a translation).
     #[must_use]
-    pub fn buttons(mut self, texts: &'static [&'static str]) -> Self {
-        self.shared::<MsgboxSettings>().buttons.set(texts);
+    pub fn buttons<T: IntoText>(mut self, texts: impl IntoIterator<Item = T>) -> Self {
+        *self.shared::<MsgboxSettings>().buttons.borrow_mut() =
+            texts.into_iter().map(IntoText::into_text).collect();
         self
     }
 
-    /// A close button in the header.
+    /// A close button in the header (a dynamic value creates the button and hides it while
+    /// `false`).
     #[must_use]
-    pub fn close_button(mut self, on: bool) -> Self {
-        self.shared::<MsgboxSettings>().close_button.set(on);
+    pub fn close_button(mut self, on: impl IntoProp<bool>) -> Self {
+        *self.shared::<MsgboxSettings>().close_button.borrow_mut() = Some(on.into_prop());
         self
     }
 

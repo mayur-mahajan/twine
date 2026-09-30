@@ -7,7 +7,7 @@ use twine_engine::{
     Engine, EngineError, Event, EventCode, EventCx, EventParam, EventResult, NodeId, OBJ_FLAGS, ObjFlags,
     Widget, WidgetClass, WidgetCx, fmt_node_id,
 };
-use twine_style::{Dir, Length, ScrollSnap};
+use twine_style::{Length, ScrollSnap, Sides};
 
 use crate::util::log_set;
 
@@ -26,13 +26,13 @@ pub static TILEVIEW_TILE_CLASS: WidgetClass = WidgetClass::new("tileview_tile")
 pub struct Tile {
     col: u8,
     row: u8,
-    dir: Dir,
+    dir: Sides,
 }
 
 impl Tile {
     /// A tile at `(col, row)` leaving in `dir`.
     #[must_use]
-    pub const fn new(col: u8, row: u8, dir: Dir) -> Self {
+    pub const fn new(col: u8, row: u8, dir: Sides) -> Self {
         Self { col, row, dir }
     }
 
@@ -50,7 +50,7 @@ impl Tile {
 
     /// The directions the user may swipe to from this tile.
     #[must_use]
-    pub fn dir(&self) -> Dir {
+    pub fn dir(&self) -> Sides {
         self.dir
     }
 }
@@ -83,15 +83,15 @@ impl Widget for Tile {
 /// - Tiles follow the view's size (percentages), so a resize keeps them aligned.
 ///
 /// ```
-/// use twine_style::Dir;
+/// use twine_style::Side;
 /// use twine_testing::EngineHarness;
 /// use twine_widgets_ext::tileview::{self, Tileview};
 ///
 /// let mut h = EngineHarness::new(240, 240);
 /// let screen = h.screen();
 /// let tv = tileview::create(h.engine_mut(), screen).unwrap();
-/// let t1 = tileview::add_tile(h.engine_mut(), tv, 0, 0, Dir::RIGHT).unwrap();
-/// let t2 = tileview::add_tile(h.engine_mut(), tv, 1, 0, Dir::LEFT).unwrap();
+/// let t1 = tileview::add_tile(h.engine_mut(), tv, 0, 0, Side::Right).unwrap();
+/// let t2 = tileview::add_tile(h.engine_mut(), tv, 1, 0, Side::Left).unwrap();
 /// h.run_until_idle();
 /// h.engine_mut().with_widget_mut(tv, |w: &mut Tileview, cx| w.set_tile(cx, t2, false));
 /// assert_eq!(h.engine().widget::<Tileview>(tv).unwrap().tile_active(), Some(t2));
@@ -160,7 +160,7 @@ impl Tileview {
         let p = e.scroll_end(tv);
         let tx = ((p.x + w / 2) / w) * w;
         let ty = ((p.y + h / 2) / h) * h;
-        let mut dir = Dir::ALL;
+        let mut dir = Sides::ALL;
         let hit = e.tree().children(tv).find_map(|c| {
             let t = e.widget::<Tile>(c)?;
             (tile_origin(e, tv, *t) == (tx, ty)).then_some((c, t.dir))
@@ -193,12 +193,20 @@ pub fn create(engine: &mut Engine, parent: NodeId) -> Result<NodeId, EngineError
     engine.create(parent, Box::new(Tileview::new()))
 }
 
-/// Adds a tile at `(col, row)` that may be left in `dir` (LVGL `lv_tileview_add_tile`). The
-/// tile at `(0, 0)` sets the view's first scroll directions.
+/// Adds a tile at `(col, row)` that may be left towards `dir` (a [`Side`](twine_style::Side)
+/// or a set of [`Sides`]; LVGL `lv_tileview_add_tile`). The tile at `(0, 0)` sets the view's
+/// first scroll directions.
 ///
 /// # Errors
 /// [`EngineError::NodeNotFound`] if `tv` does not exist (logged).
-pub fn add_tile(e: &mut Engine, tv: NodeId, col: u8, row: u8, dir: Dir) -> Result<NodeId, EngineError> {
+pub fn add_tile(
+    e: &mut Engine,
+    tv: NodeId,
+    col: u8,
+    row: u8,
+    dir: impl Into<Sides>,
+) -> Result<NodeId, EngineError> {
+    let dir = dir.into();
     let tile = e.create(tv, Box::new(Tile::new(col, row, dir)))?;
     if col == 0 && row == 0 {
         e.set_scroll_dir(tv, dir);

@@ -268,12 +268,12 @@ impl Painter<'_> {
             }
         }
         let (a, b, c, d) = (
-            i64::from(inv.a.0),
-            i64::from(inv.b.0),
-            i64::from(inv.c.0),
-            i64::from(inv.d.0),
+            i64::from(inv.a.raw()),
+            i64::from(inv.b.raw()),
+            i64::from(inv.c.raw()),
+            i64::from(inv.d.raw()),
         );
-        let (tx, ty) = (i64::from(inv.tx.0), i64::from(inv.ty.0));
+        let (tx, ty) = (i64::from(inv.tx.raw()), i64::from(inv.ty.raw()));
         let (w16, h16) = (i64::from(src.w) << 16, i64::from(src.h) << 16);
         // Samples are drawn where the source position is inside the image (bilinear: within
         // half a texel outside, where the edge fades out).

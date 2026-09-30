@@ -7,6 +7,7 @@ mod areas;
 mod framebuffer;
 mod partial;
 mod rotate;
+mod timeout;
 pub(crate) mod traverse;
 
 use alloc::boxed::Box;
@@ -14,18 +15,22 @@ use alloc::boxed::Box;
 use twine_core::{Color, ColorFormat, Duration, Instant, Opa, Rect, RectSet};
 use twine_hal::{DisplayInfo, DrawBufferMem};
 
-use twine_render::{DrawBuf, Painter};
+use twine_render::{DrawAccel, DrawBuf, Painter};
 
 use crate::display::Backend;
 use crate::{Engine, EngineError, RefreshStats, Wake};
 
 pub(crate) use framebuffer::{DirectState, FullState};
+use partial::ChunkStep;
 pub(crate) use partial::PartialState;
 
 /// Maximum areas of one frame: the dirty areas plus the performance overlay's area.
 const MAX_FRAME_AREAS: usize = 34;
 
 /// How a display's frames are rendered and flushed.
+// One `Strategy` per display, never moved after creation: its size does not matter, and
+// keeping `PartialState` inline avoids a pointer chase on every chunk.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Strategy {
     Partial(PartialState),
     Full(Box<FullState>),
@@ -86,8 +91,8 @@ pub struct RefreshOutcome {
     /// Earliest instant a display needs another refresh (pending areas waiting for
     /// `refr_period`, or a framebuffer swap to wait for).
     pub next_due: Option<Instant>,
-    /// A frame is only partly rendered (cooperative flush): call again as soon as a draw
-    /// buffer can be free.
+    /// A frame is only partly rendered (cooperative flush, or a bounded wait without a
+    /// `hires_timer`): call again as soon as a draw buffer can be free.
     pub in_progress: bool,
 }
 
@@ -179,7 +184,7 @@ impl Refresher {
     pub(crate) fn flush_pending(&self) -> bool {
         match &self.strategy {
             Strategy::Partial(p) => !p.in_flight.is_empty(),
-            Strategy::Full(f) => f.present_pending,
+            Strategy::Full(f) => f.present.is_some(),
             Strategy::Direct(_) => false,
         }
     }
@@ -237,8 +242,20 @@ fn debug_color(frame: u32) -> Color {
 enum DisplayOutcome {
     Idle,
     Due(Instant),
-    Rendered,
+    /// A frame was completed; the next one is due at the instant if areas are dirty again
+    /// (e.g. a failed flush being retried).
+    Rendered(Option<Instant>),
     InProgress,
+}
+
+/// How far [`Engine::run_job`] got.
+enum JobStep {
+    /// The frame is complete (or was abandoned because the display is halted).
+    Done,
+    /// No draw buffer was free: the frame continues in a later step.
+    Waiting,
+    /// The driver hung (`flush_timeout`): the frame was abandoned, its areas stay dirty.
+    TimedOut,
 }
 
 impl Engine {
@@ -255,7 +272,12 @@ impl Engine {
             match self.refresh_display(d, now) {
                 DisplayOutcome::Idle => {}
                 DisplayOutcome::Due(t) => out.next_due = Some(out.next_due.map_or(t, |n| n.min(t))),
-                DisplayOutcome::Rendered => out.rendered = true,
+                DisplayOutcome::Rendered(due) => {
+                    out.rendered = true;
+                    if let Some(t) = due {
+                        out.next_due = Some(out.next_due.map_or(t, |n| n.min(t)));
+                    }
+                }
                 DisplayOutcome::InProgress => {
                     out.rendered = true;
                     out.in_progress = true;
@@ -301,7 +323,7 @@ impl Engine {
         if out.in_progress {
             return Wake::Now;
         }
-        if self.config.cooperative_flush && self.flush_pending() {
+        if self.config.cooperative_flush && self.flush_awaited() {
             return Wake::Now;
         }
         let input = self.input_deadline().map_or(Wake::Idle, Wake::At);
@@ -341,6 +363,12 @@ impl Engine {
             return DisplayOutcome::Idle;
         }
         self.reclaim_buffers(d);
+        // Detects a hung driver even when no frame needs a buffer (raises the fault once).
+        let hung = self.check_flush_timeout(d);
+        if self.display_halted(d) {
+            // `FlushPolicy::Halt`: nothing is rendered until `recover_display`.
+            return DisplayOutcome::Idle;
+        }
         if self.displays[d].refresher.job.is_none() {
             let r = &mut self.displays[d].refresher;
             if r.dirty.is_empty() && r.overlay_dirty.is_none() {
@@ -359,6 +387,11 @@ impl Engine {
                     return DisplayOutcome::Due(due);
                 }
             }
+            if hung {
+                // The driver still holds a buffer or a swap past `flush_timeout`: retry once
+                // per period instead of starting a frame it cannot take.
+                return DisplayOutcome::Due(now + self.config.refr_period);
+            }
             if !self.present_done(d) {
                 return if self.config.cooperative_flush {
                     DisplayOutcome::InProgress
@@ -368,11 +401,81 @@ impl Engine {
             }
             self.start_job(d, now);
         }
-        if self.run_job(d) {
-            DisplayOutcome::Rendered
-        } else {
-            DisplayOutcome::InProgress
+        match self.run_job(d) {
+            JobStep::Done => {
+                let r = &self.displays[d].refresher;
+                let again = !self.display_halted(d) && (!r.dirty.is_empty() || r.overlay_dirty.is_some());
+                DisplayOutcome::Rendered(
+                    again.then(|| r.last_refresh.map_or(now, |last| last + self.config.refr_period)),
+                )
+            }
+            JobStep::Waiting => DisplayOutcome::InProgress,
+            JobStep::TimedOut if self.display_halted(d) => DisplayOutcome::Idle,
+            JobStep::TimedOut => DisplayOutcome::Due(now + self.config.refr_period),
         }
+    }
+
+    /// The earliest instant a display that is not rendering a frame and has dirty areas may
+    /// start its next frame (`None` when no display waits; halted displays never wait). The
+    /// async runtime uses it after reporting its flushes, which can mark areas dirty again.
+    #[must_use]
+    pub fn refresh_due(&self) -> Option<Instant> {
+        self.displays
+            .iter()
+            .filter(|d| !d.health.halted && d.refresher.job.is_none())
+            .filter(|d| !d.refresher.dirty.is_empty() || d.refresher.overlay_dirty.is_some())
+            .map(|d| {
+                d.refresher
+                    .last_refresh
+                    .map_or(Instant::from_micros(0), |last| last + self.config.refr_period)
+            })
+            .min()
+    }
+
+    /// Marks the areas of the frame of display `d` from index `from` on dirty again (the
+    /// performance overlay's area goes back to its own dirty area).
+    fn requeue_job_areas(&mut self, d: usize, from: usize) {
+        self.requeue_job_rest(d, from, None);
+    }
+
+    /// Like [`requeue_job_areas`](Self::requeue_job_areas), but the area `from` only from row
+    /// `first_y` on (its rows above were already rendered and flushed).
+    fn requeue_job_rest(&mut self, d: usize, from: usize, first_y: Option<i32>) {
+        let mut i = from;
+        loop {
+            let Some(job) = self.displays[d].refresher.job.as_ref() else {
+                return;
+            };
+            let Some(&a) = job.areas.get(i) else {
+                return;
+            };
+            let a = match first_y {
+                Some(y) if i == from => Rect::new(a.x0, y.clamp(a.y0, a.y1), a.x1, a.y1),
+                _ => a,
+            };
+            if a.is_empty() {
+                i += 1;
+                continue;
+            }
+            if i < job.counted {
+                self.add_dirty(d, a, crate::InvalidateReason::FlushRetry);
+            } else {
+                let r = &mut self.displays[d].refresher;
+                r.overlay_dirty = Some(r.overlay_dirty.map_or(a, |o| o.union(&a)));
+            }
+            i += 1;
+        }
+    }
+
+    /// Abandons the frame of display `d` (halted by the flush policy, or its driver hung):
+    /// its unrendered areas stay dirty for a later frame.
+    fn abort_job(&mut self, d: usize, why: &str) {
+        if let Some((idx, y)) = self.displays[d].refresher.job.as_ref().map(|j| (j.idx, j.next_y)) {
+            // Chunks already flushed are handled by the flush policy.
+            self.requeue_job_rest(d, idx, Some(y));
+        }
+        self.displays[d].refresher.job = None;
+        twine_core::warn!(target: "twine::refresh", "display {}: frame abandoned ({})", d, why);
     }
 
     /// Takes back finished buffers without blocking.
@@ -394,10 +497,13 @@ impl Engine {
         let disp = &mut self.displays[d];
         match (&mut disp.refresher.strategy, &mut disp.backend) {
             (Strategy::Full(f), Backend::Framebuffer(b)) => {
-                if f.present_pending && b.present_done() {
-                    f.present_pending = false;
+                if f.present.is_some() && b.present_done() {
+                    if f.present.is_some_and(|p| p.timed_out) {
+                        twine_core::info!(target: "twine::refresh", "display {}: swap done after timeout", d);
+                    }
+                    f.present = None;
                 }
-                !f.present_pending
+                f.present.is_none()
             }
             _ => true,
         }
@@ -457,15 +563,18 @@ impl Engine {
         }
     }
 
-    /// Continues the frame of display `d`. Returns `true` when the frame is complete, `false`
-    /// when it had to stop because no draw buffer was free (cooperative mode).
-    fn run_job(&mut self, d: usize) -> bool {
+    /// Continues the frame of display `d` (see [`JobStep`]).
+    fn run_job(&mut self, d: usize) -> JobStep {
         while let Some((area, y, counted)) = self.job_next(d) {
             let t0 = self.hires_us();
             let next_y = match self.displays[d].refresher.strategy {
                 Strategy::Partial(_) => match self.partial_chunk(d, area, y) {
-                    Some(next_y) => next_y,
-                    None => return false,
+                    ChunkStep::Next(next_y) => next_y,
+                    ChunkStep::Wait => return JobStep::Waiting,
+                    ChunkStep::TimedOut => {
+                        self.abort_job(d, "flush timeout");
+                        return JobStep::TimedOut;
+                    }
                 },
                 Strategy::Full(_) | Strategy::Direct(_) => {
                     self.framebuffer_area(d, area);
@@ -478,9 +587,13 @@ impl Engine {
                 }
             }
             self.job_advance(d, next_y);
+            if self.display_halted(d) {
+                self.abort_job(d, "halted");
+                return JobStep::Done;
+            }
         }
         self.finish_job(d);
-        true
+        JobStep::Done
     }
 
     /// The next piece of the frame of display `d`: `(area, first row, counted in the
@@ -526,6 +639,7 @@ impl Engine {
             let disp = &self.displays[d];
             let r = &disp.refresher;
             matches!(disp.backend, Backend::External(()))
+                && !disp.health.halted
                 && r.job.is_none()
                 && (!r.dirty.is_empty() || r.overlay_dirty.is_some())
                 && r.last_refresh
@@ -548,8 +662,15 @@ impl Engine {
     /// into `buf` (at least the display's `chunk_bytes`), in the layout to flush: rows of the
     /// returned area, rotated and format-converted as the display needs. Returns the area to
     /// flush, or `None` when the frame is complete.
+    ///
+    /// A display halted by [`FlushPolicy::Halt`](crate::FlushPolicy::Halt) (after a failure
+    /// reported with [`report_flush`](Self::report_flush)) renders no further chunk: the rest of
+    /// the frame is redrawn after [`recover_display`](Self::recover_display).
     pub fn render_chunk(&mut self, buf: &mut [u8]) -> Option<Rect> {
         let d = self.chunk_display?;
+        if self.display_halted(d) {
+            return None;
+        }
         let (area, y, counted) = self.job_next(d)?;
         let rows = match &self.displays[d].refresher.strategy {
             Strategy::Partial(p) => p.rows,
@@ -607,19 +728,16 @@ impl Engine {
         let Some(d) = self.chunk_display.take() else {
             return;
         };
-        if let Some(job) = self.displays[d].refresher.job.as_ref() {
-            if job.idx < job.areas.len() {
+        if let Some(idx) = self.displays[d]
+            .refresher
+            .job
+            .as_ref()
+            .and_then(|job| (job.idx < job.areas.len()).then_some(job.idx))
+        {
+            if !self.display_halted(d) {
                 twine_core::warn!(target: "twine::refresh", "refresh_end: frame of display {} not complete", d);
-                for a in job
-                    .areas
-                    .iter()
-                    .skip(job.idx)
-                    .copied()
-                    .collect::<heapless::Vec<Rect, MAX_FRAME_AREAS>>()
-                {
-                    self.displays[d].refresher.dirty.add(a);
-                }
             }
+            self.requeue_job_areas(d, idx);
         }
         self.finish_job(d);
         self.displays[d].refresher.busy = false;
@@ -634,11 +752,14 @@ impl Engine {
     }
 
     fn finish_job(&mut self, d: usize) {
-        match self.displays[d].refresher.strategy {
+        let presented = match self.displays[d].refresher.strategy {
             Strategy::Full(_) => self.present_full(d),
-            Strategy::Direct(_) => self.present_direct(d),
-            Strategy::Partial(_) => {}
-        }
+            Strategy::Direct(_) => {
+                self.present_direct(d);
+                true
+            }
+            Strategy::Partial(_) => true,
+        };
         let end = self.hires_us();
         let Some(job) = self.displays[d].refresher.job.take() else {
             return;
@@ -658,9 +779,13 @@ impl Engine {
         }
         let r = &mut self.displays[d].refresher;
         if let Strategy::Full(f) = &mut r.strategy {
+            // After a failed present the back buffer (not swapped) already holds everything:
+            // nothing needs syncing from the front buffer.
             f.last_areas.clear();
-            for a in &job.areas {
-                let _ = f.last_areas.push(*a);
+            if presented {
+                for a in &job.areas {
+                    let _ = f.last_areas.push(*a);
+                }
             }
         }
         s.fps = self.perf.fps();
@@ -700,8 +825,26 @@ impl Engine {
         let t0 = self.hires_us();
         let frame = self.displays[d].refresher.frame;
         render_into(self, &mut res, d, buf, format, stride, buf_area, clip, frame);
+        // One virtual call per chunk; nothing else on the path where the accelerator works.
+        let accel_timeouts = res.accel.0.as_deref_mut().map_or(0, DrawAccel::take_timeouts);
+        if accel_timeouts > 0 {
+            // The accelerator aborted operations (e.g. a queued fill whose wait timed out): the
+            // chunk is missing pixels. Render it again, in software only (the accelerator is
+            // detached for the retry so it cannot fail again), before it is flushed.
+            twine_core::warn!(target: "twine::refresh", "accelerator timed out: {} rendered again in software", clip);
+            let accel = res.accel.0.take();
+            render_into(self, &mut res, d, buf, format, stride, buf_area, clip, frame);
+            res.accel.0 = accel;
+        }
         let t1 = self.hires_us();
         self.res = Some(res);
+        if accel_timeouts > 0 {
+            self.raise_fault(
+                crate::FaultRecord::new(twine_core::fault::FaultKind::AccelTimeout)
+                    .display(crate::DisplayId(d as u8))
+                    .occurrences(accel_timeouts),
+            );
+        }
         match (t0, t1) {
             (Some(a), Some(b)) => b.saturating_sub(a),
             _ => 0,

@@ -19,8 +19,8 @@ use twine_engine::{
     NodeId, OBJ_FLAGS, ObjFlags, Widget, WidgetClass, WidgetCx, fmt_node_id,
 };
 use twine_image::ImageSource;
-use twine_style::{Align, FlexAlign, FlexFlow, Length, Part, PropId};
-use twine_text::symbols;
+use twine_style::{Align, CrossAlign, FlexFlow, Length, MainAlign, Part, PropId};
+use twine_text::Symbol;
 use twine_widgets::button::{BUTTON_CLASS, Button};
 use twine_widgets::image::Image;
 use twine_widgets::label::Label;
@@ -164,8 +164,8 @@ impl Msgbox {
         let e = cx.engine_mut();
         let h = e.create(mb, Box::new(ClassObj(&MSGBOX_HEADER_CLASS))).ok()?;
         e.set_size(h, Length::pct(100), i32::from(dpi) / 3);
-        util::set_flex(e, h, FlexFlow::Row);
-        e.set_flex_align(h, FlexAlign::Start, FlexAlign::Center, FlexAlign::Center);
+        util::set_flex(e, h, FlexFlow::ROW);
+        e.set_flex_align(h, MainAlign::Start, CrossAlign::Center, MainAlign::Center);
         let first = e.tree().children(mb).next();
         if first != Some(h) {
             let _ = e.move_node(h, mb, first);
@@ -234,8 +234,8 @@ impl Msgbox {
         let e = cx.engine_mut();
         let f = e.create(mb, Box::new(ClassObj(&MSGBOX_FOOTER_CLASS))).ok()?;
         e.set_size(f, Length::pct(100), MSGBOX_BAR_HEIGHT);
-        util::set_flex(e, f, FlexFlow::Row);
-        e.set_flex_align(f, FlexAlign::SpaceEvenly, FlexAlign::Center, FlexAlign::Center);
+        util::set_flex(e, f, FlexFlow::ROW);
+        e.set_flex_align(f, MainAlign::SpaceEvenly, CrossAlign::Center, MainAlign::Center);
         self.footer = Some(f);
         Some(f)
     }
@@ -260,7 +260,7 @@ impl Msgbox {
     /// Adds a header button with `SYMBOL_CLOSE` that closes the box (LVGL
     /// `lv_msgbox_add_close_button`).
     pub fn add_close_button(&mut self, cx: &mut WidgetCx<'_>) -> Option<NodeId> {
-        let b = self.add_header_button(cx, Some(ImageSource::Symbol(symbols::CLOSE)))?;
+        let b = self.add_header_button(cx, Some(ImageSource::symbol(Symbol::Close)))?;
         let mb = cx.node();
         cx.engine_mut()
             .add_event_handler(b, EventFilter::Code(EventCode::Clicked), move |ecx, ev| {
@@ -363,12 +363,12 @@ impl Widget for Msgbox {
         let mb = cx.node();
         let e = cx.engine_mut();
         e.set_size(mb, MSGBOX_DEFAULT_WIDTH, Length::Content);
-        util::set_flex(e, mb, FlexFlow::Column);
+        util::set_flex(e, mb, FlexFlow::COLUMN);
         let Ok(content) = e.create(mb, Box::new(ClassObj(&MSGBOX_CONTENT_CLASS))) else {
             return;
         };
         e.set_size(content, Length::pct(100), Length::Content);
-        util::set_flex(e, content, FlexFlow::Column);
+        util::set_flex(e, content, FlexFlow::COLUMN);
         e.align(mb, Align::Center, 0, 0);
         self.content = content;
     }
@@ -386,7 +386,7 @@ impl Widget for Msgbox {
                 let content_h =
                     e.style_prop(node, Part::Main, PropId::Height).as_length() == Some(Length::Content);
                 if e.tree().contains(self.content) {
-                    e.set_flex_grow(self.content, u8::from(!content_h));
+                    e.set_flex_grow(self.content, u16::from(!content_h));
                 }
             }
             EventCode::Delete => {

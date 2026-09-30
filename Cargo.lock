@@ -3048,7 +3048,11 @@ dependencies = [
  "stm32-metapac",
  "twine-accel-stm32",
  "twine-core",
+ "twine-engine",
+ "twine-hal",
  "twine-render",
+ "twine-style",
+ "twine-testing",
 ]
 
 [[package]]
@@ -3354,6 +3358,7 @@ dependencies = [
 name = "twine-sim"
 version = "0.1.0"
 dependencies = [
+ "critical-section",
  "env_logger",
  "log",
  "png 0.17.16",

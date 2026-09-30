@@ -81,8 +81,8 @@ impl Dash {
     #[must_use]
     pub fn is_valid(&self) -> bool {
         !self.pattern.is_empty()
-            && self.pattern.iter().all(|v| v.0 >= 0)
-            && self.pattern.iter().map(|v| i64::from(v.0)).sum::<i64>() > 0
+            && self.pattern.iter().all(|v| v.raw() >= 0)
+            && self.pattern.iter().map(|v| i64::from(v.raw())).sum::<i64>() > 0
     }
 }
 
@@ -235,7 +235,7 @@ impl Stroker<'_> {
             LineJoin::Miter => {
                 let hw2 = i128::from(self.hw) * i128::from(self.hw);
                 let den = hw2 + dot;
-                let lim = i128::from(self.s.miter_limit.0.max(0));
+                let lim = i128::from(self.s.miter_limit.raw().max(0));
                 // ratio² = 2·hw² / (hw² + na·nb) ≤ limit²  (limit in 16.16).
                 if den > 0 && (2 * hw2) << 32 <= lim * lim * den {
                     let m = add(na, nb);
@@ -338,7 +338,7 @@ fn dash_polylines(input: &Polylines, dash: &Dash, out: &mut Polylines) {
     let pat = &dash.pattern;
     let len = pat.len();
     let count = if len % 2 == 1 { 2 * len } else { len };
-    let val = |k: usize| i64::from(pat[k % len].0);
+    let val = |k: usize| i64::from(pat[k % len].raw());
     let total: i64 = (0..count).map(val).sum();
     for pl in input.iter() {
         let pts = pl.points;
@@ -366,7 +366,7 @@ fn dash_polylines(input: &Polylines, dash: &Dash, out: &mut Polylines) {
         // Advance by the offset.
         let mut k = 0usize;
         let mut rem = val(0);
-        let mut off = i64::from(dash.offset.0).rem_euclid(total);
+        let mut off = i64::from(dash.offset.raw()).rem_euclid(total);
         while off > 0 {
             if off >= rem {
                 off -= rem;
@@ -424,13 +424,13 @@ pub(crate) fn stroke_polylines(
     dashed: &mut Polylines,
     out: &mut Vec<Line>,
 ) {
-    if s.width.0 <= 0 {
+    if s.width.raw() <= 0 {
         return;
     }
     let st = Stroker {
         s,
-        hw: (i64::from(s.width.0) / 2).max(1),
-        tol: i64::from(tol.0.max(1)),
+        hw: (i64::from(s.width.raw()) / 2).max(1),
+        tol: i64::from(tol.raw().max(1)),
     };
     let mut o = Outline {
         t,

@@ -8,9 +8,11 @@ use core::cell::{Cell, RefCell};
 use twine_anim::{Anim, AnimId, Easing, Interpolate, TimerId};
 use twine_core::Duration;
 use twine_engine::{DisplayId, Engine, NodeId, ThemeHook, Widget};
-use twine_reactive::{ReadSignal, Scope, batch, defer_current_effect, dispose_current_effect, untrack};
+use twine_reactive::{
+    ReadSignal, Scope, Signal, StoredValue, batch, defer_current_effect, dispose_current_effect, untrack,
+};
 
-use crate::access::EngineAccess;
+use crate::access::{EngineAccess, no_engine};
 use crate::nav::{ModalHandle, show_modal};
 use crate::node_ref::NodeRef;
 use crate::view::View;
@@ -92,93 +94,116 @@ struct Tween<T> {
     to: T,
 }
 
-/// Controls a free-running animation created with [`ScopeExt::animation`]. `Clone`; every
-/// method works inside handlers, effects and timers run by the `Ui` (elsewhere it logs
-/// `warn!` and does nothing).
-#[derive(Clone)]
+/// Controls a free-running animation created with [`ScopeExt::animation`]. `Copy`, like a
+/// signal; its state is owned by the scope that created the animation (once that scope is
+/// disposed every method does nothing and `is_playing` is `false`). Every method works where
+/// the engine is available — inside handlers, effects, timers and while building (see
+/// [`ScopeExt`] § Where the engine is available); elsewhere it does nothing (`is_playing` is
+/// `false`) and, in debug builds, logs `warn!` once per call site.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AnimController {
-    inner: Rc<CtlState>,
+    state: StoredValue<CtlState>,
+    out: Signal<i32>,
 }
 
 struct CtlState {
-    id: Cell<Option<AnimId>>,
+    id: Option<AnimId>,
     params: Anim,
-    out: twine_reactive::Signal<i32>,
 }
 
 impl core::fmt::Debug for AnimController {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("AnimController")
-            .field("id", &self.inner.id.get())
-            .finish()
+        f.debug_struct("AnimController").field("id", &self.id()).finish()
     }
 }
 
 impl AnimController {
-    fn engine(&self, what: &str, f: impl FnOnce(&mut Engine, &CtlState)) {
-        if EngineAccess::with(|e| f(e, &self.inner)).is_none() {
-            twine_core::warn!(target: "twine::view", "AnimController::{} outside the Ui; ignored", what);
+    #[cfg_attr(debug_assertions, track_caller)]
+    fn engine(what: &'static str, f: impl FnOnce(&mut Engine)) {
+        if EngineAccess::with(f).is_none() {
+            no_engine(what);
         }
     }
 
-    fn start(e: &mut Engine, st: &Rc<CtlState>) {
-        let out = st.out;
-        let id = e.anim_start_fn(copy_anim(&st.params), move |e, v| {
+    /// The running animation (`None` when stopped or disposed).
+    fn id(self) -> Option<AnimId> {
+        self.state.try_with(|s| s.id).flatten()
+    }
+
+    /// Takes the running animation's id.
+    fn take_id(self) -> Option<AnimId> {
+        self.state.try_with_mut(|s| s.id.take()).flatten()
+    }
+
+    fn start(e: &mut Engine, ctl: Self) {
+        let Some(params) = ctl.state.try_with(|s| copy_anim(&s.params)) else {
+            return; // disposed with its scope
+        };
+        let out = ctl.out;
+        let id = e.anim_start_fn(params, move |e, v| {
             if out.is_alive() {
                 EngineAccess::provide(e, || out.set_if_changed(v));
             }
         });
-        if let Some(old) = st.id.replace(Some(id)) {
+        if let Some(old) = ctl.state.with_mut(|s| s.id.replace(id)) {
             e.anim_stop(old);
         }
     }
 
     /// Pauses at the current value.
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn pause(&self) {
-        self.engine("pause", |e, st| {
-            if let Some(id) = st.id.get() {
+        let id = self.id();
+        Self::engine("AnimController::pause", |e| {
+            if let Some(id) = id {
                 e.anim_pause(id);
             }
         });
     }
 
     /// Continues after [`pause`](Self::pause).
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn resume(&self) {
-        self.engine("resume", |e, st| {
-            if let Some(id) = st.id.get() {
+        let id = self.id();
+        Self::engine("AnimController::resume", |e| {
+            if let Some(id) = id {
                 e.anim_resume(id);
             }
         });
     }
 
     /// Starts again from the beginning (also after the animation ended or was stopped).
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn restart(&self) {
-        let inner = self.inner.clone();
-        self.engine("restart", move |e, st| match st.id.get() {
+        let ctl = *self;
+        Self::engine("AnimController::restart", move |e| match ctl.id() {
             Some(id) if e.anim_exists(id) => {
                 e.anim_restart(id);
             }
-            _ => Self::start(e, &inner),
+            _ => Self::start(e, ctl),
         });
     }
 
     /// Stops the animation (the value stays where it is).
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn stop(&self) {
-        self.engine("stop", |e, st| {
-            if let Some(id) = st.id.take() {
+        let ctl = *self;
+        Self::engine("AnimController::stop", move |e| {
+            if let Some(id) = ctl.take_id() {
                 e.anim_stop(id);
             }
         });
     }
 
     /// Plays (`true`, resuming or restarting) or pauses (`false`).
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn set_playing(&self, on: bool) {
-        let inner = self.inner.clone();
-        self.engine("set_playing", move |e, st| match (on, st.id.get()) {
+        let ctl = *self;
+        Self::engine("AnimController::set_playing", move |e| match (on, ctl.id()) {
             (true, Some(id)) if e.anim_exists(id) => {
                 e.anim_resume(id);
             }
-            (true, _) => Self::start(e, &inner),
+            (true, _) => Self::start(e, ctl),
             (false, Some(id)) => {
                 e.anim_pause(id);
             }
@@ -186,12 +211,19 @@ impl AnimController {
         });
     }
 
-    /// Whether the animation exists and is not paused.
+    /// Whether the animation exists and is not paused (`false` without the engine).
     #[must_use]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn is_playing(&self) -> bool {
-        let id = self.inner.id.get();
-        EngineAccess::with(|e| id.is_some_and(|id| e.anim_exists(id) && !e.anim_is_paused(id)))
-            .unwrap_or(false)
+        let id = self.id();
+        let playing = EngineAccess::with(|e| id.is_some_and(|id| e.anim_exists(id) && !e.anim_is_paused(id)));
+        if let Some(p) = playing {
+            p
+        } else {
+            // Not in a closure: `#[track_caller]` does not pass through closures.
+            no_engine("AnimController::is_playing");
+            false
+        }
     }
 }
 
@@ -203,7 +235,9 @@ pub struct ThemeHandle {
 
 impl ThemeHandle {
     /// Installs `theme` (every node is re-styled; the display is redrawn once). Works inside
-    /// handlers, effects and timers run by the `Ui`; elsewhere it logs `warn!`.
+    /// handlers, effects and timers run by the `Ui`; elsewhere it does nothing and, in debug
+    /// builds, logs `warn!` once per call site (from outside the `Ui`, use `Ui::set_theme`).
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn set(&self, theme: impl ThemeHook + 'static) {
         let cx = self.cx;
         let theme: Rc<dyn ThemeHook> = Rc::new(theme);
@@ -213,7 +247,7 @@ impl ThemeHandle {
             }
         });
         if done.is_none() {
-            twine_core::warn!(target: "twine::view", "use_theme(..).set outside the Ui; ignored");
+            no_engine("ThemeHandle::set");
         }
     }
 }
@@ -234,6 +268,37 @@ pub fn use_theme(cx: Scope) -> ThemeHandle {
 }
 
 /// Hooks tied to a [`Scope`]: everything they create is released when the scope is disposed.
+///
+/// # Where the engine is available
+///
+/// The engine is available inside event handlers, effects (bindings), timer and animation
+/// callbacks, channel message handlers and while the view is being built — the code the `Ui`
+/// runs ([`EngineAccess`](crate::EngineAccess)). Elsewhere (your main loop, another task,
+/// after `Ui::update` returned):
+///
+/// - hooks that create something (`tween`, `animation`, `interval`, `timeout`, `show_modal`),
+///   signal writes and navigation **defer** their engine work to the next `Ui::update` —
+///   correct, nothing is lost;
+/// - calls that need the engine *now* — [`NodeRef::with_mut`], the [`AnimController`]
+///   methods, [`ThemeHandle::set`] — do nothing (`None` / `false`) and, in debug builds, log
+///   `warn!` once per call site. Use the `Ui` methods (`ui.set_theme(..)`,
+///   `ui.engine_mut()`) or post a message whose handler makes the call:
+///
+/// ```
+/// use twine_view::prelude::*;
+///
+/// static PAUSE: Channel<bool, 4> = Channel::new();
+///
+/// fn app(cx: Scope) -> impl View {
+///     let (x, ctl) = cx.animation(Anim::new(0, 100).duration(Duration::ms(1000)));
+///     // Runs inside `Ui::update` with the engine lent.
+///     cx.on_message(&PAUSE, move |paused| ctl.set_playing(!paused));
+///     container(()).width(x)
+/// }
+/// # let _ = app;
+/// // Elsewhere (another task, an ISR, the main loop): post, don't call `ctl` directly.
+/// let _ = PAUSE.try_send(true);
+/// ```
 pub trait ScopeExt: Copy {
     /// An empty [`NodeRef`], filled by `.node_ref(r)` on a view.
     fn node_ref<W: Widget>(self) -> NodeRef<W>;
@@ -271,7 +336,23 @@ pub trait ScopeExt: Copy {
     /// backdrop blocking the input below, the view centered, and a focus group of its own for
     /// keypads and encoders. Closed with [`ModalHandle::close`] (or when this scope is
     /// disposed).
-    fn show_modal<V: View>(self, view: impl FnOnce(Scope) -> V + 'static) -> ModalHandle;
+    ///
+    /// `view` is called once, with the modal's own scope and its [`ModalHandle`] (`Copy`), so
+    /// the modal's buttons can close it:
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    ///
+    /// fn app(cx: Scope) -> impl View {
+    ///     button(label("Open")).on_click(move || {
+    ///         let _ = cx.show_modal(|_cx, modal: ModalHandle| {
+    ///             button(label("Close")).on_click(move || modal.close())
+    ///         });
+    ///     })
+    /// }
+    /// # let _ = app;
+    /// ```
+    fn show_modal<V: View>(self, view: impl FnOnce(Scope, ModalHandle) -> V + 'static) -> ModalHandle;
 
     /// The theme switcher of the `Ui` (same as [`use_theme`]).
     fn use_theme(self) -> ThemeHandle;
@@ -352,17 +433,16 @@ impl ScopeExt for Scope {
     fn animation(self, anim: Anim) -> (ReadSignal<i32>, AnimController) {
         let out = self.signal(anim.start);
         let ctl = AnimController {
-            inner: Rc::new(CtlState {
-                id: Cell::new(None),
+            state: self.stored_value(CtlState {
+                id: None,
                 params: anim,
-                out,
             }),
+            out,
         };
-        let st = ctl.inner.clone();
-        with_engine_once(self, move |e| AnimController::start(e, &st));
-        let st = ctl.inner.clone();
+        with_engine_once(self, move |e| AnimController::start(e, ctl));
+        // Cleanups run before the scope's stored values are dropped.
         self.on_cleanup(move || {
-            if let Some(id) = st.id.take() {
+            if let Some(id) = ctl.take_id() {
                 EngineAccess::with(|e| e.anim_stop(id));
             }
         });
@@ -387,7 +467,7 @@ impl ScopeExt for Scope {
         );
     }
 
-    fn show_modal<V: View>(self, view: impl FnOnce(Scope) -> V + 'static) -> ModalHandle {
+    fn show_modal<V: View>(self, view: impl FnOnce(Scope, ModalHandle) -> V + 'static) -> ModalHandle {
         show_modal(self, view)
     }
 

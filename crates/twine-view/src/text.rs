@@ -3,6 +3,7 @@
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt::Write;
 
 use twine_engine::NodeId;
@@ -63,6 +64,10 @@ impl core::fmt::Debug for TextProp {
 /// let _e = label(text!("{} items", n.get())); // formats in place, no allocation
 /// cx.dispose();
 /// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be used as a text",
+    label = "not a `&'static str`, `String`, `text!`, signal or memo of `String`, or `Fn() -> String`"
+)]
 pub trait IntoText {
     /// The text property.
     fn into_text(self) -> TextProp;
@@ -71,6 +76,14 @@ pub trait IntoText {
 impl IntoText for &'static str {
     fn into_text(self) -> TextProp {
         TextProp::Static(self)
+    }
+}
+
+impl IntoText for twine_text::Symbol {
+    /// The symbol's glyph as a static text (no allocation): `label(Symbol::Ok)`.
+    #[inline]
+    fn into_text(self) -> TextProp {
+        TextProp::Static(self.as_str())
     }
 }
 
@@ -262,6 +275,175 @@ pub(crate) fn bind_str(
                     move |e, n, s: alloc::rc::Rc<core::cell::RefCell<String>>| set(e, n, &s.borrow()),
                 );
             });
+        }
+    }
+}
+
+impl TextProp {
+    /// Resolves a [`TextProp::Scoped`] text (repeatedly) in `scope`; other texts are returned
+    /// as they are.
+    pub(crate) fn resolve(self, scope: Scope) -> TextProp {
+        let mut t = self;
+        while let TextProp::Scoped(f) = t {
+            t = f(scope);
+        }
+        t
+    }
+
+    /// Whether the text never changes (no binding needed).
+    pub(crate) fn is_constant(&self) -> bool {
+        matches!(self, TextProp::Static(_) | TextProp::Owned(_))
+    }
+
+    /// Writes the current text into `w` (a [`TextProp::Scoped`] text, not resolved, writes
+    /// nothing). Reads of signals are tracked by the running binding.
+    pub(crate) fn write_to(&self, w: &mut dyn Write) {
+        let _ = match self {
+            TextProp::Static(s) => w.write_str(s),
+            TextProp::Owned(s) => w.write_str(s),
+            TextProp::StaticFn(f) => w.write_str(f()),
+            TextProp::Fn(f) => w.write_str(&f()),
+            TextProp::Write(f) => {
+                f(w);
+                Ok(())
+            }
+            TextProp::Scoped(_) => Ok(()),
+        };
+    }
+}
+
+/// Joins texts with `'\n'` into one text: an owned text when every item is constant (joined
+/// once), else a writer re-run as one binding (the items' reads are tracked; no allocation
+/// once the binding's buffer is large enough, unless an item is a `String` closure).
+/// [`TextProp::Scoped`] items are resolved when the text is applied.
+pub(crate) fn join_texts(items: Vec<TextProp>) -> TextProp {
+    if items.iter().any(|t| matches!(t, TextProp::Scoped(_))) {
+        return TextProp::Scoped(Box::new(move |cx| {
+            join_texts(items.into_iter().map(|t| t.resolve(cx)).collect())
+        }));
+    }
+    let write_all = |items: &[TextProp], w: &mut dyn Write| {
+        for (i, t) in items.iter().enumerate() {
+            if i > 0 {
+                let _ = w.write_char('\n');
+            }
+            t.write_to(w);
+        }
+    };
+    match items.as_slice() {
+        [] => TextProp::Static(""),
+        [TextProp::Static(s)] => TextProp::Static(s),
+        _ if items.iter().all(TextProp::is_constant) => {
+            let mut s = String::new();
+            write_all(&items, &mut s);
+            TextProp::Owned(s)
+        }
+        _ => TextProp::Write(Box::new(move |w| write_all(&items, w))),
+    }
+}
+
+/// Writes `items` joined with `'\n'`.
+fn write_joined<S: AsRef<str>>(items: &[S], w: &mut dyn Write) {
+    for (i, s) in items.iter().enumerate() {
+        if i > 0 {
+            let _ = w.write_char('\n');
+        }
+        let _ = w.write_str(s.as_ref());
+    }
+}
+
+/// The options of a [`dropdown`](crate::dropdown) or [`roller`](crate::roller): a fixed list
+/// of texts (an array, a `Vec`, a `&'static` slice or an iterator `map`, of anything
+/// [`IntoText`] — each item may itself be dynamic, e.g. a translation) or a reactive list
+/// (a `Signal`, `ReadSignal` or `Memo` of a `Vec` of strings, a closure returning one, or a
+/// [`Prop`](crate::Prop)).
+///
+/// The widget stores the options as one `'\n'`-joined text (an option must not contain
+/// `'\n'`): a fixed list of constant texts is joined once when the view is built; dynamic
+/// items and reactive lists are joined by one binding into a reused buffer (no allocation
+/// once it is large enough), and the widget copies the result only when it changed.
+///
+/// ```
+/// use twine_view::prelude::*;
+///
+/// fn pickers(cx: Scope) -> impl View {
+///     let sel = cx.signal(0usize);
+///     let names = cx.signal(vec![String::from("Ada"), String::from("Grace")]);
+///     column((
+///         dropdown(["Low", "Medium", "High"], sel),
+///         dropdown(names, 0usize),
+///         roller((0..24).map(|h| format!("{h:02}")), 7usize),
+///         dropdown(vec![text!("{} items", sel.get()), text!("none")], 0usize),
+///     ))
+/// }
+/// # let _ = pickers;
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be used as the options of a dropdown or roller",
+    note = "use an array, a `Vec` or an iterator `map` of texts, or a signal, memo or closure of a `Vec` of strings"
+)]
+pub trait IntoOptions {
+    /// The options as one `'\n'`-joined text.
+    fn into_options(self) -> TextProp;
+}
+
+impl<T: IntoText, const N: usize> IntoOptions for [T; N] {
+    fn into_options(self) -> TextProp {
+        join_texts(self.into_iter().map(IntoText::into_text).collect())
+    }
+}
+
+impl<T: IntoText> IntoOptions for Vec<T> {
+    fn into_options(self) -> TextProp {
+        join_texts(self.into_iter().map(IntoText::into_text).collect())
+    }
+}
+
+impl<T: IntoText + Clone> IntoOptions for &'static [T] {
+    fn into_options(self) -> TextProp {
+        join_texts(self.iter().cloned().map(IntoText::into_text).collect())
+    }
+}
+
+impl<I: Iterator, T: IntoText, F: FnMut(I::Item) -> T> IntoOptions for core::iter::Map<I, F> {
+    fn into_options(self) -> TextProp {
+        join_texts(self.map(IntoText::into_text).collect())
+    }
+}
+
+impl<S: AsRef<str> + 'static> IntoOptions for Signal<Vec<S>> {
+    fn into_options(self) -> TextProp {
+        TextProp::Write(Box::new(move |w| self.with(|v| write_joined(v, w))))
+    }
+}
+
+impl<S: AsRef<str> + 'static> IntoOptions for ReadSignal<Vec<S>> {
+    fn into_options(self) -> TextProp {
+        TextProp::Write(Box::new(move |w| self.with(|v| write_joined(v, w))))
+    }
+}
+
+impl<S: AsRef<str> + 'static> IntoOptions for Memo<Vec<S>> {
+    fn into_options(self) -> TextProp {
+        TextProp::Write(Box::new(move |w| self.with(|v| write_joined(v, w))))
+    }
+}
+
+impl<S: AsRef<str> + 'static, F: Fn() -> Vec<S> + 'static> IntoOptions for F {
+    fn into_options(self) -> TextProp {
+        TextProp::Write(Box::new(move |w| write_joined(&self(), w)))
+    }
+}
+
+impl<S: AsRef<str> + 'static> IntoOptions for crate::Prop<Vec<S>> {
+    fn into_options(self) -> TextProp {
+        match self {
+            crate::Prop::Static(v) => {
+                let mut s = String::new();
+                write_joined(&v, &mut s);
+                TextProp::Owned(s)
+            }
+            crate::Prop::Dynamic(f) => TextProp::Write(Box::new(move |w| write_joined(&f(), w))),
         }
     }
 }

@@ -12,7 +12,7 @@ use twine_core::{Color, Duration, Point, Rect};
 use twine_engine::{
     EventCode, EventFilter, EventParam, EventResult, GroupDef, Key, MeasureCx, NodeId, ObjFlags, State,
 };
-use twine_style::{Align, Part, Selector, StyleProp};
+use twine_style::{Align, Length, Part, Selector, StyleProp};
 use twine_testing::EngineHarness;
 use twine_widgets::buttonmatrix::{self, BUTTONMATRIX_CLASS, BtnCtrl, ButtonMatrix, MapSrc};
 
@@ -120,7 +120,7 @@ fn btnm_layout_widths_units() {
     h.run_until_idle();
     let e = h.engine();
     let content = e.content_area(m);
-    let pcol = e.style_i32(m, Part::Main, twine_style::PropId::PadColumn);
+    let pcol = e.style_i32(m, Part::Main, twine_style::PropId::ColumnGap);
     let no_gap = content.width() - 2 * pcol;
     let (a, b, c) = (area(&h, m, 0), area(&h, m, 1), area(&h, m, 2));
     // LVGL: x1 = no_gap * units_before / 6 + i * pcol, x2 = no_gap * units_after / 6 + i * pcol - 1.
@@ -144,7 +144,7 @@ fn btnm_row_split_on_newline() {
     assert_eq!(w.row_count(), 4);
     let e = h.engine();
     let content = e.content_area(m);
-    let prow = e.style_i32(m, Part::Main, twine_style::PropId::PadRow);
+    let prow = e.style_i32(m, Part::Main, twine_style::PropId::RowGap);
     let rows: Vec<Rect> = [0, 3, 6, 9].iter().map(|&i| area(&h, m, i)).collect();
     for (r, a) in rows.iter().enumerate() {
         let r = r as i32;
@@ -211,13 +211,13 @@ fn btnm_press_invalidates_only_button() {
     let m = buttonmatrix::create_with(e, screen, MapSrc::Static(&MAP_3X4)).unwrap();
     e.set_size(m, 200, 120);
     e.align(m, Align::Center, 0, 0);
-    e.set_local_prop(m, Selector::MAIN, StyleProp::PadRow(4));
-    e.set_local_prop(m, Selector::MAIN, StyleProp::PadColumn(4));
+    e.set_local_prop(m, Selector::MAIN, StyleProp::RowGap(Length::Px(4)));
+    e.set_local_prop(m, Selector::MAIN, StyleProp::ColumnGap(Length::Px(4)));
     e.set_local_prop(m, Selector::part(Part::Items), StyleProp::BgColor(Color::BLUE));
     e.set_local_prop(
         m,
         Selector::part(Part::Items),
-        StyleProp::BgOpa(twine_core::Opa::COVER),
+        StyleProp::BgOpacity(twine_core::Opa::COVER),
     );
     h.run_until_idle();
     let b = area(&h, m, 4);

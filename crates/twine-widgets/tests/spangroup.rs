@@ -117,7 +117,7 @@ fn spans_wrap_across_boundaries() {
 fn mixed_fonts_baseline_aligned() {
     let (mut h, g) = scene(Mode::Light);
     add(&mut h, g, "small ", &[]);
-    add(&mut h, g, "BIG", &[StyleProp::TextFont(&MONTSERRAT_20)]);
+    add(&mut h, g, "BIG", &[StyleProp::Font(&MONTSERRAT_20)]);
     h.run_until_idle();
     let l = lines(&h, g);
     assert_eq!(l.len(), 1);
@@ -156,7 +156,7 @@ fn three_span_two_font_paragraph_layout_table() {
     type Row = (i32, i32, Vec<(SpanId, std::ops::Range<usize>, i32, i32)>);
     let (mut h, g) = scene(Mode::Light);
     let a = add(&mut h, g, "The quick ", &[]);
-    let b = add(&mut h, g, "BROWN fox ", &[StyleProp::TextFont(&MONTSERRAT_20)]);
+    let b = add(&mut h, g, "BROWN fox ", &[StyleProp::Font(&MONTSERRAT_20)]);
     let c = add(&mut h, g, "jumps over the lazy dog", &[]);
     break_group(&mut h, g, 150);
     assert_eq!(
@@ -231,7 +231,7 @@ fn ellipsis_on_overflow() {
 fn expand_mode_size() {
     let (mut h, g) = scene(Mode::Light);
     add(&mut h, g, "Hello, ", &[]);
-    add(&mut h, g, "world", &[StyleProp::TextLetterSpace(2)]);
+    add(&mut h, g, "world", &[StyleProp::LetterSpacing(2)]);
     h.run_until_idle();
     let w = get::<SpanGroup>(&h, g);
     let m = MeasureCx::new(h.engine(), g);
@@ -263,7 +263,7 @@ fn max_lines_limit() {
 fn span_by_point_hit() {
     let (mut h, g) = scene(Mode::Light);
     let a = add(&mut h, g, "left ", &[]);
-    let b = add(&mut h, g, "right", &[StyleProp::TextFont(&MONTSERRAT_20)]);
+    let b = add(&mut h, g, "right", &[StyleProp::Font(&MONTSERRAT_20)]);
     h.run_until_idle();
     let c = h.engine().content_area(g);
     let w = get::<SpanGroup>(&h, g);
@@ -313,11 +313,16 @@ fn snapshot_span_mixed() {
             g,
             "rich ",
             &[
-                StyleProp::TextFont(&MONTSERRAT_20),
+                StyleProp::Font(&MONTSERRAT_20),
                 StyleProp::TextColor(twine_theme::Palette::Blue.main()),
             ],
         );
-        add(&mut h, g, "text ", &[StyleProp::TextDecor(TextDecor::UNDERLINE)]);
+        add(
+            &mut h,
+            g,
+            "text ",
+            &[StyleProp::TextDecoration(TextDecor::UNDERLINE)],
+        );
         add(
             &mut h,
             g,

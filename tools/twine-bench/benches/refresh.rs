@@ -56,8 +56,13 @@ fn partial_40x40_engine_boxes(c: &mut Criterion) {
 fn large_tree(e: &mut Engine) -> NodeId {
     let d = e.default_display().unwrap();
     let mut parent = e.active_screen(d).unwrap();
-    let solid = |c: u32| [StyleProp::BgColor(Color::hex(c)), StyleProp::BgOpa(Opa::COVER)];
-    e.set_local_prop(parent, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+    let solid = |c: u32| {
+        [
+            StyleProp::BgColor(Color::hex(c)),
+            StyleProp::BgOpacity(Opa::COVER),
+        ]
+    };
+    e.set_local_prop(parent, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
     for level in 0..10 {
         let r = Rect::new(level * 8, level * 6, 320 - level * 8, 240 - level * 6);
         for i in 0..99 {

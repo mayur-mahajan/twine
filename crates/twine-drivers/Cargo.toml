@@ -47,6 +47,11 @@ qspi = []
 mipi-dcs = []
 
 #! ### Displays
+# NOTE(R3.S06): a panel feature cannot enable the `color-*` feature its format needs: the
+# drivers depend only on `twine-hal`, not on the renderer. Until the setup helpers of R3.S06,
+# the application enables it (`twine/color-rgb565-swapped` for RGB565 MIPI DCS panels,
+# `twine/color-rgb888` for RGB666/RGB888 ones, `twine/color-i1` for SSD1306/SH1106);
+# otherwise `Engine::add_display` returns `EngineError::FormatDisabled`.
 ## ILI9341 240 × 320 (SPI).
 ili9341 = ["mipi-dcs", "spi"]
 ## ILI9342C 320 × 240 (SPI).

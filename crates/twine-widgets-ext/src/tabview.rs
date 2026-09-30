@@ -13,7 +13,7 @@ use twine_engine::{
     Engine, EngineError, Event, EventCode, EventCx, EventFilter, EventParam, EventResult, NodeId, OBJ_FLAGS,
     ObjFlags, State, Widget, WidgetClass, WidgetCx, fmt_node_id,
 };
-use twine_style::{Align, Dir, FlexFlow, Length, Part, PropId, ScrollSnap, ScrollbarMode};
+use twine_style::{Align, FlexFlow, Length, Part, PropId, ScrollSnap, ScrollbarMode, Side};
 use twine_widgets::button::{BUTTON_CLASS, Button};
 use twine_widgets::label::Label;
 
@@ -65,7 +65,8 @@ pub struct Tabview {
     tab_bar: NodeId,
     content: NodeId,
     tab_cur: u32,
-    tab_pos: Dir,
+    /// `None` until the constructor places the bar.
+    tab_pos: Option<Side>,
     tab_bar_size: i32,
     animated: bool,
 }
@@ -84,7 +85,7 @@ impl Tabview {
             tab_bar: NodeId::DANGLING,
             content: NodeId::DANGLING,
             tab_cur: 0,
-            tab_pos: Dir::NONE,
+            tab_pos: None,
             tab_bar_size: 0,
             animated: true,
         }
@@ -112,8 +113,13 @@ impl Tabview {
 
     /// The bar position.
     #[must_use]
-    pub fn tab_bar_position(&self) -> Dir {
-        self.tab_pos
+    pub fn tab_bar_position(&self) -> Side {
+        self.tab_pos.unwrap_or(Side::Top)
+    }
+
+    /// The bar is at the top or the bottom.
+    fn bar_is_ver(&self) -> bool {
+        self.tab_pos.is_some_and(Side::is_vertical)
     }
 
     /// The bar size (height at the top or bottom, width at the side).
@@ -203,14 +209,14 @@ impl Tabview {
         e.update_layout();
         let c = self.content;
         let ca = e.content_area(c);
-        if self.tab_pos.intersects(Dir::VER) {
-            let gap = e.style_i32(c, Part::Main, PropId::PadColumn);
+        if self.bar_is_ver() {
+            let gap = e.style_i32(c, Part::Main, PropId::ColumnGap);
             let x = idx as i32 * (gap + ca.width());
             let rtl = util::is_rtl(&cx.measure());
             let e = cx.engine_mut();
             e.scroll_to_x(c, if rtl { -x } else { x }, anim);
         } else {
-            let gap = e.style_i32(c, Part::Main, PropId::PadRow);
+            let gap = e.style_i32(c, Part::Main, PropId::RowGap);
             e.scroll_to_y(c, idx as i32 * (gap + ca.height()), anim);
         }
         let e = cx.engine_mut();
@@ -238,19 +244,15 @@ impl Tabview {
 
     /// Puts the bar at the top, bottom, left or right (LVGL `lv_tabview_set_tab_bar_position`).
     /// Idempotent.
-    pub fn set_tab_bar_position(&mut self, cx: &mut WidgetCx<'_>, dir: Dir) {
-        if dir == self.tab_pos {
+    pub fn set_tab_bar_position(&mut self, cx: &mut WidgetCx<'_>, dir: Side) {
+        if Some(dir) == self.tab_pos {
             return;
         }
         let flow = match dir {
-            Dir::TOP => FlexFlow::Column,
-            Dir::BOTTOM => FlexFlow::ColumnReverse,
-            Dir::LEFT => FlexFlow::Row,
-            Dir::RIGHT => FlexFlow::RowReverse,
-            _ => {
-                twine_core::warn!(target: "twine::engine", "tabview: bar position {:?} is not a side", dir);
-                return;
-            }
+            Side::Top => FlexFlow::COLUMN,
+            Side::Bottom => FlexFlow::COLUMN.reverse(true),
+            Side::Left => FlexFlow::ROW,
+            Side::Right => FlexFlow::ROW.reverse(true),
         };
         log_set(TABVIEW_CLASS.name, cx.node(), "tab_bar_position");
         let tv = cx.node();
@@ -258,30 +260,30 @@ impl Tabview {
         let dpi = i32::from(util::display_dpi(cx.engine(), tv));
         let e = cx.engine_mut();
         util::set_flex(e, tv, flow);
-        let now_ver = dir.intersects(Dir::VER);
+        let now_ver = dir.is_vertical();
         if now_ver {
             e.set_width(c, Length::pct(100));
-            util::set_flex(e, bar, FlexFlow::Row);
-            util::set_flex(e, c, FlexFlow::Row);
+            util::set_flex(e, bar, FlexFlow::ROW);
+            util::set_flex(e, c, FlexFlow::ROW);
             e.set_scroll_snap_x(c, ScrollSnap::Center);
             e.set_scroll_snap_y(c, ScrollSnap::None);
         } else {
             e.set_height(c, Length::pct(100));
-            util::set_flex(e, bar, FlexFlow::Column);
-            util::set_flex(e, c, FlexFlow::Column);
+            util::set_flex(e, bar, FlexFlow::COLUMN);
+            util::set_flex(e, c, FlexFlow::COLUMN);
             e.set_scroll_snap_x(c, ScrollSnap::None);
             e.set_scroll_snap_y(c, ScrollSnap::Center);
         }
         e.set_flex_grow(c, 1);
-        let was_ver = self.tab_pos.intersects(Dir::VER);
-        if was_ver != now_ver || self.tab_pos == Dir::NONE {
+        let was_ver = self.bar_is_ver();
+        if was_ver != now_ver || self.tab_pos.is_none() {
             if now_ver {
                 e.set_size(bar, Length::pct(100), dpi / 2);
             } else {
                 e.set_size(bar, dpi, Length::pct(100));
             }
         }
-        self.tab_pos = dir;
+        self.tab_pos = Some(dir);
         let size = self.tab_bar_size;
         self.tab_bar_size = i32::MIN;
         self.set_tab_bar_size(cx, size);
@@ -296,7 +298,7 @@ impl Tabview {
         log_set(TABVIEW_CLASS.name, cx.node(), "tab_bar_size");
         let bar = self.tab_bar;
         let e = cx.engine_mut();
-        if self.tab_pos.intersects(Dir::VER) {
+        if self.bar_is_ver() {
             e.set_height(bar, size);
         } else {
             e.set_width(bar, size);
@@ -328,7 +330,7 @@ impl Tabview {
         let c = self.content;
         let p = e.scroll_end(c);
         let ca = e.content_area(c);
-        let t = if self.tab_pos.intersects(Dir::VER) {
+        let t = if self.bar_is_ver() {
             let w = ca.width().max(1);
             if util::is_rtl(&cx.measure()) {
                 -(p.x - w / 2) / w
@@ -391,7 +393,7 @@ impl Widget for Tabview {
         };
         self.tab_bar = bar;
         self.content = content;
-        util::set_flex(e, content, FlexFlow::Row);
+        util::set_flex(e, content, FlexFlow::ROW);
         e.set_scrollbar_mode(content, ScrollbarMode::Off);
         for code in [EventCode::LayoutChanged, EventCode::ScrollEnd] {
             e.add_event_handler(content, EventFilter::Code(code), move |ecx, ev| {
@@ -411,7 +413,7 @@ impl Widget for Tabview {
         }
         let dpi = i32::from(util::display_dpi(cx.engine(), tv));
         self.tab_bar_size = dpi / 2;
-        self.set_tab_bar_position(cx, Dir::TOP);
+        self.set_tab_bar_position(cx, Side::Top);
         let e = cx.engine_mut();
         e.set_flag(content, ObjFlags::SCROLL_ONE, true);
         e.set_flag(content, ObjFlags::SCROLL_ON_FOCUS, false);

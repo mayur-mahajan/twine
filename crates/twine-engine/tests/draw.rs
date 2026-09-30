@@ -4,12 +4,12 @@
 mod common;
 
 use common::{boxed, screen, style, white_screen};
-use twine_core::{Angle, Color, ColorFormat, Opa, Rect};
+use twine_core::{Angle, Color, ColorFormat, Fraction, Opa, Rect};
 use twine_engine::{Engine, InvalidateReason, MeasureCx, NodeId, ObjFlags, default_covers};
 use twine_hal::BufferSpec;
 use twine_image::{Image, ImageHeader, ImageSource};
 use twine_render::{BlendMode, GradKind, GradStop, Gradient};
-use twine_style::{GradDir, Length, StyleProp};
+use twine_style::{GradDir, Length, Radius, StyleProp};
 use twine_testing::EngineHarness;
 use twine_testing::scenes::{engine_boxes, styled_box};
 
@@ -23,12 +23,12 @@ fn bg_border_outline(e: &mut Engine) {
         Rect::from_xywh(20, 16, 60, 40),
         &[
             StyleProp::BgColor(Color::hex(0x90_CA_F9)),
-            StyleProp::BgOpa(Opa::COVER),
-            StyleProp::Radius(10),
-            StyleProp::BorderWidth(4),
+            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::Radius(Radius::Px(10)),
+            StyleProp::BorderWidth(Length::Px(4)),
             StyleProp::BorderColor(Color::hex(0x0D_47_A1)),
             StyleProp::OutlineWidth(3),
-            StyleProp::OutlinePad(3),
+            StyleProp::OutlineOffset(3),
             StyleProp::OutlineColor(Color::hex(0xE5_39_35)),
         ],
     );
@@ -42,13 +42,13 @@ fn shadow(e: &mut Engine) {
         Rect::from_xywh(26, 18, 48, 36),
         &[
             StyleProp::BgColor(Color::hex(0xFF_EE_58)),
-            StyleProp::BgOpa(Opa::COVER),
-            StyleProp::Radius(8),
+            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::Radius(Radius::Px(8)),
             StyleProp::ShadowWidth(16),
             StyleProp::ShadowOffsetX(4),
             StyleProp::ShadowOffsetY(6),
             StyleProp::ShadowSpread(2),
-            StyleProp::ShadowOpa(Opa::P70),
+            StyleProp::ShadowOpacity(Opa::P70),
         ],
     );
 }
@@ -56,9 +56,9 @@ fn shadow(e: &mut Engine) {
 static CONICAL: Gradient = Gradient::new(
     GradKind::Hor,
     &[
-        GradStop::new(Color::RED, 0),
-        GradStop::new(Color::GREEN, 128),
-        GradStop::new(Color::BLUE, 255),
+        GradStop::new(Color::RED, Fraction::ZERO),
+        GradStop::new(Color::GREEN, Fraction::from_raw(128)),
+        GradStop::new(Color::BLUE, Fraction::ONE),
     ],
 );
 
@@ -70,17 +70,17 @@ fn gradient(e: &mut Engine) {
         Rect::from_xywh(8, 8, 40, 56),
         &[
             StyleProp::BgColor(Color::hex(0x7B_1F_A2)),
-            StyleProp::BgGradColor(Color::hex(0xFF_CC_80)),
-            StyleProp::BgGradDir(GradDir::Ver),
-            StyleProp::BgOpa(Opa::COVER),
-            StyleProp::Radius(6),
+            StyleProp::BgGradientColor(Color::hex(0xFF_CC_80)),
+            StyleProp::BgGradientDir(GradDir::Ver),
+            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::Radius(Radius::Px(6)),
         ],
     );
     styled_box(
         e,
         s,
         Rect::from_xywh(52, 8, 40, 56),
-        &[StyleProp::BgGrad(&CONICAL), StyleProp::BgOpa(Opa::COVER)],
+        &[StyleProp::BgGradient(&CONICAL), StyleProp::BgOpacity(Opa::COVER)],
     );
 }
 
@@ -108,16 +108,16 @@ fn bg_image(e: &mut Engine) {
         Rect::from_xywh(10, 10, 30, 30),
         &[
             StyleProp::BgColor(Color::hex(0xDD_DD_DD)),
-            StyleProp::BgOpa(Opa::COVER),
-            StyleProp::BgImageSrc(&CHECKER_SRC),
-            StyleProp::BorderWidth(2),
+            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::BgImage(&CHECKER_SRC),
+            StyleProp::BorderWidth(Length::Px(2)),
         ],
     );
     styled_box(
         e,
         s,
         Rect::from_xywh(50, 10, 30, 30),
-        &[StyleProp::BgImageSrc(&CHECKER_SRC), StyleProp::BgImageTiled(true)],
+        &[StyleProp::BgImage(&CHECKER_SRC), StyleProp::BgImageTiled(true)],
     );
 }
 
@@ -129,8 +129,8 @@ fn radius_clip_corner(e: &mut Engine) {
         Rect::from_xywh(16, 8, 64, 56),
         &[
             StyleProp::BgColor(Color::hex(0x26_32_38)),
-            StyleProp::BgOpa(Opa::COVER),
-            StyleProp::Radius(20),
+            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::Radius(Radius::Px(20)),
             StyleProp::ClipCorner(true),
         ],
     );
@@ -159,7 +159,7 @@ fn opa_layer(e: &mut Engine) {
         e,
         s,
         Rect::from_xywh(10, 10, 70, 50),
-        &[StyleProp::OpaLayered(Opa::P50)],
+        &[StyleProp::Opacity(Opa::P50)],
     );
     boxed(e, g, Rect::from_xywh(10, 10, 45, 35), Color::RED);
     boxed(e, g, Rect::from_xywh(35, 25, 45, 35), Color::BLUE);
@@ -173,8 +173,8 @@ fn transform_rotated(e: &mut Engine) {
         Rect::from_xywh(26, 20, 44, 30),
         &[
             StyleProp::BgColor(Color::hex(0x00_96_88)),
-            StyleProp::BgOpa(Opa::COVER),
-            StyleProp::Radius(4),
+            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::Radius(Radius::Px(4)),
             StyleProp::TransformRotation(Angle::deg(30)),
             StyleProp::TransformPivotX(Length::Pct(50)),
             StyleProp::TransformPivotY(Length::Pct(50)),
@@ -192,7 +192,7 @@ fn blend_additive(e: &mut Engine) {
         Rect::from_xywh(35, 20, 50, 30),
         &[
             StyleProp::BgColor(Color::hex(0x00_80_40)),
-            StyleProp::BgOpa(Opa::COVER),
+            StyleProp::BgOpacity(Opa::COVER),
             StyleProp::BlendMode(BlendMode::Additive),
         ],
     );
@@ -206,10 +206,10 @@ fn border_post(e: &mut Engine) {
         Rect::from_xywh(16, 10, 60, 50),
         &[
             StyleProp::BgColor(Color::hex(0xEC_EF_F1)),
-            StyleProp::BgOpa(Opa::COVER),
-            StyleProp::BorderWidth(6),
+            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::BorderWidth(Length::Px(6)),
             StyleProp::BorderColor(Color::hex(0x37_47_4F)),
-            StyleProp::BorderPost(true),
+            StyleProp::BorderAboveChildren(true),
         ],
     );
     boxed(e, p, Rect::from_xywh(10, 20, 80, 20), Color::hex(0xFF_70_43));
@@ -236,8 +236,8 @@ fn bitmap_mask(e: &mut Engine) {
         Rect::from_xywh(20, 10, 48, 48),
         &[
             StyleProp::BgColor(Color::hex(0x6A_1B_9A)),
-            StyleProp::BgOpa(Opa::COVER),
-            StyleProp::BitmapMaskSrc(&RAMP_SRC),
+            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::BitmapMask(&RAMP_SRC),
         ],
     );
     boxed(e, b, Rect::from_xywh(40, 30, 20, 20), Color::hex(0xFF_EB_3B));
@@ -329,7 +329,7 @@ fn rounded_parent_does_not_cover_corner_area() {
     let mut h = EngineHarness::new(100, 80).no_theme().mount_engine(|e| {
         let s = white_screen(e);
         let n = boxed(e, s, Rect::from_xywh(10, 10, 60, 60), Color::BLUE);
-        style(e, n, &[StyleProp::Radius(10)]);
+        style(e, n, &[StyleProp::Radius(Radius::Px(10))]);
         b = Some(n);
     });
     h.run_until_idle();

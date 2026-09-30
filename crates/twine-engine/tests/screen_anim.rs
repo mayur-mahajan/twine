@@ -32,7 +32,7 @@ fn scene() -> Scene {
             a,
             &[
                 StyleProp::BgColor(Color::hex(0xDD_DD_DD)),
-                StyleProp::BgOpa(twine_core::Opa::COVER),
+                StyleProp::BgOpacity(twine_core::Opa::COVER),
             ],
         );
         common::style(
@@ -40,7 +40,7 @@ fn scene() -> Scene {
             b,
             &[
                 StyleProp::BgColor(Color::hex(0x20_40_C0)),
-                StyleProp::BgOpa(twine_core::Opa::COVER),
+                StyleProp::BgOpacity(twine_core::Opa::COVER),
             ],
         );
         common::boxed(e, a, Rect::from_xywh(8, 8, 24, 16), Color::RED);

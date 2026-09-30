@@ -8,7 +8,9 @@
 //! [`with_runtime`] is the only accessor. It may be re-entered (it hands out a shared
 //! `&Runtime`); rule R1 governs borrowing the runtime's `inner` cell, not this function.
 
-use crate::runtime::Runtime;
+use twine_core::fault::{FaultCounts, FaultKind};
+
+use crate::runtime::{FaultHook, Runtime};
 use crate::scope::Scope;
 use crate::{Stats, runtime};
 
@@ -132,19 +134,25 @@ pub fn reset() {
     with_runtime(Runtime::reset);
 }
 
-/// Live object counts and counters of this thread's runtime (tests and diagnostics).
-#[doc(hidden)]
+/// Live object counts and counters of the current context's runtime (diagnostics, tests and
+/// fault analysis).
+///
+/// ```
+/// let cx = twine_reactive::create_root();
+/// let _a = cx.signal(1);
+/// assert!(twine_reactive::runtime_stats().nodes >= 1);
+/// cx.dispose();
+/// ```
 #[must_use]
-pub fn debug_stats() -> Stats {
+pub fn runtime_stats() -> Stats {
     with_runtime(|rt| {
         let inner = rt.inner.borrow();
         let runtime::Counters {
             writes,
             effect_runs,
             memo_runs,
-            depth_guard_hits,
-            loop_cuts,
         } = inner.counters;
+        let faults = rt.faults.borrow().total;
         Stats {
             nodes: inner.nodes.len(),
             scopes: inner.scopes.len(),
@@ -154,8 +162,64 @@ pub fn debug_stats() -> Stats {
             writes,
             effect_runs,
             memo_runs,
-            depth_guard_hits,
-            loop_cuts,
+            faults,
+            retired_slots: inner.nodes.retired() + inner.scopes.retired(),
         }
     })
+}
+
+/// The faults the runtime recorded since the last call (occurrences per kind), clearing them.
+///
+/// The runtime records [`FaultKind::EffectLoopCut`], [`FaultKind::DepthGuard`] and
+/// [`FaultKind::ChannelOverflow`]. `Ui` takes them at every update and forwards them to the
+/// engine, so applications using `Ui` read all faults there; this function is for code using the
+/// runtime on its own. Lifetime totals are in [`runtime_stats`].
+///
+/// ```
+/// use twine_core::fault::FaultKind;
+///
+/// let cx = twine_reactive::create_root();
+/// twine_reactive::set_flush_iterations_limit(3);
+/// let a = cx.signal(0u32);
+/// cx.effect(move || a.set(a.get() + 1)); // an effect loop, cut by the runtime
+/// let f = twine_reactive::take_faults();
+/// assert_eq!(f.get(FaultKind::EffectLoopCut), 1);
+/// assert!(twine_reactive::take_faults().kinds().is_empty());
+/// cx.dispose();
+/// ```
+pub fn take_faults() -> FaultCounts {
+    with_runtime(|rt| core::mem::take(&mut rt.faults.borrow_mut().new))
+}
+
+/// Sets the function called for every fault the runtime records (`None` removes it), with the
+/// kind and the number of occurrences. It runs where the fault is detected — possibly in the
+/// middle of an effect flush — so keep it short: record, count or signal a supervisor.
+///
+/// ```
+/// use core::sync::atomic::{AtomicU32, Ordering};
+/// use twine_core::fault::FaultKind;
+///
+/// static LOOP_CUTS: AtomicU32 = AtomicU32::new(0);
+/// fn on_fault(kind: FaultKind, n: u32) {
+///     if kind == FaultKind::EffectLoopCut {
+///         LOOP_CUTS.fetch_add(n, Ordering::Relaxed);
+///     }
+/// }
+/// twine_reactive::set_fault_hook(Some(on_fault));
+/// let cx = twine_reactive::create_root();
+/// twine_reactive::set_flush_iterations_limit(3);
+/// let a = cx.signal(0u32);
+/// cx.effect(move || a.set(a.get() + 1));
+/// assert_eq!(LOOP_CUTS.load(Ordering::Relaxed), 1);
+/// twine_reactive::set_fault_hook(None);
+/// cx.dispose();
+/// ```
+pub fn set_fault_hook(hook: Option<FaultHook>) {
+    with_runtime(|rt| rt.faults.borrow_mut().hook = hook);
+}
+
+/// Records `n` occurrences of `kind` in the current runtime (crate-internal fault sites that have
+/// no `&Runtime` at hand).
+pub(crate) fn record_fault(kind: FaultKind, n: u32) {
+    with_runtime(|rt| rt.record_fault(kind, n));
 }

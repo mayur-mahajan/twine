@@ -8,8 +8,8 @@ use alloc::vec::Vec;
 use twine_core::{Point, Rect, Size};
 use twine_layout::{AlignTo, LayoutFlags, LayoutScratch, LayoutTree, layout_children_with};
 use twine_style::{
-    Align, FlexAlign, FlexFlow, GridAlign, GridTrack, LayoutKind, Length, Part, PropId, Selector, StyleProp,
-    StyleValue,
+    Align, Anchor, CrossAlign, FlexFlow, GridAlign, GridSpan, GridTrack, LayoutKind, Length, MainAlign, Part,
+    PropId, Selector, StyleProp, StyleValue,
 };
 
 use crate::{Engine, EventCode, EventParam, InvalidateReason, LayoutDirty, NodeId, ObjFlags, fmt_node_id};
@@ -76,12 +76,12 @@ impl LayoutTree for EngineLayout<'_> {
     fn style_i32(&self, id: NodeId, prop: PropId) -> i32 {
         // Paddings and the border width come from the node's style cache.
         match prop {
-            PropId::PadLeft => self.engine.cached_main(id).pad.left,
-            PropId::PadTop => self.engine.cached_main(id).pad.top,
-            PropId::PadRight => self.engine.cached_main(id).pad.right,
-            PropId::PadBottom => self.engine.cached_main(id).pad.bottom,
+            PropId::PaddingLeft => self.engine.cached_main(id).pad.left,
+            PropId::PaddingTop => self.engine.cached_main(id).pad.top,
+            PropId::PaddingRight => self.engine.cached_main(id).pad.right,
+            PropId::PaddingBottom => self.engine.cached_main(id).pad.bottom,
             PropId::BorderWidth => self.engine.cached_main(id).border_width,
-            _ => self.style_prop(id, prop).as_i32().unwrap_or(0),
+            _ => self.style_prop(id, prop).as_px().unwrap_or(0),
         }
     }
 
@@ -156,6 +156,10 @@ impl LayoutTree for EngineLayout<'_> {
             .node(id)
             .and_then(|n| n.align_to)
             .filter(|a| self.engine.tree.contains(a.base))
+    }
+
+    fn grid_tracks(&self, id: NodeId, axis: twine_layout::Axis) -> Option<&[GridTrack]> {
+        self.engine.grid_tracks_on(id, axis)
     }
 
     fn scroll(&self, id: NodeId) -> Point {
@@ -630,12 +634,17 @@ impl Engine {
         self.set_pos(id, x, y);
     }
 
-    /// Aligns `id` to another node `base` (LVGL `lv_obj_align_to`): inner alignments use the
-    /// base's content area, `Out*` alignments place `id` next to the base. Unlike LVGL the
-    /// relation is kept: `id` follows `base` when it moves. Flex and grid parents ignore it
-    /// for their items. `align_to` a deleted node is ignored.
-    pub fn align_to(&mut self, id: NodeId, base: NodeId, align: Align, x: i32, y: i32) {
-        let rel = AlignTo { base, align, x, y };
+    /// Aligns `id` to another node `base` (LVGL `lv_obj_align_to`): an [`Align`] (or
+    /// [`Anchor::Inside`]) places `id` in the base's content area, the other [`Anchor`]s next to
+    /// the base. Unlike LVGL the relation is kept: `id` follows `base` when it moves. Flex and
+    /// grid parents ignore it for their items. `align_to` a deleted node is ignored.
+    pub fn align_to(&mut self, id: NodeId, base: NodeId, anchor: impl Into<Anchor>, x: i32, y: i32) {
+        let rel = AlignTo {
+            base,
+            anchor: anchor.into(),
+            x,
+            y,
+        };
         let Some(n) = self.tree.node_mut(id) else {
             twine_core::warn!(target: "twine::layout", "align_to: node {} not found", fmt_node_id(id));
             return;
@@ -665,27 +674,119 @@ impl Engine {
         self.set_main(id, StyleProp::Layout(kind));
     }
 
-    /// Sets the flex flow (direction, wrapping, reverse).
+    /// Sets the flex flow (direction, wrapping, reverse), e.g. `FlexFlow::COLUMN.wrap(true)`.
     pub fn set_flex_flow(&mut self, id: NodeId, flow: FlexFlow) {
         self.set_main(id, StyleProp::FlexFlow(flow));
     }
 
-    /// Sets the flex main-axis, cross-axis and track placements.
-    pub fn set_flex_align(&mut self, id: NodeId, main: FlexAlign, cross: FlexAlign, track: FlexAlign) {
-        self.set_main(id, StyleProp::FlexMainPlace(main));
-        self.set_main(id, StyleProp::FlexCrossPlace(cross));
-        self.set_main(id, StyleProp::FlexTrackPlace(track));
+    /// Sets the placement of the items on the main axis, across it (in their track) and of the
+    /// tracks of a wrapping container.
+    pub fn set_flex_align(&mut self, id: NodeId, main: MainAlign, cross: CrossAlign, track: MainAlign) {
+        self.set_main(id, StyleProp::FlexMainAlign(main));
+        self.set_main(id, StyleProp::FlexCrossAlign(cross));
+        self.set_main(id, StyleProp::FlexTrackAlign(track));
     }
 
-    /// Sets how much of the free main-axis space a flex item takes (0 = none).
-    pub fn set_flex_grow(&mut self, id: NodeId, grow: u8) {
+    /// Sets the weight of a flex item's share of the free main-axis space (0 = none; items
+    /// share it in proportion to their weights).
+    pub fn set_flex_grow(&mut self, id: NodeId, grow: u16) {
         self.set_main(id, StyleProp::FlexGrow(grow));
     }
 
-    /// Sets the grid column and row templates.
-    pub fn set_grid_dsc_array(&mut self, id: NodeId, cols: &'static [GridTrack], rows: &'static [GridTrack]) {
-        self.set_main(id, StyleProp::GridColumnDscArray(cols));
-        self.set_main(id, StyleProp::GridRowDscArray(rows));
+    /// Sets the grid column and row templates, owned by the engine (see
+    /// [`set_grid_column_tracks`](Self::set_grid_column_tracks)).
+    pub fn set_grid_tracks(
+        &mut self,
+        id: NodeId,
+        columns: impl Into<Vec<GridTrack>>,
+        rows: impl Into<Vec<GridTrack>>,
+    ) {
+        self.set_grid_column_tracks(id, columns);
+        self.set_grid_row_tracks(id, rows);
+    }
+
+    /// Sets the grid column template of `id`. The engine keeps the tracks (no `'static` data
+    /// needed) and they take precedence over the `GridColumnTracks` style property; an empty
+    /// list removes them (the style applies again). Idempotent: unchanged tracks do nothing.
+    pub fn set_grid_column_tracks(&mut self, id: NodeId, tracks: impl Into<Vec<GridTrack>>) {
+        self.set_grid_template(id, 0, tracks.into());
+    }
+
+    /// Sets the grid row template of `id` (like
+    /// [`set_grid_column_tracks`](Self::set_grid_column_tracks)).
+    pub fn set_grid_row_tracks(&mut self, id: NodeId, tracks: impl Into<Vec<GridTrack>>) {
+        self.set_grid_template(id, 1, tracks.into());
+    }
+
+    /// The grid column template of `id` as the layout uses it: the tracks set with
+    /// [`set_grid_column_tracks`](Self::set_grid_column_tracks), else the `GridColumnTracks`
+    /// style property.
+    #[must_use]
+    pub fn grid_column_tracks(&self, id: NodeId) -> Option<&[GridTrack]> {
+        self.grid_tracks_on(id, twine_layout::Axis::X)
+    }
+
+    /// The grid row template of `id` (like [`grid_column_tracks`](Self::grid_column_tracks)).
+    #[must_use]
+    pub fn grid_row_tracks(&self, id: NodeId) -> Option<&[GridTrack]> {
+        self.grid_tracks_on(id, twine_layout::Axis::Y)
+    }
+
+    fn grid_tracks_on(&self, id: NodeId, axis: twine_layout::Axis) -> Option<&[GridTrack]> {
+        if let Some(t) = self.owned_grid_tracks(id, axis) {
+            return Some(t);
+        }
+        let prop = match axis {
+            twine_layout::Axis::X => PropId::GridColumnTracks,
+            twine_layout::Axis::Y => PropId::GridRowTracks,
+        };
+        self.style_prop(id, Part::Main, prop).as_grid_tracks()
+    }
+
+    /// The engine-owned template of `id` on `axis`, if any (a short linear search: only grid
+    /// containers built at run time have one).
+    fn owned_grid_tracks(&self, id: NodeId, axis: twine_layout::Axis) -> Option<&[GridTrack]> {
+        if self.grid_templates.is_empty() {
+            return None;
+        }
+        let g = self.grid_templates.iter().find(|g| g.node == id)?;
+        let t = &g.tracks[axis.index()];
+        (!t.is_empty()).then_some(t.as_slice())
+    }
+
+    fn set_grid_template(&mut self, id: NodeId, axis: usize, tracks: Vec<GridTrack>) {
+        if !self.tree.contains(id) {
+            twine_core::warn!(target: "twine::layout", "set_grid_tracks: node {} not found", fmt_node_id(id));
+            return;
+        }
+        let i = match self.grid_templates.iter().position(|g| g.node == id) {
+            Some(i) => i,
+            None if tracks.is_empty() => return,
+            None => {
+                self.grid_templates.push(GridTemplate {
+                    node: id,
+                    tracks: [Vec::new(), Vec::new()],
+                });
+                self.grid_templates.len() - 1
+            }
+        };
+        let g = &mut self.grid_templates[i];
+        if g.tracks[axis] == tracks {
+            return;
+        }
+        g.tracks[axis] = tracks;
+        if g.tracks.iter().all(Vec::is_empty) {
+            self.grid_templates.swap_remove(i);
+        }
+        self.mark_layout(id, LayoutDirty::SELF);
+    }
+
+    /// Drops the templates of deleted nodes.
+    pub(crate) fn forget_grid_templates(&mut self) {
+        if !self.grid_templates.is_empty() {
+            let tree = &self.tree;
+            self.grid_templates.retain(|g| tree.contains(g.node));
+        }
     }
 
     /// Sets how the grid tracks are placed in the container (columns, rows).
@@ -694,24 +795,72 @@ impl Engine {
         self.set_main(id, StyleProp::GridRowAlign(row_align));
     }
 
-    /// Places a grid item: column alignment, column, column span, row alignment, row, row
-    /// span.
-    #[allow(clippy::too_many_arguments)]
+    /// Places a grid item: its columns and rows (a track `2` or a range `0..2`, see
+    /// [`GridSpan`]) and its alignment in the cell (horizontal, vertical).
     pub fn set_grid_cell(
         &mut self,
         id: NodeId,
-        column_align: GridAlign,
-        col: i32,
-        col_span: i32,
-        row_align: GridAlign,
-        row: i32,
-        row_span: i32,
+        columns: impl Into<GridSpan>,
+        rows: impl Into<GridSpan>,
+        x_align: GridAlign,
+        y_align: GridAlign,
     ) {
-        self.set_main(id, StyleProp::GridCellXAlign(column_align));
-        self.set_main(id, StyleProp::GridCellColumnPos(col));
-        self.set_main(id, StyleProp::GridCellColumnSpan(col_span));
-        self.set_main(id, StyleProp::GridCellYAlign(row_align));
-        self.set_main(id, StyleProp::GridCellRowPos(row));
-        self.set_main(id, StyleProp::GridCellRowSpan(row_span));
+        let (c, r) = (columns.into(), rows.into());
+        self.set_main(id, StyleProp::GridCellXAlign(x_align));
+        self.set_main(id, StyleProp::GridCellColumn(c.start));
+        self.set_main(id, StyleProp::GridCellColumnSpan(c.span));
+        self.set_main(id, StyleProp::GridCellYAlign(y_align));
+        self.set_main(id, StyleProp::GridCellRow(r.start));
+        self.set_main(id, StyleProp::GridCellRowSpan(r.span));
+    }
+}
+
+/// A grid template owned by the engine ([`Engine::set_grid_column_tracks`]): columns, rows.
+#[derive(Debug)]
+pub(crate) struct GridTemplate {
+    node: NodeId,
+    tracks: [Vec<GridTrack>; 2],
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::boxed::Box;
+
+    use twine_core::Rect;
+    use twine_style::{GridAlign, GridTrack, LayoutKind};
+
+    use crate::{Engine, EngineConfig, Obj};
+
+    #[test]
+    fn owned_grid_tracks_are_idempotent_and_dropped_with_the_node() {
+        let mut e = Engine::new(EngineConfig::default()).unwrap();
+        let root = e.create_root(Box::new(Obj)).unwrap();
+        e.place(root, Rect::from_xywh(0, 0, 200, 100));
+        let g = e.create(root, Box::new(Obj)).unwrap();
+        e.set_size(g, 200, 100);
+        e.set_layout(g, LayoutKind::Grid);
+        let tracks = [GridTrack::Px(40), GridTrack::Fr(1)];
+        e.set_grid_tracks(g, tracks, [GridTrack::Fr(1)]);
+        let c = e.create(g, Box::new(Obj)).unwrap();
+        e.set_size(c, 10, 10);
+        e.set_grid_cell(c, 1, 0, GridAlign::Start, GridAlign::Start);
+        e.update_layout();
+        assert_eq!(e.coords(c).x0, 40);
+        assert_eq!(e.grid_column_tracks(g), Some(&tracks[..]));
+        assert_eq!(e.grid_templates.len(), 1);
+
+        // Unchanged tracks: nothing to lay out.
+        e.set_grid_column_tracks(g, tracks);
+        assert!(!e.layout.pending);
+
+        // Removing both templates drops the entry; the style applies again (none: no grid).
+        e.set_grid_tracks(g, [], []);
+        assert!(e.grid_templates.is_empty());
+        assert_eq!(e.grid_column_tracks(g), None);
+
+        e.set_grid_tracks(g, tracks, tracks);
+        assert_eq!(e.grid_templates.len(), 1);
+        e.delete(g).unwrap();
+        assert!(e.grid_templates.is_empty(), "the deleted grid's tracks are freed");
     }
 }

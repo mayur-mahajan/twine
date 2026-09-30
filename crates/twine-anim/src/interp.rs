@@ -65,7 +65,7 @@ impl Interpolate for u8 {
 
 impl Interpolate for Opa {
     fn lerp(a: Opa, b: Opa, t: i32) -> Opa {
-        Opa(u8::lerp(a.0, b.0, t))
+        Opa::from_raw(u8::lerp(a.raw(), b.raw(), t))
     }
 }
 
@@ -74,7 +74,7 @@ impl Interpolate for Color {
     /// (floor), i.e. [`Color::mix`]; outside, each channel is extrapolated and saturated.
     fn lerp(a: Color, b: Color, t: i32) -> Color {
         if (0..=EASING_ONE).contains(&t) {
-            Color::mix(b, a, Opa(((t * 255) >> 10) as u8))
+            Color::mix(b, a, Opa::from_raw(((t * 255) >> 10) as u8))
         } else {
             Color::new(
                 u8::lerp(a.r, b.r, t),
@@ -99,13 +99,15 @@ impl Interpolate for Size {
 
 impl Interpolate for Angle {
     fn lerp(a: Angle, b: Angle, t: i32) -> Angle {
-        Angle(i32::lerp(a.0, b.0, t))
+        Angle::deci_deg(i32::lerp(a.as_deci_deg(), b.as_deci_deg(), t))
     }
 }
 
 impl Interpolate for Scale {
     fn lerp(a: Scale, b: Scale, t: i32) -> Scale {
-        Scale(lerp_clamped(a.0.into(), b.0.into(), t, 0, u16::MAX.into()) as u16)
+        Scale::from_raw_256(
+            lerp_clamped(a.raw_256().into(), b.raw_256().into(), t, 0, u16::MAX.into()) as u16,
+        )
     }
 }
 
@@ -121,14 +123,26 @@ mod tests {
         assert_eq!(i32::lerp(-10, 10, 512), 0);
         assert_eq!(i16::lerp(i16::MIN, i16::MAX, 1024), i16::MAX);
         assert_eq!(i16::lerp(0, 30_000, 2048), i16::MAX);
-        assert_eq!(Opa::lerp(Opa(0), Opa(255), 512), Opa(127));
+        assert_eq!(
+            Opa::lerp(Opa::from_raw(0), Opa::from_raw(255), 512),
+            Opa::from_raw(127)
+        );
         assert_eq!(
             Size::lerp(Size::new(0, 10), Size::new(100, 20), 256),
             Size::new(25, 12)
         );
-        assert_eq!(Angle::lerp(Angle(0), Angle(3600), 512), Angle(1800));
-        assert_eq!(Scale::lerp(Scale(256), Scale(512), 512), Scale(384));
-        assert_eq!(Scale::lerp(Scale(256), Scale(0), 2048), Scale(0));
+        assert_eq!(
+            Angle::lerp(Angle::deci_deg(0), Angle::deci_deg(3600), 512),
+            Angle::deci_deg(1800)
+        );
+        assert_eq!(
+            Scale::lerp(Scale::from_raw_256(256), Scale::from_raw_256(512), 512),
+            Scale::from_raw_256(384)
+        );
+        assert_eq!(
+            Scale::lerp(Scale::from_raw_256(256), Scale::from_raw_256(0), 2048),
+            Scale::from_raw_256(0)
+        );
         assert_eq!(i32::lerp(i32::MIN, i32::MAX, 1024), i32::MAX);
         assert_eq!(i32::lerp(0, i32::MAX, 2048), i32::MAX);
     }
@@ -151,7 +165,7 @@ mod tests {
         let a = Color::hex(0x10_80_F0);
         let b = Color::hex(0xF0_20_08);
         for t in 0..=1024 {
-            let want = Color::mix(b, a, Opa(((t * 255) >> 10) as u8));
+            let want = Color::mix(b, a, Opa::from_raw(((t * 255) >> 10) as u8));
             assert_eq!(<Color as Interpolate>::lerp(a, b, t), want, "t = {t}");
         }
         assert_eq!(<Color as Interpolate>::lerp(a, b, 0), a);
@@ -178,8 +192,8 @@ mod tests {
         assert_eq!(u8::lerp(10, 20, -2048), 0);
         assert_eq!(u8::lerp(0, 200, 1100), 214);
         assert_eq!(
-            Opa::lerp(Opa(0), Opa(255), Easing::Overshoot.apply(896)),
-            Opa(255)
+            Opa::lerp(Opa::from_raw(0), Opa::from_raw(255), Easing::Overshoot.apply(896)),
+            Opa::from_raw(255)
         );
     }
 }

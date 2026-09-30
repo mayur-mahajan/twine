@@ -75,8 +75,8 @@ fn checkbox_content_size() {
     let text = TextLayout::new("Remember me", font).measure();
     // Default theme: marker padding dpx(3) = 2 at 130 dpi, `pad_gap` dpx(10) = 8.
     let e = h.engine();
-    assert_eq!(e.style_i32(c, Part::Indicator, PropId::PadLeft), 2);
-    assert_eq!(e.style_i32(c, Part::Main, PropId::PadColumn), 8);
+    assert_eq!(e.style_i32(c, Part::Indicator, PropId::PaddingLeft), 2);
+    assert_eq!(e.style_i32(c, Part::Main, PropId::ColumnGap), 8);
     let marker = font_h + 4;
     let r = e.coords(c);
     assert_eq!((r.width(), r.height()), (marker + 8 + text.w, marker.max(text.h)));

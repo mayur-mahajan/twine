@@ -23,7 +23,10 @@ const fn shr16_round(v: i64) -> i64 {
     }
 }
 
-/// 16.16 signed fixed-point number (`Fx(1 << 16)` is 1.0).
+/// 16.16 signed fixed-point number (`Fx::from_raw(1 << 16)` is 1.0).
+///
+/// The raw representation is private; build values with [`Fx::from_int`], [`Fx::from_ratio`]
+/// or [`Fx::from_raw`] and read it back with [`Fx::raw`] (both `const`, zero cost).
 ///
 /// Arithmetic saturates at [`Fx::MIN`]/[`Fx::MAX`] and rounds half away from zero, so results
 /// are deterministic on every platform.
@@ -38,7 +41,7 @@ const fn shr16_round(v: i64) -> i64 {
 /// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Fx(pub i32);
+pub struct Fx(pub(crate) i32);
 
 #[allow(clippy::should_implement_trait)] // `mul`/`div` are the documented saturating forms; the traits delegate to them
 impl Fx {
@@ -54,6 +57,20 @@ impl Fx {
     pub const MAX: Fx = Fx(i32::MAX);
     /// Smallest value (−32768.0).
     pub const MIN: Fx = Fx(i32::MIN);
+
+    /// The number whose 16.16 representation is `raw` (`from_raw(1 << 16)` is 1.0).
+    #[inline]
+    #[must_use]
+    pub const fn from_raw(raw: i32) -> Fx {
+        Fx(raw)
+    }
+
+    /// The 16.16 representation (`Fx::ONE.raw() == 1 << 16`).
+    #[inline]
+    #[must_use]
+    pub const fn raw(self) -> i32 {
+        self.0
+    }
 
     /// Converts an integer (saturating outside −32768..=32767).
     #[must_use]
@@ -197,27 +214,56 @@ impl fmt::Display for Fx {
     }
 }
 
-/// Scale factor with 256 = 1.0 (LVGL zoom convention).
+/// Scale factor, stored with 256 = 1.0 (LVGL zoom convention).
+///
+/// The field is private: build scales with [`Scale::pct`], [`Scale::ONE`] or, for the raw
+/// 256-based value, [`Scale::from_raw_256`]; read it with [`Scale::raw_256`]. The newtype is
+/// exactly a `u16` (no runtime cost).
 ///
 /// ```
 /// use twine_core::Scale;
-/// assert_eq!(Scale::from_percent(50).apply(101), 51); // 50.5 rounds half up
-/// assert_eq!(Scale::from_percent(50).apply(-101), -51); // symmetric
-/// assert_eq!(Scale(512).inverse_apply(100), 50);
+/// assert_eq!(Scale::pct(50).apply(101), 51); // 50.5 rounds half up
+/// assert_eq!(Scale::pct(50).apply(-101), -51); // symmetric
+/// assert_eq!(Scale::from_raw_256(512).inverse_apply(100), 50);
+/// assert_eq!(Scale::pct(100), Scale::ONE);
+/// assert_eq!(Scale::ONE.raw_256(), 256);
+/// ```
+///
+/// A bare number is not a scale:
+///
+/// ```compile_fail
+/// let _ = twine_core::Scale(256); // private field: write Scale::ONE or Scale::pct(100)
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Scale(pub u16);
+pub struct Scale(pub(crate) u16);
 
 impl Scale {
     /// 1.0 (no scaling).
     pub const ONE: Scale = Scale(256);
+    /// 0 (everything collapses to a point).
+    pub const ZERO: Scale = Scale(0);
 
-    /// `p` percent (`100` → 256), truncated; saturates at `u16::MAX`.
+    /// `p` percent (`100` → 256), truncated; saturates at `u16::MAX` (≈ 256 ×).
+    #[inline]
     #[must_use]
-    pub const fn from_percent(p: u16) -> Scale {
+    pub const fn pct(p: u16) -> Scale {
         let v = p as u32 * 256 / 100;
         Scale(if v > u16::MAX as u32 { u16::MAX } else { v as u16 })
+    }
+
+    /// The scale whose 256-based representation is `raw` (`256` = 1.0, `128` = 0.5).
+    #[inline]
+    #[must_use]
+    pub const fn from_raw_256(raw: u16) -> Scale {
+        Scale(raw)
+    }
+
+    /// The 256-based representation (`Scale::ONE.raw_256() == 256`).
+    #[inline]
+    #[must_use]
+    pub const fn raw_256(self) -> u16 {
+        self.0
     }
 
     /// `v · s / 256`, rounded half away from zero, saturating.
@@ -325,8 +371,8 @@ mod tests {
 
     #[test]
     fn scale_ops() {
-        assert_eq!(Scale::from_percent(100), Scale::ONE);
-        assert_eq!(Scale::from_percent(u16::MAX), Scale(u16::MAX));
+        assert_eq!(Scale::pct(100), Scale::ONE);
+        assert_eq!(Scale::pct(u16::MAX), Scale(u16::MAX));
         assert_eq!(Scale::ONE.apply(-37), -37);
         assert_eq!(Scale(128).apply(3), 2);
         assert_eq!(Scale(128).apply(-3), -2);

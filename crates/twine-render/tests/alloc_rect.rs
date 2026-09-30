@@ -1,7 +1,7 @@
 //! No allocation while drawing rectangles, borders, gradients, shadows, masks and layers
 //! (after one warm-up draw that fills the caches).
 
-use twine_core::{Color, ColorFormat, Opa, Point, Rect};
+use twine_core::{Color, ColorFormat, Fraction, Opa, Point, Rect};
 use twine_render::{
     GradKind, GradStop, Gradient, LayerDsc, Mask, Painter, RADIUS_CIRCLE, RectDsc, ShadowDsc,
 };
@@ -32,7 +32,7 @@ fn rounded_rects_do_not_allocate() {
                     border_width: 3,
                     border_opa: Opa::COVER,
                     outline_width: 2,
-                    outline_opa: Opa(128),
+                    outline_opa: Opa::from_raw(128),
                     ..RectDsc::default()
                 },
             );
@@ -65,7 +65,10 @@ fn gradients_do_not_allocate() {
     .map(|k| {
         Gradient::new(
             k,
-            &[GradStop::new(Color::RED, 0), GradStop::new(Color::BLUE, 255)],
+            &[
+                GradStop::new(Color::RED, Fraction::ZERO),
+                GradStop::new(Color::BLUE, Fraction::ONE),
+            ],
         )
         .dither(true)
     })
@@ -96,7 +99,7 @@ fn shadows_do_not_allocate() {
                     bg_opa: Opa::COVER,
                     shadow: ShadowDsc {
                         width: 20,
-                        opa: Opa(160),
+                        opa: Opa::from_raw(160),
                         ..ShadowDsc::default()
                     },
                     ..RectDsc::default()
@@ -120,7 +123,7 @@ fn masked_fills_do_not_allocate() {
             y_top: 10,
             y_bottom: 120,
             opa_top: Opa::COVER,
-            opa_bottom: Opa(20),
+            opa_bottom: Opa::from_raw(20),
         });
         let c = p.push_mask(Mask::Map {
             area: Rect::from_xywh(40, 40, 8, 8),
@@ -149,7 +152,7 @@ fn layers_with_strips_do_not_allocate() {
         p.layer(
             Rect::from_xywh(10, 10, 150, 120),
             &LayerDsc {
-                opa: Opa(128),
+                opa: Opa::from_raw(128),
                 ..LayerDsc::default()
             },
             |p| {

@@ -3,7 +3,7 @@
 
 use twine_core::{Instant, Point};
 use twine_hal::PointerData;
-use twine_style::{Dir, State};
+use twine_style::{Side, Sides, State};
 
 use super::{ClickCounter, Forget, InputId, Timing, stopped};
 use crate::{DisplayId, Engine, EventCode, EventParam, EventResult, MeasureCx, NodeId, ObjFlags};
@@ -33,7 +33,7 @@ pub(crate) struct PointerProc {
     /// The node being scrolled by this pointer (dragged, then thrown after the release).
     pub(crate) scroll_obj: Option<NodeId>,
     /// The locked scroll direction (`HOR`, `VER` or `NONE`).
-    pub(crate) scroll_dir: Dir,
+    pub(crate) scroll_dir: Sides,
     /// The momentum of a throw (decays every read after the release).
     pub(crate) scroll_throw_vect: Point,
     /// The throw vector at the release (for snap predictions).
@@ -45,7 +45,7 @@ pub(crate) struct PointerProc {
     pub(crate) vect_hist_index: u8,
     pub(crate) gesture_sum: Point,
     pub(crate) gesture_sent: bool,
-    pub(crate) gesture_dir: Option<Dir>,
+    pub(crate) gesture_dir: Option<Side>,
     clicks: ClickCounter,
     /// The press started on `act_obj` (LVGL `pointer.pressed`): only then a release clicks.
     press_started_here: bool,
@@ -68,7 +68,7 @@ impl PointerProc {
             vect: Point::ZERO,
             scroll_sum: Point::ZERO,
             scroll_obj: None,
-            scroll_dir: Dir::NONE,
+            scroll_dir: Sides::empty(),
             scroll_throw_vect: Point::ZERO,
             scroll_throw_vect_ori: Point::ZERO,
             scroll_area: crate::scroll_drag::ScrollLimits::NONE,
@@ -89,7 +89,7 @@ impl PointerProc {
         self.long_pr_sent = false;
         self.scroll_sum = Point::ZERO;
         self.scroll_obj = None;
-        self.scroll_dir = Dir::NONE;
+        self.scroll_dir = Sides::empty();
         self.scroll_throw_vect = Point::ZERO;
         self.gesture_sum = Point::ZERO;
         match forget {
@@ -156,7 +156,7 @@ impl PointerProc {
         self.hovered = alive(self.hovered);
         if self.scroll_obj.is_some() && alive(self.scroll_obj).is_none() {
             self.scroll_obj = None;
-            self.scroll_dir = Dir::NONE;
+            self.scroll_dir = Sides::empty();
             self.scroll_throw_vect = Point::ZERO;
         }
     }
@@ -223,7 +223,7 @@ impl PointerProc {
                 self.press_time = now;
                 self.long_pr_sent = false;
                 self.scroll_sum = Point::ZERO;
-                self.set_scroll_obj(e, id, None, Dir::NONE);
+                self.set_scroll_obj(e, id, None, Sides::empty());
                 self.gesture_dir = None;
                 self.gesture_sent = false;
                 self.gesture_sum = Point::ZERO;

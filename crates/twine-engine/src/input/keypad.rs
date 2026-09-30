@@ -10,7 +10,7 @@ use crate::{Engine, EventCode, EventParam, GroupId, NodeId};
 /// The state of one keypad.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct KeypadProc {
-    last_key: Option<Key>,
+    pub(crate) last_key: Option<Key>,
     /// Whether the last key event was a press.
     pub(crate) pressed: bool,
     press_time: Instant,

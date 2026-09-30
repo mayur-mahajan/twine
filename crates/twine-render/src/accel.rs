@@ -47,5 +47,18 @@ pub trait DrawAccel {
         stride: usize,
     ) -> AccelResult;
     /// Waits until all queued operations have finished.
+    ///
+    /// An accelerator whose hardware can hang should bound this wait (e.g.
+    /// `twine_accel_stm32::Dma2d::with_timeout`) and count what timed out in
+    /// [`take_timeouts`](Self::take_timeouts).
     fn wait(&mut self);
+
+    /// Operations that did not finish within the accelerator's own bound since the last call
+    /// (clearing the count). Their pixels may be missing (a queued operation is only found
+    /// to have timed out at a later [`wait`](Self::wait)). The engine polls this after every
+    /// rendered chunk; when non-zero it renders the chunk again in software and raises
+    /// `FaultKind::AccelTimeout`. Default: `0` (an accelerator that cannot time out).
+    fn take_timeouts(&mut self) -> u32 {
+        0
+    }
 }

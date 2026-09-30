@@ -69,7 +69,9 @@ color-rgb888 = ["twine-render/color-rgb888"]
 color-xrgb8888 = ["twine-render/color-xrgb8888"]
 color-argb8888 = ["twine-render/color-argb8888"]
 color-l8 = ["twine-render/color-l8"]
-color-i1 = ["twine-render/color-i1"]
+## `I1` (monochrome) displays: framebuffers are drawn in `I1`, partial and chunked displays in
+## `L8` (converted per chunk), so both renderers are enabled.
+color-i1 = ["twine-render/color-i1", "twine-render/color-l8"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }

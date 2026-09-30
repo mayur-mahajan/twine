@@ -1,0 +1,7 @@
+error: unknown style property: pad_all (the keys and the former names they replace are listed in twine-style/PROPERTIES.md)
+ --> tests/ui/old_name.rs:4:19
+  |
+4 | static S: Style = style! { pad_all: 4 };
+  |                   ^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `$crate::__style_prop` which comes from the expansion of the macro `style` (in Nightly builds, run with -Z macro-backtrace for more info)

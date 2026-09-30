@@ -233,7 +233,7 @@ fn imgbtn_symbol_source_sized_by_its_text() {
             cx,
             S::Released,
             None,
-            Some(ImageSource::Symbol(twine_text::symbols::POWER)),
+            Some(ImageSource::symbol(twine_text::Symbol::Power)),
             None,
         );
     });

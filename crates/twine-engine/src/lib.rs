@@ -50,6 +50,7 @@
 //! | layout | [`Engine::set_size`], [`Engine::set_pos`], [`Engine::align`], [`Engine::align_to`], [`Engine::set_flex_flow`], [`Engine::set_grid_cell`], [`Engine::update_layout`], [`LayoutStats`] |
 //! | animation | [`Engine::anim_start`], [`Engine::anim_start_fn`], [`Engine::timer_add`], [`Engine::load_screen_anim`], [`ScreenAnim`], [`Deferred`] |
 //! | focus | [`Engine::create_group`], [`Engine::group_add`], [`Engine::focus_next`], [`gridnav`] |
+//! | faults | [`Engine::raise_fault`], [`Engine::take_faults`], [`Engine::set_fault_hook`], [`FaultRecord`], [`FaultKind`](twine_core::fault::FaultKind) |
 //! | scrolling | [`Engine::scroll_by`], [`Engine::scroll_to`], [`Engine::scroll_to_view`], [`Engine::scroll_top`], [`Engine::set_scroll_snap_x`], [`Engine::update_snap`], [`Engine::scrollbar_areas`], [`ScrollbarMode`] |
 //!
 //! ## Features
@@ -85,7 +86,7 @@
 //! engine.set_pos(boxed, 8, 8); // laid out by the next `step`
 //! engine.set_size(boxed, 20, 10);
 //! engine.set_local_prop(boxed, Selector::MAIN, StyleProp::BgColor(Color::RED));
-//! engine.set_local_prop(boxed, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+//! engine.set_local_prop(boxed, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
 //! assert!(matches!(engine.step(Instant::from_millis(0)), Wake::Idle)); // rendered, nothing left
 //! assert_eq!(engine.step(Instant::from_millis(100)), Wake::Idle);      // idle: no work at all
 //! ```
@@ -106,11 +107,13 @@ mod draw_dsc;
 mod engine;
 mod error;
 mod event;
+mod fault;
 mod files;
 mod flags;
 pub mod gridnav;
 mod group;
 mod handlers;
+mod health;
 mod id;
 mod input;
 mod invalidate;
@@ -142,15 +145,17 @@ pub use display::{BufferMode, MAX_DISPLAYS};
 pub use draw_cx::DrawCx;
 pub use draw_dsc::RectStyle;
 pub use engine::Engine;
-pub use error::{EngineError, InvariantError};
+pub use error::{DriverErrorCode, EngineError, InvariantError};
 pub use event::{Event, EventCode, EventCx, EventParam, EventResult, EventText};
+pub use fault::{FaultHook, FaultRecord};
 #[cfg(feature = "fs")]
 pub use files::VfsFileSource;
 pub use flags::{LayoutDirty, ObjFlags, flag_names};
 pub use gridnav::GridnavCtrl;
 pub use group::{EdgeCb, FocusCb, GroupId, MAX_GROUPS, RefocusPolicy};
 pub use handlers::{EventFilter, Handler, HandlerId};
-pub use id::{DisplayId, NodeId, NodeIdFmt, fmt_node_id};
+pub use health::{DisplayHealth, DisplayState, FlushPolicy};
+pub use id::{DEAD_NODE, DisplayId, NodeId, NodeIdFmt, fmt_node_id};
 pub use input::{InputId, MAX_INPUTS};
 pub use invalidate::InvalidateReason;
 pub use layout::{LayoutStats, MAX_LAYOUT_ITERATIONS};
@@ -168,7 +173,7 @@ pub use tree::{Ancestors, Children, ChildrenRev, Descendants, Node, Tree};
 pub use twine_anim::{Anim, AnimId, AnimProp, Easing, Repeat, TimerId};
 pub use twine_hal::{InputKind, Key};
 pub use twine_style::State;
-pub use twine_style::{Dir, ScrollSnap, ScrollbarMode};
+pub use twine_style::{Axis, ScrollSnap, ScrollbarMode, Side, Sides};
 pub use wake::Wake;
 pub use widget::{
     AsAny, Editable, GroupDef, MeasureCx, Widget, WidgetClass, WidgetCx, default_covers, default_hit_test,

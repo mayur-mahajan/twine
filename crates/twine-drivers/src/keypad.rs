@@ -8,6 +8,14 @@
 //! construction) and each debounced change is queued as a key event (queue of 8; the engine
 //! reads them one by one, [`KeypadData::more`] tells it to read again).
 //!
+//! # Failures
+//!
+//! A scan in which a pin reports an error (e.g. pins on an I/O expander whose bus failed)
+//! counts as a failed read for [`health`](InputDevice::health): `Degraded` after one,
+//! `Failed` after [`with_fail_after`](GpioMatrix::with_fail_after) consecutive ones (default
+//! [`DeviceHealth::DEFAULT_FAIL_AFTER`]), `Ok` after a clean scan. MCU pins that cannot fail
+//! (`Error = Infallible`) compile the checks away.
+//!
 //! # Ghosting
 //!
 //! Without a diode per key, pressing three keys at three corners of a rectangle makes the
@@ -48,7 +56,7 @@ use embedded_hal::digital::{InputPin, OutputPin};
 use heapless::Deque;
 use twine_core::Duration;
 use twine_core::log::{debug, warn};
-use twine_hal::{Clock, InputData, InputDevice, InputKind, Key, KeypadData};
+use twine_hal::{Clock, DeviceHealth, InputData, InputDevice, InputKind, Key, KeypadData};
 
 use crate::debounce::Debouncer;
 
@@ -65,6 +73,8 @@ pub struct GpioMatrix<ROW, COL, C, const R: usize, const N: usize> {
     queue: Deque<(Key, bool), QUEUE_LEN>,
     last: KeypadData,
     clock: C,
+    health: DeviceHealth,
+    fail_after: u16,
 }
 
 impl<ROW: OutputPin, COL: InputPin, C: Clock, const R: usize, const N: usize> GpioMatrix<ROW, COL, C, R, N> {
@@ -88,7 +98,17 @@ impl<ROW: OutputPin, COL: InputPin, C: Clock, const R: usize, const N: usize> Gp
                 more: false,
             },
             clock,
+            health: DeviceHealth::Ok,
+            fail_after: DeviceHealth::DEFAULT_FAIL_AFTER,
         }
+    }
+
+    /// Reports the keypad [`Failed`](DeviceHealth::Failed) after `n` consecutive scans with
+    /// pin errors (default [`DeviceHealth::DEFAULT_FAIL_AFTER`]).
+    #[must_use]
+    pub fn with_fail_after(mut self, n: u16) -> Self {
+        self.fail_after = n;
+        self
     }
 
     /// Sets the per-key debounce time.
@@ -102,13 +122,21 @@ impl<ROW: OutputPin, COL: InputPin, C: Clock, const R: usize, const N: usize> Gp
     /// periodic task if the engine reads less often than the debounce time.
     pub fn scan(&mut self) {
         let now = self.clock.now();
+        let mut failed = false;
         for r in 0..R {
             if self.rows[r].set_low().is_err() {
                 warn!(target: "twine::driver", "keypad: row pin error");
+                failed = true;
                 continue;
             }
             for c in 0..N {
-                let raw = self.cols[c].is_low().unwrap_or(false);
+                let raw = if let Ok(low) = self.cols[c].is_low() {
+                    low
+                } else {
+                    failed = true;
+                    // An unreadable key keeps its debounced state.
+                    self.keys[r][c].level()
+                };
                 let before = self.keys[r][c].level();
                 let after = self.keys[r][c].update(raw, now);
                 if before != after {
@@ -121,8 +149,14 @@ impl<ROW: OutputPin, COL: InputPin, C: Clock, const R: usize, const N: usize> Gp
             }
             if self.rows[r].set_high().is_err() {
                 warn!(target: "twine::driver", "keypad: row pin error");
+                failed = true;
             }
         }
+        self.health = if failed {
+            self.health.after_error(self.fail_after)
+        } else {
+            DeviceHealth::Ok
+        };
     }
 
     /// Returns the pins and the clock.
@@ -155,6 +189,10 @@ impl<ROW: OutputPin, COL: InputPin, C: Clock, const R: usize, const N: usize> In
             self.last.more = false;
         }
         InputData::Keypad(self.last)
+    }
+
+    fn health(&self) -> DeviceHealth {
+        self.health
     }
 }
 
@@ -323,5 +361,27 @@ mod tests {
         fn pipe_debounce(self) -> Self {
             (self.0, self.1.with_debounce(Duration::ms(0)))
         }
+    }
+
+    #[test]
+    fn pin_errors_degrade_then_fail() {
+        let rec = crate::mock::Recorder::new();
+        let clock = TestClock(Cell::new(Instant::from_millis(0)));
+        let rows = [rec.quiet_pin("r0")];
+        let cols = [rec.quiet_pin("c0")];
+        rec.set_level("c0", true);
+        let mut pad = GpioMatrix::new(rows, cols, [[Key::Enter]], &clock).with_fail_after(3);
+        let _ = pad.read();
+        assert_eq!(pad.health(), DeviceHealth::Ok);
+        for errors in 1..3 {
+            rec.fail_next();
+            let _ = pad.read();
+            assert_eq!(pad.health(), DeviceHealth::Degraded { errors });
+        }
+        rec.fail_next();
+        assert!(!keypad(pad.read()).pressed);
+        assert_eq!(pad.health(), DeviceHealth::Failed);
+        let _ = pad.read();
+        assert_eq!(pad.health(), DeviceHealth::Ok);
     }
 }

@@ -8,7 +8,9 @@ use std::rc::Rc;
 use proptest::prelude::*;
 use twine_core::{Color, Opa, Rect};
 use twine_engine::{Engine, EngineConfig, NodeId, Obj};
-use twine_style::{Part, PropId, Selector, State, Style, StyleBuf, StyleProp, StyleRef, StyleValue};
+use twine_style::{
+    Length, Part, PropId, Radius, Selector, State, Style, StyleBuf, StyleProp, StyleRef, StyleValue,
+};
 use twine_testing::EngineHarness;
 
 static BLUE_BG: Style = Style::new(&[StyleProp::BgColor(Color::BLUE)]);
@@ -91,7 +93,7 @@ fn non_inherited_prop_uses_default() {
     let child = e.create(parent, Box::new(Obj)).unwrap();
     e.set_local_prop(parent, Selector::MAIN, StyleProp::BgColor(Color::RED));
     assert_eq!(bg(&e, child), Color::WHITE);
-    assert_eq!(e.style_opa(child, Part::Main, PropId::BgOpa), Opa::TRANSP);
+    assert_eq!(e.style_opa(child, Part::Main, PropId::BgOpacity), Opa::TRANSP);
 }
 
 #[test]
@@ -184,7 +186,7 @@ fn inherited_change_bumps_epoch_and_children_see_new_value() {
 #[test]
 fn report_style_change_refreshes_users_only() {
     let mut users = Vec::new();
-    let shared = Rc::new(StyleBuf::new().bg_color(Color::RED).bg_opa(Opa::COVER));
+    let shared = Rc::new(StyleBuf::new().bg_color(Color::RED).bg_opacity(Opa::COVER));
     let mut h = EngineHarness::new(64, 64).no_theme().mount_engine(|e| {
         let s = common::white_screen(e);
         for i in 0..3 {
@@ -215,19 +217,19 @@ fn random_style(bits: u8, color: u32) -> StyleBuf {
         s.set(StyleProp::BgColor(Color::hex(color)));
     }
     if bits & 2 != 0 {
-        s.set(StyleProp::Radius(i32::from(bits)));
+        s.set(StyleProp::Radius(Radius::Px(i32::from(bits))));
     }
     if bits & 4 != 0 {
-        s.set(StyleProp::PadTop(i32::from(bits) + 1));
+        s.set(StyleProp::PaddingTop(Length::Px(i32::from(bits) + 1)));
     }
     if bits & 8 != 0 {
         s.set(StyleProp::TextColor(Color::hex(color ^ 0xFF)));
     }
     if bits & 16 != 0 {
-        s.set(StyleProp::Opa(Opa(color as u8)));
+        s.set(StyleProp::PartOpacity(Opa::from_raw(color as u8)));
     }
     if bits & 32 != 0 {
-        s.set(StyleProp::BorderWidth(3));
+        s.set(StyleProp::BorderWidth(Length::Px(3)));
     }
     s
 }
@@ -259,9 +261,9 @@ proptest! {
             let m = e.cached_main(child);
             prop_assert_eq!(m.bg_color, e.style_color(child, Part::Main, PropId::BgColor));
             prop_assert_eq!(m.radius, e.style_i32(child, Part::Main, PropId::Radius));
-            prop_assert_eq!(m.pad.top, e.style_i32(child, Part::Main, PropId::PadTop));
+            prop_assert_eq!(m.pad.top, e.style_i32(child, Part::Main, PropId::PaddingTop));
             prop_assert_eq!(m.text_color, e.style_color(child, Part::Main, PropId::TextColor));
-            prop_assert_eq!(m.opa, e.style_opa(child, Part::Main, PropId::Opa));
+            prop_assert_eq!(m.opa, e.style_opa(child, Part::Main, PropId::PartOpacity));
             prop_assert_eq!(m.border_width, e.style_i32(child, Part::Main, PropId::BorderWidth));
             // The parent's state changes the child's inherited text color.
             let _ = e.cached_main(child);

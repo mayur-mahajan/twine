@@ -10,8 +10,9 @@
 //! | Rotation | reports panel coordinates (12-bit): use [`TouchTransform`] |
 //!
 //! A reading reads 6 registers from `0x01`: gesture, finger count, `XH` (bits 11:8 in 3:0),
-//! `XL`, `YH`, `YL`. Because the controller does not answer while asleep, a failed read is
-//! reported as "released" and logged at debug level only.
+//! `XL`, `YH`, `YL`. Because the controller does not answer while asleep, a failed read while
+//! released is reported as "released" and logged at debug level only; only failed reads while
+//! touched (the controller is awake then) count for [`health`](InputDevice::health).
 //!
 //! # Wiring
 //!
@@ -35,7 +36,7 @@ use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal::i2c::I2c;
 use twine_core::log::{debug, trace};
-use twine_hal::{InputData, InputDevice, InputKind, PointerData, PollHint};
+use twine_hal::{DeviceHealth, InputData, InputDevice, InputKind, PointerData, PollHint};
 
 use super::{IrqState, TouchTransform};
 use crate::NoPin;
@@ -75,6 +76,16 @@ impl<I2C, IRQ> Cst816s<I2C, IRQ, NoPin> {
             rst: Some(rst),
             transform: self.transform,
         }
+    }
+}
+
+impl<I2C, IRQ, RST> Cst816s<I2C, IRQ, RST> {
+    /// Reports the device [`Failed`](DeviceHealth::Failed) after `n` consecutive bus errors
+    /// (default [`DeviceHealth::DEFAULT_FAIL_AFTER`]; see [`health`](InputDevice::health)).
+    #[must_use]
+    pub fn with_fail_after(mut self, n: u16) -> Self {
+        self.irq.fail_after = n;
+        self
     }
 }
 
@@ -128,16 +139,27 @@ impl<I2C: I2c, IRQ: InputPin, RST> InputDevice for Cst816s<I2C, IRQ, RST> {
                 pressed: true,
             },
             Ok(None) => self.irq.released(),
+            Err(_) if self.irq.last.pressed => {
+                // Awake while touched: a missing answer now is a failure.
+                twine_core::log::warn!(target: "twine::driver", "cst816s: I2C error while touched");
+                return InputData::Pointer(self.irq.error("cst816s"));
+            }
             Err(_) => {
+                // Asleep: not a failure (the health is left as it is).
                 debug!(target: "twine::driver", "cst816s: no answer (asleep)");
-                self.irq.released()
+                let released = self.irq.released();
+                return InputData::Pointer(self.irq.update("cst816s", released));
             }
         };
-        InputData::Pointer(self.irq.update("cst816s", data))
+        InputData::Pointer(self.irq.ok("cst816s", data))
     }
 
     fn poll_hint(&self) -> PollHint {
         self.irq.poll_hint()
+    }
+
+    fn health(&self) -> DeviceHealth {
+        self.irq.health
     }
 }
 
@@ -213,5 +235,27 @@ mod tests {
         );
         block_on(t.wait_for_interrupt());
         assert_eq!(rec.ops(), [BusOp::Wait("irq", false)]);
+    }
+
+    #[test]
+    fn cst816s_errors_count_only_while_touched() {
+        let rec = Recorder::new();
+        let regs = Regs::install(&rec);
+        rec.set_level("irq", false);
+        let mut t = Cst816s::new(
+            rec.i2c(),
+            Some(rec.quiet_pin("irq")),
+            TouchTransform::identity(240, 240),
+        )
+        .with_fail_after(DeviceHealth::DEFAULT_FAIL_AFTER);
+        // Asleep (released): no answer is not a failure.
+        rec.set_bus_down(true);
+        for _ in 0..5 {
+            assert!(matches!(t.read(), InputData::Pointer(p) if !p.pressed));
+        }
+        assert_eq!(t.health(), DeviceHealth::Ok);
+        rec.set_bus_down(false);
+        regs.set(0x01, &[0x00, 0x01, 0x00, 0x10, 0x00, 0x20]);
+        crate::touch::test_util::assert_bus_failure_sequence(&rec, &mut t);
     }
 }

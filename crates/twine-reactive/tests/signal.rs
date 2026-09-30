@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use twine_reactive::{create_root, debug_stats, reset};
+use twine_reactive::{create_root, reset, runtime_stats};
 
 #[test]
 fn signal_get_set_roundtrip() {
@@ -58,16 +58,16 @@ fn signal_split_handles_share_value() {
 fn signal_set_if_changed_equal_value_is_noop() {
     let cx = create_root();
     let s = cx.signal(3);
-    let w0 = debug_stats().writes;
+    let w0 = runtime_stats().writes;
     s.set_if_changed(3);
-    assert_eq!(debug_stats().writes, w0);
+    assert_eq!(runtime_stats().writes, w0);
     s.write_only().set_if_changed(3);
-    assert_eq!(debug_stats().writes, w0);
+    assert_eq!(runtime_stats().writes, w0);
     s.set_if_changed(4);
-    assert_eq!(debug_stats().writes, w0 + 1);
+    assert_eq!(runtime_stats().writes, w0 + 1);
     assert_eq!(s.get(), 4);
     s.set(4); // `set` always notifies
-    assert_eq!(debug_stats().writes, w0 + 2);
+    assert_eq!(runtime_stats().writes, w0 + 2);
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn signals_of_different_types_coexist() {
     assert_eq!(c.get(), P { x: 4 });
     assert_eq!(d.with(Vec::len), 1);
     e.set(());
-    assert_eq!(debug_stats().nodes, 5);
+    assert_eq!(runtime_stats().nodes, 5);
 }
 
 #[test]

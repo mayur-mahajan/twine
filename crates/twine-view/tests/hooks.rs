@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Wake as TaskWake, Waker};
 
-use twine_reactive::debug_stats;
+use twine_reactive::runtime_stats;
 use twine_testing::{TestUi, by_id, by_text, capture_logs};
 use twine_view::prelude::*;
 use twine_widgets::label::Label;
@@ -119,12 +119,11 @@ fn tween_retarget_midflight_is_continuous() {
 fn animation_controller_pause_resume() {
     let mut t = TestUi::new(200, 100).mount(|cx| {
         let (a, ctl) = cx.animation(Anim::new(0, 1000).duration(Duration::ms(1000)));
-        cx.provide((a, ctl.clone()));
-        let c2 = ctl.clone();
-        let c3 = ctl.clone();
+        cx.provide((a, ctl));
+        // `Copy`: the same controller moves into every handler.
         column((
-            button(label("pause")).on_click(move || c2.pause()),
-            button(label("resume")).on_click(move || c3.resume()),
+            button(label("pause")).on_click(move || ctl.pause()),
+            button(label("resume")).on_click(move || ctl.resume()),
             button(label("restart")).on_click(move || ctl.restart()),
         ))
     });
@@ -210,10 +209,10 @@ fn on_message_drains_in_batch() {
     for v in [1, 2, 3] {
         BATCH_CH.try_send(v).unwrap();
     }
-    let runs = debug_stats().effect_runs;
+    let runs = runtime_stats().effect_runs;
     t.update();
     assert_eq!(
-        debug_stats().effect_runs - runs,
+        runtime_stats().effect_runs - runs,
         1,
         "one binding run for three messages"
     );

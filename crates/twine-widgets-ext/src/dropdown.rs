@@ -12,8 +12,8 @@ use twine_engine::{
     fmt_node_id,
 };
 use twine_image::{ImageSource, with_pixels};
-use twine_style::{COORD_MAX, Dir, Length, Part, PropId, Selector, StyleProp, TextAlign};
-use twine_text::{TextDrawFlags, TextLayout, symbols};
+use twine_style::{COORD_MAX, Length, Part, PropId, Selector, Side, StyleProp, TextAlign};
+use twine_text::{Symbol, TextDrawFlags, TextLayout};
 use twine_widgets::label::LabelText;
 
 use crate::options::{self, Options};
@@ -48,7 +48,7 @@ pub const DROPDOWN_DEFAULT_WIDTH: i32 = util::DPI_DEF;
 pub const DROPDOWN_DEFAULT_OPTIONS: &str = "Option 1\nOption 2\nOption 3";
 
 /// The default symbol: `SYMBOL_DOWN` (drawn as `SYMBOL_UP` when the list opens upwards).
-pub const DROPDOWN_DEFAULT_SYMBOL: ImageSource = ImageSource::Symbol(symbols::DOWN);
+pub const DROPDOWN_DEFAULT_SYMBOL: ImageSource = ImageSource::symbol(Symbol::Down);
 
 /// A dropdown (LVGL `lv_dropdown`): shows the selected option (or a fixed
 /// [`text`](Self::set_text)) and a symbol; a click opens the options as a
@@ -96,7 +96,7 @@ pub struct Dropdown {
     sel_orig: u16,
     /// The pressed option in the list.
     pr_opt: Option<u16>,
-    dir: Dir,
+    dir: Side,
     symbol: Option<ImageSource>,
     /// The size of an image symbol (read from its header when set).
     symbol_size: Size,
@@ -124,7 +124,7 @@ impl Dropdown {
             sel: 0,
             sel_orig: 0,
             pr_opt: None,
-            dir: Dir::BOTTOM,
+            dir: Side::Bottom,
             symbol: Some(DROPDOWN_DEFAULT_SYMBOL),
             symbol_size: Size::ZERO,
             text: None,
@@ -188,7 +188,7 @@ impl Dropdown {
 
     /// The direction the list opens to.
     #[must_use]
-    pub fn dir(&self) -> Dir {
+    pub fn dir(&self) -> Side {
         self.dir
     }
 
@@ -304,14 +304,10 @@ impl Dropdown {
         Self::refresh_size(cx);
     }
 
-    /// The direction the list opens to (`Dir::BOTTOM`, `TOP`, `LEFT` or `RIGHT`; LVGL
-    /// `lv_dropdown_set_dir`). Idempotent.
-    pub fn set_dir(&mut self, cx: &mut WidgetCx<'_>, dir: Dir) {
+    /// The side the list opens to ([`Side::Bottom`] by default; LVGL `lv_dropdown_set_dir`).
+    /// Idempotent.
+    pub fn set_dir(&mut self, cx: &mut WidgetCx<'_>, dir: Side) {
         if self.dir == dir {
-            return;
-        }
-        if ![Dir::BOTTOM, Dir::TOP, Dir::LEFT, Dir::RIGHT].contains(&dir) {
-            twine_core::warn!(target: "twine::engine", "dropdown: direction {:?} is not a single side", dir);
             return;
         }
         log_set(DROPDOWN_CLASS.name, cx.node(), "dir");
@@ -465,7 +461,11 @@ impl Dropdown {
         watch_outside(e, dd, list);
         let dur = e.style_i32(list, Part::Main, PropId::AnimDuration);
         if dur > 0 {
-            e.set_local_prop(list, Selector::MAIN, StyleProp::Opa(twine_core::Opa::TRANSP));
+            e.set_local_prop(
+                list,
+                Selector::MAIN,
+                StyleProp::PartOpacity(twine_core::Opa::TRANSP),
+            );
             e.anim_start(
                 list,
                 AnimProp::Opa,
@@ -483,7 +483,7 @@ impl Dropdown {
         let m = MeasureCx::new(e, list);
         let border = m.style_i32(Part::Main, PropId::BorderWidth).max(0);
         let pad = m.padding(Part::Main);
-        let vertical = self.dir == Dir::BOTTOM || self.dir == Dir::TOP;
+        let vertical = self.dir == Side::Bottom || self.dir == Side::Top;
         let content_w = text.w + pad.left + pad.right + 2 * border;
         let w = if content_w <= c.width() && vertical {
             c.width()
@@ -498,19 +498,19 @@ impl Dropdown {
         // LVGL's inclusive y2.
         let y2 = c.y1 - 1;
         let mut dir = self.dir;
-        if self.dir == Dir::BOTTOM {
+        if self.dir == Side::Bottom {
             if y2 + list_h > ver_res {
                 if c.y0 > ver_res - y2 {
                     // More space above: drop up.
-                    dir = Dir::TOP;
+                    dir = Side::Top;
                     list_h = c.y0 - 1;
                 } else {
                     list_h = ver_res - y2 - 1;
                 }
             }
-        } else if self.dir == Dir::TOP && c.y0 - list_h < 0 {
+        } else if self.dir == Side::Top && c.y0 - list_h < 0 {
             if c.y0 < ver_res - y2 {
-                dir = Dir::BOTTOM;
+                dir = Side::Bottom;
                 list_h = ver_res - y2;
             } else {
                 list_h = c.y0;
@@ -526,16 +526,16 @@ impl Dropdown {
         let origin = e.content_area(layer);
         let rtl = util::is_rtl(&MeasureCx::new(e, list));
         let (x, y) = match dir {
-            Dir::TOP | Dir::BOTTOM => {
+            Side::Top | Side::Bottom => {
                 let x = if rtl { c.x1 - lw } else { c.x0 };
-                let y = if dir == Dir::BOTTOM { c.y1 } else { c.y0 - lh };
+                let y = if dir == Side::Bottom { c.y1 } else { c.y0 - lh };
                 (x, y)
             }
-            Dir::LEFT => (c.x0 - lw, c.y0),
-            _ => (c.x1, c.y0),
+            Side::Left => (c.x0 - lw, c.y0),
+            Side::Right => (c.x1, c.y0),
         };
         let mut y = y;
-        if (dir == Dir::LEFT || dir == Dir::RIGHT) && y + lh > ver_res {
+        if (dir == Side::Left || dir == Side::Right) && y + lh > ver_res {
             y -= (y + lh - 1 - ver_res) + 1;
         }
         e.set_pos(list, x - origin.x0, y - origin.y0);
@@ -567,7 +567,7 @@ impl Dropdown {
         let dur = e.style_i32(list, Part::Main, PropId::AnimDuration);
         if dur > 0 {
             e.set_flag(list, ObjFlags::CLICKABLE, false);
-            let from = e.style_opa(list, Part::Main, PropId::Opa).0;
+            let from = e.style_opa(list, Part::Main, PropId::PartOpacity).raw();
             self.closing = Some(list);
             let a = Anim::new(i32::from(from), 0)
                 .duration(Duration::ms(u64::from(dur.unsigned_abs())))
@@ -689,11 +689,11 @@ impl Dropdown {
         cx.post_event(EventCode::ValueChanged, EventParam::Value(i32::from(self.sel)));
     }
 
-    /// The symbol drawn: the default `SYMBOL_DOWN` turns into `SYMBOL_UP` for `Dir::TOP`.
+    /// The symbol drawn: the default `SYMBOL_DOWN` turns into `SYMBOL_UP` for `Side::Top`.
     fn shown_symbol(&self) -> Option<ImageSource> {
         match &self.symbol {
-            Some(ImageSource::Symbol(s)) if *s == symbols::DOWN && self.dir == Dir::TOP => {
-                Some(ImageSource::Symbol(symbols::UP))
+            Some(ImageSource::Symbol(s)) if *s == Symbol::Down.as_str() && self.dir == Side::Top => {
+                Some(ImageSource::symbol(Symbol::Up))
             }
             s => s.clone(),
         }
@@ -766,7 +766,7 @@ impl Widget for Dropdown {
     fn content_size(&self, cx: &MeasureCx<'_>) -> Size {
         let mut size = Size::ZERO;
         if let Some(sym) = self.shown_symbol() {
-            size.w += self.symbol_dims(cx, &sym).w + cx.style_i32(Part::Main, PropId::PadColumn);
+            size.w += self.symbol_dims(cx, &sym).w + cx.style_i32(Part::Main, PropId::ColumnGap);
         }
         let d = cx.text_dsc(Part::Main);
         let mut l = TextLayout::new(self.button_text(), d.font);
@@ -786,7 +786,7 @@ impl Widget for Dropdown {
         let border = m.style_i32(Part::Main, PropId::BorderWidth).max(0);
         let pad = m.padding(Part::Main);
         let (left, right) = (pad.left + border, pad.right + border);
-        let symbol_to_left = self.dir == Dir::LEFT || util::is_rtl(&m);
+        let symbol_to_left = self.dir == Side::Left || util::is_rtl(&m);
         let mut symbol_w = -1;
         let sym = self.shown_symbol();
         if let Some(sym) = &sym {
@@ -824,7 +824,7 @@ impl Widget for Dropdown {
         if sym.is_none() && d.align == TextAlign::Auto {
             d.align = TextAlign::Center;
         } else {
-            let gap = symbol_w + m.style_i32(Part::Main, PropId::PadColumn);
+            let gap = symbol_w + m.style_i32(Part::Main, PropId::ColumnGap);
             if symbol_to_left {
                 if d.align == TextAlign::Auto {
                     d.align = TextAlign::Right;

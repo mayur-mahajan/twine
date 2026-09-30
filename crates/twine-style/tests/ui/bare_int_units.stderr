@@ -1,0 +1,104 @@
+error[E0308]: mismatched types
+ --> tests/ui/bare_int_units.rs:5:46
+  |
+5 | static OPACITY: Style = style! { bg_opacity: 128 };
+  |                         ---------------------^^^--
+  |                         |                    |
+  |                         |                    expected `Opa`, found integer
+  |                         arguments to this enum variant are incorrect
+  |
+note: tuple variant defined here
+ --> src/table.rs
+  |
+  |             BgOpacity(bg_opacity): val [Opa] [] TRANSP ["bg_opa" "LV_STYLE_BG_OPA"];
+  |             ^^^^^^^^^
+  |
+ ::: src/prop.rs
+  |
+  | crate::__prop_table!(define_props $);
+  | ------------------------------------ in this macro invocation
+  = note: this error originates in the macro `crate::__prop_table` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0308]: mismatched types
+ --> tests/ui/bare_int_units.rs:6:55
+  |
+6 | static ROTATION: Style = style! { transform_rotation: 300 };
+  |                          -----------------------------^^^--
+  |                          |                            |
+  |                          |                            expected `Angle`, found integer
+  |                          arguments to this enum variant are incorrect
+  |
+note: tuple variant defined here
+ --> src/table.rs
+  |
+  |             TransformRotation(transform_rotation): val [Angle] [EXT_DRAW LAYER TRANSFORM] ANGLE0 ["LV_STYLE_TRANSFORM_ROTATION"];
+  |             ^^^^^^^^^^^^^^^^^
+  |
+ ::: src/prop.rs
+  |
+  | crate::__prop_table!(define_props $);
+  | ------------------------------------ in this macro invocation
+  = note: this error originates in the macro `crate::__prop_table` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0308]: mismatched types
+ --> tests/ui/bare_int_units.rs:7:51
+  |
+7 | static SCALE: Style = style! { transform_scale_x: 256 };
+  |                       ----------------------------^^^--
+  |                       |                           |
+  |                       |                           expected `Scale`, found integer
+  |                       arguments to this enum variant are incorrect
+  |
+note: tuple variant defined here
+ --> src/table.rs
+  |
+  |             TransformScaleX(transform_scale_x): val [Scale] [EXT_DRAW LAYER TRANSFORM] SCALE_ONE ["LV_STYLE_TRANSFORM_SCALE_X"];
+  |             ^^^^^^^^^^^^^^^
+  |
+ ::: src/prop.rs
+  |
+  | crate::__prop_table!(define_props $);
+  | ------------------------------------ in this macro invocation
+  = note: this error originates in the macro `crate::__prop_table` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0308]: mismatched types
+ --> tests/ui/bare_int_units.rs:8:54
+  |
+8 | static SCALE_BOTH: Style = style! { transform_scale: 250 };
+  |                            --------------------------^^^--
+  |                            |                         |
+  |                            |                         expected `Scale`, found integer
+  |                            arguments to this enum variant are incorrect
+  |
+note: tuple variant defined here
+ --> src/table.rs
+  |
+  |             TransformScaleX(transform_scale_x): val [Scale] [EXT_DRAW LAYER TRANSFORM] SCALE_ONE ["LV_STYLE_TRANSFORM_SCALE_X"];
+  |             ^^^^^^^^^^^^^^^
+  |
+ ::: src/prop.rs
+  |
+  | crate::__prop_table!(define_props $);
+  | ------------------------------------ in this macro invocation
+  = note: this error originates in the macro `crate::__prop_table` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0308]: mismatched types
+ --> tests/ui/bare_int_units.rs:8:54
+  |
+8 | static SCALE_BOTH: Style = style! { transform_scale: 250 };
+  |                            --------------------------^^^--
+  |                            |                         |
+  |                            |                         expected `Scale`, found integer
+  |                            arguments to this enum variant are incorrect
+  |
+note: tuple variant defined here
+ --> src/table.rs
+  |
+  |             TransformScaleY(transform_scale_y): val [Scale] [EXT_DRAW LAYER TRANSFORM] SCALE_ONE ["LV_STYLE_TRANSFORM_SCALE_Y"];
+  |             ^^^^^^^^^^^^^^^
+  |
+ ::: src/prop.rs
+  |
+  | crate::__prop_table!(define_props $);
+  | ------------------------------------ in this macro invocation
+  = note: this error originates in the macro `crate::__prop_table` (in Nightly builds, run with -Z macro-backtrace for more info)

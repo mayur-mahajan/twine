@@ -88,7 +88,7 @@ fn fill_with_opa_uses_blend_mode() {
     with_buf(ColorFormat::Rgb565, |buf, base| {
         let area = Rect::from_xywh(10, 20, 32, 16);
         assert_eq!(
-            dma.fill(buf, area, Color::hex(0x102030), Opa(128)),
+            dma.fill(buf, area, Color::hex(0x102030), Opa::from_raw(128)),
             AccelResult::Queued
         );
         let regs = dma.regs();
@@ -117,7 +117,12 @@ fn fill_with_opa_uses_blend_mode() {
 fn xrgb8888_background_alpha_is_replaced() {
     let mut dma = Dma2d::new(MockRegs::new());
     with_buf(ColorFormat::Xrgb8888, |buf, _| {
-        dma.fill(buf, Rect::from_xywh(10, 20, 32, 16), Color::WHITE, Opa(100));
+        dma.fill(
+            buf,
+            Rect::from_xywh(10, 20, 32, 16),
+            Color::WHITE,
+            Opa::from_raw(100),
+        );
     });
     assert_eq!(
         dma.regs().get(Reg::Bgpfccr),
@@ -174,7 +179,7 @@ fn blit_argb8888_on_rgb565_uses_blend_pfc() {
     let src_bytes = &*aligned4(&mut raw);
     let src = ImagePixels::new(ColorFormat::Argb8888, 32, 16, src_bytes);
     with_buf(ColorFormat::Rgb565, |buf, base| {
-        let r = dma.blit(buf, Rect::from_xywh(10, 20, 32, 16), &src, Opa(200));
+        let r = dma.blit(buf, Rect::from_xywh(10, 20, 32, 16), &src, Opa::from_raw(200));
         assert_eq!(r, AccelResult::Done);
         let regs = dma.regs();
         assert_eq!(mode(&dma), MODE_M2M_BLEND);
@@ -419,4 +424,105 @@ fn painter_integration_drop_waits() {
     assert!(!dma.is_busy());
     assert!(!dma.regs().is_running());
     assert_eq!(dma.release().starts(), 1);
+}
+
+#[test]
+fn bounded_fill_is_still_queued_and_completes() {
+    let mut dma = Dma2d::new(MockRegs::new().with_busy_reads(3)).with_timeout(10);
+    assert_eq!(dma.timeout(), Some(10));
+    with_buf(ColorFormat::Rgb565, |buf, _| {
+        let r = dma.fill(buf, Rect::from_xywh(10, 20, 32, 16), Color::RED, Opa::COVER);
+        assert_eq!(r, AccelResult::Queued, "the bound keeps the CPU/DMA overlap");
+        assert_eq!(dma.regs().cr_reads(), 0, "nothing waited yet");
+        dma.wait();
+    });
+    assert!(!dma.is_busy());
+    assert!(!dma.is_faulted());
+    assert_eq!(dma.take_timeouts(), 0);
+}
+
+#[test]
+fn hung_transfer_times_out_is_aborted_and_disables_the_hardware() {
+    let mut dma = Dma2d::new(MockRegs::new().hang()).with_timeout(50);
+    let mut raw = vec![0u8; 16 * 16 * 2 + 4];
+    let src = ImagePixels::new(ColorFormat::Rgb565, 16, 16, aligned4(&mut raw));
+    with_buf(ColorFormat::Rgb565, |buf, _| {
+        let r = dma.blit(buf, Rect::from_xywh(10, 20, 16, 16), &src, Opa::COVER);
+        assert_eq!(r, AccelResult::Unsupported, "timed out: software draws it");
+        assert!(dma.is_faulted());
+        assert_eq!(dma.regs().aborts(), 1);
+        assert!(!dma.regs().is_running());
+        // The CR polls are bounded: max_polls for the transfer, max_polls after the abort.
+        assert!(dma.regs().cr_reads() <= 50 + 1 + 50);
+        // Faulted: nothing touches the hardware any more.
+        let starts = dma.regs().starts();
+        let r = dma.fill(buf, Rect::from_xywh(10, 20, 32, 16), Color::RED, Opa::COVER);
+        assert_eq!(r, AccelResult::Unsupported);
+        assert_eq!(dma.regs().starts(), starts);
+    });
+    assert_eq!(dma.timeout_count(), 1);
+    assert_eq!(dma.take_timeouts(), 1);
+    assert_eq!(dma.take_timeouts(), 0, "taken");
+    dma.regs_mut().set_hang(false);
+    dma.recover();
+    with_buf(ColorFormat::Rgb565, |buf, _| {
+        let r = dma.fill(buf, Rect::from_xywh(10, 20, 32, 16), Color::RED, Opa::COVER);
+        assert_eq!(r, AccelResult::Queued);
+        dma.wait();
+    });
+    assert_eq!(dma.timeout_count(), 1);
+    assert!(!dma.is_faulted());
+}
+
+#[test]
+fn queued_fill_times_out_at_the_next_wait() {
+    let mut dma = Dma2d::new(MockRegs::new().hang()).with_timeout(20);
+    with_buf(ColorFormat::Rgb565, |buf, _| {
+        let r = dma.fill(buf, Rect::from_xywh(10, 20, 32, 16), Color::RED, Opa::COVER);
+        assert_eq!(r, AccelResult::Queued);
+        dma.wait();
+    });
+    assert!(!dma.is_busy());
+    assert!(dma.is_faulted());
+    assert_eq!(dma.regs().aborts(), 1);
+    assert_eq!(dma.take_timeouts(), 1);
+}
+
+#[test]
+fn hung_clut_load_times_out() {
+    let mut dma = Dma2d::new(MockRegs::new().hang()).with_timeout(8);
+    let mut raw = vec![0u8; 16 * 16 + 4];
+    let src = ImagePixels::new(ColorFormat::L8, 16, 16, aligned4(&mut raw));
+    with_buf(ColorFormat::Rgb565, |buf, _| {
+        let r = dma.blit(buf, Rect::from_xywh(10, 20, 16, 16), &src, Opa::COVER);
+        assert_eq!(r, AccelResult::Unsupported);
+    });
+    assert!(dma.is_faulted());
+    assert_eq!(dma.regs().aborts(), 1);
+    assert_eq!(dma.regs().starts(), 0, "the transfer never started");
+    assert_eq!(dma.regs().get(Reg::Fgpfccr) & PFCCR_START, 0, "CLUT load aborted");
+}
+
+#[test]
+fn painter_with_hung_dma2d_returns_and_reports_the_timeout() {
+    use twine_render::{Painter, RenderCaches};
+    let mut dma = Dma2d::new(MockRegs::new().hang()).with_timeout(100);
+    let mut caches = RenderCaches::default();
+    let mut raw = vec![0u8; (W * H * 2) as usize + 4];
+    let mem = aligned4(&mut raw);
+    {
+        let buf = DrawBuf::new_packed(&mut *mem, ColorFormat::Rgb565, Rect::from_xywh(0, 0, W, H)).unwrap();
+        let mut p = Painter::new(buf, &mut caches).with_accel(&mut dma);
+        p.fill(Rect::from_xywh(0, 0, W, H), Color::RED, Opa::COVER); // queued, hangs
+        p.fill(Rect::from_xywh(0, 0, W, H / 2), Color::BLUE, Opa::COVER); // waits: times out
+    }
+    // The second fill was drawn in software; the aborted first one is missing (the caller —
+    // the engine — re-renders the chunk, see tests/engine.rs).
+    let px = |x: i32, y: i32| {
+        let i = ((y * W + x) * 2) as usize;
+        u16::from_le_bytes([mem[i], mem[i + 1]])
+    };
+    assert_eq!(px(0, 0), Color::BLUE.to_rgb565());
+    assert_eq!(dma.take_timeouts(), 1);
+    assert_eq!(dma.regs().starts(), 1);
 }

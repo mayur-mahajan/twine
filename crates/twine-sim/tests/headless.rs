@@ -109,3 +109,30 @@ fn headless_output_is_deterministic() {
     };
     assert_eq!(run("det-a"), run("det-b"));
 }
+
+#[test]
+fn run_headless_accepts_a_capturing_closure() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use twine_view::prelude::*;
+
+    let dir = out_dir("closure");
+    let cfg = SimConfig::new(64, 32).headless(Some(Headless {
+        frames: 3,
+        script: None,
+        out_dir: dir.clone(),
+    }));
+    let built = Rc::new(Cell::new(0u32));
+    let b = built.clone();
+    // A non-`Clone` capture: `app` is `FnOnce`.
+    let greeting = String::from("hi");
+    let report = twine_sim::run_headless(cfg, move |_cx| {
+        b.set(b.get() + 1);
+        label(greeting)
+    })
+    .unwrap();
+    assert_eq!(built.get(), 1, "the app is built exactly once");
+    assert_eq!(report.frames, 3);
+    assert!(dir.join("final.png").is_file());
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -95,7 +95,7 @@ impl RasterScratch {
 /// Converts a 16.16 coordinate to 24.8 (rounded).
 #[inline]
 fn to8(v: twine_core::Fx) -> i32 {
-    sat((i64::from(v.0) + 128) >> 8)
+    sat((i64::from(v.raw()) + 128) >> 8)
 }
 
 /// Rasterizes the closed polygon(s) given as `lines` into `p` with `rule`, painting with `src`.

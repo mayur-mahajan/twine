@@ -4,7 +4,7 @@ use core::cell::Cell;
 
 use twine_anim::Repeat;
 use twine_core::Duration;
-use twine_engine::State;
+use twine_engine::{State, WidgetCx};
 use twine_image::ImageSource;
 use twine_widgets::animimg::AnimImg;
 use twine_widgets::image_button::{ImageButton, ImageButtonState};
@@ -12,16 +12,34 @@ use twine_widgets::image_button::{ImageButton, ImageButtonState};
 use crate::bind::bind_prop;
 use crate::build::{WidgetView, widget_view};
 use crate::model::{IntoModel, bind_model, on_value_changed};
-use crate::prop::IntoProp;
+use crate::prop::{IntoIcon, IntoProp};
 use crate::widgets::controls::is_checked;
 
 /// Sets the image (the middle slice) of `state`.
-fn set_mid(v: WidgetView<ImageButton>, state: ImageButtonState, src: ImageSource) -> WidgetView<ImageButton> {
-    v.op(move |cx, node| {
-        cx.engine().with_widget_mut(node, |b: &mut ImageButton, wcx| {
-            b.set_src(wcx, state, None, Some(src), None);
-        });
+fn set_mid(
+    v: WidgetView<ImageButton>,
+    state: ImageButtonState,
+    src: impl IntoProp<ImageSource>,
+) -> WidgetView<ImageButton> {
+    v.bind(src, move |b: &mut ImageButton, wcx, src| {
+        b.set_src(wcx, state, None, Some(src), None);
     })
+}
+
+/// Sets slice `slot` (0 = left, 1 = middle, 2 = right) of `state`, keeping the others.
+fn set_slice(
+    b: &mut ImageButton,
+    wcx: &mut WidgetCx<'_>,
+    state: ImageButtonState,
+    slot: usize,
+    src: Option<ImageSource>,
+) {
+    let mut s = b.src(state).map(Option::<&ImageSource>::cloned);
+    if let Some(x) = s.get_mut(slot) {
+        *x = src;
+    }
+    let [l, m, r] = s;
+    b.set_src(wcx, state, l, m, r);
 }
 
 /// A button drawn with one image per state: `released` and `pressed` (states without an
@@ -32,13 +50,16 @@ fn set_mid(v: WidgetView<ImageButton>, state: ImageButtonState, src: ImageSource
 ///
 /// let cx = twine_reactive::create_root();
 /// let on = cx.signal(false);
-/// let _v = image_button(ImageSource::Symbol(symbols::PLAY), ImageSource::Symbol(symbols::PLAY))
-///     .checked_images(ImageSource::Symbol(symbols::PAUSE), ImageSource::Symbol(symbols::PAUSE))
+/// let _v = image_button(Symbol::Play, Symbol::Play)
+///     .checked_images(Symbol::Pause, Symbol::Pause)
 ///     .checkable(true)
 ///     .checked(on);
 /// cx.dispose();
 /// ```
-pub fn image_button(released: ImageSource, pressed: ImageSource) -> WidgetView<ImageButton> {
+pub fn image_button(
+    released: impl IntoProp<ImageSource>,
+    pressed: impl IntoProp<ImageSource>,
+) -> WidgetView<ImageButton> {
     let v = set_mid(
         widget_view(ImageButton::new),
         ImageButtonState::Released,
@@ -50,31 +71,39 @@ pub fn image_button(released: ImageSource, pressed: ImageSource) -> WidgetView<I
 impl WidgetView<ImageButton> {
     /// The images of the checked state (released and pressed).
     #[must_use]
-    pub fn checked_images(self, released: ImageSource, pressed: ImageSource) -> Self {
+    pub fn checked_images(
+        self,
+        released: impl IntoProp<ImageSource>,
+        pressed: impl IntoProp<ImageSource>,
+    ) -> Self {
         let v = set_mid(self, ImageButtonState::CheckedReleased, released);
         set_mid(v, ImageButtonState::CheckedPressed, pressed)
     }
 
     /// The image of the disabled state.
     #[must_use]
-    pub fn disabled_image(self, src: ImageSource) -> Self {
+    pub fn disabled_image(self, src: impl IntoProp<ImageSource>) -> Self {
         set_mid(self, ImageButtonState::Disabled, src)
     }
 
-    /// Three-slice images of `state`: `left` and `right` at the ends, `mid` tiled between
-    /// them to fill the width.
+    /// Three-slice images of `state`: `left` and `right` at the ends (optional: `()` for none,
+    /// any [`IntoIcon`]), `mid` tiled between them to fill the width.
     #[must_use]
     pub fn three_slice(
         self,
         state: ImageButtonState,
-        left: Option<ImageSource>,
-        mid: ImageSource,
-        right: Option<ImageSource>,
+        left: impl IntoIcon,
+        mid: impl IntoProp<ImageSource>,
+        right: impl IntoIcon,
     ) -> Self {
-        self.op(move |cx, node| {
-            cx.engine().with_widget_mut(node, |b: &mut ImageButton, wcx| {
-                b.set_src(wcx, state, left, Some(mid), right);
-            });
+        self.bind(mid, move |b: &mut ImageButton, wcx, src| {
+            set_slice(b, wcx, state, 1, Some(src));
+        })
+        .bind(left.into_icon(), move |b: &mut ImageButton, wcx, src| {
+            set_slice(b, wcx, state, 0, src);
+        })
+        .bind(right.into_icon(), move |b: &mut ImageButton, wcx, src| {
+            set_slice(b, wcx, state, 2, src);
         })
     }
 
@@ -127,20 +156,23 @@ struct AnimImgCfg {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// static FRAMES: [ImageSource; 2] = [ImageSource::Symbol(symbols::PLAY), ImageSource::Symbol(symbols::PAUSE)];
+/// static FRAMES: [ImageSource; 2] = [ImageSource::symbol(Symbol::Play), ImageSource::symbol(Symbol::Pause)];
 /// let cx = twine_reactive::create_root();
 /// let run = cx.signal(true);
 /// let _v = animimg(&FRAMES, Duration::ms(400)).repeat(Repeat::Infinite).playing(run);
 /// cx.dispose();
 /// ```
-pub fn animimg(frames: &'static [ImageSource], period: Duration) -> WidgetView<AnimImg> {
-    let mut v = widget_view(AnimImg::new).op(move |cx, node| {
-        cx.engine().with_widget_mut(node, |a: &mut AnimImg, wcx| {
-            a.set_repeat(wcx, Repeat::Infinite);
-            a.set_frames(wcx, frames);
-            a.set_period(wcx, period);
-        });
-    });
+pub fn animimg(
+    frames: impl IntoProp<&'static [ImageSource]>,
+    period: impl IntoProp<Duration>,
+) -> WidgetView<AnimImg> {
+    let mut v = widget_view(AnimImg::new)
+        .op(move |cx, node| {
+            cx.engine()
+                .with_widget_mut(node, |a: &mut AnimImg, wcx| a.set_repeat(wcx, Repeat::Infinite));
+        })
+        .bind(frames, |a: &mut AnimImg, wcx, f| a.set_frames(wcx, f))
+        .bind(period, |a: &mut AnimImg, wcx, p| a.set_period(wcx, p));
     let cfg = v.shared::<AnimImgCfg>();
     v.after_children(move |cx, node| {
         if !cfg.controlled.get() {

@@ -68,7 +68,7 @@ fn dropdown_and_roller_stay_in_sync() {
     let unit = {
         let e = t.engine();
         let m = MeasureCx::new(&e, r);
-        i32::from(m.font(Part::Main).line_height) + m.style_i32(Part::Main, PropId::TextLineSpace)
+        i32::from(m.font(Part::Main).line_height) + m.style_i32(Part::Main, PropId::LineSpacing)
     };
     let c = center(&t, r);
     t.tap(Point::new(c.x, c.y + unit));

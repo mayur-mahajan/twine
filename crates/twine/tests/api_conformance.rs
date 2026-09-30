@@ -33,7 +33,7 @@ pub fn counter(cx: Scope) -> impl View {
     ))
     .gap(12)
     .padding(16)
-    .align_items(FlexAlign::Center)
+    .align_items(CrossAlign::Center)
     .size(Length::Pct(100), Length::Pct(100))
 }
 
@@ -68,7 +68,7 @@ mod thermostat {
                 button(label("+")).on_click(move || target.update(|t| *t += 5)),
             ))
             .gap(8)
-            .align_items(FlexAlign::Center),
+            .align_items(CrossAlign::Center),
             label(text!("{}", if heating.get() { "Heating" } else { "Idle" }))
                 .text_color(move || {
                     if heating.get() {
@@ -81,7 +81,7 @@ mod thermostat {
         ))
         .gap(12)
         .padding(16)
-        .align_items(FlexAlign::Center)
+        .align_items(CrossAlign::Center)
         .size(Length::Pct(100), Length::Pct(100))
     }
 }
@@ -221,11 +221,10 @@ fn s3_views_and_props() {
 // ---- §3.5 Widgets: basic controls, text entry ----------------------------------------------
 
 static FRAMES: [ImageSource; 2] = [
-    ImageSource::Symbol(symbols::PLAY),
-    ImageSource::Symbol(symbols::PAUSE),
+    ImageSource::symbol(Symbol::Play),
+    ImageSource::symbol(Symbol::Pause),
 ];
 static POINTS: [Point; 3] = [Point::new(0, 10), Point::new(20, 0), Point::new(40, 10)];
-static MAP: [&str; 5] = ["1", "2", "\n", "3", "4"];
 static KB_MAP: [&str; 3] = ["a", "b", "c"];
 static KB_CTRL: [BtnCtrl; 3] = [BtnCtrl::empty(), BtnCtrl::empty(), BtnCtrl::empty()];
 
@@ -235,15 +234,9 @@ fn basic_controls(cx: Scope) -> impl View {
     let on = cx.signal(false);
     let pts = cx.signal(vec![Point::new(0, 0), Point::new(30, 20)]);
     column((
-        image_button(
-            ImageSource::Symbol(symbols::PLAY),
-            ImageSource::Symbol(symbols::PLAY),
-        )
-        .checked_images(
-            ImageSource::Symbol(symbols::PAUSE),
-            ImageSource::Symbol(symbols::PAUSE),
-        )
-        .disabled_image(ImageSource::Symbol(symbols::STOP)),
+        image_button(Symbol::Play, Symbol::Play)
+            .checked_images(Symbol::Pause, Symbol::Pause)
+            .disabled_image(Symbol::Stop),
         animimg(&FRAMES, Duration::ms(500))
             .repeat(Repeat::Infinite)
             .playing(on),
@@ -254,7 +247,7 @@ fn basic_controls(cx: Scope) -> impl View {
             .mode(ArcMode::Normal)
             .rotation(Angle::deg(135))
             .knob(true)
-            .change_rate(720),
+            .change_rate(AngularSpeed::deg_per_s(720)),
         bar(level)
             .range(0..=100)
             .mode(BarMode::Range)
@@ -268,7 +261,7 @@ fn basic_controls(cx: Scope) -> impl View {
             .orientation(Orientation::Auto),
         switch(on).orientation(Orientation::Horizontal),
         checkbox("Enabled", on),
-        led(on).color(Color::RED).brightness(200),
+        led(on).color(Color::RED).brightness(Fraction::from_raw(200)),
         line(pts).y_invert(false).width(2).rounded(true).dash(4, 2),
         line_static(&POINTS),
         spinner().period(Duration::ms(1000)).arc_angle(Angle::deg(200)),
@@ -281,8 +274,7 @@ fn text_entry(cx: Scope) -> impl View {
     let name = cx.signal(String::from("Ada"));
     let ta: NodeRef<Textarea> = cx.node_ref();
     column((
-        buttonmatrix(&MAP)
-            .ctrl(0, BtnCtrl::CHECKABLE)
+        buttonmatrix([[btn("1").checkable(), btn("2")], [btn("3"), btn("4").width(2)]])
             .one_checked(true)
             .on_select(|idx: usize| {}),
         textarea(text)
@@ -305,7 +297,7 @@ fn text_entry(cx: Scope) -> impl View {
             span(name)
                 .font(&fonts::MONTSERRAT_20)
                 .text_color(Color::BLUE)
-                .text_decor(TextDecor::UNDERLINE),
+                .text_decoration(TextDecor::UNDERLINE),
         ))
         .mode(SpanMode::Break)
         .overflow(SpanOverflow::Ellipsis)
@@ -329,52 +321,52 @@ fn selection_widgets(cx: Scope) -> impl View {
     let city = cx.signal(0usize);
     let names = cx.signal(vec![String::from("Oslo"), String::from("Rome")]);
     let tab_idx = cx.signal(0usize);
-    let at = cx.signal((0u8, 0u8));
+    let at = cx.signal(TilePos::new(0, 0));
     let page = cx.menu_page_ref();
     column((
         dropdown(names, city)
-            .dir(Dir::BOTTOM)
-            .symbol(ImageSource::Symbol(symbols::DOWN))
+            .dir(Side::Bottom)
+            .symbol(Symbol::Down)
             .text("City")
             .highlight(true)
             .on_change(|i: usize| {}),
-        dropdown_static("a\nb\nc", 1usize),
+        dropdown(["a", "b", "c"], 1usize),
         roller(names, city)
             .mode(RollerMode::Infinite)
             .visible_rows(3)
             .on_change(|i: usize| {}),
-        roller_static("x\ny", 0usize).mode(RollerMode::Normal),
+        roller(["x", "y"], 0usize).mode(RollerMode::Normal),
         list((
             list_text("Section"),
-            list_button(Some(ImageSource::Symbol(symbols::FILE)), "Open").on_click(|| {}),
+            list_button(Symbol::File, "Open").on_click(|| {}),
         ))
         .height(100),
-        menu(menu_page(None, menu_cont(label("More")).loads(page)))
-            .sidebar(menu_page(Some("Side"), menu_section(menu_cont(label("x")))))
-            .pages(menu_page(Some("More"), (label("page"), menu_separator())).page_ref(page))
+        menu(menu_page(menu_cont(label("More")).loads(page)))
+            .sidebar(menu_page(menu_section(menu_cont(label("x")))).title("Side"))
+            .pages(
+                menu_page((label("page"), menu_separator()))
+                    .title("More")
+                    .page_ref(page),
+            )
             .header_mode(MenuHeaderMode::TopFixed)
             .root_back_button(false)
             .height(120),
         tabview(tab_idx, (tab("A", label("a")), tab("B", label("b"))))
-            .bar_position(Dir::TOP)
+            .bar_position(Side::Top)
             .bar_size(30)
             .animated(true)
             .height(100),
         tileview(
             at,
             (
-                tile(0, 0, Dir::RIGHT, label("1")),
-                tile(1, 0, Dir::LEFT, label("2")),
+                tile(TilePos::new(0, 0), Side::Right, label("1")),
+                tile(TilePos::new(1, 0), Side::Left, label("2")),
             ),
         )
         .height(80),
-        window(
-            "Window",
-            window_button(ImageSource::Symbol(symbols::CLOSE), 30),
-            label("content"),
-        )
-        .header_height(30)
-        .height(100),
+        window("Window", window_button(Symbol::Close, 30), label("content"))
+            .header_height(30)
+            .height(100),
     ))
 }
 
@@ -383,9 +375,9 @@ fn s3_5_selection_widgets() {
     let mut t = TestUi::new(320, 960).mount(selection_widgets);
     t.run_until_idle();
     let t = TestUi::new(240, 160).mount(|cx| {
-        let m = cx.show_modal(|_| {
+        let m = cx.show_modal(|_, _| {
             msgbox("Title", "Text")
-                .buttons(&["OK"])
+                .buttons(["OK"])
                 .close_button(true)
                 .on_button(|i: usize| {})
                 .on_close(|| {})
@@ -397,27 +389,28 @@ fn s3_5_selection_widgets() {
 
 // ---- §3.3 Containers and §3.4 control flow ------------------------------------------------
 
-static COLS: [GridTrack; 2] = [GridTrack::Px(40), GridTrack::Fr(1)];
-static ROWS: [GridTrack; 1] = [GridTrack::Content];
-
 fn containers_and_flow(cx: Scope) -> impl View {
     let on = cx.signal(true);
     let items = cx.signal(vec![1u32, 2, 3]);
     column((
-        row((label("a"), spacer(), label("b"))).justify(FlexAlign::SpaceBetween),
-        flex(FlexFlow::RowWrap, (label("c"), label("d")))
-            .align_items(FlexAlign::Center)
-            .align_content(FlexAlign::Start),
+        row((label("a"), spacer(), label("b"))).justify(MainAlign::SpaceBetween),
+        flex(FlexDirection::Row, (label("c"), label("d")))
+            .wrap(true)
+            .align_items(CrossAlign::Center)
+            .align_content(MainAlign::Start),
         grid(
-            &COLS,
-            &ROWS,
-            (label("e").grid_cell(0, 1, 0, 1), label("f").grid_cell(1, 1, 0, 1)),
+            grid_tracks![px(40), fr(1)],
+            grid_tracks![content],
+            (
+                label("e").grid_col(0).grid_row(0),
+                label("f").grid_col(1).grid_row(0),
+            ),
         )
         .column_align(GridAlign::Start)
         .row_align(GridAlign::Start),
         container(label("g")),
         stack((label("h"), label("i"))),
-        scroll_view(Dir::VER, label("j")),
+        scroll_view(Axis::Vertical, label("j")),
         when(move || on.get(), |_cx| label("on")).otherwise(|_cx| label("off")),
         dynamic(move |_cx| {
             if on.get() {
@@ -442,13 +435,13 @@ fn s3_3_containers_and_control_flow() {
 
 pub static CARD: Style = style! {
     bg_color: Color::WHITE,
-    bg_opa: Opa::COVER,
+    bg_opacity: Opa::COVER,
     radius: 8,
-    pad_all: 12,              // shorthand → pad_top/bottom/left/right
+    padding: 12,              // shorthand → pad_top/bottom/left/right
     shadow_width: 12,
-    shadow_opa: Opa::P30,
+    shadow_opacity: Opa::P30,
 };
-pub static CARD_PRESSED: Style = style! { bg_color: Color::hex(0xEEEEEE), transform_scale: 250 };
+pub static CARD_PRESSED: Style = style! { bg_color: Color::hex(0xEEEEEE), transform_scale: Scale::pct(98) };
 
 fn card(title: &'static str) -> impl View {
     container(label(title))
@@ -517,7 +510,8 @@ mod navigation {
     }
 
     pub fn modal(cx: Scope) {
-        let modal = cx.show_modal(|cx| msgbox("Delete?", "This cannot be undone").buttons(&["Yes", "No"]));
+        let modal =
+            cx.show_modal(|_cx, _modal| msgbox("Delete?", "This cannot be undone").buttons(["Yes", "No"]));
         modal.close();
     }
 }
@@ -567,7 +561,7 @@ fn animation(cx: Scope) -> impl View {
             .repeat(Repeat::Infinite)
             .easing(Easing::Linear),
     );
-    let _ = image(ImageSource::from(&GEAR)).rotation(move || Angle::decideg(angle.get()));
+    let _ = image(ImageSource::from(&GEAR)).rotation(move || Angle::deci_deg(angle.get()));
     ctl.pause();
     ctl.resume();
     ctl.restart();
@@ -672,7 +666,7 @@ fn super_loop<D: twine::hal::DisplayDriver + 'static>(
     clock: impl twine::hal::Clock + 'static,
     buf_a: &'static mut [u8],
     buf_b: &'static mut [u8],
-    app: fn(Scope) -> Flex,
+    app: impl FnOnce(Scope) -> Flex,
     rounds: usize,
 ) {
     let mut ui = Ui::builder(display) // impl DisplayDriver
@@ -696,7 +690,8 @@ fn s10_1_super_loop() {
     use twine::hal::DisplayInfo;
     let leak = |n: usize| -> &'static mut [u8] { Box::leak(vec![0u8; n].into_boxed_slice()) };
     let display = twine_testing::MemoryDisplay::new(DisplayInfo::new(160, 120, ColorFormat::Rgb565));
-    let app: fn(Scope) -> Flex = |_| column(label("loop"));
+    let text = String::from("loop");
+    let app = move |_| column(label(text));
     super_loop(
         display,
         twine_testing::MockPointer::new(),

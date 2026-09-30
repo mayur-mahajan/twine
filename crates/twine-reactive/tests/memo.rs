@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use twine_reactive::{Memo, batch, create_root, debug_stats};
+use twine_reactive::{Memo, batch, create_root, runtime_stats};
 
 fn counter() -> (Rc<Cell<u32>>, Rc<Cell<u32>>) {
     let c = Rc::new(Cell::new(0));
@@ -180,10 +180,17 @@ fn memo_deep_chain_depth_guard_logs() {
             }
             let last = prev.unwrap();
             assert_eq!(last.get(), 301);
-            assert_eq!(debug_stats().depth_guard_hits, 0);
+            assert_eq!(
+                runtime_stats()
+                    .faults
+                    .get(twine_core::fault::FaultKind::DepthGuard),
+                0
+            );
             a.set(2);
             assert_eq!(last.get(), 302, "values stay correct past the guard");
-            debug_stats().depth_guard_hits
+            runtime_stats()
+                .faults
+                .get(twine_core::fault::FaultKind::DepthGuard)
         })
         .unwrap()
         .join()

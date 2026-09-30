@@ -1,14 +1,14 @@
 //! The basic controls: [`bar`], [`slider`], [`switch`], [`checkbox`], [`arc`], [`led`],
 //! [`line()`] / [`line_static`] and [`spinner`].
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::ops::RangeInclusive;
 
 use alloc::vec::Vec;
 
-use twine_core::{Angle, Color, Duration, Point};
+use twine_core::{Angle, AngularSpeed, Color, Duration, Fraction, Point};
 use twine_engine::{Engine, NodeId, ObjFlags, State};
-use twine_style::{Part, Selector, StyleProp};
+use twine_style::{EntryKind, Part, Selector, StyleEntry, StyleProp};
 use twine_widgets::Orientation;
 use twine_widgets::arc::{Arc, ArcMode};
 use twine_widgets::bar::{Bar, BarMode};
@@ -19,11 +19,11 @@ use twine_widgets::slider::{Slider, SliderMode};
 use twine_widgets::spinner::Spinner;
 use twine_widgets::switch::Switch;
 
-use crate::bind::bind_prop;
+use crate::bind::{bind_node, bind_prop};
 use crate::build::{WidgetView, widget_view};
 use crate::model::{IntoModel, bind_model, bind_model_synced, event_value, on_value_changed};
 use crate::modifiers::ViewExt;
-use crate::prop::IntoProp;
+use crate::prop::{IntoProp, Prop};
 use crate::text::{IntoText, bind_str};
 
 /// Whether the `CHECKED` state of `n` is set.
@@ -110,9 +110,9 @@ impl WidgetView<Bar> {
     /// Animates value changes over `d` (sets the local `anim_duration` style, and the value
     /// bindings call `set_value(v, anim = true)`).
     #[must_use]
-    pub fn animated(mut self, d: Duration) -> Self {
+    pub fn animated(mut self, d: impl IntoProp<Duration>) -> Self {
         self.shared::<BarCfg>().animated.set(true);
-        self.style_prop(d, |d: Duration| StyleProp::AnimDuration(d.as_millis_u32()))
+        self.style_prop(d, |d: Duration| StyleProp::AnimDuration(d.into()))
     }
 }
 
@@ -369,23 +369,28 @@ impl WidgetView<Arc> {
     }
 
     /// `false` removes the knob's styles and makes the arc not clickable (a display-only
-    /// arc, LVGL `lv_obj_remove_style(arc, NULL, LV_PART_KNOB)`).
+    /// arc, LVGL `lv_obj_remove_style(arc, NULL, LV_PART_KNOB)`); `true` (the default) puts
+    /// them back.
     #[must_use]
-    pub fn knob(self, on: bool) -> Self {
-        if on {
+    pub fn knob(self, on: impl IntoProp<bool>) -> Self {
+        let on = on.into_prop();
+        if matches!(on, Prop::Static(true)) {
             return self;
         }
-        self.op(|cx, node| {
-            let e = cx.engine();
-            e.remove_style(node, None, Some(Selector::part(Part::Knob)));
-            e.set_flag(node, ObjFlags::CLICKABLE, false);
+        self.op(move |cx, node| {
+            // The knob styles taken off, to put back when the knob shows again.
+            let removed: RefCell<Vec<StyleEntry>> = RefCell::new(Vec::new());
+            bind_node(cx, node, on, move |e, n, on| {
+                set_knob(e, n, on, &mut removed.borrow_mut());
+            });
         })
     }
 
-    /// The maximum drag speed in degrees per second (LVGL default 720).
+    /// The maximum drag speed (LVGL default 720 °/s), e.g.
+    /// `.change_rate(AngularSpeed::deg_per_s(360))`.
     #[must_use]
-    pub fn change_rate(self, deg_per_s: impl IntoProp<u16>) -> Self {
-        self.bind(deg_per_s, |a: &mut Arc, cx, r| a.set_change_rate(cx, r))
+    pub fn change_rate(self, speed: impl IntoProp<AngularSpeed>) -> Self {
+        self.bind(speed, |a: &mut Arc, cx, r| a.set_change_rate(cx, r))
     }
 
     /// Called with the new value whenever the user changes it.
@@ -395,12 +400,41 @@ impl WidgetView<Arc> {
     }
 }
 
+/// Removes the knob styles of arc `n` into `removed` (`on == false`) or puts them back.
+fn set_knob(e: &mut Engine, n: NodeId, on: bool, removed: &mut Vec<StyleEntry>) {
+    let knob = Selector::part(Part::Knob);
+    if on {
+        // In reverse: each one is added before the earlier ones of its class.
+        for s in removed.drain(..).rev() {
+            match s.kind {
+                EntryKind::Theme => e.add_theme_style(n, s.style, s.selector),
+                _ => e.add_style(n, s.style, s.selector),
+            }
+        }
+    } else if removed.is_empty() {
+        if let Some(node) = e.tree().node(n) {
+            removed.extend(
+                node.styles()
+                    .entries()
+                    .iter()
+                    .filter(|s| {
+                        s.selector.part == Part::Knob
+                            && matches!(s.kind, EntryKind::Normal | EntryKind::Theme)
+                    })
+                    .cloned(),
+            );
+        }
+        e.remove_style(n, None, Some(knob));
+    }
+    e.set_flag(n, ObjFlags::CLICKABLE, on);
+}
+
 // ---- LED ------------------------------------------------------------------------------------
 
 /// Settings of a [`led`] view shared by its bindings.
 struct LedCfg {
     on: Cell<bool>,
-    bright: Cell<u8>,
+    bright: Cell<Fraction>,
 }
 
 impl Default for LedCfg {
@@ -420,7 +454,7 @@ impl Default for LedCfg {
 ///
 /// let cx = twine_reactive::create_root();
 /// let alarm = cx.signal(false);
-/// let _v = led(alarm).color(Color::RED).brightness(200);
+/// let _v = led(alarm).color(Color::RED).brightness(Fraction::pct(80));
 /// cx.dispose();
 /// ```
 pub fn led(on: impl IntoProp<bool>) -> WidgetView<Led> {
@@ -446,9 +480,10 @@ impl WidgetView<Led> {
         self.bind(c, |l: &mut Led, cx, c| l.set_color(cx, c))
     }
 
-    /// The brightness while on (80…255, LVGL's `LV_LED_BRIGHT_MIN`…`MAX`).
+    /// The brightness while on, clamped to LVGL's `LV_LED_BRIGHT_MIN`…`MAX` (80…255 of 255,
+    /// i.e. about 31 %…100 %: an LED is never fully black).
     #[must_use]
-    pub fn brightness(mut self, b: impl IntoProp<u8>) -> Self {
+    pub fn brightness(mut self, b: impl IntoProp<Fraction>) -> Self {
         let cfg = self.shared::<LedCfg>();
         self.bind(b, move |l: &mut Led, cx, b| {
             cfg.bright.set(b);

@@ -17,6 +17,7 @@
 //! | `vector` | paths, gradients, strokes, SVG icons, an animated path (feature `vector`) |
 //! | `multilang` | translations (`tr!`), right-to-left and Arabic text, font fallback, a file image (feature `multilang`) |
 #![no_std]
+#![forbid(unsafe_code)]
 
 extern crate alloc;
 

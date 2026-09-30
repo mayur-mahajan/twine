@@ -16,7 +16,7 @@ use crate::geom::{FxPoint, fxp};
 use crate::path::{Path, PathEl};
 
 /// Default flattening tolerance: 0.25 px.
-pub const DEFAULT_TOLERANCE: Fx = Fx(1 << 14);
+pub const DEFAULT_TOLERANCE: Fx = Fx::from_raw(1 << 14);
 
 /// Most segments one curve is split into.
 pub const MAX_CURVE_SEGMENTS: u32 = 64;
@@ -34,7 +34,7 @@ pub struct Line {
 /// Number of segments for a curve of degree 2 or 3 with largest second difference `m`
 /// (raw 16.16 length) at tolerance `tol`.
 fn segment_count(m: i64, degree: i64, tol: Fx) -> u32 {
-    let tol = i64::from(tol.0.max(1));
+    let tol = i64::from(tol.raw().max(1));
     // r = d(d−1)/8 · m / tol, in 16.16.
     let num = (i128::from(m) * i128::from(degree * (degree - 1))) << 16;
     let r = num / i128::from(8 * tol);
@@ -306,7 +306,10 @@ mod tests {
         // M = 1 px, tol 0.25: quad √(1/4 · 4) = 1; cubic √(3/4 · 4) = 1.73 → 2.
         assert_eq!(segment_count(1 << 16, 2, DEFAULT_TOLERANCE), 1);
         assert_eq!(segment_count(1 << 16, 3, DEFAULT_TOLERANCE), 2);
-        assert_eq!(segment_count(i64::MAX / 4, 3, Fx(1)), MAX_CURVE_SEGMENTS);
+        assert_eq!(
+            segment_count(i64::MAX / 4, 3, Fx::from_raw(1)),
+            MAX_CURVE_SEGMENTS
+        );
     }
 
     #[test]

@@ -49,11 +49,12 @@ impl From<&'static [GradStop]> for Stops {
 /// How a path is filled or stroked.
 ///
 /// ```
-/// use twine_core::{Color, Fx, Transform};
+/// use twine_core::{Color, Fraction, Fx, Transform};
 /// use twine_render::{GradExtend, GradStop};
 /// use twine_vector::{FxPoint, Paint, Stops};
 ///
-/// static STOPS: [GradStop; 2] = [GradStop::new(Color::RED, 0), GradStop::new(Color::BLUE, 255)];
+/// static STOPS: [GradStop; 2] =
+///     [GradStop::new(Color::RED, Fraction::ZERO), GradStop::new(Color::BLUE, Fraction::ONE)];
 /// let p = Paint::Linear {
 ///     start: FxPoint::from_int(0, 0),
 ///     end: FxPoint::from_int(100, 0),
@@ -200,14 +201,14 @@ pub(crate) enum Sampler {
 fn map_center(inv: &Transform, x: i32, y: i32) -> (i64, i64) {
     let (x2, y2) = (2 * i64::from(x) + 1, 2 * i64::from(y) + 1);
     let (a, b, c, d) = (
-        i64::from(inv.a.0),
-        i64::from(inv.b.0),
-        i64::from(inv.c.0),
-        i64::from(inv.d.0),
+        i64::from(inv.a.raw()),
+        i64::from(inv.b.raw()),
+        i64::from(inv.c.raw()),
+        i64::from(inv.d.raw()),
     );
     (
-        (a * x2 + c * y2) / 2 + i64::from(inv.tx.0),
-        (b * x2 + d * y2) / 2 + i64::from(inv.ty.0),
+        (a * x2 + c * y2) / 2 + i64::from(inv.tx.raw()),
+        (b * x2 + d * y2) / 2 + i64::from(inv.ty.raw()),
     )
 }
 
@@ -239,10 +240,10 @@ impl Sampler {
                     });
                 }
                 let (ia, ib, ic, id) = (
-                    i128::from(inv.a.0),
-                    i128::from(inv.b.0),
-                    i128::from(inv.c.0),
-                    i128::from(inv.d.0),
+                    i128::from(inv.a.raw()),
+                    i128::from(inv.b.raw()),
+                    i128::from(inv.c.raw()),
+                    i128::from(inv.d.raw()),
                 );
                 // t(x, y) = ((u − s)·g) / |g|², u = inv(x, y); coefficients with 32 fraction bits.
                 let k = |num: i128| -> i64 {
@@ -252,8 +253,8 @@ impl Sampler {
                 // t is linear in the pixel position: t = t0 + x·dx + y·dy (the 2^32 scales of
                 // the 16.16 products cancel against |g|²).
                 Some(Sampler::Linear {
-                    t0: k((i128::from(inv.tx.0) - i128::from(sx)) * gx
-                        + (i128::from(inv.ty.0) - i128::from(sy)) * gy),
+                    t0: k((i128::from(inv.tx.raw()) - i128::from(sx)) * gx
+                        + (i128::from(inv.ty.raw()) - i128::from(sy)) * gy),
                     dx: k(ia * gx + ib * gy),
                     dy: k(ic * gx + id * gy),
                     extend: *extend,
@@ -268,7 +269,7 @@ impl Sampler {
                 ..
             } => {
                 let inv = transform.then(*t).invert()?;
-                let r_raw = i64::from(radius.0.max(0));
+                let r_raw = i64::from(radius.raw().max(0));
                 // Scale paint space by 2^sh so the radius is ≈ 2^22 in 16.16 (2^14 in 24.8).
                 let bits = 64 - r_raw.leading_zeros() as i32;
                 let sh = (22 - bits).clamp(-8, 24);
@@ -290,7 +291,15 @@ impl Sampler {
                 }
                 let (ex, ey) = (ex >> 8, ey >> 8);
                 let a = ex * ex + ey * ey - r * r;
-                let m = [inv.a.0, inv.b.0, inv.c.0, inv.d.0, inv.tx.0, inv.ty.0].map(|v| scale(i64::from(v)));
+                let m = [
+                    inv.a.raw(),
+                    inv.b.raw(),
+                    inv.c.raw(),
+                    inv.d.raw(),
+                    inv.tx.raw(),
+                    inv.ty.raw(),
+                ]
+                .map(|v| scale(i64::from(v)));
                 Some(Sampler::Radial {
                     inv: m,
                     fx: fx >> 8,
@@ -374,7 +383,7 @@ impl Sampler {
                 aa,
             } => {
                 let (mut u, mut v) = map_center(&inv, x0, y);
-                let (du, dv) = (i64::from(inv.a.0), i64::from(inv.b.0));
+                let (du, dv) = (i64::from(inv.a.raw()), i64::from(inv.b.raw()));
                 let (w, h) = (i64::from(image.w), i64::from(image.h));
                 for px in out.chunks_exact_mut(4) {
                     let c = if aa {

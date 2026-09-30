@@ -29,9 +29,6 @@ pub const CITIES: [&str; 10] = [
     "Tokyo",
 ];
 
-/// The same cities, `'\n'`-separated (static options: no allocation).
-pub const CITY_OPTIONS: &str = "Amsterdam\nBerlin\nCairo\nDelhi\nLima\nMadrid\nOslo\nParis\nRome\nTokyo";
-
 /// The demo's state, provided to the scope as context (tests read it).
 #[derive(Clone, Copy, Debug)]
 pub struct Selection {
@@ -40,7 +37,7 @@ pub struct Selection {
     /// The active tab.
     pub tab: Signal<usize>,
     /// The tile in view.
-    pub tile: Signal<(u8, u8)>,
+    pub tile: Signal<TilePos>,
     /// The number of times the About box was opened.
     pub about_opened: Signal<u32>,
 }
@@ -65,7 +62,7 @@ pub fn app(cx: Scope) -> impl View {
     let s = Selection {
         city: cx.signal(1),
         tab: cx.signal(0),
-        tile: cx.signal((0, 0)),
+        tile: cx.signal(TilePos::new(0, 0)),
         about_opened: cx.signal(0),
     };
     cx.provide(s);
@@ -75,12 +72,12 @@ pub fn app(cx: Scope) -> impl View {
             .test_id("about")
             .on_click(move || {
                 s.about_opened.update(|n| *n += 1);
-                let _ = cx.show_modal(|_| {
+                let _ = cx.show_modal(|_, _| {
                     msgbox(
                         "About",
                         "Dropdown, roller, list, menu, tabview, tileview, window and msgbox.",
                     )
-                    .buttons(&["OK"])
+                    .buttons(["OK"])
                     .close_button(true)
                     .test_id("about_box")
                 });
@@ -107,9 +104,7 @@ pub fn app(cx: Scope) -> impl View {
 fn pickers(s: Selection) -> impl View {
     row((
         column((
-            dropdown_static(CITY_OPTIONS, s.city)
-                .width(120)
-                .test_id("dropdown"),
+            dropdown(CITIES, s.city).width(120).test_id("dropdown"),
             label(move || {
                 let i = s.city.get();
                 format!("City: {}", CITIES.get(i).copied().unwrap_or("?"))
@@ -117,28 +112,28 @@ fn pickers(s: Selection) -> impl View {
             .test_id("city"),
         ))
         .gap(12),
-        roller_static(CITY_OPTIONS, s.city)
+        roller(CITIES, s.city)
             .mode(RollerMode::Infinite)
             .visible_rows(3)
             .test_id("roller"),
     ))
     .gap(16)
     .size(Length::pct(100), Length::Content)
-    .align_items(FlexAlign::Start)
+    .align_items(CrossAlign::Start)
 }
 
 /// The symbols of the list buttons, cycled.
-const ICONS: [&str; 10] = [
-    symbols::FILE,
-    symbols::DIRECTORY,
-    symbols::SAVE,
-    symbols::IMAGE,
-    symbols::AUDIO,
-    symbols::VIDEO,
-    symbols::BLUETOOTH,
-    symbols::WIFI,
-    symbols::USB,
-    symbols::GPS,
+const ICONS: [Symbol; 10] = [
+    Symbol::File,
+    Symbol::Directory,
+    Symbol::Save,
+    Symbol::Image,
+    Symbol::Audio,
+    Symbol::Video,
+    Symbol::Bluetooth,
+    Symbol::Wifi,
+    Symbol::Usb,
+    Symbol::Gps,
 ];
 
 /// The Lists tab: a list of 20 buttons and a settings menu with a sidebar.
@@ -153,34 +148,31 @@ fn lists(cx: Scope) -> impl View {
             for_each(
                 move || items.get(),
                 |i| *i,
-                |_, i| {
-                    list_button(
-                        Some(ImageSource::Symbol(ICONS[i as usize % ICONS.len()])),
-                        format!("Item {}", i + 1),
-                    )
-                },
+                |_, i| list_button(ICONS[i as usize % ICONS.len()], format!("Item {}", i + 1)),
             ),
         ))
         .size(Length::pct(100), 120)
         .test_id("list"),
-        menu(menu_page(None, label("Pick a page").padding(8)))
-            .sidebar(menu_page(
-                Some("Settings"),
-                (
+        menu(menu_page(label("Pick a page").padding(8)))
+            .sidebar(
+                menu_page((
                     menu_cont(label("Display")).loads(display).test_id("menu_display"),
                     menu_cont(label("Sound")).loads(sound).test_id("menu_sound"),
-                ),
-            ))
+                ))
+                .title("Settings"),
+            )
             .pages((
-                menu_page(
-                    Some("Display"),
-                    menu_section((row_switch("Dark mode", false), menu_cont(slider(60).flex_grow(1)))),
-                )
+                menu_page(menu_section((
+                    row_switch("Dark mode", false),
+                    menu_cont(slider(60).flex_grow(1)),
+                )))
+                .title("Display")
                 .page_ref(display),
-                menu_page(
-                    Some("Sound"),
-                    menu_section((row_switch("Mute", false), menu_cont(slider(30).flex_grow(1)))),
-                )
+                menu_page(menu_section((
+                    row_switch("Mute", false),
+                    menu_cont(slider(30).flex_grow(1)),
+                )))
+                .title("Sound")
                 .page_ref(sound),
             ))
             .size(Length::pct(100), 180)
@@ -192,34 +184,35 @@ fn lists(cx: Scope) -> impl View {
 
 /// The Tiles tab: a 2 × 2 tileview; each tile names the directions it can be swiped to.
 fn tiles(s: Selection) -> impl View {
-    let t =
-        |col: u8, row: u8, dirs: Dir, text: String| tile(col, row, dirs, label(text).align(Align::Center));
+    let t = |col: u8, row: u8, dirs: Sides, text: String| {
+        tile(TilePos::new(col, row), dirs, label(text).align(Align::Center))
+    };
     tileview(
         s.tile,
         (
             t(
                 0,
                 0,
-                Dir::RIGHT | Dir::BOTTOM,
-                format!("Tile 1  {}  {}", symbols::RIGHT, symbols::DOWN),
+                Sides::RIGHT | Sides::BOTTOM,
+                format!("Tile 1  {}  {}", Symbol::Right, Symbol::Down),
             ),
             t(
                 1,
                 0,
-                Dir::LEFT | Dir::BOTTOM,
-                format!("{}  Tile 2  {}", symbols::LEFT, symbols::DOWN),
+                Sides::LEFT | Sides::BOTTOM,
+                format!("{}  Tile 2  {}", Symbol::Left, Symbol::Down),
             ),
             t(
                 0,
                 1,
-                Dir::TOP | Dir::RIGHT,
-                format!("{}  Tile 3  {}", symbols::UP, symbols::RIGHT),
+                Sides::TOP | Sides::RIGHT,
+                format!("{}  Tile 3  {}", Symbol::Up, Symbol::Right),
             ),
             t(
                 1,
                 1,
-                Dir::TOP | Dir::LEFT,
-                format!("{}  Tile 4  {}", symbols::LEFT, symbols::UP),
+                Sides::TOP | Sides::LEFT,
+                format!("{}  Tile 4  {}", Symbol::Left, Symbol::Up),
             ),
         ),
     )

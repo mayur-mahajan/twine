@@ -52,10 +52,10 @@ const fn mask_of(props: &[StyleProp]) -> u16 {
 ///
 /// ```
 /// use twine_core::Color;
-/// use twine_style::{PropId, Style, StyleProp, StyleValue};
+/// use twine_style::{Length, PropId, Radius, Style, StyleProp, StyleValue};
 ///
-/// static S: Style = Style::new(&[StyleProp::BgColor(Color::RED), StyleProp::Radius(4)]);
-/// assert_eq!(S.get(PropId::Radius), Some(StyleValue::Int(4)));
+/// static S: Style = Style::new(&[StyleProp::BgColor(Color::RED), StyleProp::Radius(Radius::Px(4))]);
+/// assert_eq!(S.get(PropId::Radius), Some(StyleValue::Length(Length::Px(4))));
 /// assert_eq!(S.get(PropId::Width), None);
 /// ```
 #[derive(Clone, Copy, Debug)]
@@ -109,12 +109,12 @@ impl Style {
 /// use twine_core::{Color, Opa};
 /// use twine_style::{PropId, StyleBuf, StyleProp, StyleValue};
 ///
-/// let mut s = StyleBuf::new().bg_color(Color::BLUE).bg_opa(Opa::COVER).width(120);
+/// let mut s = StyleBuf::new().bg_color(Color::BLUE).bg_opacity(Opa::COVER).width(120);
 /// assert_eq!(s.len(), 3);
 /// assert!(s.set(StyleProp::BgColor(Color::RED))); // changed
 /// assert!(!s.set(StyleProp::BgColor(Color::RED))); // same value
 /// assert_eq!(s.get(PropId::BgColor), Some(StyleValue::Color(Color::RED)));
-/// assert!(s.remove(PropId::BgOpa));
+/// assert!(s.remove(PropId::BgOpacity));
 /// assert_eq!(s.len(), 2);
 /// ```
 #[derive(Clone, Debug, Default)]
@@ -312,29 +312,37 @@ mod tests {
     #[test]
     fn last_duplicate_wins_in_static_style() {
         static S: Style = Style::new(&[
-            StyleProp::Radius(1),
-            StyleProp::BgOpa(Opa::COVER),
-            StyleProp::Radius(2),
+            StyleProp::Radius(crate::Radius::Px(1)),
+            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::Radius(crate::Radius::Px(2)),
         ]);
-        assert_eq!(S.get(PropId::Radius), Some(StyleValue::Int(2)));
+        assert_eq!(S.get(PropId::Radius), Some(StyleValue::Length(Length::Px(2))));
     }
 
     #[test]
     fn stylebuf_set_replaces_and_reports_change() {
         let mut s = StyleBuf::new();
-        assert!(s.set(StyleProp::Radius(3)));
-        assert!(!s.set(StyleProp::Radius(3)));
-        assert!(s.set(StyleProp::Radius(4)));
+        assert!(s.set(StyleProp::Radius(crate::Radius::Px(3))));
+        assert!(!s.set(StyleProp::Radius(crate::Radius::Px(3))));
+        assert!(s.set(StyleProp::Radius(crate::Radius::Px(4))));
         assert_eq!(s.len(), 1, "replaced in place, no duplicate");
-        assert!(s.set(StyleProp::PadTop(1)));
+        assert!(s.set(StyleProp::PaddingTop(Length::Px(1))));
         assert_eq!(
             s.iter().map(StyleProp::id).collect::<Vec<_>>(),
-            [PropId::Radius, PropId::PadTop]
+            [PropId::Radius, PropId::PaddingTop]
         );
-        assert_eq!(s.get(PropId::Radius), Some(StyleValue::Int(4)));
-        let collected: StyleBuf = [StyleProp::Radius(1), StyleProp::Radius(9)].into_iter().collect();
+        assert_eq!(s.get(PropId::Radius), Some(StyleValue::Length(Length::Px(4))));
+        let collected: StyleBuf = [
+            StyleProp::Radius(crate::Radius::Px(1)),
+            StyleProp::Radius(crate::Radius::Px(9)),
+        ]
+        .into_iter()
+        .collect();
         assert_eq!(collected.len(), 1);
-        assert_eq!(collected.get(PropId::Radius), Some(StyleValue::Int(9)));
+        assert_eq!(
+            collected.get(PropId::Radius),
+            Some(StyleValue::Length(Length::Px(9)))
+        );
         assert_eq!((&collected).into_iter().count(), 1);
     }
 
@@ -366,7 +374,10 @@ mod tests {
 
     #[test]
     fn styleref_shared_and_static_equivalent() {
-        static S: Style = Style::new(&[StyleProp::BgColor(Color::BLUE), StyleProp::Radius(8)]);
+        static S: Style = Style::new(&[
+            StyleProp::BgColor(Color::BLUE),
+            StyleProp::Radius(crate::Radius::Px(8)),
+        ]);
         let st = StyleRef::from(&S);
         let sh = StyleRef::from(StyleBuf::new().bg_color(Color::BLUE).radius(8));
         for id in PropId::ALL {

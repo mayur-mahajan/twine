@@ -19,10 +19,10 @@ pub use self::core::{button, image, label};
 pub use self::images::{animimg, image_button};
 pub use self::lists::{list, list_button, list_text};
 pub use self::menus::{MenuPageRef, MenuPageView, menu, menu_cont, menu_page, menu_section, menu_separator};
-pub use self::selection::{dropdown, dropdown_static, roller, roller_static};
+pub use self::selection::{dropdown, roller};
 pub use self::span::{SpanView, span, spangroup};
-pub use self::tabs::{TabView, TileView, tab, tabview, tile, tileview};
-pub use self::text_input::{buttonmatrix, keyboard, spinbox, textarea};
+pub use self::tabs::{TabView, TilePos, TileView, tab, tabview, tile, tileview};
+pub use self::text_input::{Btn, btn, buttonmatrix, keyboard, spinbox, textarea};
 #[cfg(feature = "vector")]
 pub use self::vector::{VectorCanvas, vector_canvas};
 pub use self::windows::{msgbox, window, window_button};

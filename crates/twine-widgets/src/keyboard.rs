@@ -7,7 +7,7 @@ use twine_engine::{
     NodeId, OBJ_FLAGS, ObjFlags, State, Widget, WidgetClass, WidgetCx, fmt_node_id,
 };
 use twine_style::{Align, BaseDir, Length, Part, Selector, StyleProp};
-use twine_text::symbols;
+use twine_text::Symbol;
 
 use crate::buttonmatrix::{BtnCtrl, ButtonMatrix, MapSrc};
 use crate::log_set;
@@ -65,7 +65,7 @@ pub static MAP_LOWER: [&str; 43] = [
     "i",
     "o",
     "p",
-    symbols::BACKSPACE,
+    Symbol::Backspace.as_str(),
     "\n",
     MODE_TEXT_UPPER,
     "a",
@@ -77,7 +77,7 @@ pub static MAP_LOWER: [&str; 43] = [
     "j",
     "k",
     "l",
-    symbols::NEW_LINE,
+    Symbol::NewLine.as_str(),
     "\n",
     "_",
     "-",
@@ -92,11 +92,11 @@ pub static MAP_LOWER: [&str; 43] = [
     ",",
     ":",
     "\n",
-    symbols::KEYBOARD,
-    symbols::LEFT,
+    Symbol::Keyboard.as_str(),
+    Symbol::Left.as_str(),
     " ",
-    symbols::RIGHT,
-    symbols::OK,
+    Symbol::Right.as_str(),
+    Symbol::Ok.as_str(),
 ];
 
 /// LVGL `default_kb_ctrl_lc_map` (`default_kb_ctrl_uc_map` is identical).
@@ -159,7 +159,7 @@ pub static MAP_UPPER: [&str; 43] = [
     "I",
     "O",
     "P",
-    symbols::BACKSPACE,
+    Symbol::Backspace.as_str(),
     "\n",
     MODE_TEXT_LOWER,
     "A",
@@ -171,7 +171,7 @@ pub static MAP_UPPER: [&str; 43] = [
     "J",
     "K",
     "L",
-    symbols::NEW_LINE,
+    Symbol::NewLine.as_str(),
     "\n",
     "_",
     "-",
@@ -186,11 +186,11 @@ pub static MAP_UPPER: [&str; 43] = [
     ",",
     ":",
     "\n",
-    symbols::CLOSE,
-    symbols::LEFT,
+    Symbol::Close.as_str(),
+    Symbol::Left.as_str(),
     " ",
-    symbols::RIGHT,
-    symbols::OK,
+    Symbol::Right.as_str(),
+    Symbol::Ok.as_str(),
 ];
 
 /// LVGL `default_kb_ctrl_uc_map` (the same as the lower case one).
@@ -208,7 +208,7 @@ pub static MAP_SPECIAL: [&str; 43] = [
     "8",
     "9",
     "0",
-    symbols::BACKSPACE,
+    Symbol::Backspace.as_str(),
     "\n",
     MODE_TEXT_LOWER,
     "+",
@@ -236,11 +236,11 @@ pub static MAP_SPECIAL: [&str; 43] = [
     "\"",
     "'",
     "\n",
-    symbols::KEYBOARD,
-    symbols::LEFT,
+    Symbol::Keyboard.as_str(),
+    Symbol::Left.as_str(),
     " ",
-    symbols::RIGHT,
-    symbols::OK,
+    Symbol::Right.as_str(),
+    Symbol::Ok.as_str(),
 ];
 
 /// LVGL `default_kb_ctrl_spec_map`.
@@ -292,23 +292,23 @@ pub static MAP_NUMBER: [&str; 20] = [
     "1",
     "2",
     "3",
-    symbols::KEYBOARD,
+    Symbol::Keyboard.as_str(),
     "\n",
     "4",
     "5",
     "6",
-    symbols::OK,
+    Symbol::Ok.as_str(),
     "\n",
     "7",
     "8",
     "9",
-    symbols::BACKSPACE,
+    Symbol::Backspace.as_str(),
     "\n",
     "+/-",
     "0",
     ".",
-    symbols::LEFT,
-    symbols::RIGHT,
+    Symbol::Left.as_str(),
+    Symbol::Right.as_str(),
 ];
 
 /// LVGL `default_kb_ctrl_num_map`.
@@ -619,7 +619,8 @@ impl Keyboard {
             return;
         }
         let ta = self.live_textarea(cx.engine());
-        if txt == symbols::CLOSE || txt == symbols::KEYBOARD {
+        let sym = Symbol::from_text(txt);
+        if matches!(sym, Some(Symbol::Close | Symbol::Keyboard)) {
             if cx.send(node, EventCode::Cancel, EventParam::None) == EventResult::Consumed {
                 return;
             }
@@ -628,7 +629,7 @@ impl Keyboard {
             }
             return;
         }
-        if txt == symbols::OK {
+        if sym == Some(Symbol::Ok) {
             if cx.send(node, EventCode::Ready, EventParam::None) == EventResult::Consumed {
                 return;
             }
@@ -641,8 +642,8 @@ impl Keyboard {
             return;
         };
         let e = cx.engine_mut();
-        let typed = match txt {
-            "Enter" | symbols::NEW_LINE => with_textarea(e, ta, |t, tcx| {
+        let typed = match (sym, txt) {
+            (Some(Symbol::NewLine), _) | (None, "Enter") => with_textarea(e, ta, |t, tcx| {
                 t.add_char(tcx, '\n');
                 t.one_line()
             })
@@ -651,10 +652,10 @@ impl Keyboard {
                     e.send_event(ta, EventCode::Ready, EventParam::None);
                 }
             }),
-            symbols::LEFT => with_textarea(e, ta, super::textarea::Textarea::cursor_left),
-            symbols::RIGHT => with_textarea(e, ta, super::textarea::Textarea::cursor_right),
-            symbols::BACKSPACE => with_textarea(e, ta, super::textarea::Textarea::delete_char),
-            "+/-" => {
+            (Some(Symbol::Left), _) => with_textarea(e, ta, super::textarea::Textarea::cursor_left),
+            (Some(Symbol::Right), _) => with_textarea(e, ta, super::textarea::Textarea::cursor_right),
+            (Some(Symbol::Backspace), _) => with_textarea(e, ta, super::textarea::Textarea::delete_char),
+            (None, "+/-") => {
                 let first = textarea::text_of(e, ta).and_then(|s| s.chars().next());
                 with_textarea(e, ta, |t, tcx| {
                     let cur = i32::try_from(t.cursor_pos()).unwrap_or(0);

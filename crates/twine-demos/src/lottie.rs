@@ -42,9 +42,9 @@ fn card(cx: Scope, i: usize) -> impl View {
                 button(label(text!(
                     "{}",
                     if playing.get() {
-                        symbols::PAUSE
+                        Symbol::Pause
                     } else {
-                        symbols::PLAY
+                        Symbol::Play
                     }
                 )))
                 .on_click(move || playing.update(|p| *p = !*p))
@@ -52,14 +52,14 @@ fn card(cx: Scope, i: usize) -> impl View {
                 switch(looping).test_id(["loop0", "loop1", "loop2"][i]),
             ))
             .gap(8)
-            .align_items(FlexAlign::Center),
+            .align_items(CrossAlign::Center),
             slider(scrub)
                 .range(0..=FRAMES - 1)
                 .width(Length::pct(100))
                 .test_id(["scrub0", "scrub1", "scrub2"][i]),
         ))
         .gap(6)
-        .align_items(FlexAlign::Center)
+        .align_items(CrossAlign::Center)
         .width(Length::pct(100)),
     )
     .width(148)
@@ -81,5 +81,5 @@ pub fn app(cx: Scope) -> impl View {
         .gap(8)
         .padding(8)
         .size(Length::pct(100), Length::pct(100))
-        .align_items(FlexAlign::Start)
+        .align_items(CrossAlign::Start)
 }

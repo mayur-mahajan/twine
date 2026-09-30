@@ -28,13 +28,13 @@
 //! |------|------|
 //! | [`View`], [`ViewSeq`], [`AnyView`] | descriptions consumed once by [`View::build`] |
 //! | [`BuildCx`], [`WidgetView`], [`widget_view`] | building nodes; the generic widget builder every widget view wraps |
-//! | [`IntoProp`], [`Prop`], [`IntoText`], [`text!`], [`IntoModel`] | constant, signal, memo or closure property values; zero-allocation text; two-way bindings |
+//! | [`IntoProp`], [`Prop`], [`PropValue`] ([`prop_value!`]), [`IntoText`], [`text!`], [`IntoModel`], [`ModelValue`] | constant, signal, memo or closure property values (your own types with one line); zero-allocation text; two-way bindings |
 //! | [`ViewExt`] | every style, flag, event and identity modifier |
 //! | [`column()`], [`row`], [`grid`], [`container`], [`stack`], [`spacer`], [`scroll_view`] | layout containers |
 //! | [`label`], [`button`], [`image`], [`image_button`], [`animimg`] | core widget views |
 //! | [`bar`], [`slider`], [`switch`], [`checkbox`], [`arc`], [`led`], [`line()`], [`spinner`] | basic controls (value widgets take an [`IntoModel`]: two-way with a signal) |
 //! | [`textarea`], [`keyboard`], [`spinbox`], [`buttonmatrix`], [`spangroup`] + [`span`] | text and number entry, rich text |
-//! | [`dropdown`], [`dropdown_static`], [`roller`], [`roller_static`] | selection widgets (`twine-widgets-ext`) |
+//! | [`dropdown`], [`roller`] (options: [`IntoOptions`]) | selection widgets (`twine-widgets-ext`) |
 //! | [`list`], [`menu`], [`tabview`], [`tileview`], [`window`], [`msgbox`] | containers (`twine-widgets-ext`) |
 //! | [`when`], [`dynamic`], [`for_each`], [`virtual_list`] | structural reactivity limited to one region |
 //! | [`NodeRef`], [`ScopeExt`] | the imperative escape hatch, tweens, animations, timers, modals |
@@ -48,6 +48,34 @@
 //! runs (event handlers, effect flushes, timers, animations) and any code below borrows it
 //! exclusively for a moment. A binding that runs without an engine (a signal written outside
 //! `Ui::update`) re-queues itself for the next update.
+//!
+//! **The rule:** the engine is available inside event handlers, effects, timers (and
+//! animation and channel-message callbacks) and while building; elsewhere use the [`Ui`]
+//! methods or post a message. Hooks that create something (timers, tweens, animations,
+//! modals) and navigation defer their engine work to the next update, which is always
+//! correct. Calls that need the engine *now* — [`NodeRef::with_mut`], the [`AnimController`]
+//! methods, [`ThemeHandle::set`] — return `None` / do nothing without it and, in debug builds
+//! (`debug_assertions`), log `warn!` once per call site (compiled out in release builds; see
+//! [`EngineAccess`] § Diagnostics).
+//!
+//! ```
+//! use twine_view::prelude::*;
+//! use twine_widgets::label::Label;
+//!
+//! static STATUS: Channel<&'static str, 4> = Channel::new();
+//!
+//! fn app(cx: Scope) -> impl View {
+//!     let r: NodeRef<Label> = cx.node_ref();
+//!     // A message handler runs inside `Ui::update`: the engine is lent.
+//!     cx.on_message(&STATUS, move |s| {
+//!         r.with_mut(|l: &mut Label, cx| l.set_text(cx, s));
+//!     });
+//!     label("idle").node_ref(r)
+//! }
+//! # let _ = app;
+//! // From another task or an ISR: post a message rather than calling `r.with_mut` there.
+//! let _ = STATUS.try_send("busy");
+//! ```
 //!
 //! ## Allocation
 //!
@@ -75,6 +103,7 @@ mod async_ui;
 mod bind;
 mod build;
 mod containers;
+mod error;
 pub mod flow;
 mod hooks;
 mod model;
@@ -93,22 +122,22 @@ pub use access::{EffectCx, EngineAccess};
 pub use async_ui::{AsyncUi, AsyncUiBuilder, NoInputWait};
 pub use build::{BuildCx, BuildOp, WidgetView, widget_view};
 pub use containers::{Container, Flex, Grid, column, container, flex, grid, row, scroll_view, spacer, stack};
+pub use error::{BuildError, BuildFailure, UiError};
 pub use flow::{Dynamic, ForEach, VirtualList, When, WhenElse, dynamic, for_each, virtual_list, when};
 pub use hooks::{AnimController, ScopeExt, ThemeHandle, use_theme};
-pub use model::{IntoModel, Model, bind_model, event_value};
+pub use model::{IntoModel, Model, ModelValue, bind_model, event_value};
 pub use modifiers::ViewExt;
 pub use nav::{ModalHandle, Navigator, navigator, use_navigator};
 pub use node_ref::NodeRef;
-pub use prop::{IntoProp, Prop};
-pub use text::{IntoText, TextFn, TextProp};
+pub use prop::{IntoGridSpan, IntoIcon, IntoProp, Prop, PropValue};
+pub use text::{IntoOptions, IntoText, TextFn, TextProp};
 pub use ui::{DisplaySetup, Framebuffer, Partial, Ui, UiBuilder, UiCore};
 pub use view::{AnyView, IntoAnyView, View, ViewSeq};
 pub use widgets::{
-    MenuPageRef, MenuPageView, SpanView, TabView, TileView, animimg, arc, bar, button, buttonmatrix,
-    checkbox, dropdown, dropdown_static, image, image_button, keyboard, label, led, line, line_static, list,
-    list_button, list_text, menu, menu_cont, menu_page, menu_section, menu_separator, msgbox, roller,
-    roller_static, slider, span, spangroup, spinbox, spinner, switch, tab, tabview, textarea, tile, tileview,
-    window, window_button,
+    Btn, MenuPageRef, MenuPageView, SpanView, TabView, TilePos, TileView, animimg, arc, bar, btn, button,
+    buttonmatrix, checkbox, dropdown, image, image_button, keyboard, label, led, line, line_static, list,
+    list_button, list_text, menu, menu_cont, menu_page, menu_section, menu_separator, msgbox, roller, slider,
+    span, spangroup, spinbox, spinner, switch, tab, tabview, textarea, tile, tileview, window, window_button,
 };
 #[cfg(feature = "vector")]
 pub use widgets::{VectorCanvas, vector_canvas};

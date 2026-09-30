@@ -444,7 +444,7 @@ impl Textarea {
         let b = byte_of(l.shown_text(), self.cursor.pos);
         let pos = l.letter_pos(&lm, b);
         let m = cx.measure();
-        let step = i32::from(m.font(Part::Main).line_height) + m.style_i32(Part::Main, PropId::TextLineSpace);
+        let step = i32::from(m.font(Part::Main).line_height) + m.style_i32(Part::Main, PropId::LineSpacing);
         Some((pos, step))
     }
 

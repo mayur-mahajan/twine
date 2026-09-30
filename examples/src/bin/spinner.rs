@@ -15,7 +15,7 @@ use twine_view::prelude::*;
 fn app(_cx: Scope) -> impl View {
     stack(spinner().size(60, 60))
         .size(Length::pct(100), Length::pct(100))
-        .bg_opa(Opa::TRANSP)
+        .bg_opacity(Opa::TRANSP)
         .border_width(0)
 }
 

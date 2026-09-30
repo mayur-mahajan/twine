@@ -17,7 +17,7 @@
 //!     ))
 //!     .gap(12)
 //!     .padding(16)
-//!     .align_items(FlexAlign::Center)
+//!     .align_items(CrossAlign::Center)
 //! }
 //! # let _ = counter;
 //! ```
@@ -36,6 +36,7 @@
 //!   fonts; `fs`: the file system (`fs` module) and file images; `vector`: vector graphics
 //!   (`vector` module, `vector_canvas`).
 #![no_std]
+#![forbid(unsafe_code)]
 
 pub use twine_anim as anim;
 pub use twine_assets as assets;
@@ -68,7 +69,7 @@ pub use twine_assets::fonts;
 /// ```
 /// use twine::prelude::*;
 ///
-/// pub static CARD: Style = style! { bg_color: Color::WHITE, bg_opa: Opa::COVER, radius: 8, pad_all: 12 };
+/// pub static CARD: Style = style! { bg_color: Color::WHITE, bg_opacity: Opa::COVER, radius: 8, padding: 12 };
 ///
 /// fn card(title: &'static str) -> impl View {
 ///     container(label(title)).style(&CARD)

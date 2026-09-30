@@ -10,6 +10,7 @@
 //!
 //! [embedded-graphics]: https://docs.rs/embedded-graphics
 #![no_std]
+#![forbid(unsafe_code)]
 
 mod color;
 mod display;

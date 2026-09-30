@@ -1,7 +1,8 @@
 //! Grid layout (LVGL `lv_grid.c`).
 //!
 //! Faithful to LVGL 9:
-//! - Templates are `GridColumnDscArray` / `GridRowDscArray`; gaps `PadColumn` / `PadRow`.
+//! - Templates come from [`LayoutTree::grid_tracks`] (by default the `GridColumnTracks` /
+//!   `GridRowTracks` styles); gaps `ColumnGap` / `RowGap`.
 //! - Track sizes: `Px(n)` fixed; `Content` = the largest size (without margins) of the
 //!   single-span items placed in that track, 0 if none (items spanning several tracks never
 //!   grow `Content` tracks); `Fr(k)` share `free = content − gaps − Σ other tracks` (at least
@@ -29,21 +30,18 @@ use crate::size::{raw_size, resolve_node, translate};
 use crate::tree::{self, Axis, LayoutTree, is_rtl, margins, place, style_enum, sum};
 
 /// The column and row templates, if both are set and non-empty.
-pub(crate) fn templates<T: LayoutTree + ?Sized>(
-    t: &T,
-    id: T::Id,
-) -> Option<(&'static [GridTrack], &'static [GridTrack])> {
-    let cols = t.style_prop(id, PropId::GridColumnDscArray).as_grid_tracks()?;
-    let rows = t.style_prop(id, PropId::GridRowDscArray).as_grid_tracks()?;
+pub(crate) fn templates<T: LayoutTree + ?Sized>(t: &T, id: T::Id) -> Option<(&[GridTrack], &[GridTrack])> {
+    let cols = t.grid_tracks(id, Axis::X)?;
+    let rows = t.grid_tracks(id, Axis::Y)?;
     (!cols.is_empty() && !rows.is_empty()).then_some((cols, rows))
 }
 
 /// Column, column span, row, row span of a grid item (unclamped).
 pub(crate) fn cell_of<T: LayoutTree + ?Sized>(t: &T, id: T::Id) -> [i32; 4] {
     [
-        t.style_i32(id, PropId::GridCellColumnPos),
+        t.style_i32(id, PropId::GridCellColumn),
         t.style_i32(id, PropId::GridCellColumnSpan),
-        t.style_i32(id, PropId::GridCellRowPos),
+        t.style_i32(id, PropId::GridCellRow),
         t.style_i32(id, PropId::GridCellRowSpan),
     ]
 }
@@ -181,8 +179,8 @@ pub(crate) fn extent<T: LayoutTree + ?Sized>(
 ) -> Option<i32> {
     let (cols, rows) = templates(t, id)?;
     let (templ, gap) = match axis {
-        Axis::X => (cols, t.style_i32(id, PropId::PadColumn)),
-        Axis::Y => (rows, t.style_i32(id, PropId::PadRow)),
+        Axis::X => (cols, t.style_i32(id, PropId::ColumnGap)),
+        Axis::Y => (rows, t.style_i32(id, PropId::RowGap)),
     };
     let base = s.ints.len();
     s.ints.resize(base + templ.len(), 0);
@@ -264,8 +262,8 @@ pub(crate) fn arrange<T: LayoutTree + ?Sized>(
 
     let (nc, nr) = (cols.len(), rows.len());
     let (col_gap, row_gap) = (
-        t.style_i32(id, PropId::PadColumn),
-        t.style_i32(id, PropId::PadRow),
+        t.style_i32(id, PropId::ColumnGap),
+        t.style_i32(id, PropId::RowGap),
     );
     let base = s.ints.len();
     s.ints.resize(base + 2 * (nc + nr), 0);

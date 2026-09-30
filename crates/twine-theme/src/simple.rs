@@ -2,7 +2,7 @@
 
 use alloc::rc::Rc;
 
-use twine_core::{Color, Opa};
+use twine_core::{Color, Duration, Opa};
 use twine_engine::{ThemeCx, ThemeHook, WidgetClass};
 use twine_style::{BorderSide, Part, Selector, State, StyleBuf};
 use twine_text::Font;
@@ -41,7 +41,7 @@ pub struct SimpleStyles {
 /// A flat bg + line + arc style of one color (`white`, `light`, `dark`, `dim` in LVGL).
 fn tone(c: Color) -> StyleBuf {
     StyleBuf::new()
-        .bg_opa(Opa::COVER) // lv_style_set_bg_opa(.., LV_OPA_COVER)
+        .bg_opacity(Opa::COVER) // lv_style_set_bg_opa(.., LV_OPA_COVER)
         .bg_color(c) // lv_style_set_bg_color(.., COLOR_x)
         .line_width(1) // lv_style_set_line_width(.., 1)
         .line_color(c) // lv_style_set_line_color(.., COLOR_x)
@@ -53,19 +53,19 @@ impl SimpleStyles {
     /// LVGL `style_init()` of the simple theme.
     fn new(font: &'static Font) -> Self {
         let scrollbar = StyleBuf::new()
-            .bg_opa(Opa::COVER) // lv_style_set_bg_opa(&scrollbar, LV_OPA_COVER)
+            .bg_opacity(Opa::COVER) // lv_style_set_bg_opa(&scrollbar, LV_OPA_COVER)
             .bg_color(COLOR_DARK) // lv_style_set_bg_color(&scrollbar, COLOR_DARK)
             .width(SCROLLBAR_WIDTH); // lv_style_set_width(&scrollbar, SCROLLBAR_WIDTH)
         let scr = StyleBuf::new()
-            .bg_opa(Opa::COVER) // lv_style_set_bg_opa(&scr, LV_OPA_COVER)
+            .bg_opacity(Opa::COVER) // lv_style_set_bg_opa(&scr, LV_OPA_COVER)
             .bg_color(COLOR_SCR) // lv_style_set_bg_color(&scr, COLOR_SCR)
             .text_color(COLOR_DIM) // lv_style_set_text_color(&scr, COLOR_DIM)
             // LVGL takes the default font from `LV_FONT_DEFAULT` instead of a style.
-            .text_font(font);
+            .font(font);
         Self {
             scr: Rc::new(scr),
             // lv_style_set_bg_opa(&transp, LV_OPA_TRANSP)
-            transp: Rc::new(StyleBuf::new().bg_opa(Opa::TRANSP)),
+            transp: Rc::new(StyleBuf::new().bg_opacity(Opa::TRANSP)),
             white: Rc::new(tone(COLOR_WHITE)),
             light: Rc::new(tone(COLOR_LIGHT)),
             dark: Rc::new(tone(COLOR_DARK)),
@@ -74,15 +74,15 @@ impl SimpleStyles {
             // lv_style_set_arc_width(&arc_line, 6)
             arc_line: Rc::new(StyleBuf::new().arc_width(6)),
             // lv_style_set_pad_all(&arc_knob, 5)
-            arc_knob: Rc::new(StyleBuf::new().pad_top(5).pad_bottom(5).pad_left(5).pad_right(5)),
+            arc_knob: Rc::new(StyleBuf::new().padding(5)),
             // #if LV_USE_TEXTAREA (lines 131-138)
             ta_cursor: Rc::new(
                 StyleBuf::new()
                     .border_side(BorderSide::LEFT) // lv_style_set_border_side(&ta_cursor, LV_BORDER_SIDE_LEFT)
                     .border_color(COLOR_DIM) // lv_style_set_border_color(&ta_cursor, COLOR_DIM)
                     .border_width(2) // lv_style_set_border_width(&ta_cursor, 2)
-                    .bg_opa(Opa::TRANSP) // lv_style_set_bg_opa(&ta_cursor, LV_OPA_TRANSP)
-                    .anim_duration(500u32), // lv_style_set_anim_duration(&ta_cursor, 500)
+                    .bg_opacity(Opa::TRANSP) // lv_style_set_bg_opa(&ta_cursor, LV_OPA_TRANSP)
+                    .anim_duration(Duration::ms(500)), // lv_style_set_anim_duration(&ta_cursor, 500)
             ),
         }
     }

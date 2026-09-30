@@ -75,7 +75,7 @@ pub fn app(cx: Scope) -> impl View {
             }),
         ))
         .width(Length::pct(100))
-        .align_items(FlexAlign::Center),
+        .align_items(CrossAlign::Center),
         textarea(form.name)
             .one_line(true)
             .placeholder("Your name")
@@ -118,7 +118,7 @@ pub fn app(cx: Scope) -> impl View {
         ))
         .width(Length::pct(100))
         .gap(6)
-        .align_items(FlexAlign::Center),
+        .align_items(CrossAlign::Center),
         spangroup((
             span("Hello, "),
             span(form.name)
@@ -134,7 +134,7 @@ pub fn app(cx: Scope) -> impl View {
     .gap(8);
 
     container((
-        scroll_view(Dir::VER, content)
+        scroll_view(Axis::Vertical, content)
             .size(Length::pct(100), Length::pct(100))
             .padding(10)
             .node_ref(page)
@@ -153,14 +153,22 @@ pub fn app(cx: Scope) -> impl View {
                             // Room for the keyboard below the fields, and the field above it.
                             let Some(p) = page.get_untracked() else { return };
                             let e = cx.engine();
-                            e.set_local_prop(p, Selector::MAIN, StyleProp::PadBottom(KB_H + 10));
+                            e.set_local_prop(
+                                p,
+                                Selector::MAIN,
+                                StyleProp::PaddingBottom(Length::Px(KB_H + 10)),
+                            );
                             e.update_layout();
                             if let Some(t) = ta.get_untracked() {
                                 e.scroll_to_view(t, false);
                             }
                             cx.on_delete(kb, move || {
                                 EngineAccess::with(|e| {
-                                    e.set_local_prop(p, Selector::MAIN, StyleProp::PadBottom(10));
+                                    e.set_local_prop(
+                                        p,
+                                        Selector::MAIN,
+                                        StyleProp::PaddingBottom(Length::Px(10)),
+                                    );
                                 });
                             });
                         })

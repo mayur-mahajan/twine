@@ -45,6 +45,26 @@ pub enum MemoryDisplayError {
         /// Bytes in the buffer.
         got: usize,
     },
+    /// A failure injected with [`MemoryDisplay::fail_flush_after`] or
+    /// [`MemoryDisplay::fail_flush_times`] (nothing was copied).
+    Injected,
+}
+
+impl MemoryDisplayError {
+    /// The error's code, as reported by `DisplayDriver::error_code`: `Busy` 1, `OutOfBounds`
+    /// 2, `BufferTooSmall` 3, `Injected` [`INJECTED_CODE`](Self::INJECTED_CODE).
+    #[must_use]
+    pub const fn code(&self) -> u32 {
+        match self {
+            Self::Busy => 1,
+            Self::OutOfBounds(_) => 2,
+            Self::BufferTooSmall { .. } => 3,
+            Self::Injected => Self::INJECTED_CODE,
+        }
+    }
+
+    /// The code of [`MemoryDisplayError::Injected`].
+    pub const INJECTED_CODE: u32 = 0xF1;
 }
 
 impl fmt::Display for MemoryDisplayError {
@@ -55,11 +75,24 @@ impl fmt::Display for MemoryDisplayError {
             Self::BufferTooSmall { needed, got } => {
                 write!(f, "draw buffer too small: {got} bytes, area needs {needed}")
             }
+            Self::Injected => f.write_str("injected flush failure"),
         }
     }
 }
 
 impl std::error::Error for MemoryDisplayError {}
+
+/// Injected flush failures (see [`MemoryDisplay::fail_flush_after`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Injection {
+    /// Every flush is processed normally.
+    #[default]
+    None,
+    /// `ok` more flushes succeed, then every flush fails.
+    After { ok: u32 },
+    /// The next `n` flushes fail, then flushes succeed again.
+    Times { n: u32 },
+}
 
 #[derive(Debug)]
 struct InFlight {
@@ -76,6 +109,9 @@ struct InFlight {
 ///   emulating a DMA transfer so the engine's ping-pong logic is testable.
 /// - At most `max_in_flight` (default 1) buffers may be held; one more `begin_flush` fails with
 ///   [`MemoryDisplayError::Busy`].
+/// - Failures can be injected ([`fail_flush_after`](Self::fail_flush_after),
+///   [`fail_flush_times`](Self::fail_flush_times)): a failed flush copies nothing, records
+///   nothing and hands the buffer back on the next `poll_flush`, like a bus error.
 ///
 /// ```
 /// use twine_core::{Color, ColorFormat, Rect};
@@ -111,6 +147,10 @@ pub struct MemoryDisplay {
     panel_h: u16,
     /// Buffer addresses in order of first use.
     buffers_seen: Vec<usize>,
+    injection: Injection,
+    failed: u64,
+    /// Buffers are never handed back (`never_complete`).
+    hung: bool,
 }
 
 impl MemoryDisplay {
@@ -147,6 +187,105 @@ impl MemoryDisplay {
             panel_w,
             panel_h,
             buffers_seen: Vec::new(),
+            injection: Injection::None,
+            failed: 0,
+            hung: false,
+        }
+    }
+
+    /// Lets the next `n` flushes succeed, then fails every later one with
+    /// [`MemoryDisplayError::Injected`] (a bus that breaks down) until
+    /// [`stop_failing`](Self::stop_failing). Replaces any earlier injection.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Rect};
+    /// use twine_hal::{DisplayDriver, DisplayInfo};
+    /// use twine_testing::{MemoryDisplay, MemoryDisplayError, leak_buffer};
+    ///
+    /// let mut d = MemoryDisplay::new(DisplayInfo::new(4, 4, ColorFormat::L8));
+    /// d.fail_flush_after(1);
+    /// let area = Rect::from_xywh(0, 0, 1, 1);
+    /// assert!(d.begin_flush(area, leak_buffer(1)).is_ok());
+    /// let buf = d.poll_flush().unwrap();
+    /// assert_eq!(d.begin_flush(area, buf), Err(MemoryDisplayError::Injected));
+    /// let buf = d.poll_flush().unwrap(); // the rejected buffer comes back
+    /// assert!(d.begin_flush(area, buf).is_err());
+    /// assert_eq!(d.failed_flushes(), 2);
+    /// ```
+    pub fn fail_flush_after(&mut self, n: u32) {
+        self.injection = Injection::After { ok: n };
+    }
+
+    /// Fails the next `n` flushes with [`MemoryDisplayError::Injected`], then lets flushes
+    /// succeed again (a transient fault). Replaces any earlier injection.
+    pub fn fail_flush_times(&mut self, n: u32) {
+        self.injection = if n == 0 {
+            Injection::None
+        } else {
+            Injection::Times { n }
+        };
+    }
+
+    /// A display whose flushes never complete: `begin_flush` accepts (and copies) the pixels,
+    /// but `poll_flush` never hands a buffer back — a hung DMA transfer or a driver that loses
+    /// buffers. Rejected buffers are withheld too. Undo with [`complete_again`](Self::complete_again).
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Rect};
+    /// use twine_hal::{DisplayDriver, DisplayInfo};
+    /// use twine_testing::{MemoryDisplay, leak_buffer};
+    ///
+    /// let mut d = MemoryDisplay::new(DisplayInfo::new(4, 4, ColorFormat::L8)).never_complete();
+    /// d.begin_flush(Rect::from_xywh(0, 0, 1, 1), leak_buffer(1)).unwrap();
+    /// assert!(d.poll_flush().is_none());
+    /// assert_eq!(d.in_flight(), 1);
+    /// d.complete_again();
+    /// assert!(d.poll_flush().is_some());
+    /// ```
+    #[must_use]
+    pub fn never_complete(mut self) -> Self {
+        self.hung = true;
+        self
+    }
+
+    /// Hands buffers back again after [`never_complete`](Self::never_complete) (the transfer
+    /// recovered): the next `poll_flush` calls return the held buffers in order.
+    pub fn complete_again(&mut self) {
+        self.hung = false;
+    }
+
+    /// Hangs the display now, like [`never_complete`](Self::never_complete).
+    pub fn hang(&mut self) {
+        self.hung = true;
+    }
+
+    /// Cancels the injected failures: every later flush is processed normally.
+    pub fn stop_failing(&mut self) {
+        self.injection = Injection::None;
+    }
+
+    /// Number of flushes that failed (injected or rejected) since creation.
+    #[must_use]
+    pub fn failed_flushes(&self) -> u64 {
+        self.failed
+    }
+
+    /// Whether the injection fails this flush (and advances it).
+    fn inject(&mut self) -> bool {
+        match &mut self.injection {
+            Injection::None => false,
+            Injection::After { ok: 0 } => true,
+            Injection::After { ok } => {
+                *ok -= 1;
+                false
+            }
+            Injection::Times { n } => {
+                *n -= 1;
+                if *n == 0 {
+                    self.injection = Injection::None;
+                }
+                true
+            }
         }
     }
 
@@ -326,9 +465,17 @@ impl DisplayDriver for MemoryDisplay {
     }
 
     fn begin_flush(&mut self, area: Rect, buf: DrawBufferMem) -> Result<(), Self::Error> {
-        if let Err(e) = self.validate(area, buf.len()) {
+        let checked = self.validate(area, buf.len()).and_then(|()| {
+            if self.inject() {
+                Err(MemoryDisplayError::Injected)
+            } else {
+                Ok(())
+            }
+        });
+        if let Err(e) = checked {
             log::warn!(target: "twine::driver", "MemoryDisplay: rejected flush: {e}");
             self.rejected.push_back(buf);
+            self.failed += 1;
             return Err(e);
         }
         self.copy_in(area, buf.as_slice());
@@ -361,6 +508,9 @@ impl DisplayDriver for MemoryDisplay {
 
     fn poll_flush(&mut self) -> Option<DrawBufferMem> {
         self.polls += 1;
+        if self.hung {
+            return None;
+        }
         if let Some(buf) = self.rejected.pop_front() {
             return Some(buf);
         }
@@ -376,6 +526,10 @@ impl DisplayDriver for MemoryDisplay {
             }
         }
         Some(done.buf)
+    }
+
+    fn error_code(&self, error: &Self::Error) -> u32 {
+        error.code()
     }
 }
 

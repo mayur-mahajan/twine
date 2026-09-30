@@ -6,7 +6,7 @@ mod common;
 use common::{Mode, center, class, count_events, get, harness_with_group, with};
 use twine_core::{Duration, Point};
 use twine_engine::{EventCode, NodeId};
-use twine_style::{Dir, Length};
+use twine_style::{Length, Sides};
 use twine_testing::EngineHarness;
 use twine_widgets_ext::tileview::{self, Tileview};
 
@@ -16,9 +16,9 @@ fn scene(mode: Mode) -> (EngineHarness, NodeId, [NodeId; 3]) {
     let screen = h.screen();
     let e = h.engine_mut();
     let tv = tileview::create(e, screen).unwrap();
-    let t00 = tileview::add_tile(e, tv, 0, 0, Dir::RIGHT | Dir::BOTTOM).unwrap();
-    let t10 = tileview::add_tile(e, tv, 1, 0, Dir::LEFT).unwrap();
-    let t01 = tileview::add_tile(e, tv, 0, 1, Dir::TOP).unwrap();
+    let t00 = tileview::add_tile(e, tv, 0, 0, Sides::RIGHT | Sides::BOTTOM).unwrap();
+    let t10 = tileview::add_tile(e, tv, 1, 0, Sides::LEFT).unwrap();
+    let t01 = tileview::add_tile(e, tv, 0, 1, Sides::TOP).unwrap();
     for (t, text) in [(t00, "Tile 0,0"), (t10, "Tile 1,0"), (t01, "Tile 0,1")] {
         let l = twine_widgets::label::create_with(e, t, text).unwrap();
         e.align(l, twine_style::Align::Center, 0, 0);
@@ -48,7 +48,7 @@ fn tileview_structure() {
     assert_eq!(e.coords(tiles[1]).x0, ca.x0 + ca.width());
     assert_eq!(e.coords(tiles[2]).y0, ca.y0 + ca.height());
     assert_eq!(active(&h, tv), Some(tiles[0]));
-    assert_eq!(e.scroll_dir(tv), Dir::RIGHT | Dir::BOTTOM);
+    assert_eq!(e.scroll_dir(tv), Sides::RIGHT | Sides::BOTTOM);
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn tileview_swipe_only_allowed_dirs() {
     // Left: to (1,0).
     swipe(&mut h, tv, -150, 0);
     assert_eq!(active(&h, tv), Some(tiles[1]));
-    assert_eq!(h.engine().scroll_dir(tv), Dir::LEFT);
+    assert_eq!(h.engine().scroll_dir(tv), Sides::LEFT);
     // Up is not allowed from (1,0).
     let before = h.engine().scroll_offset(tv);
     swipe(&mut h, tv, 0, -120);

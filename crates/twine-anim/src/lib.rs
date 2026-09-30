@@ -31,6 +31,7 @@
 //! assert_eq!(a.sample(Duration::ms(50)).value, 100);
 //! ```
 #![no_std]
+#![forbid(unsafe_code)]
 #![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 
 extern crate alloc;

@@ -46,7 +46,7 @@ fn card(title: &'static str, content: impl ViewSeq) -> impl View {
         .op(|cx, n| {
             let e = cx.engine();
             e.set_local_prop(n, Selector::MAIN, StyleProp::Layout(LayoutKind::Flex));
-            e.set_local_prop(n, Selector::MAIN, StyleProp::FlexFlow(FlexFlow::Column));
+            e.set_local_prop(n, Selector::MAIN, StyleProp::FlexFlow(FlexFlow::COLUMN));
         })
         .size(CARD_W, Length::Content)
         .padding(8)
@@ -84,8 +84,8 @@ fn build(cx: Scope, animated: bool) -> impl View {
             ))
             .width(Length::pct(100))
             .gap(14)
-            .padding_ver(6)
-            .align_items(FlexAlign::Center),
+            .padding_y(6)
+            .align_items(CrossAlign::Center),
             bar(level)
                 .animated(Duration::ms(300))
                 .width(Length::pct(100))
@@ -103,7 +103,7 @@ fn build(cx: Scope, animated: bool) -> impl View {
             label(text!("{}", level.get())),
         ))
         .size(Length::pct(100), 94)
-        .bg_opa(Opa::TRANSP)
+        .bg_opacity(Opa::TRANSP)
         .border_width(0)
         .padding(0),
     );
@@ -121,8 +121,8 @@ fn build(cx: Scope, animated: bool) -> impl View {
                     .test_id("power"),
             ))
             .width(Length::pct(100))
-            .justify(FlexAlign::SpaceBetween)
-            .align_items(FlexAlign::Center),
+            .justify(MainAlign::SpaceBetween)
+            .align_items(CrossAlign::Center),
             checkbox("Enabled", enabled).test_id("check"),
         ),
     );
@@ -134,20 +134,21 @@ fn build(cx: Scope, animated: bool) -> impl View {
                 animimg(&FRAMES, Duration::ms(800)).test_id("anim"),
             ))
             .gap(24)
-            .align_items(FlexAlign::Center),
+            .align_items(CrossAlign::Center),
         )
     });
     let chart_card = card("Chart", line_static(&CHART).width(2).rounded(true));
 
     scroll_view(
-        Dir::VER,
+        Axis::Vertical,
         flex(
-            FlexFlow::RowWrap,
+            FlexDirection::Row,
             (level_card, arc_card, enabled_card, busy_card, chart_card),
         )
+        .wrap(true)
         .width(Length::pct(100))
         .gap(8)
-        .justify(FlexAlign::Center),
+        .justify(MainAlign::Center),
     )
     .size(Length::pct(100), Length::pct(100))
     .padding(8)

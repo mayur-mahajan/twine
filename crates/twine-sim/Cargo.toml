@@ -40,3 +40,5 @@ env_logger = "0.11"
 [dev-dependencies]
 twine-style = { path = "../twine-style", features = ["std", "log"] }
 twine-assets = { path = "../twine-assets", features = ["montserrat-14"] }
+# Host implementation of `critical-section` (the `Ui` leases a reactive waker) for test binaries.
+critical-section = { version = "1", features = ["std"] }

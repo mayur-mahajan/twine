@@ -2,7 +2,7 @@
 //! full-screen fill < 40 µs, full-screen rounded rect r=16 with border < 250 µs, 100 × 100
 //! shadow w=20 (warm cache) < 60 µs, 60 px spinner arc < 30 µs.
 
-use twine_core::{Angle, Color, ColorFormat, Fx, Opa, Point, Rect, Rotation, Transform};
+use twine_core::{Angle, Color, ColorFormat, Fraction, Fx, Opa, Point, Rect, Rotation, Transform};
 use twine_render::{
     ArcDsc, BlitDsc, DrawBuf, GradKind, GradStop, Gradient, ImageDsc, ImagePixels, LayerDsc, LayerTransform,
     LineDsc, Mask, Painter, RectDsc, RenderCaches, ShadowDsc, TriangleDsc, rotate_buffer,
@@ -24,8 +24,8 @@ pub struct Scene {
 const GRAD_VER: Gradient = Gradient::new(
     GradKind::Ver,
     &[
-        GradStop::new(Color::hex(0x10_20_40), 0),
-        GradStop::new(Color::hex(0xF0_A0_20), 255),
+        GradStop::new(Color::hex(0x10_20_40), Fraction::ZERO),
+        GradStop::new(Color::hex(0xF0_A0_20), Fraction::ONE),
     ],
 );
 const GRAD_RADIAL: Gradient = Gradient::new(
@@ -35,7 +35,10 @@ const GRAD_RADIAL: Gradient = Gradient::new(
         focal: Point::new(100, 100),
         focal_radius: 0,
     },
-    &[GradStop::new(Color::WHITE, 0), GradStop::new(Color::BLUE, 255)],
+    &[
+        GradStop::new(Color::WHITE, Fraction::ZERO),
+        GradStop::new(Color::BLUE, Fraction::ONE),
+    ],
 );
 
 fn fill_fullscreen(p: &mut Painter<'_>) {
@@ -65,7 +68,7 @@ fn shadow_100_w20(p: &mut Painter<'_>) {
             bg_opa: Opa::COVER,
             shadow: ShadowDsc {
                 width: 20,
-                opa: Opa(160),
+                opa: Opa::from_raw(160),
                 ..ShadowDsc::default()
             },
             ..RectDsc::default()
@@ -92,7 +95,7 @@ fn masked_fill_radius_fade(p: &mut Painter<'_>) {
         y_top: 20,
         y_bottom: 220,
         opa_top: Opa::COVER,
-        opa_bottom: Opa(20),
+        opa_bottom: Opa::from_raw(20),
     });
     p.fill(Rect::from_xywh(0, 0, W, H), Color::hex(0xAA_33_55), Opa::COVER);
     p.pop_mask(b);
@@ -104,7 +107,7 @@ fn layer_opa_200x200(p: &mut Painter<'_>) {
     p.layer(
         area,
         &LayerDsc {
-            opa: Opa(128),
+            opa: Opa::from_raw(128),
             ..LayerDsc::default()
         },
         |p| {

@@ -31,7 +31,8 @@ use twine_engine::{
 use twine_hal::Key;
 use twine_sim::{SimConfig, run_engine};
 use twine_style::{
-    Easing, FlexAlign, FlexFlow, LayoutKind, Length, Part, PropId, Selector, StyleProp, TransitionDsc,
+    CrossAlign, Easing, FlexFlow, LayoutKind, Length, MainAlign, Part, PropId, Radius, Selector, StyleProp,
+    TransitionDsc,
 };
 
 /// A box with an encoder edit mode (stands in for a slider until widgets exist).
@@ -63,12 +64,12 @@ const BOX_H: i32 = 50;
 const STEP: i32 = 8;
 
 /// Paddings on all four sides.
-fn pad_all(e: &mut Engine, id: NodeId, p: i32) {
+fn set_padding(e: &mut Engine, id: NodeId, p: i32) {
     for prop in [
-        StyleProp::PadLeft(p),
-        StyleProp::PadTop(p),
-        StyleProp::PadRight(p),
-        StyleProp::PadBottom(p),
+        StyleProp::PaddingLeft(Length::Px(p)),
+        StyleProp::PaddingTop(Length::Px(p)),
+        StyleProp::PaddingRight(Length::Px(p)),
+        StyleProp::PaddingBottom(Length::Px(p)),
     ] {
         e.set_local_prop(id, Selector::MAIN, prop);
     }
@@ -80,18 +81,18 @@ fn style_box(e: &mut Engine, b: NodeId, checkable: bool) {
     let main = Selector::MAIN;
     let props = [
         (main, StyleProp::BgColor(Color::hex(0x5C_6B_C0))),
-        (main, StyleProp::BgOpa(Opa::COVER)),
-        (main, StyleProp::Radius(6)),
+        (main, StyleProp::BgOpacity(Opa::COVER)),
+        (main, StyleProp::Radius(Radius::Px(6))),
         (main, StyleProp::Transition(&TRANSITION)),
         (main, StyleProp::TransformPivotX(Length::Pct(50))),
         (main, StyleProp::TransformPivotY(Length::Pct(50))),
         (
             main.with_state(State::PRESSED),
-            StyleProp::TransformScaleX(Scale(236)),
+            StyleProp::TransformScaleX(Scale::from_raw_256(236)),
         ),
         (
             main.with_state(State::PRESSED),
-            StyleProp::TransformScaleY(Scale(236)),
+            StyleProp::TransformScaleY(Scale::from_raw_256(236)),
         ),
         (
             main.with_state(State::PRESSED),
@@ -106,7 +107,7 @@ fn style_box(e: &mut Engine, b: NodeId, checkable: bool) {
             main.with_state(State::FOCUSED),
             StyleProp::OutlineColor(Color::hex(0x21_21_21)),
         ),
-        (main.with_state(State::FOCUSED), StyleProp::OutlinePad(2)),
+        (main.with_state(State::FOCUSED), StyleProp::OutlineOffset(2)),
         (main.with_state(State::FOCUS_KEY), StyleProp::OutlineWidth(4)),
         (
             main.with_state(State::FOCUS_KEY),
@@ -122,7 +123,7 @@ fn style_box(e: &mut Engine, b: NodeId, checkable: bool) {
     }
     if checkable {
         e.set_flag(b, ObjFlags::CHECKABLE, true);
-        e.set_local_prop(b, main, StyleProp::BorderWidth(2));
+        e.set_local_prop(b, main, StyleProp::BorderWidth(Length::Px(2)));
         e.set_local_prop(b, main, StyleProp::BorderColor(Color::hex(0x1A_23_7E)));
     }
 }
@@ -157,7 +158,7 @@ fn scene(e: &mut Engine) {
     let d = e.default_display().expect("display");
     let screen = e.active_screen(d).expect("screen");
     e.set_local_prop(screen, Selector::MAIN, StyleProp::BgColor(Color::hex(0xEC_EF_F1)));
-    e.set_local_prop(screen, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+    e.set_local_prop(screen, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
     e.add_event_handler(screen, EventFilter::Code(EventCode::Gesture), |_, ev| {
         if let Some(dir) = ev.dir() {
             twine_core::info!(target: "twine::sim", "Gesture({:?}) on the screen", dir);
@@ -170,13 +171,13 @@ fn scene(e: &mut Engine) {
     e.set_pos(grid, 8, 8);
     e.set_size(grid, 272, 186);
     e.set_layout(grid, LayoutKind::Flex);
-    e.set_flex_flow(grid, FlexFlow::RowWrap);
-    pad_all(e, grid, 8);
-    e.set_local_prop(grid, Selector::MAIN, StyleProp::PadRow(8));
-    e.set_local_prop(grid, Selector::MAIN, StyleProp::PadColumn(8));
+    e.set_flex_flow(grid, FlexFlow::ROW.wrap(true));
+    set_padding(e, grid, 8);
+    e.set_local_prop(grid, Selector::MAIN, StyleProp::RowGap(Length::Px(8)));
+    e.set_local_prop(grid, Selector::MAIN, StyleProp::ColumnGap(Length::Px(8)));
     e.set_local_prop(grid, Selector::MAIN, StyleProp::BgColor(Color::WHITE));
-    e.set_local_prop(grid, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
-    e.set_local_prop(grid, Selector::MAIN, StyleProp::Radius(8));
+    e.set_local_prop(grid, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
+    e.set_local_prop(grid, Selector::MAIN, StyleProp::Radius(Radius::Px(8)));
     // An outline (not a border) as focus ring: it does not shrink the content area.
     e.set_local_prop(
         grid,
@@ -201,9 +202,14 @@ fn scene(e: &mut Engine) {
     e.set_pos(column, 296, 8);
     e.set_size(column, Length::Content, 194);
     e.set_layout(column, LayoutKind::Flex);
-    e.set_flex_flow(column, FlexFlow::Column);
-    e.set_flex_align(column, FlexAlign::SpaceEvenly, FlexAlign::Start, FlexAlign::Start);
-    pad_all(e, column, 8);
+    e.set_flex_flow(column, FlexFlow::COLUMN);
+    e.set_flex_align(
+        column,
+        MainAlign::SpaceEvenly,
+        CrossAlign::Start,
+        MainAlign::Start,
+    );
+    set_padding(e, column, 8);
     let mut side = Vec::new();
     for (i, name) in SIDE.iter().enumerate() {
         let b = if i == 1 {

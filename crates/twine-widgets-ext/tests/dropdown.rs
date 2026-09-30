@@ -10,7 +10,7 @@ use common::{Mode, center, class, count_events, get, harness, harness_with_group
 use twine_core::{Color, Duration, Point, Size};
 use twine_engine::{EventCode, Key, NodeId, State, ThemeCx, ThemeHook, WidgetClass};
 use twine_image::ImageSource;
-use twine_style::{Align, Dir, Part, PropId, Selector, StyleBuf};
+use twine_style::{Align, Part, PropId, Selector, Side, StyleBuf};
 use twine_testing::{EngineHarness, capture_logs};
 use twine_text::Font;
 use twine_theme::{DefaultTheme, Palette};
@@ -77,7 +77,7 @@ fn dd_defaults() {
     let w = get::<Dropdown>(&h, d);
     assert_eq!(w.options(), dropdown::DROPDOWN_DEFAULT_OPTIONS);
     assert_eq!((w.option_count(), w.selected()), (3, 0));
-    assert_eq!(w.dir(), Dir::BOTTOM);
+    assert_eq!(w.dir(), Side::Bottom);
     assert_eq!(w.symbol(), Some(&dropdown::DROPDOWN_DEFAULT_SYMBOL));
     assert!(w.selected_highlight());
     assert_eq!(w.text(), None);
@@ -86,7 +86,8 @@ fn dd_defaults() {
     let c = h.engine().coords(d);
     assert_eq!(c.width(), 130);
     let e = h.engine();
-    let pad = e.style_i32(d, Part::Main, PropId::PadTop) + e.style_i32(d, Part::Main, PropId::PadBottom);
+    let pad =
+        e.style_i32(d, Part::Main, PropId::PaddingTop) + e.style_i32(d, Part::Main, PropId::PaddingBottom);
     let border = 2 * e.style_i32(d, Part::Main, PropId::BorderWidth);
     let line = i32::from(e.style_font(d, Part::Main).line_height);
     assert_eq!(c.height(), line + pad + border);
@@ -101,15 +102,15 @@ fn dd_theme_styles() {
     // `card` + `pad_small`: white, grey border, 10 px (dpx) padding at 130 dpi.
     assert_eq!(e.style_color(d, Part::Main, PropId::BgColor), Color::WHITE);
     assert_eq!(
-        e.style_i32(d, Part::Main, PropId::PadLeft),
-        twine_theme::dpx(10, 130)
+        e.style_i32(d, Part::Main, PropId::PaddingLeft),
+        twine_style::dpx(10, 130)
     );
     with(&mut h, d, |w: &mut Dropdown, cx| w.open(cx));
     let l = list_of(&h, d).unwrap();
     let e = h.engine();
     assert_eq!(
-        e.style_i32(l, Part::Main, PropId::TextLineSpace),
-        twine_theme::dpx(20, 130)
+        e.style_i32(l, Part::Main, PropId::LineSpacing),
+        twine_style::dpx(20, 130)
     );
     assert_eq!(
         e.style_i32(l, Part::Main, PropId::MaxHeight),
@@ -149,8 +150,8 @@ fn dd_open_creates_list_on_top_layer() {
     let t = twine_engine::MeasureCx::new(h.engine(), l).text_dsc(Part::Main);
     let text_h = 6 * i32::from(t.font.line_height) + 5 * t.line_space;
     let e = h.engine();
-    let space = e.style_i32(l, Part::Main, PropId::PadTop)
-        + e.style_i32(l, Part::Main, PropId::PadBottom)
+    let space = e.style_i32(l, Part::Main, PropId::PaddingTop)
+        + e.style_i32(l, Part::Main, PropId::PaddingBottom)
         + 2 * e.style_i32(l, Part::Main, PropId::BorderWidth);
     assert_eq!(lc.height(), (text_h + space).min(260).min(240 - dc.y1));
     // The options scroll inside it.
@@ -193,14 +194,14 @@ fn dd_list_positions_below_or_flips_up() {
     // Asking for the top near the top of the screen flips it down.
     let (mut h, d) = scene(Mode::Light, Align::TopMid);
     with(&mut h, d, |w: &mut Dropdown, cx| {
-        w.set_dir(cx, Dir::TOP);
+        w.set_dir(cx, Side::Top);
         w.open(cx);
     });
     h.run_until_idle();
     let (dc, lc) = (h.engine().coords(d), h.engine().coords(list_of(&h, d).unwrap()));
     assert_eq!(lc.y0, dc.y1, "below");
     // Left and right: beside it, top-aligned, as wide as the options.
-    for (dir, left) in [(Dir::LEFT, true), (Dir::RIGHT, false)] {
+    for (dir, left) in [(Side::Left, true), (Side::Right, false)] {
         let (mut h, d) = scene(Mode::Light, Align::Center);
         with(&mut h, d, |w: &mut Dropdown, cx| {
             w.set_dir(cx, dir);
@@ -335,7 +336,7 @@ fn dd_list_inherits_text_style_of_dropdown_ancestors() {
     let e = h.engine_mut();
     let cont = e.create(screen, Box::new(twine_engine::Obj)).unwrap();
     e.set_size(cont, 320, 240);
-    e.set_local_prop(cont, Selector::MAIN, StyleProp::TextFont(&MONTSERRAT_20));
+    e.set_local_prop(cont, Selector::MAIN, StyleProp::Font(&MONTSERRAT_20));
     e.set_local_prop(cont, Selector::MAIN, StyleProp::BaseDir(BaseDir::Rtl));
     let d = dropdown::create(e, cont).unwrap();
     with(&mut h, d, |w: &mut Dropdown, cx| w.set_options_static(cx, CITIES));
@@ -359,7 +360,7 @@ fn dd_list_inherits_text_style_of_dropdown_ancestors() {
     // A change while open reaches the list.
     h.run_until_idle();
     h.engine_mut()
-        .set_local_prop(cont, Selector::MAIN, StyleProp::TextFont(&MONTSERRAT_14));
+        .set_local_prop(cont, Selector::MAIN, StyleProp::Font(&MONTSERRAT_14));
     assert!(core::ptr::eq(
         h.engine().style_font(l, Part::Main),
         &raw const MONTSERRAT_14
@@ -406,7 +407,7 @@ fn dd_options_same_no_invalidate() {
     with(&mut h, d, |w: &mut Dropdown, cx| {
         w.set_options(cx, "a\nb\nc");
         w.set_selected(cx, 2);
-        w.set_dir(cx, Dir::BOTTOM);
+        w.set_dir(cx, Side::Bottom);
         w.set_symbol(cx, Some(dropdown::DROPDOWN_DEFAULT_SYMBOL));
         w.set_text(cx, None);
         w.set_selected_highlight(cx, true);
@@ -539,7 +540,7 @@ fn dd_open_close_animations() {
     // With 200 ms: fade in, fade out, then deleted.
     let theme = FadingTheme(
         DefaultTheme::light(),
-        Rc::new(StyleBuf::new().anim_duration(200u32)),
+        Rc::new(StyleBuf::new().anim_duration(twine_core::Duration::ms(200))),
     );
     let mut h = EngineHarness::new(320, 240).theme(Rc::new(theme));
     let screen = h.screen();
@@ -550,10 +551,13 @@ fn dd_open_close_animations() {
     with(&mut h, d, |w: &mut Dropdown, cx| w.open(cx));
     let l = list_of(&h, d).unwrap();
     h.advance(Duration::ms(100));
-    let opa = h.engine().style_opa(l, Part::Main, PropId::Opa).0;
+    let opa = h.engine().style_opa(l, Part::Main, PropId::PartOpacity).raw();
     assert!(opa > 0 && opa < 255, "fading in: {opa}");
     h.run_until_idle();
-    assert_eq!(h.engine().style_opa(l, Part::Main, PropId::Opa).0, 255);
+    assert_eq!(
+        h.engine().style_opa(l, Part::Main, PropId::PartOpacity).raw(),
+        255
+    );
     with(&mut h, d, |w: &mut Dropdown, cx| w.close(cx));
     assert!(
         !get::<Dropdown>(&h, d).is_open(h.engine()),
@@ -582,7 +586,7 @@ fn dd_image_symbol_size() {
     let (mut h, d) = scene(Mode::Light, Align::TopMid);
     let before = h.engine().coords(d).height();
     with(&mut h, d, |w: &mut Dropdown, cx| {
-        w.set_symbol(cx, Some(ImageSource::Symbol(twine_text::symbols::OK)));
+        w.set_symbol(cx, Some(ImageSource::symbol(twine_text::Symbol::Ok)));
     });
     h.run_until_idle();
     assert_eq!(h.engine().coords(d).height(), before);
@@ -602,7 +606,7 @@ fn snapshot_dropdown() {
     }
     let (mut h, d) = scene(Mode::Light, Align::BottomMid);
     with(&mut h, d, |w: &mut Dropdown, cx| {
-        w.set_dir(cx, Dir::TOP);
+        w.set_dir(cx, Side::Top);
         w.open(cx);
     });
     h.run_until_idle();

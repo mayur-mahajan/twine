@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use twine_engine::{NodeId, Widget, WidgetCx, fmt_node_id};
 use twine_reactive::{Scope, Signal};
 
-use crate::access::EngineAccess;
+use crate::access::{EngineAccess, no_engine};
 
 /// A reference to the node of a widget view, filled when the view is built
 /// (`.node_ref(r)`). `Copy`, like a signal (it is one: reading it with [`get`](Self::get)
@@ -14,21 +14,41 @@ use crate::access::EngineAccess;
 /// [`with_mut`](Self::with_mut) calls the widget's own setters — LVGL-style, for hot paths —
 /// from handlers, effects and timer callbacks run by the `Ui`.
 ///
+/// # Where the engine is available
+///
+/// The engine is available inside event handlers, effects (bindings), timer and animation
+/// callbacks, channel message handlers and while the view is being built — the code the `Ui`
+/// runs ([`EngineAccess`]). Elsewhere (in your main loop, another task, after `Ui::update`
+/// returned) `with_mut` returns `None` and does nothing; in debug builds it also logs one
+/// `warn!` per call site. From there, use the `Ui` methods (`ui.engine_mut()`), write a
+/// signal the widget is bound to, or post a message on a [`Channel`](twine_reactive::Channel)
+/// whose handler (run by `Ui::update`) calls `with_mut`:
+///
 /// ```
 /// use twine_view::prelude::*;
 /// use twine_widgets::label::Label;
 ///
+/// static POKE: Channel<(), 4> = Channel::new();
+///
 /// fn app(cx: Scope) -> impl View {
 ///     let r: NodeRef<Label> = cx.node_ref();
+///     // Runs inside `Ui::update`: the engine is lent, `with_mut` works.
+///     cx.on_message(&POKE, move |()| {
+///         r.with_mut(|l: &mut Label, cx| l.set_text(cx, "poked"));
+///     });
 ///     column((
 ///         label("0").node_ref(r),
 ///         button(label("Poke")).on_click(move || {
-///             r.with_mut(|l: &mut Label, cx| l.set_text(cx, "poked"));
+///             r.with_mut(|l: &mut Label, cx| l.set_text(cx, "clicked")); // a handler: fine
 ///         }),
 ///     ))
 /// }
 /// # let _ = app;
+/// // From outside the Ui (an ISR, another task, the main loop):
+/// let _ = POKE.try_send(());
 /// ```
+///
+/// [`EngineAccess`]: crate::EngineAccess
 pub struct NodeRef<W: Widget> {
     cell: Signal<Option<NodeId>>,
     _w: PhantomData<fn() -> W>,
@@ -85,10 +105,14 @@ impl<W: Widget> NodeRef<W> {
     }
 
     /// Calls `f` with the widget and a widget context for its node, inside handlers, effects
-    /// and timer callbacks run by the `Ui` (the engine is taken from [`EngineAccess`]).
-    /// Returns `None` and logs `warn!` when no engine is available (outside those scopes),
-    /// when the reference is not filled yet or its node was deleted, or when the node holds
-    /// another widget type.
+    /// and timer callbacks run by the `Ui` (the engine is taken from
+    /// [`EngineAccess`](crate::EngineAccess)).
+    ///
+    /// Returns `None` without calling `f` when no engine is available (outside those scopes,
+    /// see [Where the engine is available](NodeRef#where-the-engine-is-available); in debug
+    /// builds this logs `warn!` once per call site), when the reference is not filled yet or
+    /// its node was deleted (logs `warn!`), or when the node holds another widget type.
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut W, &mut WidgetCx<'_>) -> R) -> Option<R> {
         let Some(node) = self.get_untracked() else {
             twine_core::warn!(target: "twine::view", "NodeRef::with_mut: reference not filled");
@@ -97,11 +121,7 @@ impl<W: Widget> NodeRef<W> {
         if let Some(r) = EngineAccess::with(|e| e.with_widget_mut::<W, R>(node, f)) {
             r
         } else {
-            twine_core::warn!(
-                target: "twine::view",
-                "NodeRef::with_mut on {} outside a Ui handler, effect or timer; ignored",
-                fmt_node_id(node)
-            );
+            no_engine("NodeRef::with_mut");
             None
         }
     }

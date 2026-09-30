@@ -3,16 +3,16 @@
 use core::fmt;
 
 use twine_anim::AnimTemplate;
-use twine_core::{Angle, Color, Opa, Scale};
+use twine_core::{Angle, Color, Duration, Fraction, Opa, Scale};
 use twine_image::ImageSource;
 use twine_render::Gradient;
 use twine_text::Font;
 
 use crate::transition::TransitionDsc;
 use crate::value_types::{
-    Align, BaseDir, BlendMode, BlurQuality, BorderSide, ColorFilter, Dir, FlexAlign, FlexFlow, GradDir,
-    GridAlign, GridTrack, ImageColorkey, LayoutKind, Length, ScrollSnap, ScrollbarMode, StyleEnum, TextAlign,
-    TextDecor, TextLeadingTrim,
+    Align, BaseDir, BlendMode, BlurQuality, BorderSide, ColorFilter, CrossAlign, DurationMs, FlexFlow,
+    GradDir, GridAlign, GridTrack, ImageColorkey, LayoutKind, Length, MainAlign, Radius, ScrollSnap,
+    ScrollbarMode, StyleEnum, TextAlign, TextDecor, TextLeadingTrim,
 };
 
 /// The value of a style property as returned by lookups and resolution: one variant per value
@@ -111,18 +111,19 @@ impl fmt::Display for StyleValue {
             StyleValue::Length(Length::Px(v)) => write!(f, "{v}px"),
             StyleValue::Length(Length::Pct(v)) => write!(f, "{v}%"),
             StyleValue::Length(Length::Content) => f.write_str("content"),
+            StyleValue::Length(Length::Dp(v)) => write!(f, "{v}dp"),
             StyleValue::Color(c) => write!(f, "{c}"),
-            StyleValue::Opa(o) => write!(f, "opa {}", o.0),
+            StyleValue::Opa(o) => write!(f, "opa {}", o.raw()),
             StyleValue::Angle(a) => {
-                let sign = if a.0 < 0 { "-" } else { "" };
+                let sign = if a.as_deci_deg() < 0 { "-" } else { "" };
                 write!(
                     f,
                     "{sign}{}.{}°",
-                    a.0.unsigned_abs() / 10,
-                    a.0.unsigned_abs() % 10
+                    a.as_deci_deg().unsigned_abs() / 10,
+                    a.as_deci_deg().unsigned_abs() % 10
                 )
             }
-            StyleValue::Scale(s) => write!(f, "scale {}", s.0),
+            StyleValue::Scale(s) => write!(f, "scale {}", s.raw_256()),
             StyleValue::Font(font) => write!(f, "font@{:p} ({} px lines)", font, font.line_height),
             StyleValue::Image(i) => write!(f, "image {i}"),
             StyleValue::Grad(g) => write!(f, "gradient ({} stops)", g.stops().len()),
@@ -217,7 +218,67 @@ macro_rules! prop_value_int {
     )*};
 }
 
-prop_value_int!(u8, u32);
+prop_value_int!(u8, u16, u32);
+
+/// A radius is stored as a pixel `Length` (`Circle` in the renderer's compact encoding), so
+/// readers of the property see an ordinary length and the engine resolves `Dp` like any other.
+impl PropValue for Radius {
+    #[inline]
+    fn into_value(self) -> StyleValue {
+        StyleValue::Length(self.to_length())
+    }
+    #[inline]
+    fn from_value(v: StyleValue) -> Option<Self> {
+        match v {
+            StyleValue::Length(l) => Radius::from_length(l),
+            _ => None,
+        }
+    }
+}
+
+/// A duration is stored as whole milliseconds in an `Int` (saturating at `i32::MAX` ms, about
+/// 24 days), the representation widgets read (LVGL `anim_duration` is in ms).
+impl PropValue for Duration {
+    #[inline]
+    fn into_value(self) -> StyleValue {
+        StyleValue::Int(i32::try_from(self.as_millis()).unwrap_or(i32::MAX))
+    }
+    #[inline]
+    fn from_value(v: StyleValue) -> Option<Self> {
+        match v {
+            StyleValue::Int(ms) => u64::try_from(ms).ok().map(Duration::ms),
+            _ => None,
+        }
+    }
+}
+
+/// A style duration is stored as whole milliseconds in an `Int` (like [`Duration`]).
+impl PropValue for DurationMs {
+    #[inline]
+    fn into_value(self) -> StyleValue {
+        StyleValue::Int(i32::try_from(self.as_millis()).unwrap_or(i32::MAX))
+    }
+    #[inline]
+    fn from_value(v: StyleValue) -> Option<Self> {
+        Duration::from_value(v).map(DurationMs::from_duration)
+    }
+}
+
+/// A fraction is stored as its 8-bit value (`0..=255`) in an `Int`, the representation the
+/// renderer reads (LVGL gradient stops).
+impl PropValue for Fraction {
+    #[inline]
+    fn into_value(self) -> StyleValue {
+        StyleValue::Int(i32::from(self.raw()))
+    }
+    #[inline]
+    fn from_value(v: StyleValue) -> Option<Self> {
+        match v {
+            StyleValue::Int(x) => u8::try_from(x).ok().map(Fraction::from_raw),
+            _ => None,
+        }
+    }
+}
 
 macro_rules! prop_value_enum {
     ($($t:ty),* $(,)?) => {$(
@@ -247,7 +308,8 @@ prop_value_enum!(
     Align,
     BaseDir,
     FlexFlow,
-    FlexAlign,
+    MainAlign,
+    CrossAlign,
     GridAlign,
     LayoutKind,
     GradDir,
@@ -259,7 +321,6 @@ prop_value_enum!(
     BlendMode,
     BorderSide,
     TextDecor,
-    Dir,
 );
 
 macro_rules! accessors {
@@ -279,6 +340,38 @@ impl StyleValue {
     #[must_use]
     pub fn get<T: PropValue>(self) -> Option<T> {
         T::from_value(self)
+    }
+
+    /// The value in pixels of an `Int` or a `Length::Px` (spacing properties such as padding
+    /// are pixel lengths; the engine has converted `Dp` by the time a resolved value is read).
+    /// `None` for anything else.
+    #[inline]
+    #[must_use]
+    pub const fn as_px(self) -> Option<i32> {
+        match self {
+            StyleValue::Int(v) | StyleValue::Length(Length::Px(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// This value with a `Length::Dp` converted to pixels for a `dpi` display; every other
+    /// value is returned unchanged (the engine calls it on resolved values).
+    #[inline]
+    #[must_use]
+    pub const fn with_dpi(self, dpi: u16) -> StyleValue {
+        match self {
+            StyleValue::Length(Length::Dp(v)) => {
+                StyleValue::Length(Length::Px(crate::value_types::dpx(v, dpi)))
+            }
+            other => other,
+        }
+    }
+
+    /// Whether this is a density-independent length (`Length::Dp`).
+    #[inline]
+    #[must_use]
+    pub const fn is_dp(&self) -> bool {
+        matches!(self, StyleValue::Length(Length::Dp(_)))
     }
 
     /// Whether this is [`StyleValue::None`].
@@ -324,8 +417,10 @@ impl StyleValue {
         as_base_dir -> BaseDir;
         /// A [`FlexFlow`] code.
         as_flex_flow -> FlexFlow;
-        /// A [`FlexAlign`] code.
-        as_flex_align -> FlexAlign;
+        /// A [`MainAlign`] code.
+        as_main_align -> MainAlign;
+        /// A [`CrossAlign`] code.
+        as_cross_align -> CrossAlign;
         /// A [`GridAlign`] code.
         as_grid_align -> GridAlign;
         /// A [`LayoutKind`] code.
@@ -379,8 +474,8 @@ mod tests {
         assert_eq!(StyleValue::Int(30).get::<u8>(), Some(30));
         assert_eq!(StyleValue::Enum(200).as_align(), None);
         assert_eq!(
-            StyleValue::from(FlexFlow::ColumnWrap).as_flex_flow(),
-            Some(FlexFlow::ColumnWrap)
+            StyleValue::from(FlexFlow::COLUMN.wrap(true)).as_flex_flow(),
+            Some(FlexFlow::COLUMN.wrap(true))
         );
         assert_eq!(
             StyleValue::Length(Length::Content).as_length(),
@@ -394,9 +489,10 @@ mod tests {
     fn display() {
         use std::string::ToString;
         assert_eq!(StyleValue::Length(Length::Pct(50)).to_string(), "50%");
+        assert_eq!(StyleValue::Length(Length::Dp(8)).to_string(), "8dp");
         assert_eq!(StyleValue::Color(Color::RED).to_string(), "#FF0000");
-        assert_eq!(StyleValue::Angle(Angle(-15)).to_string(), "-1.5°");
-        assert_eq!(StyleValue::Angle(Angle(-5)).to_string(), "-0.5°");
+        assert_eq!(StyleValue::Angle(Angle::deci_deg(-15)).to_string(), "-1.5°");
+        assert_eq!(StyleValue::Angle(Angle::deci_deg(-5)).to_string(), "-0.5°");
         assert_eq!(StyleValue::None.to_string(), "none");
     }
 }

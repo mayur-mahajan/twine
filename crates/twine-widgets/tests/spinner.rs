@@ -72,7 +72,7 @@ fn spinner_anim_params_same_value_no_restart() {
 fn spinner_angles_follow_lvgl() {
     let w = Spinner::new();
     // v = 0: start 0°, end = sweep.
-    assert_eq!(w.angles_at(0), (Angle(0), Angle::deg(200)));
+    assert_eq!(w.angles_at(0), (Angle::deci_deg(0), Angle::deg(200)));
     // v = 1024: a full turn for both.
     assert_eq!(w.angles_at(1024), (Angle::deg(360), Angle::deg(560)));
     // The end is linear, the start follows LVGL's bezier; the arc never vanishes.
@@ -80,18 +80,21 @@ fn spinner_angles_follow_lvgl() {
     assert_eq!(e, Angle::deg(290));
     for v in 0..=1024 {
         let (s, e) = w.angles_at(v);
-        assert!(e.0 - s.0 > 0 && e.0 - s.0 <= 2000, "v {v}: {s} .. {e}");
+        assert!(
+            e.as_deci_deg() - s.as_deci_deg() > 0 && e.as_deci_deg() - s.as_deci_deg() <= 2000,
+            "v {v}: {s} .. {e}"
+        );
     }
 }
 
 #[test]
 fn spinner_anim_is_infinite_and_continuous() {
     let (mut h, s) = scene(Mode::Light, 160, 160, 60);
-    let mut prev = get::<Spinner>(&h, s).arc().angle_end().0;
+    let mut prev = get::<Spinner>(&h, s).arc().angle_end().as_deci_deg();
     let mut moved = 0;
     for _ in 0..(5000 / 16) {
         h.advance(Duration::ms(16));
-        let end = get::<Spinner>(&h, s).arc().angle_end().0;
+        let end = get::<Spinner>(&h, s).arc().angle_end().as_deci_deg();
         let step = (end - prev).rem_euclid(3600);
         // Linear end: 360° per second = 5.76° per 16 ms frame.
         assert!(step <= 70, "jump of {step} (0.1°)");

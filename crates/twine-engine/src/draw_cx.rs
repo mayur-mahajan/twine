@@ -289,8 +289,8 @@ impl<'a, 'p> DrawCx<'a, 'p> {
             return;
         }
         let rs = self.rect_dsc(part);
-        let img = self.style(part, PropId::BgImageSrc).get::<&'static ImageSource>();
-        let img_opa = self.opa_of(part, PropId::BgImageOpa);
+        let img = self.style(part, PropId::BgImage).get::<&'static ImageSource>();
+        let img_opa = self.opa_of(part, PropId::BgImageOpacity);
         match img {
             Some(src) if !img_opa.is_transparent() => {
                 // Background image between background and border: two passes.
@@ -376,7 +376,11 @@ impl<'a, 'p> DrawCx<'a, 'p> {
     /// Draws the border of `part` when it has `BorderPost` (called by the engine after the
     /// children).
     pub fn draw_border_post(&mut self, part: Part) {
-        if !self.style(part, PropId::BorderPost).as_bool().unwrap_or(false) {
+        if !self
+            .style(part, PropId::BorderAboveChildren)
+            .as_bool()
+            .unwrap_or(false)
+        {
             return;
         }
         let area = if part == Part::Main {

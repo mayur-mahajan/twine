@@ -7,7 +7,7 @@ use common::{Mode, harness};
 use twine_core::{Color, Opa, Point};
 use twine_engine::{MeasureCx, OBJ_CLASS, ObjFlags};
 use twine_render::BorderSide;
-use twine_style::{Align, Part, Selector, State, StyleProp};
+use twine_style::{Align, Length, Part, Radius, Selector, State, StyleProp};
 use twine_widgets::container::{self, CONTAINER_CLASS};
 use twine_widgets::label;
 
@@ -92,50 +92,50 @@ fn init_draw_rect_dsc_resolves_all_props() {
     let e = h.engine_mut();
     for p in [
         StyleProp::BgColor(Color::hex(0x0001_0203)),
-        StyleProp::BgOpa(Opa(201)),
-        StyleProp::Radius(9),
+        StyleProp::BgOpacity(Opa::from_raw(201)),
+        StyleProp::Radius(Radius::Px(9)),
         StyleProp::BorderColor(Color::hex(0x0004_0506)),
-        StyleProp::BorderWidth(3),
-        StyleProp::BorderOpa(Opa(202)),
+        StyleProp::BorderWidth(Length::Px(3)),
+        StyleProp::BorderOpacity(Opa::from_raw(202)),
         StyleProp::BorderSide(BorderSide::TOP | BorderSide::LEFT),
-        StyleProp::BorderPost(false),
+        StyleProp::BorderAboveChildren(false),
         StyleProp::OutlineColor(Color::hex(0x0007_0809)),
         StyleProp::OutlineWidth(4),
-        StyleProp::OutlineOpa(Opa(203)),
-        StyleProp::OutlinePad(5),
+        StyleProp::OutlineOpacity(Opa::from_raw(203)),
+        StyleProp::OutlineOffset(5),
         StyleProp::ShadowWidth(6),
         StyleProp::ShadowOffsetX(7),
         StyleProp::ShadowOffsetY(8),
         StyleProp::ShadowSpread(10),
         StyleProp::ShadowColor(Color::hex(0x000A_0B0C)),
-        StyleProp::ShadowOpa(Opa(204)),
+        StyleProp::ShadowOpacity(Opa::from_raw(204)),
     ] {
         e.set_local_prop(c, m, p);
     }
     let d = MeasureCx::new(h.engine(), c).rect_dsc(Part::Main).base;
     assert_eq!(d.bg_color, Color::hex(0x0001_0203));
-    assert_eq!(d.bg_opa, Opa(201));
+    assert_eq!(d.bg_opa, Opa::from_raw(201));
     assert_eq!(d.radius, 9);
     assert_eq!(d.border_color, Color::hex(0x0004_0506));
     assert_eq!(d.border_width, 3);
-    assert_eq!(d.border_opa, Opa(202));
+    assert_eq!(d.border_opa, Opa::from_raw(202));
     assert_eq!(d.border_side, BorderSide::TOP | BorderSide::LEFT);
     assert!(!d.border_post);
     assert_eq!(d.outline_color, Color::hex(0x0007_0809));
     assert_eq!(d.outline_width, 4);
-    assert_eq!(d.outline_opa, Opa(203));
+    assert_eq!(d.outline_opa, Opa::from_raw(203));
     assert_eq!(d.outline_pad, 5);
     assert_eq!(d.shadow.width, 6);
     assert_eq!(d.shadow.ofs_x, 7);
     assert_eq!(d.shadow.ofs_y, 8);
     assert_eq!(d.shadow.spread, 10);
     assert_eq!(d.shadow.color, Color::hex(0x000A_0B0C));
-    assert_eq!(d.shadow.opa, Opa(204));
+    assert_eq!(d.shadow.opa, Opa::from_raw(204));
     // The style `Recolor` applies to every color (LVGL 9.3+).
     h.engine_mut()
         .set_local_prop(c, m, StyleProp::Recolor(Color::BLACK));
     h.engine_mut()
-        .set_local_prop(c, m, StyleProp::RecolorOpa(Opa::COVER));
+        .set_local_prop(c, m, StyleProp::RecolorOpacity(Opa::COVER));
     let d = MeasureCx::new(h.engine(), c).rect_dsc(Part::Main).base;
     assert_eq!(d.bg_color, Color::BLACK);
     assert_eq!(d.border_color, Color::BLACK);

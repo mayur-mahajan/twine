@@ -16,7 +16,7 @@
 
 use twine_anim::{Anim, AnimProp, AnimTarget, Easing};
 use twine_core::{Duration, Point, Rect};
-use twine_style::{BaseDir, Dir, Part, PropId, ScrollSnap, ScrollbarMode};
+use twine_style::{BaseDir, Part, PropId, ScrollSnap, ScrollbarMode, Sides};
 
 use crate::{Engine, EventCode, EventParam, InvalidateReason, MeasureCx, NodeId, ObjFlags, fmt_node_id};
 
@@ -36,7 +36,7 @@ pub(crate) const COORD_MIN: i32 = -COORD_MAX;
 /// Scroll settings of a node (LVGL `spec_attr` scroll fields), 4 bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ScrollAttrs {
-    pub(crate) dir: Dir,
+    pub(crate) dir: Sides,
     pub(crate) scrollbar_mode: ScrollbarMode,
     pub(crate) snap_x: ScrollSnap,
     pub(crate) snap_y: ScrollSnap,
@@ -45,7 +45,7 @@ pub(crate) struct ScrollAttrs {
 impl ScrollAttrs {
     /// LVGL's defaults: all directions, `Auto` scrollbars, no snapping.
     pub(crate) const DEFAULT: ScrollAttrs = ScrollAttrs {
-        dir: Dir::ALL,
+        dir: Sides::ALL,
         scrollbar_mode: ScrollbarMode::Auto,
         snap_x: ScrollSnap::None,
         snap_y: ScrollSnap::None,
@@ -98,14 +98,17 @@ impl Engine {
         old != n.scroll_attrs
     }
 
-    /// Sets the directions `id` can be scrolled in (default [`Dir::ALL`]). Idempotent.
-    pub fn set_scroll_dir(&mut self, id: NodeId, dir: Dir) {
+    /// Sets the directions `id` can be scrolled in (default [`Sides::ALL`]): an
+    /// [`Axis`](twine_style::Axis) or any set of [`Sides`] (e.g. only `Sides::LEFT`; the empty
+    /// set disables scrolling). Idempotent.
+    pub fn set_scroll_dir(&mut self, id: NodeId, dir: impl Into<Sides>) {
+        let dir = dir.into();
         self.with_scroll_attrs(id, "set_scroll_dir", |a| a.dir = dir);
     }
 
     /// The directions `id` can be scrolled in.
     #[must_use]
-    pub fn scroll_dir(&self, id: NodeId) -> Dir {
+    pub fn scroll_dir(&self, id: NodeId) -> Sides {
         self.scroll_attrs(id).dir
     }
 
@@ -667,16 +670,16 @@ impl Engine {
         // Remove any pending scroll animations.
         self.stop_scroll_anim(parent);
         let dir = attrs.dir;
-        if !dir.contains(Dir::LEFT) && x_scroll < 0 {
+        if !dir.contains(Sides::LEFT) && x_scroll < 0 {
             x_scroll = 0;
         }
-        if !dir.contains(Dir::RIGHT) && x_scroll > 0 {
+        if !dir.contains(Sides::RIGHT) && x_scroll > 0 {
             x_scroll = 0;
         }
-        if !dir.contains(Dir::TOP) && y_scroll < 0 {
+        if !dir.contains(Sides::TOP) && y_scroll < 0 {
             y_scroll = 0;
         }
-        if !dir.contains(Dir::BOTTOM) && y_scroll > 0 {
+        if !dir.contains(Sides::BOTTOM) && y_scroll > 0 {
             y_scroll = 0;
         }
         if anim {

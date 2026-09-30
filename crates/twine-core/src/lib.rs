@@ -18,8 +18,10 @@
 //! | [`time`] | [`Instant`], [`Duration`] (µs) |
 //! | [`arena`] | [`Arena<T>`], generational [`Id<T>`] |
 //! | [`small_vec`] | [`SmallVec`] (inline-first vector) |
+//! | [`symbol`] | [`Symbol`] (built-in icon glyphs, LVGL `LV_SYMBOL_*`) |
 //! | [`rect_set`] | [`RectSet`] (dirty areas, LVGL join policy) |
 //! | [`mod@error`] | [`Error`] |
+//! | [`fault`] | [`FaultKind`], [`Faults`], [`FaultCounts`]: failures Twine recovered from, reported to the application |
 //! | [`rng`] | [`XorShift32`] (deterministic, non-cryptographic) |
 //! | [`log`] | `trace!`, `debug!`, `info!`, `warn!`, `error!` (log / defmt / none backends) |
 //! | [`prelude`] | the most used types |
@@ -61,6 +63,7 @@ extern crate std;
 pub mod arena;
 pub mod color;
 pub mod error;
+pub mod fault;
 pub mod geometry;
 pub mod log;
 pub mod math;
@@ -68,17 +71,20 @@ pub mod prelude;
 pub mod rect_set;
 pub mod rng;
 pub mod small_vec;
+pub mod symbol;
 pub mod time;
 pub mod transform;
 
 pub use arena::{Arena, Id};
 pub use color::{Color, ColorFormat, Opa, PixelFormat};
 pub use error::Error;
+pub use fault::{FaultCounts, FaultKind, Faults};
 pub use geometry::*;
-pub use math::{Angle, Fx, Scale};
+pub use math::{Angle, AngularSpeed, Fraction, Fx, Scale};
 pub use rect_set::{AddResult, RectSet};
 pub use rng::XorShift32;
 pub use small_vec::SmallVec;
+pub use symbol::Symbol;
 pub use time::{Duration, Instant};
 pub use transform::Transform;
 

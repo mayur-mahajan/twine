@@ -35,7 +35,7 @@ use read::{TexelOps, pack, with_texel};
 /// ```
 /// use twine_core::{Angle, Opa};
 /// use twine_render::ImageDsc;
-/// let dsc = ImageDsc { opa: Opa::from_percent(50), angle: Angle::deg(30), ..ImageDsc::default() };
+/// let dsc = ImageDsc { opa: Opa::pct(50), angle: Angle::deg(30), ..ImageDsc::default() };
 /// assert!(dsc.is_transformed());
 /// assert!(!ImageDsc::default().is_transformed());
 /// ```
@@ -82,7 +82,7 @@ impl Default for ImageDsc<'_> {
             tile: false,
             clip_radius: 0,
             antialias: true,
-            angle: Angle(0),
+            angle: Angle::deci_deg(0),
             scale_x: Scale::ONE,
             scale_y: Scale::ONE,
             pivot: Point::new(0, 0),
@@ -96,7 +96,7 @@ impl ImageDsc<'_> {
     /// Whether the image is rotated or scaled (`angle` is taken modulo 360°).
     #[must_use]
     pub fn is_transformed(&self) -> bool {
-        self.angle.normalized().0 != 0 || self.scale_x != Scale::ONE || self.scale_y != Scale::ONE
+        self.angle.normalized().as_deci_deg() != 0 || self.scale_x != Scale::ONE || self.scale_y != Scale::ONE
     }
 
     /// The texel operations for an image of `format`.
@@ -128,7 +128,7 @@ impl ImageDsc<'_> {
 /// ```
 #[must_use]
 pub fn transformed_area(area: Rect, angle: Angle, scale_x: Scale, scale_y: Scale, pivot: Point) -> Rect {
-    if angle.normalized().0 == 0 && scale_x == Scale::ONE && scale_y == Scale::ONE {
+    if angle.normalized().as_deci_deg() == 0 && scale_x == Scale::ONE && scale_y == Scale::ONE {
         return area;
     }
     let p = Point::new(area.x0 + pivot.x, area.y0 + pivot.y);
@@ -481,7 +481,13 @@ mod tests {
             transformed_area(a, Angle::deg(360), Scale::ONE, Scale::ONE, Point::new(3, 3)),
             a
         );
-        let r = transformed_area(a, Angle(0), Scale(512), Scale(512), Point::new(0, 0));
+        let r = transformed_area(
+            a,
+            Angle::deci_deg(0),
+            Scale::from_raw_256(512),
+            Scale::from_raw_256(512),
+            Point::new(0, 0),
+        );
         assert_eq!(r, Rect::from_xywh(10, 10, 40, 20));
     }
 }

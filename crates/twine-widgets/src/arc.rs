@@ -7,7 +7,7 @@
 use alloc::boxed::Box;
 
 use twine_core::math::{atan2, cos, sin};
-use twine_core::{Angle, Duration, Point, Rect};
+use twine_core::{Angle, AngularSpeed, Duration, Point, Rect};
 use twine_engine::{
     Anim, AnimId, AnimProp, DrawCx, Editable, Engine, EngineError, Event, EventCode, EventCx, EventParam,
     EventResult, InputKind, Key, MeasureCx, NodeId, OBJ_FLAGS, ObjFlags, Repeat, Widget, WidgetClass,
@@ -104,7 +104,7 @@ impl DragClock {
 ///   the indicator angles as LVGL's `value_update` does; [`ArcMode::Reverse`] grows
 ///   counter-clockwise from the end, [`ArcMode::Symmetrical`] from the middle.
 /// - **Dragging**: pressing the ring and moving sets the value from the pointer's angle. The
-///   angle moves at most [`change_rate`](Self::change_rate) degrees per second (default 720)
+///   angle moves at most [`change_rate`](Self::change_rate) (default 720 °/s)
 ///   and never jumps across the gap between the ends. `ValueChanged` (with the value as
 ///   [`EventParam::Value`]) is sent on each change.
 /// - **Keys** / encoder: ±1 per step.
@@ -211,8 +211,8 @@ pub(crate) fn arc_segment_area(c: Point, r: i32, w: i32, start: i32, end: i32, r
     let ri = r - w;
     let mut b: Option<Rect> = None;
     let mut add = |a: i32, rad: i32| {
-        let x = c.x + ((i64::from(rad) * i64::from(cos(Angle(a)))) >> 15) as i32;
-        let y = c.y + ((i64::from(rad) * i64::from(sin(Angle(a)))) >> 15) as i32;
+        let x = c.x + ((i64::from(rad) * i64::from(cos(Angle::deci_deg(a)))) >> 15) as i32;
+        let y = c.y + ((i64::from(rad) * i64::from(sin(Angle::deci_deg(a)))) >> 15) as i32;
         let p = Rect::new(x - 1, y - 1, x + 2, y + 2);
         b = Some(b.map_or(p, |b| b.union(&p)));
     };
@@ -281,31 +281,31 @@ impl Arc {
     /// The indicator's start angle.
     #[must_use]
     pub fn angle_start(&self) -> Angle {
-        Angle(self.indic_start)
+        Angle::deci_deg(self.indic_start)
     }
 
     /// The indicator's end angle.
     #[must_use]
     pub fn angle_end(&self) -> Angle {
-        Angle(self.indic_end)
+        Angle::deci_deg(self.indic_end)
     }
 
     /// The background's start angle.
     #[must_use]
     pub fn bg_angle_start(&self) -> Angle {
-        Angle(self.bg_start)
+        Angle::deci_deg(self.bg_start)
     }
 
     /// The background's end angle.
     #[must_use]
     pub fn bg_angle_end(&self) -> Angle {
-        Angle(self.bg_end)
+        Angle::deci_deg(self.bg_end)
     }
 
     /// The rotation of the whole arc.
     #[must_use]
     pub fn rotation(&self) -> Angle {
-        Angle(self.rotation)
+        Angle::deci_deg(self.rotation)
     }
 
     /// The mode.
@@ -314,16 +314,16 @@ impl Arc {
         self.mode
     }
 
-    /// The maximal drag speed in degrees per second.
+    /// The maximal drag speed.
     #[must_use]
-    pub fn change_rate(&self) -> u16 {
-        self.chg_rate
+    pub fn change_rate(&self) -> AngularSpeed {
+        AngularSpeed::deg_per_s(self.chg_rate)
     }
 
     /// The knob's angular offset from the indicator's end.
     #[must_use]
     pub fn knob_offset(&self) -> Angle {
-        Angle(self.knob_offset)
+        Angle::deci_deg(self.knob_offset)
     }
 
     /// Whether the arc is being dragged.
@@ -374,13 +374,13 @@ impl Arc {
     /// Sets the indicator's angles directly (LVGL `lv_arc_set_angles`; values are normalized
     /// to 0…360°). Idempotent.
     pub fn set_angles(&mut self, cx: &mut WidgetCx<'_>, start: Angle, end: Angle) {
-        self.set_indic(cx, start.0, end.0);
+        self.set_indic(cx, start.as_deci_deg(), end.as_deci_deg());
     }
 
     /// Sets the background's angles (LVGL `lv_arc_set_bg_angles`); the indicator follows the
     /// value. Idempotent.
     pub fn set_bg_angles(&mut self, cx: &mut WidgetCx<'_>, start: Angle, end: Angle) {
-        let (start, end) = (norm_incl(start.0), norm_incl(end.0));
+        let (start, end) = (norm_incl(start.as_deci_deg()), norm_incl(end.as_deci_deg()));
         if (start, end) == (self.bg_start, self.bg_end) {
             return;
         }
@@ -394,7 +394,7 @@ impl Arc {
 
     /// Turns the whole arc (LVGL `lv_arc_set_rotation`; normalized to 0…360°). Idempotent.
     pub fn set_rotation(&mut self, cx: &mut WidgetCx<'_>, rotation: Angle) {
-        let r = norm(rotation.0);
+        let r = norm(rotation.as_deci_deg());
         if r == self.rotation {
             return;
         }
@@ -429,9 +429,10 @@ impl Arc {
         self.value_update(cx);
     }
 
-    /// Limits how fast dragging may turn the value (degrees per second, LVGL
-    /// `lv_arc_set_change_rate`). Idempotent.
-    pub fn set_change_rate(&mut self, cx: &mut WidgetCx<'_>, rate: u16) {
+    /// Limits how fast dragging may turn the value (LVGL `lv_arc_set_change_rate`).
+    /// Idempotent.
+    pub fn set_change_rate(&mut self, cx: &mut WidgetCx<'_>, rate: AngularSpeed) {
+        let rate = rate.as_deg_per_s();
         if self.chg_rate == rate {
             return;
         }
@@ -441,12 +442,12 @@ impl Arc {
 
     /// Moves the knob by `offset` along the arc (LVGL `lv_arc_set_knob_offset`). Idempotent.
     pub fn set_knob_offset(&mut self, cx: &mut WidgetCx<'_>, offset: Angle) {
-        if self.knob_offset == offset.0 {
+        if self.knob_offset == offset.as_deci_deg() {
             return;
         }
         log_set(self.name, cx.node(), "knob_offset");
         let old = self.knob_inv_area(&cx.measure());
-        self.knob_offset = offset.0;
+        self.knob_offset = offset.as_deci_deg();
         let new = self.knob_inv_area(&cx.measure());
         for a in [old, new].into_iter().flatten() {
             cx.invalidate_area(a);
@@ -603,7 +604,7 @@ impl Arc {
         let w = cx.style_i32(Part::Indicator, PropId::ArcWidth);
         let half = w / 2;
         let r = r - half - Self::indicator_max_pad(cx);
-        let a = Angle(self.knob_angle() + self.knob_offset);
+        let a = Angle::deci_deg(self.knob_angle() + self.knob_offset);
         let kx = ((i64::from(r) * i64::from(cos(a))) >> 15) as i32;
         let ky = ((i64::from(r) * i64::from(sin(a))) >> 15) as i32;
         let p = cx.padding(Part::Knob);
@@ -624,7 +625,7 @@ impl Arc {
             + m.style_i32(k, PropId::ShadowSpread)
             + m.style_i32(k, PropId::ShadowOffsetX).abs()
             + m.style_i32(k, PropId::ShadowOffsetY).abs();
-        let outline = m.style_i32(k, PropId::OutlineWidth) + m.style_i32(k, PropId::OutlinePad);
+        let outline = m.style_i32(k, PropId::OutlineWidth) + m.style_i32(k, PropId::OutlineOffset);
         shadow.max(outline)
     }
 
@@ -633,14 +634,14 @@ impl Arc {
     fn knob_inv_area(&self, m: &MeasureCx<'_>) -> Option<Rect> {
         let d = m.rect_dsc(Part::Knob).base;
         let img = m
-            .style(Part::Knob, PropId::BgImageSrc)
+            .style(Part::Knob, PropId::BgImage)
             .get::<&'static twine_image::ImageSource>()
             .is_some();
-        let visible = d.bg_opa.0 > twine_core::Opa::MIN.0
+        let visible = d.bg_opa.raw() > twine_core::Opa::MIN.raw()
             || img
-            || (d.border_opa.0 > twine_core::Opa::MIN.0 && d.border_width > 0)
-            || (d.outline_opa.0 > twine_core::Opa::MIN.0 && d.outline_width > 0)
-            || (d.shadow.opa.0 > twine_core::Opa::MIN.0 && d.shadow.width > 0);
+            || (d.border_opa.raw() > twine_core::Opa::MIN.raw() && d.border_width > 0)
+            || (d.outline_opa.raw() > twine_core::Opa::MIN.raw() && d.outline_width > 0)
+            || (d.shadow.opa.raw() > twine_core::Opa::MIN.raw() && d.shadow.width > 0);
         if !visible || m.coords().is_empty() {
             return None;
         }
@@ -719,7 +720,7 @@ impl Arc {
             return;
         }
         let bg_end = self.bg_end_unwrapped();
-        let mut angle = norm(atan2(py, px).0 - self.rotation - self.bg_start);
+        let mut angle = norm(atan2(py, px).as_deci_deg() - self.rotation - self.bg_start);
         r = r.max(1);
         let circumference = 2 * r * 314 / 100;
         let tolerance = TURN * util::dpx(cx.engine(), node, 20) / circumference.max(1);
@@ -807,7 +808,7 @@ impl Arc {
             let d = cx.arc_dsc(Part::Main);
             let (s, e) = (self.bg_start + self.rotation, self.bg_end + self.rotation);
             if s != e {
-                cx.painter().arc(c, r, Angle(s), Angle(e), &d);
+                cx.painter().arc(c, r, Angle::deci_deg(s), Angle::deci_deg(e), &d);
             }
         }
         let ir = r - Self::indicator_max_pad(&m);
@@ -815,7 +816,8 @@ impl Arc {
             let d = cx.arc_dsc(Part::Indicator);
             let (s, e) = (self.indic_start + self.rotation, self.indic_end + self.rotation);
             if s != e {
-                cx.painter().arc(c, ir, Angle(s), Angle(e), &d);
+                cx.painter()
+                    .arc(c, ir, Angle::deci_deg(s), Angle::deci_deg(e), &d);
             }
         }
         if knob {
@@ -869,7 +871,7 @@ impl Widget for Arc {
         if d2 < 4 * inner * inner {
             return false;
         }
-        let angle = norm(atan2(py as i32, px as i32).0 - self.rotation - self.bg_start);
+        let angle = norm(atan2(py as i32, px as i32).as_deci_deg() - self.rotation - self.bg_start);
         let circ = (2 * r * 314 / 100).max(1);
         let tolerance = TURN * util::dpx(cx.engine(), cx.node(), 20) / circ;
         if self.bg_bounds(angle, tolerance).is_none() {

@@ -1,12 +1,15 @@
 //! Lists: [`list`], [`list_text`] and [`list_button`].
 
+use twine_engine::ObjFlags;
 use twine_image::ImageSource;
 use twine_widgets::button::Button;
 use twine_widgets::image::Image;
 use twine_widgets::label::Label;
 use twine_widgets_ext::list::{self, LIST_BUTTON_CLASS, List};
 
+use crate::bind::bind_node;
 use crate::build::{WidgetView, widget_view};
+use crate::prop::{IntoIcon, Prop};
 use crate::text::{IntoText, TextProp, bind_label_text};
 use crate::view::ViewSeq;
 
@@ -21,7 +24,7 @@ use crate::view::ViewSeq;
 ///     list((
 ///         list_text("Files"),
 ///         for_each(move || names.get(), |n| n.clone(), |_, n| {
-///             list_button(Some(ImageSource::Symbol(symbols::FILE)), n)
+///             list_button(Symbol::File, n)
 ///         }),
 ///     ))
 /// }
@@ -41,17 +44,23 @@ pub fn list_text(text: impl IntoText) -> WidgetView<Label> {
     v.op(|cx, n| list::init_text(cx.engine(), n))
 }
 
-/// A button of a [`list()`]: an optional `icon` (a symbol or an image) and `text` in a row, the
-/// text scrolling circularly when too long. All button modifiers apply (`on_click`,
-/// `checkable`…).
-pub fn list_button(icon: Option<ImageSource>, text: impl IntoText) -> WidgetView<Button> {
+/// A button of a [`list()`]: an optional `icon` (`()` for none, a [`Symbol`](twine_text::Symbol),
+/// an image, or a signal/closure of `Option<ImageSource>`, which hides the image while `None`:
+/// see [`IntoIcon`]) and `text` in a row, the text scrolling circularly when too long.
+/// All button modifiers apply (`on_click`, `checkable`…).
+pub fn list_button(icon: impl IntoIcon, text: impl IntoText) -> WidgetView<Button> {
+    let icon = icon.into_icon();
     let text = text.into_text();
     widget_view(|| Button::with_class(&LIST_BUTTON_CLASS)).op(move |cx, btn| {
         list::init_button(cx.engine(), btn);
-        if let Some(src) = icon {
+        if !matches!(icon, Prop::Static(None)) {
             let img = cx.with_parent(btn, |cx| cx.create(Image::new()));
-            cx.engine()
-                .with_widget_mut(img, |i: &mut Image, wcx| i.set_src(wcx, src));
+            bind_node(cx, img, icon, |e, img, src: Option<ImageSource>| {
+                e.set_flag(img, ObjFlags::HIDDEN, src.is_none());
+                if let Some(src) = src {
+                    e.with_widget_mut(img, |i: &mut Image, wcx| i.set_src(wcx, src));
+                }
+            });
         }
         let lbl = cx.with_parent(btn, |cx| cx.create(Label::new("")));
         bind_label_text(cx, lbl, text);

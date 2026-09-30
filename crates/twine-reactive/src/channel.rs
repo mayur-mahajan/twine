@@ -4,15 +4,23 @@
 //! Neither type touches the reactive runtime: they only use `critical_section` and
 //! `portable_atomic` (load/store natively, read-modify-write through the critical-section
 //! fallback on targets without CAS such as thumbv6m), so they may be used from any context.
+//!
+//! **Wake-up routing.** Every root scope may own one `&'static UiWaker`
+//! ([`Scope::set_ui_waker`]). [`Scope::on_message`] registers a task [`Waker`] over the waker
+//! of the root that owns the handler in the channel ([`UiWaker::task_waker`]: no allocation,
+//! clone and drop are no-ops), so a send wakes exactly that UI. The routing is set up when a
+//! handler or a waker is registered and torn down when its scope is disposed; `try_send` and
+//! [`drain_channels`] do no extra work for it.
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::cell::{Cell, RefCell};
-use core::task::Waker;
+use core::task::{RawWaker, RawWakerVTable, Waker};
 
 use critical_section::Mutex;
 use portable_atomic::{AtomicBool, AtomicU32, Ordering};
-use twine_core::log::warn;
+use twine_core::fault::FaultKind;
+use twine_core::log::{debug, warn};
 
 use crate::batch::batch;
 use crate::global::with_runtime;
@@ -101,6 +109,209 @@ impl UiWaker {
     /// Whether the flag is set (not clearing it).
     pub fn is_set(&self) -> bool {
         self.flag.load(Ordering::Acquire)
+    }
+
+    /// Removes the registered task if it is `w` (or wakes the same task); returns whether it
+    /// was removed.
+    pub fn unregister(&self, w: &Waker) -> bool {
+        let old = critical_section::with(|cs| {
+            let cell = self.waker.borrow(cs);
+            match cell.take() {
+                Some(o) if o.will_wake(w) => Some(o),
+                other => {
+                    cell.set(other);
+                    None
+                }
+            }
+        });
+        let removed = old.is_some();
+        drop(old); // dropped outside the critical section
+        removed
+    }
+
+    /// Clears the flag and removes the registered task (a waker handed to a new owner).
+    pub fn reset(&self) {
+        let old = critical_section::with(|cs| self.waker.borrow(cs).take());
+        self.flag.store(false, Ordering::Release);
+        drop(old); // dropped outside the critical section
+    }
+
+    /// A task [`Waker`] that wakes this `UiWaker` (sets its flag and wakes the task
+    /// registered in it). It allocates nothing: the waker points to `self`, so cloning and
+    /// dropping it are no-ops, and it may be woken from any thread or interrupt.
+    ///
+    /// ```
+    /// use twine_reactive::UiWaker;
+    /// static W: UiWaker = UiWaker::new();
+    /// let w = W.task_waker();
+    /// w.clone().wake();
+    /// assert!(W.take());
+    /// assert!(w.will_wake(&W.task_waker()));
+    /// ```
+    #[must_use]
+    pub fn task_waker(&'static self) -> Waker {
+        let raw = RawWaker::new(core::ptr::from_ref(self).cast::<()>(), &TASK_WAKER_VTABLE);
+        // SAFETY: the vtable functions uphold the `RawWaker` contract: the data pointer is a
+        // `&'static UiWaker` (valid for the program's lifetime, so clones and drops need no
+        // bookkeeping), and `wake`/`wake_by_ref` only call `UiWaker::wake`, which is thread-
+        // and interrupt-safe (`UiWaker: Sync`).
+        #[allow(unsafe_code)]
+        unsafe {
+            Waker::from_raw(raw)
+        }
+    }
+
+    /// A `'static` waker for a new owner (a `Ui`), returned to a process-wide pool when the
+    /// [`WakerLease`] is dropped. See [`WakerLease`] for where the waker lives.
+    ///
+    /// ```
+    /// use twine_reactive::UiWaker;
+    /// let lease = UiWaker::lease();
+    /// let w = lease.get();
+    /// assert!(!w.is_set());
+    /// drop(lease); // back in the pool
+    /// ```
+    #[must_use]
+    pub fn lease() -> WakerLease {
+        WakerLease::acquire()
+    }
+}
+
+static TASK_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
+    task_waker_clone,
+    task_waker_wake,
+    task_waker_wake,
+    task_waker_drop,
+);
+
+#[allow(unsafe_code)]
+unsafe fn task_waker_clone(p: *const ()) -> RawWaker {
+    RawWaker::new(p, &TASK_WAKER_VTABLE)
+}
+
+#[allow(unsafe_code)]
+unsafe fn task_waker_wake(p: *const ()) {
+    // SAFETY: every `RawWaker` with this vtable is created by `UiWaker::task_waker` (or cloned
+    // from one) from a `&'static UiWaker`, so `p` points to a live `UiWaker` forever. `UiWaker`
+    // is `Sync` (an atomic flag and a critical-section mutex), so waking it from any thread or
+    // interrupt is sound.
+    let w = unsafe { &*p.cast::<UiWaker>() };
+    w.wake();
+}
+
+#[allow(unsafe_code)]
+unsafe fn task_waker_drop(_p: *const ()) {}
+
+/// Wakers kept in `static` memory: the first `STATIC_SLOTS` simultaneous leases use no heap.
+static POOL: [UiWaker; WakerLease::STATIC_SLOTS] = [const { UiWaker::new() }; WakerLease::STATIC_SLOTS];
+const _: () = assert!(WakerLease::STATIC_SLOTS <= 8, "POOL_USED is a u8 bitmap");
+/// Bit `i` set: `POOL[i]` is leased.
+static POOL_USED: Mutex<Cell<u8>> = Mutex::new(Cell::new(0));
+/// Heap wakers returned by their lease, ready for the next one (intrusive list: pushing and
+/// popping allocate nothing).
+static HEAP_FREE: Mutex<Cell<Option<&'static HeapWaker>>> = Mutex::new(Cell::new(None));
+
+/// A waker allocated once when the static slots are all leased; never freed (a task
+/// [`Waker`] over it may still exist in another context), but reused by later leases.
+struct HeapWaker {
+    waker: UiWaker,
+    next: Mutex<Cell<Option<&'static HeapWaker>>>,
+}
+
+/// Where a leased waker lives.
+#[derive(Clone, Copy)]
+enum Slot {
+    Static(u8),
+    Heap(&'static HeapWaker),
+}
+
+/// A `'static` [`UiWaker`] lent to one owner at a time ([`UiWaker::lease`]); returned (and
+/// [`reset`](UiWaker::reset)) when dropped.
+///
+/// The first [`STATIC_SLOTS`](Self::STATIC_SLOTS) leases alive at the same time are served
+/// from `static` memory (no heap). Beyond that a waker is allocated once and, when its lease
+/// ends, kept in a free list for the next lease: the heap used for wakers is bounded by the
+/// largest number of leases ever alive at once, so mounting and disposing a UI repeatedly
+/// does not grow it. Wakers are never freed because a task [`Waker`] over one
+/// ([`UiWaker::task_waker`]) may still be held by another context; the worst a stale one can
+/// do is one spurious wake-up of the waker's next owner.
+///
+/// An application that wants a waker it can name from interrupt handlers before the UI
+/// exists declares a `static UiWaker` and hands it to the `Ui` instead (no lease, no pool).
+pub struct WakerLease {
+    waker: &'static UiWaker,
+    slot: Slot,
+}
+
+impl core::fmt::Debug for WakerLease {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("WakerLease")
+            .field("static", &matches!(self.slot, Slot::Static(_)))
+            .field("waker", self.waker)
+            .finish()
+    }
+}
+
+impl WakerLease {
+    /// Leases served from `static` memory before the heap is used.
+    pub const STATIC_SLOTS: usize = 4;
+
+    fn acquire() -> WakerLease {
+        let slot = critical_section::with(|cs| {
+            let used = POOL_USED.borrow(cs);
+            let bits = used.get();
+            let free = bits.trailing_ones() as usize;
+            if free < Self::STATIC_SLOTS {
+                used.set(bits | (1 << free));
+                // `free < STATIC_SLOTS <= 8`: fits a `u8`.
+                return Some(Slot::Static(free as u8));
+            }
+            let head = HEAP_FREE.borrow(cs);
+            let h = head.get()?;
+            head.set(h.next.borrow(cs).take());
+            Some(Slot::Heap(h))
+        });
+        let slot = slot.unwrap_or_else(|| {
+            debug!(
+                target: "twine::reactive",
+                "waker pool: {} static slots leased; allocating a waker",
+                Self::STATIC_SLOTS
+            );
+            Slot::Heap(Box::leak(Box::new(HeapWaker {
+                waker: UiWaker::new(),
+                next: Mutex::new(Cell::new(None)),
+            })))
+        });
+        let waker = match slot {
+            Slot::Static(i) => &POOL[usize::from(i)],
+            Slot::Heap(h) => &h.waker,
+        };
+        waker.reset();
+        WakerLease { waker, slot }
+    }
+
+    /// The leased waker. The reference outlives the lease (it is `'static`), but once the
+    /// lease is dropped the waker may belong to another owner.
+    #[must_use]
+    pub fn get(&self) -> &'static UiWaker {
+        self.waker
+    }
+}
+
+impl Drop for WakerLease {
+    fn drop(&mut self) {
+        self.waker.reset();
+        critical_section::with(|cs| match self.slot {
+            Slot::Static(i) => {
+                let used = POOL_USED.borrow(cs);
+                used.set(used.get() & !(1 << i));
+            }
+            Slot::Heap(h) => {
+                let head = HEAP_FREE.borrow(cs);
+                h.next.borrow(cs).set(head.get());
+                head.set(Some(h));
+            }
+        });
     }
 }
 
@@ -221,11 +432,40 @@ pub(crate) struct ChannelReg {
     id: u64,
     scope: ScopeKey,
     chan: &'static dyn ChannelSource,
+    /// The waker of the root scope owning the handler, registered in the channel (`None`
+    /// while that root has none).
+    waker: Option<&'static UiWaker>,
     /// `None` while the handler is running (taken out of the runtime, R1).
     drain: Option<DrainFn>,
 }
 
-/// Removes the registrations of scope `s`; the caller drops them after releasing the borrow.
+/// Whether `a` and `b` are the same channel.
+fn same_channel(a: &'static dyn ChannelSource, b: &'static dyn ChannelSource) -> bool {
+    core::ptr::addr_eq(a, b)
+}
+
+/// The root of scope `s` (walking up the parents), or `None` if `s` is dead.
+pub(crate) fn root_of(inner: &Inner, s: ScopeKey) -> Option<ScopeKey> {
+    let mut cur = s;
+    loop {
+        match inner.scopes.get(cur)?.parent {
+            Some(p) => cur = p,
+            None => return Some(cur),
+        }
+    }
+}
+
+/// The waker set on root scope `root` ([`Scope::set_ui_waker`]).
+fn root_waker(inner: &Inner, root: ScopeKey) -> Option<&'static UiWaker> {
+    inner
+        .root_wakers
+        .iter()
+        .find(|(k, _)| *k == root)
+        .map(|&(_, w)| w)
+}
+
+/// Removes the registrations of scope `s`; the caller passes them to [`release_channels`]
+/// after releasing the borrow.
 pub(crate) fn take_scope_channels(inner: &mut Inner, s: ScopeKey) -> Vec<ChannelReg> {
     let mut removed = Vec::new();
     let mut i = 0;
@@ -239,12 +479,42 @@ pub(crate) fn take_scope_channels(inner: &mut Inner, s: ScopeKey) -> Vec<Channel
     removed
 }
 
+/// Undoes the wake-up routing of removed registrations (the runtime must not be borrowed):
+/// a channel still handled elsewhere wakes the UI of its remaining handler, any other channel
+/// stops waking the UI of the removed one. Drops the registrations.
+pub(crate) fn release_channels(removed: Vec<ChannelReg>) {
+    for reg in removed {
+        let Some(w) = reg.waker else {
+            continue;
+        };
+        let other = with_runtime(|rt| {
+            rt.inner
+                .borrow()
+                .channels
+                .iter()
+                .rev()
+                .filter(|r| same_channel(r.chan, reg.chan))
+                .find_map(|r| r.waker)
+        });
+        match other {
+            Some(o) => reg.chan.ui_waker().register(&o.task_waker()),
+            None => {
+                reg.chan.ui_waker().unregister(&w.task_waker());
+            }
+        }
+        drop(reg); // the handler is user code: dropped without the runtime borrowed (R1)
+    }
+}
+
 impl Scope {
     /// Calls `f` for every value received on `ch` while this scope is alive.
     ///
     /// Values are delivered by [`drain_channels`] (called by `Ui::update` inside one
-    /// [`batch`](crate::batch)). The registration is removed when the scope is disposed. On a
-    /// dead scope this is a no-op with a warning.
+    /// [`batch`](crate::batch)). A send wakes the waker of this scope's root
+    /// ([`set_ui_waker`](Scope::set_ui_waker)), i.e. the `Ui` the handler belongs to. A
+    /// channel wakes one UI: if handlers of several roots listen to the same channel, the
+    /// most recently registered one's. The registration is removed when the scope is
+    /// disposed. On a dead scope this is a no-op with a warning.
     ///
     /// ```
     /// use twine_reactive::{Channel, drain_channels};
@@ -265,6 +535,7 @@ impl Scope {
             let dropped = ch.take_dropped();
             if dropped > 0 {
                 warn!(target: "twine::reactive", "channel dropped {} messages", dropped);
+                crate::global::record_fault(FaultKind::ChannelOverflow, dropped);
             }
             let mut n = 0;
             while n < max {
@@ -280,16 +551,17 @@ impl Scope {
         let mut waker = None;
         let rejected = with_runtime(|rt| {
             let mut inner = rt.inner.borrow_mut();
-            if !inner.scopes.contains(scope) {
+            let Some(root) = root_of(&inner, scope) else {
                 return Some(drain);
-            }
-            waker.clone_from(&inner.ui_waker);
+            };
+            waker = root_waker(&inner, root);
             let id = inner.next_channel_id;
             inner.next_channel_id = id.wrapping_add(1);
             inner.channels.push(ChannelReg {
                 id,
                 scope,
                 chan: ch,
+                waker,
                 drain: Some(drain),
             });
             None
@@ -298,8 +570,79 @@ impl Scope {
             warn!(target: "twine::reactive", "on_message on disposed scope {:?}; ignored", scope);
             drop(d);
         } else if let Some(w) = waker {
-            ch.waker().register(&w);
+            ch.waker().register(&w.task_waker());
         }
+    }
+
+    /// Makes `waker` the waker of this root scope: every channel with an
+    /// [`on_message`](Scope::on_message) handler in the scope's tree (now or later) wakes it
+    /// on a send. Replaces a previous waker of the root. The waker is forgotten when the root
+    /// is disposed.
+    ///
+    /// Each `Ui` sets its own waker on its own root, so two `Ui`s sharing a runtime are woken
+    /// only by their own channels. A no-op with a warning on a dead or non-root scope.
+    ///
+    /// ```
+    /// use twine_reactive::{Channel, UiWaker};
+    /// static CH: Channel<u8, 2> = Channel::new();
+    /// static W: UiWaker = UiWaker::new();
+    /// let root = twine_reactive::create_root();
+    /// root.child().on_message(&CH, |_| {});
+    /// root.set_ui_waker(&W);
+    /// assert_eq!(root.ui_waker().map(|w| w as *const UiWaker), Some(&W as *const UiWaker));
+    /// CH.try_send(1).unwrap(); // e.g. from an interrupt
+    /// assert!(W.take());
+    /// ```
+    pub fn set_ui_waker(self, waker: &'static UiWaker) {
+        let root = self.key();
+        let targets = with_runtime(|rt| {
+            let mut inner = rt.inner.borrow_mut();
+            match inner.scopes.get(root) {
+                Some(d) if d.parent.is_none() => {}
+                Some(_) => return Err("not a root"),
+                None => return Err("disposed"),
+            }
+            match inner.root_wakers.iter_mut().find(|(k, _)| *k == root) {
+                Some(e) => e.1 = waker,
+                None => inner.root_wakers.push((root, waker)),
+            }
+            // Registrations of this root's tree: point them (and their channels) at `waker`.
+            let mut targets: Vec<&'static dyn ChannelSource> = Vec::new();
+            let Inner { channels, scopes, .. } = &mut *inner;
+            for reg in channels.iter_mut() {
+                let mut cur = Some(reg.scope);
+                while let Some(s) = cur {
+                    if s == root {
+                        reg.waker = Some(waker);
+                        targets.push(reg.chan);
+                        break;
+                    }
+                    cur = scopes.get(s).and_then(|d| d.parent);
+                }
+            }
+            Ok(targets)
+        });
+        match targets {
+            Ok(targets) => {
+                let w = waker.task_waker();
+                for chan in targets {
+                    chan.ui_waker().register(&w);
+                }
+            }
+            Err(why) => {
+                warn!(target: "twine::reactive", "set_ui_waker on {} scope {:?}; ignored", why, root);
+            }
+        }
+    }
+
+    /// The waker of this scope's root ([`set_ui_waker`](Scope::set_ui_waker)); `None` if it
+    /// has none or the scope is dead.
+    #[must_use]
+    pub fn ui_waker(self) -> Option<&'static UiWaker> {
+        with_runtime(|rt| {
+            let inner = rt.inner.borrow();
+            root_of(&inner, self.key()).and_then(|r| root_waker(&inner, r))
+        })
     }
 }
 
@@ -364,36 +707,6 @@ pub fn drain_channels(max_per_channel: usize) -> usize {
     })
 }
 
-/// Registers `w` in the [`UiWaker`] of every channel with an `on_message` registration, so a
-/// `try_send` on any of them wakes the UI task. The runtime keeps `w` and also registers it in
-/// the channels of later `on_message` calls.
-///
-/// ```
-/// use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
-/// use std::task::{Wake, Waker};
-/// struct Count(AtomicUsize);
-/// impl Wake for Count {
-///     fn wake(self: Arc<Self>) { self.0.fetch_add(1, Ordering::SeqCst); }
-/// }
-/// static CH: twine_reactive::Channel<u8, 2> = twine_reactive::Channel::new();
-/// let cx = twine_reactive::create_root();
-/// cx.on_message(&CH, |_| {});
-/// let count = Arc::new(Count(AtomicUsize::new(0)));
-/// twine_reactive::register_waker(&Waker::from(count.clone()));
-/// CH.try_send(1).unwrap();
-/// assert_eq!(count.0.load(Ordering::SeqCst), 1);
-/// ```
-pub fn register_waker(w: &Waker) {
-    let old = with_runtime(|rt| rt.inner.borrow_mut().ui_waker.replace(w.clone()));
-    drop(old); // outside the borrow (R1: a waker's drop is foreign code)
-    let mut i = 0;
-    // The registration list is re-read each step: nothing is borrowed while `register` runs.
-    while let Some(chan) = with_runtime(|rt| rt.inner.borrow().channels.get(i).map(|r| r.chan)) {
-        chan.ui_waker().register(w);
-        i += 1;
-    }
-}
-
 /// Whether any channel with an `on_message` registration has queued messages.
 ///
 /// ```
@@ -407,4 +720,37 @@ pub fn any_channel_pending() -> bool {
             .iter()
             .any(|r| r.chan.pending_len() > 0)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_waker_sets_the_flag_through_clones() {
+        static W: UiWaker = UiWaker::new();
+        let w: &'static UiWaker = &W;
+        let waker = w.task_waker();
+        let clone = waker.clone();
+        drop(waker);
+        clone.wake_by_ref();
+        assert!(w.take());
+        clone.wake();
+        assert!(w.take());
+        assert!(!w.is_set());
+    }
+
+    #[test]
+    fn unregister_removes_only_the_given_task() {
+        static A: UiWaker = UiWaker::new();
+        static B: UiWaker = UiWaker::new();
+        let ch: Channel<u8, 2> = Channel::new();
+        ch.waker().register(&A.task_waker());
+        assert!(!ch.waker().unregister(&B.task_waker()));
+        ch.try_send(1).unwrap();
+        assert!(A.take());
+        assert!(ch.waker().unregister(&A.task_waker()));
+        ch.try_send(2).unwrap();
+        assert!(!A.is_set());
+    }
 }

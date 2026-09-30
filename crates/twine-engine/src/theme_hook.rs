@@ -8,7 +8,7 @@
 use alloc::rc::Rc;
 
 use twine_core::{Color, Size};
-use twine_style::{EntryKind, Selector, StyleEntry, StyleRef};
+use twine_style::{EntryKind, Selector, StyleEntry, StyleRef, dpx};
 use twine_text::Font;
 
 use crate::{DisplayId, Engine, NodeId, Tree, WidgetClass, fmt_node_id};
@@ -204,17 +204,6 @@ impl<'a> ThemeCx<'a> {
     #[must_use]
     pub fn display(&self) -> DisplayId {
         self.display
-    }
-}
-
-/// `px` pixels at 160 DPI scaled to `dpi` (LVGL `LV_DPX_CALC`): 0 stays 0, positive values
-/// are at least 1, negative values are scaled symmetrically.
-#[must_use]
-pub(crate) fn dpx(px: i32, dpi: u16) -> i32 {
-    match px {
-        0 => 0,
-        p if p > 0 => ((i32::from(dpi) * p + 80) / 160).max(1),
-        p => -dpx(-p, dpi),
     }
 }
 

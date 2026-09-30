@@ -6,6 +6,8 @@ use common::{boxed, style, white_screen};
 use twine_core::{Color, ColorFormat, Instant, Opa, Rect, Rotation};
 use twine_engine::{BufferMode, Engine, EngineConfig, InvalidateReason, Wake};
 use twine_hal::{BufferSpec, DisplayDriver, DisplayInfo, DrawBufferMem};
+use twine_style::Length;
+use twine_style::Radius;
 use twine_style::StyleProp;
 use twine_testing::{EngineHarness, MemoryDisplay, MemoryDisplayError, leak_buffer};
 
@@ -18,7 +20,14 @@ fn scene(e: &mut Engine) {
     boxed(e, s, Rect::from_xywh(2, 3, 40, 12), Color::RED);
     boxed(e, s, Rect::from_xywh(60, 40, 30, 20), Color::BLUE);
     let r = boxed(e, s, Rect::from_xywh(20, 22, 30, 30), Color::hex(0x002E_7D32));
-    style(e, r, &[StyleProp::Radius(10), StyleProp::BorderWidth(3)]);
+    style(
+        e,
+        r,
+        &[
+            StyleProp::Radius(Radius::Px(10)),
+            StyleProp::BorderWidth(Length::Px(3)),
+        ],
+    );
 }
 
 fn render(rotation: Rotation, spec: BufferSpec) -> EngineHarness {
@@ -188,10 +197,10 @@ fn i1_output_thresholds_and_aligns() {
             style(
                 e,
                 s,
-                &[StyleProp::BgColor(Color::BLACK), StyleProp::BgOpa(Opa::COVER)],
+                &[StyleProp::BgColor(Color::BLACK), StyleProp::BgOpacity(Opa::COVER)],
             );
             let a = boxed(e, s, Rect::from_xywh(6, 6, 40, 24), Color::WHITE);
-            style(e, a, &[StyleProp::Radius(8)]);
+            style(e, a, &[StyleProp::Radius(Radius::Px(8))]);
             boxed(e, s, Rect::from_xywh(60, 10, 30, 30), Color::hex(0x80_80_80)); // luminance 128: white
             boxed(e, s, Rect::from_xywh(95, 10, 20, 30), Color::hex(0x7E_7E_7E)); // below: black
             let b = boxed(e, s, Rect::from_xywh(20, 38, 90, 20), Color::WHITE);
@@ -199,9 +208,9 @@ fn i1_output_thresholds_and_aligns() {
                 e,
                 b,
                 &[
-                    StyleProp::BorderWidth(4),
+                    StyleProp::BorderWidth(Length::Px(4)),
                     StyleProp::BorderColor(Color::BLACK),
-                    StyleProp::Radius(10),
+                    StyleProp::Radius(Radius::Px(10)),
                 ],
             );
         });
@@ -233,7 +242,7 @@ fn i1_output_thresholds_and_aligns() {
             style(
                 e,
                 s,
-                &[StyleProp::BgColor(Color::BLACK), StyleProp::BgOpa(Opa::COVER)],
+                &[StyleProp::BgColor(Color::BLACK), StyleProp::BgOpacity(Opa::COVER)],
             );
             boxed(e, s, Rect::from_xywh(8, 8, 16, 8), Color::WHITE);
         });

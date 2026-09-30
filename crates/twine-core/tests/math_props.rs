@@ -9,12 +9,12 @@ use twine_core::math::{atan2, cos, isqrt64, sin, udiv255};
 fn sin_within_2_of_f64() {
     for d in 0..3600 {
         let exact = (f64::from(d) / 10.0).to_radians().sin() * 32_767.0;
-        let s = sin(Angle(d));
+        let s = sin(Angle::deci_deg(d));
         assert!(
             (f64::from(s) - exact).abs() <= 2.0,
             "sin({d}) = {s}, expected {exact}"
         );
-        let c = cos(Angle(d));
+        let c = cos(Angle::deci_deg(d));
         let exact_c = (f64::from(d) / 10.0).to_radians().cos() * 32_767.0;
         assert!(
             (f64::from(c) - exact_c).abs() <= 2.0,
@@ -42,7 +42,7 @@ proptest! {
         prop_assume!(x != 0 || y != 0);
         let exact = f64::from(y).atan2(f64::from(x)).to_degrees() * 10.0;
         let exact = exact.rem_euclid(3600.0);
-        let got = atan2(y, x).0;
+        let got = atan2(y, x).as_deci_deg();
         prop_assert!((0..3600).contains(&got));
         let d = (f64::from(got) - exact).rem_euclid(3600.0);
         let d = d.min(3600.0 - d);

@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use twine_core::Rect;
 use twine_hal::Key;
-use twine_reactive::debug_stats;
+use twine_reactive::runtime_stats;
 use twine_testing::{TestUi, by_class, by_id, capture_logs};
 use twine_view::prelude::*;
 use twine_widgets::buttonmatrix::ButtonMatrix;
@@ -64,7 +64,12 @@ fn textarea_view_two_way() {
     t.type_text("m");
     settle(&mut t);
     assert_eq!(name.get_untracked(), "Adam");
-    assert_eq!(debug_stats().loop_cuts, 0);
+    assert_eq!(
+        runtime_stats()
+            .faults
+            .get(twine_reactive::FaultKind::EffectLoopCut),
+        0
+    );
     // Signal → text (cursor at the end).
     name.set(String::from("Grace"));
     settle(&mut t);
@@ -151,9 +156,9 @@ fn keyboard_types_into_bound_textarea() {
     tap_key(&mut t, "i");
     assert_eq!(name.get_untracked(), "hi");
     assert_eq!(ta_text(&t, "ta"), "hi");
-    tap_key(&mut t, symbols::BACKSPACE);
+    tap_key(&mut t, Symbol::Backspace.as_str());
     assert_eq!(name.get_untracked(), "h");
-    tap_key(&mut t, symbols::OK);
+    tap_key(&mut t, Symbol::Ok.as_str());
     assert_eq!(ready.get(), 1);
 }
 
@@ -177,7 +182,7 @@ fn keyboard_hidden_by_when_releases_textarea_and_idles() {
     });
     t.advance(Duration::ms(100));
     assert!(t.find(by_id("ta")).state().contains(State::FOCUSED));
-    tap_key(&mut t, symbols::OK);
+    tap_key(&mut t, Symbol::Ok.as_str());
     t.run_until_idle();
     assert!(t.find_all(by_class("keyboard")).is_empty());
     assert!(!t.find(by_id("ta")).state().contains(State::FOCUSED));
@@ -213,13 +218,12 @@ fn spinbox_view_two_way() {
 
 #[test]
 fn buttonmatrix_select_and_selected_model() {
-    static MAP: [&str; 7] = ["1", "2", "3", "\n", "4", "5", "6"];
     let picked = Rc::new(Cell::new(None));
     let p = picked.clone();
     let mut t = TestUi::new(240, 160).mount(move |cx| {
         let sel = cx.signal(None::<u16>);
         cx.provide(sel);
-        buttonmatrix(&MAP)
+        buttonmatrix([[btn("1"), btn("2"), btn("3")], [btn("4"), btn("5"), btn("6")]])
             .selected(sel)
             .on_select(move |i| p.set(Some(i)))
             .size(200, 100)
@@ -257,7 +261,7 @@ fn span_text_binding_redraws_only_the_group() {
                 span("Hello, "),
                 span(name)
                     .text_color(Color::hex(0x21_96_F3))
-                    .text_decor(TextDecor::UNDERLINE),
+                    .text_decoration(TextDecor::UNDERLINE),
                 span("!"),
             ))
             .mode(SpanMode::Break)
@@ -279,10 +283,10 @@ fn span_text_binding_redraws_only_the_group() {
     assert_eq!(texts(&t), ["Hello, ", "Ada", "!"]);
     let area = t.find(by_id("g")).coords();
     name.set(String::from("Grace"));
-    let runs = debug_stats().effect_runs;
+    let runs = runtime_stats().effect_runs;
     let period = t.engine().config().refr_period;
     t.advance(period);
-    assert_eq!(debug_stats().effect_runs - runs, 1);
+    assert_eq!(runtime_stats().effect_runs - runs, 1);
     assert_eq!(texts(&t), ["Hello, ", "Grace", "!"]);
     let inv: Vec<Rect> = t.invalidations().iter().map(|(r, _)| *r).collect();
     for r in &inv {
@@ -320,11 +324,66 @@ fn keyboard_removal_keeps_group_focus_of_textarea() {
         .size(Length::pct(100), Length::pct(100))
     });
     settle(&mut t);
-    tap_key(&mut t, symbols::OK);
+    tap_key(&mut t, Symbol::Ok.as_str());
     assert!(t.find_all(by_class("keyboard")).is_empty());
     // The textarea has the keypad focus: it stays focused (keypad typing goes on there).
     assert!(t.find(by_id("ta")).state().contains(State::FOCUSED));
     t.type_text("x");
     settle(&mut t);
     assert_eq!(ta_text(&t, "ta"), "x");
+}
+
+#[test]
+fn buttonmatrix_builder_maps_rows_widths_and_controls() {
+    let mut t = TestUi::new(240, 160).mount(|cx| {
+        let ok = cx.signal(String::from("OK"));
+        cx.provide(ok);
+        buttonmatrix([
+            vec![btn("1"), btn("").hidden(), btn("3").disabled()],
+            vec![
+                btn(ok).width(2).checkable().checked(),
+                btn("x").no_repeat().click_trig(),
+            ],
+            vec![btn("p").popover().custom_1().custom_2()],
+        ])
+        .size(200, 120)
+        .test_id("m")
+    });
+    t.run_until_idle();
+    let ok = t.root_scope().expect_context::<Signal<String>>();
+    let n = node(&t, "m");
+    {
+        let e = t.engine();
+        let m = e.widget::<ButtonMatrix>(n).unwrap();
+        assert_eq!((m.btn_count(), m.row_count()), (6, 3));
+        let texts: Vec<_> = (0..6).map(|i| m.btn_text(i).unwrap()).collect();
+        assert_eq!(
+            texts,
+            ["1", "", "3", "OK", "x", "p"],
+            "an empty text is a button, not the end"
+        );
+        let ctrl: Vec<_> = (0..6).map(|i| m.btn_ctrl(i).unwrap()).collect();
+        assert_eq!(
+            ctrl,
+            [
+                BtnCtrl::empty(),
+                BtnCtrl::HIDDEN,
+                BtnCtrl::DISABLED,
+                BtnCtrl::width(2) | BtnCtrl::CHECKABLE | BtnCtrl::CHECKED,
+                BtnCtrl::NO_REPEAT | BtnCtrl::CLICK_TRIG,
+                BtnCtrl::POPOVER | BtnCtrl::CUSTOM_1 | BtnCtrl::CUSTOM_2,
+            ]
+        );
+        // "OK" is twice as wide as "x" (rows share their width by units).
+        let mcx = MeasureCx::new(&e, n);
+        let (a, b) = (m.btn_area(&mcx, 3).unwrap(), m.btn_area(&mcx, 4).unwrap());
+        assert!((a.width() - 2 * b.width()).abs() <= 2, "{a:?} {b:?}");
+    }
+    // A dynamic text updates the map; the control bits stay.
+    ok.set(String::from("Done"));
+    t.run_until_idle();
+    let e = t.engine();
+    let m = e.widget::<ButtonMatrix>(n).unwrap();
+    assert_eq!(m.btn_text(3), Some("Done"));
+    assert!(m.has_btn_ctrl(3, BtnCtrl::CHECKED));
 }

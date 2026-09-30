@@ -4,13 +4,14 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::any::Any;
 
+use twine_core::fault::FaultKind;
 use twine_core::{ColorFormat, Rect, Rotation};
 use twine_hal::{DisplayDriver, DisplayInfo, DrawBufferMem, FramebufferDisplay};
 
 use crate::refresh::Refresher;
 use crate::{
-    DisplayId, Engine, EngineError, EventCode, EventParam, InvalidateReason, NodeId, Obj, ObjFlags, Widget,
-    fmt_node_id,
+    DisplayId, Engine, EngineError, EventCode, EventParam, FaultRecord, InvalidateReason, NodeId, Obj,
+    ObjFlags, Widget, fmt_node_id,
 };
 
 /// Maximum number of displays per engine.
@@ -82,7 +83,8 @@ impl BufferMode {
     }
 }
 
-/// Object-safe view of a [`DisplayDriver`] (errors mapped to [`EngineError::Driver`]).
+/// Object-safe view of a [`DisplayDriver`] (errors mapped to [`EngineError::Driver`], with
+/// the driver's error code).
 pub(crate) trait FlushBackend {
     fn begin_flush(&mut self, area: Rect, buf: DrawBufferMem) -> Result<(), EngineError>;
     fn poll_flush(&mut self) -> Option<DrawBufferMem>;
@@ -95,9 +97,10 @@ pub(crate) trait FlushBackend {
 impl<D: DisplayDriver + 'static> FlushBackend for D {
     fn begin_flush(&mut self, area: Rect, buf: DrawBufferMem) -> Result<(), EngineError> {
         DisplayDriver::begin_flush(self, area, buf).map_err(|e| {
-            let err = EngineError::driver(&e);
-            if let EngineError::Driver(msg) = &err {
-                twine_core::error!(target: "twine::driver", "flush {} failed: {}", area, msg.as_str());
+            let code = crate::DriverErrorCode::new(DisplayDriver::error_code(self, &e));
+            let err = EngineError::driver(code, &e);
+            if let EngineError::Driver { message, .. } = &err {
+                twine_core::error!(target: "twine::driver", "flush {} failed ({}): {}", area, code, message.as_str());
             }
             err
         })
@@ -130,9 +133,10 @@ pub(crate) trait FbBackend {
 impl<D: FramebufferDisplay + 'static> FbBackend for D {
     fn present(&mut self, index: u8) -> Result<(), EngineError> {
         FramebufferDisplay::present(self, index).map_err(|e| {
-            let err = EngineError::driver(&e);
-            if let EngineError::Driver(msg) = &err {
-                twine_core::error!(target: "twine::driver", "present {} failed: {}", index, msg.as_str());
+            let code = crate::DriverErrorCode::new(FramebufferDisplay::error_code(self, &e));
+            let err = EngineError::driver(code, &e);
+            if let EngineError::Driver { message, .. } = &err {
+                twine_core::error!(target: "twine::driver", "present {} failed ({}): {}", index, code, message.as_str());
             }
             err
         })
@@ -195,6 +199,8 @@ pub(crate) struct Display {
     pub(crate) perf_overlay: Option<NodeId>,
     /// The display's theme (LVGL `lv_display_set_theme`).
     pub(crate) theme: Option<alloc::rc::Rc<dyn crate::ThemeHook>>,
+    /// Flush health (consecutive errors, halted).
+    pub(crate) health: crate::health::HealthTracker,
 }
 
 impl Display {
@@ -225,6 +231,9 @@ impl Engine {
     /// Registers a display with an embedded frame memory (SPI/i80 panels). `buffers` must be
     /// [`BufferMode::Partial`]. Creates the display's bottom layer, first screen, top layer and
     /// system layer, and schedules a full redraw. The first display becomes the default one.
+    ///
+    /// Fails with [`EngineError::FormatDisabled`] (and raises [`FaultKind::FormatDisabled`])
+    /// when the renderer for the display's colour format is not compiled in.
     pub fn add_display(
         &mut self,
         driver: impl DisplayDriver + 'static,
@@ -237,6 +246,7 @@ impl Engine {
             return Err(EngineError::TooManyDisplays);
         }
         let info = DisplayDriver::info(&driver);
+        self.check_draw_format(&info, true)?;
         let refresher = Refresher::new_partial(&info, a, b)?;
         self.push_display(Backend::Flush(Box::new(driver)), info, refresher)
     }
@@ -246,6 +256,9 @@ impl Engine {
     /// [`refresh_end`](Self::refresh_end)): the caller owns the draw buffers (at least
     /// `chunk_bytes` each) and flushes each rendered chunk itself, e.g. through an async
     /// driver. Rotation, alignment and mono conversion work as with [`add_display`](Self::add_display).
+    ///
+    /// Fails with [`EngineError::FormatDisabled`] (and raises [`FaultKind::FormatDisabled`])
+    /// when the renderer for the display's colour format is not compiled in.
     ///
     /// ```
     /// use twine_core::ColorFormat;
@@ -272,6 +285,7 @@ impl Engine {
         if self.displays.len() >= MAX_DISPLAYS {
             return Err(EngineError::TooManyDisplays);
         }
+        self.check_draw_format(&info, true)?;
         let refresher = Refresher::new_external(&info, chunk_bytes)?;
         self.push_display(Backend::External(()), info, refresher)
     }
@@ -280,6 +294,9 @@ impl Engine {
     /// [`BufferMode::Full`] (the driver must hand out two framebuffers) or
     /// [`BufferMode::Direct`]. Each framebuffer must hold exactly `width × height` pixels.
     /// Software rotation is not available in these modes.
+    ///
+    /// Fails with [`EngineError::FormatDisabled`] (and raises [`FaultKind::FormatDisabled`])
+    /// when the renderer for the display's colour format is not compiled in.
     #[allow(clippy::needless_pass_by_value)] // symmetric with `add_display`, which consumes its buffers
     pub fn add_framebuffer_display(
         &mut self,
@@ -295,6 +312,7 @@ impl Engine {
             return Err(EngineError::TooManyDisplays);
         }
         let info = FramebufferDisplay::info(&driver);
+        self.check_draw_format(&info, false)?;
         if info.rotation != Rotation::Deg0 && !info.hw_rotation {
             return Err(EngineError::InvalidConfig(
                 "software rotation needs partial buffers",
@@ -308,6 +326,33 @@ impl Engine {
         let fbs = FramebufferDisplay::framebuffers(&mut driver).ok_or(EngineError::BufferModeMismatch)?;
         let refresher = Refresher::new_framebuffer(&info, fbs, full)?;
         self.push_display(Backend::Framebuffer(Box::new(driver)), info, refresher)
+    }
+
+    /// Refuses a display whose pixels the renderer cannot draw (see
+    /// [`EngineError::FormatDisabled`]) and raises [`FaultKind::FormatDisabled`] for it
+    /// (no display: it is not added; `code` = the draw format's LVGL discriminant). Runs once
+    /// per registration; a display's format cannot change afterwards, so rendering needs no
+    /// check.
+    fn check_draw_format(&mut self, info: &DisplayInfo, chunked: bool) -> Result<(), EngineError> {
+        // Partial and chunked `I1` panels are drawn in `L8` and converted per chunk.
+        let format = if chunked && info.format == ColorFormat::I1 {
+            ColorFormat::L8
+        } else {
+            info.format
+        };
+        if twine_render::is_format_enabled(format) {
+            return Ok(());
+        }
+        twine_core::error!(
+            target: "twine::engine",
+            "display {}x{} {} refused: drawing into {} is not compiled in (enable its `color-*` feature)",
+            info.width,
+            info.height,
+            info.format,
+            format
+        );
+        self.raise_fault(FaultRecord::new(FaultKind::FormatDisabled).code(u32::from(format as u8)));
+        Err(EngineError::FormatDisabled(format))
     }
 
     fn push_display(
@@ -348,6 +393,7 @@ impl Engine {
             #[cfg(feature = "perf-monitor")]
             perf_overlay: None,
             theme: None,
+            health: crate::health::HealthTracker::default(),
         });
         if self.default_display.is_none() {
             self.default_display = Some(id);
@@ -511,7 +557,7 @@ impl Engine {
             twine_core::warn!(target: "twine::engine", "create: parent {} not found", fmt_node_id(parent));
             return Err(EngineError::NodeNotFound(parent));
         }
-        let id = self.tree.create(Some(parent), widget)?;
+        let id = self.tree_create(Some(parent), widget)?;
         self.mark_layout(id, crate::LayoutDirty::SELF);
         // LVGL `lv_obj_class_init_obj`: the theme first, then the constructor.
         self.apply_theme_on_create(id);
@@ -533,10 +579,32 @@ impl Engine {
         Ok(id)
     }
 
+    /// [`Tree::create`](crate::Tree::create) within
+    /// [`EngineConfig::max_nodes`](crate::EngineConfig::max_nodes), raising
+    /// [`FaultKind::Capacity`] (with the parent) when the tree is full.
+    fn tree_create(
+        &mut self,
+        parent: Option<NodeId>,
+        widget: Box<dyn Widget>,
+    ) -> Result<NodeId, EngineError> {
+        let result = if self.tree.len() >= usize::from(self.config.max_nodes) {
+            Err(EngineError::TooManyNodes)
+        } else {
+            self.tree.create(parent, widget)
+        };
+        result.inspect_err(|e| {
+            if *e == EngineError::TooManyNodes {
+                twine_core::error!(target: "twine::engine", "create: too many nodes");
+                let r = FaultRecord::new(FaultKind::Capacity);
+                self.raise_fault(if let Some(p) = parent { r.node(p) } else { r });
+            }
+        })
+    }
+
     /// Creates a root node that belongs to no display (LVGL `lv_obj_create(NULL)` before the
     /// screen is used). Useful for tests and for building trees off-screen.
     pub fn create_root(&mut self, widget: Box<dyn Widget>) -> Result<NodeId, EngineError> {
-        let id = self.tree.create(None, widget)?;
+        let id = self.tree_create(None, widget)?;
         self.init_widget(id);
         self.group_auto_add(id);
         if self.tree.contains(id) {
@@ -641,6 +709,7 @@ impl Engine {
         self.anims_forget_nodes(&deleted);
         self.screen_anims_forget(&deleted);
         self.forget_outside_presses();
+        self.forget_grid_templates();
         for d in &mut self.displays {
             d.screens.retain(|s| *s != id);
             if d.prev_screen == Some(id) {

@@ -1,39 +1,70 @@
 //! The `style!` macro.
 
-/// Builds a `const` [`Style`](crate::Style) from `name: value` pairs.
+/// Builds a `const` [`Style`](crate::Style) from `key: value` pairs.
 ///
-/// Every property is accepted under its `snake_case` name (`bg_color`, `pad_top`, …; see
-/// [`PropId`](crate::PropId)), plus these shorthands:
+/// The keys are the property names of the style vocabulary (`bg_color`, `padding_top`,
+/// `font`, …; see [`PropId`](crate::PropId) and `PROPERTIES.md`), the same names as the
+/// [`StyleBuf`](crate::StyleBuf) builder methods and the `twine-view` modifiers, plus the
+/// shorthands of [`SHORTHANDS`](crate::SHORTHANDS):
 ///
-/// | Shorthand | Expands to |
-/// |-----------|------------|
-/// | `pad_all: v` | `pad_top`, `pad_bottom`, `pad_left`, `pad_right` |
-/// | `pad_hor: v` / `pad_ver: v` | left + right / top + bottom padding |
-/// | `pad_gap: v` | `pad_row` + `pad_column` |
-/// | `margin_all`, `margin_hor`, `margin_ver` | like the padding shorthands |
-/// | `size: (w, h)` | `width` + `height` |
-/// | `transform_scale: s` | `transform_scale_x` + `transform_scale_y` |
-/// | `border: (w, c)` | `border_width` + `border_color` |
+/// | Shorthand | Sets |
+/// |-----------|------|
+/// | `size: (w, h)`, `pos: (x, y)`, `translate: (x, y)` | `width` + `height`, `x` + `y`, `translate_x` + `translate_y` |
+/// | `offset: point` | `translate_x` + `translate_y` in pixels |
+/// | `padding: v`, `padding_x: v`, `padding_y: v`, `padding_each: insets` | all four / left + right / top + bottom / each side |
+/// | `margin`, `margin_x`, `margin_y`, `margin_each` | like the padding shorthands |
+/// | `gap: v` | `row_gap` + `column_gap` |
+/// | `bg: color` | `bg_color` + `bg_opacity: Opa::COVER` |
+/// | `border: (w, color)` | `border_width` + `border_color` + `border_opacity: Opa::COVER` |
+/// | `outline: (w, color, offset)` | `outline_width` + `outline_color` + `outline_opacity: Opa::COVER` + `outline_offset` |
+/// | `shadow: shadow_dsc`, `shadow_offset: (x, y)` | every shadow property / both offsets |
+/// | `transform_scale: s`, `transform_pivot: point` | both scale axes / both pivot coordinates |
+/// | `grid_col: span`, `grid_row: span`, `grid_align: (x, y)` | the grid cell placement (a `GridSpan`: first track and count) |
 ///
-/// Length properties (`width`, `x`, `translate_x`, `size`, …) accept integers (pixels) or any
-/// [`Length`](crate::Length) expression; scale properties accept integers (256 = 1.0) or a
-/// `Scale`. Later entries override earlier ones; unknown names are compile errors. The result
-/// is a `const` expression, so styles can be `static` (in flash).
+/// Length properties (`width`, `x`, `translate_x`, `size`, the spacing properties `padding`,
+/// `margin`, `gap`, `border_width`, …) accept integers (pixels) or any
+/// [`Length`](crate::Length) expression, e.g. `Length::dp(8)` (density-independent);
+/// `radius` accepts integers (pixels) or a [`Radius`](crate::Radius) (`Radius::Circle`).
+/// Unit-typed properties take typed values only: opacities an `Opa` (`Opa::pct(50)`), angles
+/// an `Angle` (`Angle::deg(30)`), scales a `Scale` (`Scale::pct(98)`), durations a
+/// `Duration`; a bare integer does not compile. Later entries override earlier ones; unknown
+/// names (including the former LVGL-style names such as `pad_all` or `bg_opa`) are compile
+/// errors. The result is a `const` expression,
+/// so styles can be `static` (in flash).
 ///
 /// ```
 /// use twine_core::{Color, Opa};
 /// use twine_style::{Length, PropId, Style, StyleValue, style};
 ///
 /// static CARD: Style = style! {
-///     bg_color: Color::WHITE,
-///     bg_opa: Opa::COVER,
+///     bg: Color::WHITE,
+///     bg_opacity: Opa::pct(90),
 ///     radius: 8,
-///     pad_all: 12,
+///     padding: 12,
+///     border: (1, Color::hex(0xDDDDDD)),
 ///     width: Length::pct(50),
 ///     height: 40,
 /// };
-/// assert_eq!(CARD.get(PropId::PadLeft), Some(StyleValue::Int(12)));
+/// assert_eq!(CARD.get(PropId::PaddingLeft), Some(StyleValue::Length(Length::Px(12))));
+/// assert_eq!(CARD.get(PropId::BgOpacity), Some(StyleValue::Opa(Opa::pct(90))));
 /// assert_eq!(CARD.get(PropId::Height), Some(StyleValue::Length(Length::Px(40))));
+/// ```
+///
+/// A bare integer is not an opacity, an angle or a scale:
+///
+/// ```compile_fail
+/// use twine_style::{Style, style};
+/// static S: Style = style! { bg_opacity: 128 }; // write Opa::pct(50) or Opa::from_raw(128)
+/// ```
+///
+/// ```compile_fail
+/// use twine_style::{Style, style};
+/// static S: Style = style! { transform_rotation: 300 }; // write Angle::deg(30)
+/// ```
+///
+/// ```compile_fail
+/// use twine_style::{Style, style};
+/// static S: Style = style! { transform_scale: 250 }; // write Scale::pct(98)
 /// ```
 #[macro_export]
 macro_rules! style {
@@ -42,72 +73,22 @@ macro_rules! style {
     };
 }
 
-/// Accumulates the property list of `style!` (tt-muncher).
+/// Accumulates the property list of `style!` (tt-muncher). Each entry goes through
+/// `__style_shorthand!` (generated from the shorthand table), which continues the muncher.
+/// Parenthesized values are passed as tokens so a shorthand can take a tuple of parameters.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __style_props {
     // Done.
     ([$($acc:expr),*] $(,)?) => { [$($acc),*] };
 
-    // Shorthands.
-    ([$($acc:expr),*] pad_all : $v:expr $(, $($rest:tt)*)?) => {
-        $crate::__style_props!([$($acc,)*
-            $crate::StyleProp::PadTop($v), $crate::StyleProp::PadBottom($v),
-            $crate::StyleProp::PadLeft($v), $crate::StyleProp::PadRight($v)] $($($rest)*)?)
-    };
-    ([$($acc:expr),*] pad_hor : $v:expr $(, $($rest:tt)*)?) => {
-        $crate::__style_props!([$($acc,)* $crate::StyleProp::PadLeft($v), $crate::StyleProp::PadRight($v)] $($($rest)*)?)
-    };
-    ([$($acc:expr),*] pad_ver : $v:expr $(, $($rest:tt)*)?) => {
-        $crate::__style_props!([$($acc,)* $crate::StyleProp::PadTop($v), $crate::StyleProp::PadBottom($v)] $($($rest)*)?)
-    };
-    ([$($acc:expr),*] pad_gap : $v:expr $(, $($rest:tt)*)?) => {
-        $crate::__style_props!([$($acc,)* $crate::StyleProp::PadRow($v), $crate::StyleProp::PadColumn($v)] $($($rest)*)?)
-    };
-    ([$($acc:expr),*] margin_all : $v:expr $(, $($rest:tt)*)?) => {
-        $crate::__style_props!([$($acc,)*
-            $crate::StyleProp::MarginTop($v), $crate::StyleProp::MarginBottom($v),
-            $crate::StyleProp::MarginLeft($v), $crate::StyleProp::MarginRight($v)] $($($rest)*)?)
-    };
-    ([$($acc:expr),*] margin_hor : $v:expr $(, $($rest:tt)*)?) => {
-        $crate::__style_props!([$($acc,)* $crate::StyleProp::MarginLeft($v), $crate::StyleProp::MarginRight($v)] $($($rest)*)?)
-    };
-    ([$($acc:expr),*] margin_ver : $v:expr $(, $($rest:tt)*)?) => {
-        $crate::__style_props!([$($acc,)* $crate::StyleProp::MarginTop($v), $crate::StyleProp::MarginBottom($v)] $($($rest)*)?)
-    };
-    ([$($acc:expr),*] size : ($w:expr, $h:expr $(,)?) $(, $($rest:tt)*)?) => {
-        $crate::__style_props!([$($acc,)*
-            $crate::StyleProp::Width($crate::__to_length!($w)),
-            $crate::StyleProp::Height($crate::__to_length!($h))] $($($rest)*)?)
-    };
-    ([$($acc:expr),*] transform_scale : $v:expr $(, $($rest:tt)*)?) => {
-        $crate::__style_props!([$($acc,)*
-            $crate::StyleProp::TransformScaleX($crate::__style_wrap!(scale, $v)),
-            $crate::StyleProp::TransformScaleY($crate::__style_wrap!(scale, $v))] $($($rest)*)?)
-    };
-    ([$($acc:expr),*] border : ($w:expr, $c:expr $(,)?) $(, $($rest:tt)*)?) => {
-        $crate::__style_props!([$($acc,)* $crate::StyleProp::BorderWidth($w), $crate::StyleProp::BorderColor($c)] $($($rest)*)?)
+    // A parenthesized value: a tuple of shorthand parameters (or a parenthesized expression).
+    ([$($acc:expr),*] $name:ident : ( $($inner:tt)* ) $(, $($rest:tt)*)?) => {
+        $crate::__style_shorthand!($name, ($($inner)*), [$($acc),*] $($($rest)*)?)
     };
 
-    // Any property.
+    // Any other value.
     ([$($acc:expr),*] $name:ident : $v:expr $(, $($rest:tt)*)?) => {
-        $crate::__style_props!([$($acc,)* $crate::__style_prop!($name, $v)] $($($rest)*)?)
-    };
-}
-
-/// Converts an integer (pixels) or a [`Length`](crate::Length) expression into a `Length` in
-/// `const` context (used by `style!` for length properties).
-///
-/// ```
-/// use twine_style::{__to_length, Length};
-/// const A: Length = __to_length!(10);
-/// const B: Length = __to_length!(Length::pct(20));
-/// assert_eq!((A, B), (Length::Px(10), Length::Pct(20)));
-/// ```
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __to_length {
-    ($v:expr) => {
-        $crate::__LengthArg($v).get()
+        $crate::__style_shorthand!($name, ($v), [$($acc),*] $($($rest)*)?)
     };
 }

@@ -150,8 +150,8 @@ impl Checkbox {
     /// The text's size (one layout without width limit, LVGL `lv_text_get_size`).
     fn text_size(&self, m: &MeasureCx<'_>) -> Size {
         let mut l = TextLayout::new(self.text(), m.font(Part::Main));
-        l.letter_space = m.style_i32(Part::Main, PropId::TextLetterSpace);
-        l.line_space = m.style_i32(Part::Main, PropId::TextLineSpace);
+        l.letter_space = m.style_i32(Part::Main, PropId::LetterSpacing);
+        l.line_space = m.style_i32(Part::Main, PropId::LineSpacing);
         l.max_width = COORD_MAX;
         l.measure()
     }
@@ -215,7 +215,7 @@ impl Widget for Checkbox {
     fn content_size(&self, cx: &MeasureCx<'_>) -> Size {
         let font_h = i32::from(cx.font(Part::Main).line_height);
         let txt = self.text_size(cx);
-        let col = cx.style_i32(Part::Main, PropId::PadColumn);
+        let col = cx.style_i32(Part::Main, PropId::ColumnGap);
         let mp = cx.padding(Part::Indicator);
         let mw = font_h + mp.left + mp.right;
         let mh = font_h + mp.top + mp.bottom;
@@ -235,7 +235,7 @@ impl Widget for Checkbox {
         cx.draw_rect_style(grown.to_rect(), Part::Indicator);
         let font_h = i32::from(m.font(Part::Main).line_height);
         let txt = self.text_size(&m);
-        let col = m.style_i32(Part::Main, PropId::PadColumn);
+        let col = m.style_i32(Part::Main, PropId::ColumnGap);
         let y_ofs = (marker.height() - font_h) / 2;
         let top = m.padding(Part::Main).top + m.style_i32(Part::Main, PropId::BorderWidth);
         let y1 = m.coords().y0 + top + y_ofs;

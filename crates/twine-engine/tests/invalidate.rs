@@ -224,14 +224,14 @@ fn ext_draw_includes_shadow_and_outline() {
     style(
         &mut e,
         n,
-        &[StyleProp::OutlineWidth(15), StyleProp::OutlinePad(10)],
+        &[StyleProp::OutlineWidth(15), StyleProp::OutlineOffset(10)],
     );
     assert_eq!(e.tree().node(n).unwrap().ext_draw(), 25);
     style(
         &mut e,
         n,
         &[
-            StyleProp::ShadowOpa(twine_core::Opa::TRANSP),
+            StyleProp::ShadowOpacity(twine_core::Opa::TRANSP),
             StyleProp::OutlineWidth(1),
         ],
     );

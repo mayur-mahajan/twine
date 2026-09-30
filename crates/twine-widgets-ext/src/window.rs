@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 
 use twine_engine::{Engine, EngineError, NodeId, OBJ_FLAGS, Widget, WidgetClass, WidgetCx, fmt_node_id};
 use twine_image::ImageSource;
-use twine_style::{Align, FlexAlign, FlexFlow, Length};
+use twine_style::{Align, CrossAlign, FlexFlow, Length, MainAlign};
 use twine_text::LongMode;
 use twine_widgets::button::Button;
 use twine_widgets::image::Image;
@@ -49,7 +49,7 @@ pub fn default_header_height(dpi: u16) -> i32 {
 /// let w = window::create(h.engine_mut(), screen).unwrap();
 /// h.engine_mut().with_widget_mut(w, |win: &mut Window, cx| {
 ///     win.add_title(cx, "Settings");
-///     win.add_button(cx, ImageSource::Symbol(twine_text::symbols::CLOSE), 40);
+///     win.add_button(cx, ImageSource::symbol(twine_text::Symbol::Close), 40);
 /// });
 /// h.run_until_idle();
 /// let win = h.engine().widget::<Window>(w).unwrap();
@@ -159,7 +159,7 @@ impl Widget for Window {
         let dpi = util::display_dpi(cx.engine(), win);
         let e = cx.engine_mut();
         e.set_size(win, Length::pct(100), Length::pct(100));
-        util::set_flex(e, win, FlexFlow::Column);
+        util::set_flex(e, win, FlexFlow::COLUMN);
         let (Ok(header), Ok(content)) = (
             e.create(win, Box::new(ClassObj(&WIN_HEADER_CLASS))),
             e.create(win, Box::new(ClassObj(&WIN_CONTENT_CLASS))),
@@ -168,8 +168,8 @@ impl Widget for Window {
             return;
         };
         e.set_size(header, Length::pct(100), default_header_height(dpi));
-        util::set_flex(e, header, FlexFlow::Row);
-        e.set_flex_align(header, FlexAlign::Start, FlexAlign::Center, FlexAlign::Center);
+        util::set_flex(e, header, FlexFlow::ROW);
+        e.set_flex_align(header, MainAlign::Start, CrossAlign::Center, MainAlign::Center);
         e.set_flex_grow(content, 1);
         e.set_width(content, Length::pct(100));
         self.header = header;

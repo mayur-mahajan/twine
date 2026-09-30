@@ -6,7 +6,7 @@ use twine_assets::fonts::{MONTSERRAT_14, MONTSERRAT_14_SUBPX, MONTSERRAT_20, MON
 use twine_core::{Color, ColorFormat, Opa, Point, Rect};
 use twine_render::Painter;
 use twine_testing::{RenderHarness, assert_render_snapshot};
-use twine_text::{GlyphCache, TextAlign, TextDecor, TextDsc, draw_text, symbols};
+use twine_text::{GlyphCache, Symbol, TextAlign, TextDecor, TextDsc, draw_text};
 
 const W: u16 = 240;
 const H: u16 = 160;
@@ -121,7 +121,7 @@ fn ellipsis(p: &mut Painter<'_>, c: &mut GlyphCache) {
 fn opa_50(p: &mut Painter<'_>, c: &mut GlyphCache) {
     p.fill(Rect::from_xywh(0, 60, 240, 40), Color::hex(0x1565C0), Opa::COVER);
     let mut d = TextDsc::new(&MONTSERRAT_28);
-    d.opa = Opa(128);
+    d.opa = Opa::from_raw(128);
     draw_text(p, Rect::from_xywh(8, 20, 230, 40), "Half opaque", &d, c);
     d.color = Color::WHITE;
     draw_text(p, Rect::from_xywh(8, 64, 230, 40), "On blue 50 %", &d, c);
@@ -129,11 +129,11 @@ fn opa_50(p: &mut Painter<'_>, c: &mut GlyphCache) {
     d.color = Color::hex(0x6A1B9A);
     let s = format!(
         "{} {} {} {} {}",
-        symbols::OK,
-        symbols::WIFI,
-        symbols::BATTERY_3,
-        symbols::HOME,
-        symbols::SETTINGS
+        Symbol::Ok.as_str(),
+        Symbol::Wifi.as_str(),
+        Symbol::Battery3.as_str(),
+        Symbol::Home.as_str(),
+        Symbol::Settings.as_str()
     );
     draw_text(p, Rect::from_xywh(8, 110, 230, 20), &s, &d, c);
     d.ofs = Point::new(-20, 0);

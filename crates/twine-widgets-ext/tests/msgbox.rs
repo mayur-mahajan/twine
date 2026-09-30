@@ -12,7 +12,7 @@ use twine_engine::{EventCode, EventFilter, EventResult, Key, NodeId};
 use twine_image::ImageSource;
 use twine_style::{Length, Part, PropId};
 use twine_testing::EngineHarness;
-use twine_text::symbols;
+use twine_text::Symbol;
 use twine_widgets_ext::msgbox::{self, Msgbox};
 
 /// A screen with a button behind, and a modal message box.
@@ -77,7 +77,7 @@ fn msgbox_backdrop_style() {
     let backdrop = get::<Msgbox>(&h, mb).backdrop().unwrap();
     let e = h.engine();
     assert_eq!(
-        e.style_opa(backdrop, Part::Main, PropId::BgOpa),
+        e.style_opa(backdrop, Part::Main, PropId::BgOpacity),
         twine_core::Opa::P50
     );
     assert_eq!(
@@ -199,7 +199,7 @@ fn msgbox_open_close_100_leaves_nothing() {
             m.add_title(cx, "Hi");
             m.add_text(cx, "Text");
             m.add_footer_button(cx, "OK");
-            m.add_header_button(cx, Some(ImageSource::Symbol(symbols::SETTINGS)));
+            m.add_header_button(cx, Some(ImageSource::symbol(Symbol::Settings)));
         });
         h.run_until_idle();
         msgbox::close(h.engine_mut(), mb);

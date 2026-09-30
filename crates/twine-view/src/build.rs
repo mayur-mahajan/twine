@@ -5,13 +5,16 @@ use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::any::Any;
 
+use twine_core::fault::FaultKind;
 use twine_engine::{
-    DisplayId, Engine, EventCode, EventFilter, EventResult, NodeId, Widget, WidgetCx, fmt_node_id,
+    DEAD_NODE, DisplayId, Engine, EngineError, EventCode, EventFilter, EventResult, FaultRecord, NodeId,
+    Widget, WidgetCx, fmt_node_id,
 };
 use twine_reactive::Scope;
 
 use crate::access::EngineAccess;
 use crate::bind::bind_prop;
+use crate::error::BuildFailure;
 use crate::prop::IntoProp;
 use crate::view::{View, ViewSeq};
 
@@ -73,24 +76,82 @@ impl<'a> BuildCx<'a> {
     }
 
     /// Creates `w` as the last child of [`parent`](Self::parent) (the theme styles it, then
-    /// `Widget::init` runs). If the parent no longer exists a detached root is created instead
-    /// (logged), so building can go on.
+    /// `Widget::init` runs) and returns its id.
+    ///
+    /// # Failure
+    ///
+    /// When the node cannot be created (the tree is full, or the parent was deleted) this
+    /// returns [`DEAD_NODE`], never another node: every engine call given it is ignored, so
+    /// later build steps and bindings cannot style or change the wrong node. The failure is
+    /// logged (`warn!`, with the widget type) and raised as a
+    /// [`FaultKind::BuildFailed`](twine_core::fault::FaultKind::BuildFailed) fault with the
+    /// parent as its node and the [`BuildFailure`] as its code; the runtime constructors then
+    /// fail with a [`BuildError`](crate::BuildError). Creating under a dead parent returns
+    /// [`DEAD_NODE`] at once, without a fault of its own (the parent's failure was reported).
+    ///
+    /// Custom views that do more than run [`WidgetView`] steps should stop early when the
+    /// returned id [`is_dead`](Self::is_dead) (as [`WidgetView`] does), rather than
+    /// registering handlers and effects for a node that does not exist.
+    ///
+    /// ```
+    /// use twine_engine::{DEAD_NODE, Engine, EngineConfig, Obj};
+    /// use twine_view::BuildCx;
+    ///
+    /// let mut e = Engine::new(EngineConfig { max_nodes: 1, ..EngineConfig::default() }).unwrap();
+    /// let root = e.create_root(Box::new(Obj)).unwrap();
+    /// let scope = twine_reactive::create_root();
+    /// let mut cx = BuildCx::new(&mut e, root, scope);
+    /// let n = cx.create(Obj); // the tree is full
+    /// assert_eq!(n, DEAD_NODE);
+    /// assert!(BuildCx::is_dead(n));
+    /// # scope.dispose();
+    /// ```
     pub fn create<W: Widget>(&mut self, w: W) -> NodeId {
-        let id = if let Ok(id) = self.engine.create(self.parent, Box::new(w)) {
-            id
-        } else {
-            twine_core::warn!(
+        if self.parent == DEAD_NODE {
+            twine_core::trace!(
                 target: "twine::view",
-                "build: parent {} is gone; building detached",
-                fmt_node_id(self.parent)
+                "build {}: parent failed; skipped",
+                core::any::type_name::<W>()
             );
-            // Root creation only fails when the arena is full; `create` logged the cause.
-            self.engine
-                .create_root(Box::new(twine_engine::Obj))
-                .unwrap_or(self.parent)
-        };
-        twine_core::trace!(target: "twine::view", "build {} -> {}", core::any::type_name::<W>(), fmt_node_id(id));
-        id
+            return DEAD_NODE;
+        }
+        match self.engine.create(self.parent, Box::new(w)) {
+            Ok(id) => {
+                twine_core::trace!(target: "twine::view", "build {} -> {}", core::any::type_name::<W>(), fmt_node_id(id));
+                id
+            }
+            Err(e) => {
+                self.fail(core::any::type_name::<W>(), &e);
+                DEAD_NODE
+            }
+        }
+    }
+
+    /// Reports a widget that could not be created (cold path, kept out of `create`).
+    #[cold]
+    #[inline(never)]
+    fn fail(&mut self, widget: &'static str, e: &EngineError) {
+        let cause = BuildFailure::of(e);
+        twine_core::warn!(
+            target: "twine::view",
+            "build: cannot create {} under {}: {}",
+            widget,
+            fmt_node_id(self.parent),
+            cause
+        );
+        self.engine.raise_fault(
+            FaultRecord::new(FaultKind::BuildFailed)
+                .node(self.parent)
+                .code(cause.code()),
+        );
+    }
+
+    /// Whether `id` is [`DEAD_NODE`] (a widget whose creation failed; see
+    /// [`create`](Self::create)).
+    #[must_use]
+    #[inline]
+    pub fn is_dead(id: NodeId) -> bool {
+        id == DEAD_NODE
     }
 
     /// Runs `f` with `parent` as the parent of new nodes.
@@ -199,7 +260,8 @@ pub fn widget_view<W: Widget>(ctor: impl FnOnce() -> W + 'static) -> WidgetView<
 
 impl<W: Widget> WidgetView<W> {
     /// Adds a build step: `f(cx, node)` runs right after the node is created, after the
-    /// steps added before, before the children are built.
+    /// steps added before, before the children are built. When the node cannot be created
+    /// (see [`BuildCx::create`]) no step runs and no child is built.
     #[must_use]
     pub fn op(mut self, f: impl FnOnce(&mut BuildCx<'_>, NodeId) + 'static) -> Self {
         self.ops.push(Box::new(f));
@@ -258,6 +320,11 @@ impl<W: Widget> WidgetView<W> {
 impl<W: Widget> View for WidgetView<W> {
     fn build(self, cx: &mut BuildCx<'_>) -> NodeId {
         let id = cx.create((self.ctor)());
+        if id == DEAD_NODE {
+            // Nothing to style, bind or put children under: skip the steps and children (a
+            // failed widget's subtree is never built into its parent).
+            return id;
+        }
         for op in self.ops {
             op(cx, id);
         }

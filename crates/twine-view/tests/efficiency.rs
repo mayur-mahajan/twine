@@ -4,7 +4,7 @@
 use twine_core::{Point, Rect};
 use twine_engine::EngineConfig;
 use twine_hal::Key;
-use twine_reactive::debug_stats;
+use twine_reactive::runtime_stats;
 use twine_testing::alloc::{CountingAllocator, count_allocs};
 use twine_testing::{TestUi, by_id, by_text};
 use twine_view::prelude::*;
@@ -31,7 +31,8 @@ fn fifty(cx: Scope) -> impl View {
             label(text!("{}", s.get())).test_id(IDS[i]).width(40)
         })
         .collect();
-    flex(FlexFlow::RowWrap, labels)
+    flex(FlexDirection::Row, labels)
+        .wrap(true)
         .size(Length::pct(100), Length::pct(100))
         .gap(2)
 }
@@ -42,9 +43,9 @@ fn signal_update_runs_one_binding() {
     t.run_until_idle();
     let signals = t.root_scope().expect_context::<Vec<Signal<i32>>>();
     signals[17].set(1000); // outside the Ui: deferred to the next update
-    let runs = debug_stats().effect_runs;
+    let runs = runtime_stats().effect_runs;
     t.run_until_idle();
-    assert_eq!(debug_stats().effect_runs - runs, 1);
+    assert_eq!(runtime_stats().effect_runs - runs, 1);
     assert_eq!(t.find(by_id("l17")).text(), "1000");
 }
 
@@ -83,7 +84,7 @@ fn idle_after_every_interaction() {
             label(text!("{}", n.get())),
             button(label("inc")).on_click(move || n.update(|v| *v += 1)),
             scroll_view(
-                Dir::VER,
+                Axis::Vertical,
                 (0..20)
                     .map(|i| label(format!("row {i}")).height(20))
                     .collect::<Vec<_>>(),
@@ -140,10 +141,10 @@ fn unchanged_value_no_work() {
     });
     t.run_until_idle();
     let n = t.root_scope().expect_context::<Signal<i32>>();
-    let runs = debug_stats().effect_runs;
+    let runs = runtime_stats().effect_runs;
     n.set_if_changed(5);
     t.update();
-    assert_eq!(debug_stats().effect_runs, runs, "no effect ran");
+    assert_eq!(runtime_stats().effect_runs, runs, "no effect ran");
     assert!(t.invalidations().is_empty());
     t.assert_idle();
 }
@@ -179,4 +180,47 @@ fn counter_heap_usage() {
     let counter_only = app - empty;
     println!("counter heap usage (app only): {counter_only} bytes");
     assert!(counter_only <= 8 * 1024, "{counter_only} bytes");
+}
+
+/// R1.S03: the text bindings of the widget views (dropdown options with dynamic items, a
+/// dropdown text, msgbox buttons, a tab title, a menu page title, a checkbox text, a
+/// placeholder, a roller fed by a signal list) allocate nothing once warmed up.
+#[test]
+fn no_alloc_steady_state_widget_text_bindings() {
+    let mut t = TestUi::new(320, 480).mount(|cx| {
+        let n = cx.signal(0u32);
+        let names = cx.signal(vec![String::from("a"), String::from("b")]);
+        cx.provide((n, names));
+        let _ = cx.show_modal(move |_, _| {
+            msgbox("m", text!("{}", n.get())).buttons([text!("ok {}", n.get() % 10)])
+        });
+        column((
+            dropdown([text!("{} min", n.get() % 10), text!("fixed")], 0usize)
+                .text(text!("n={}", n.get() % 10)),
+            roller(names, 0usize),
+            checkbox(text!("item {}", n.get() % 10), false),
+            textarea(String::new()).placeholder(text!("hint {}", n.get() % 10)),
+            tabview(0usize, (tab(text!("tab {}", n.get() % 10), label("t")),)).size(200, 100),
+            menu(menu_page(label("p")).title(text!("title {}", n.get() % 10))).size(200, 100),
+        ))
+    });
+    t.run_until_idle();
+    let (n, names) = t
+        .root_scope()
+        .expect_context::<(Signal<u32>, Signal<Vec<String>>)>();
+    let step = |t: &mut TestUi, i: u32| {
+        n.set(i);
+        // Same lengths: the reused buffers never grow; the list is replaced in place.
+        names.update(|v| v.swap(0, 1));
+        t.run_until_idle();
+    };
+    for i in 0..20 {
+        step(&mut t, i);
+    }
+    let ((), stats) = count_allocs(|| {
+        for i in 20..40 {
+            step(&mut t, i);
+        }
+    });
+    assert_eq!(stats.allocs, 0, "{stats:?}");
 }

@@ -39,7 +39,7 @@ mod xml;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use twine_core::{Color, Fx, Opa, Rect, Transform};
+use twine_core::{Color, Fraction, Fx, Opa, Rect, Transform};
 use twine_render::{FillRule, GradExtend, GradStop, Painter};
 
 use self::color::parse_color;
@@ -135,7 +135,7 @@ impl SvgDocument {
     #[must_use]
     pub fn transform_for(&self, dst: Rect) -> Transform {
         let vb = self.view_box;
-        let (vw, vh) = (i64::from(vb.width().0), i64::from(vb.height().0));
+        let (vw, vh) = (i64::from(vb.width().raw()), i64::from(vb.height().raw()));
         if vw <= 0 || vh <= 0 || dst.is_empty() {
             return Transform::translate(Fx::from_int(dst.x0), Fx::from_int(dst.y0));
         }
@@ -161,15 +161,17 @@ impl SvgDocument {
         };
         let free_x = dw - ((vw * i64::from(sx)) >> 16);
         let free_y = dh - ((vh * i64::from(sy)) >> 16);
-        let tx = (i64::from(dst.x0) << 16) + free_x * fx / 2 - ((i64::from(vb.x0.0) * i64::from(sx)) >> 16);
-        let ty = (i64::from(dst.y0) << 16) + free_y * fy / 2 - ((i64::from(vb.y0.0) * i64::from(sy)) >> 16);
+        let tx =
+            (i64::from(dst.x0) << 16) + free_x * fx / 2 - ((i64::from(vb.x0.raw()) * i64::from(sx)) >> 16);
+        let ty =
+            (i64::from(dst.y0) << 16) + free_y * fy / 2 - ((i64::from(vb.y0.raw()) * i64::from(sy)) >> 16);
         Transform {
-            a: Fx(sx),
+            a: Fx::from_raw(sx),
             b: Fx::ZERO,
             c: Fx::ZERO,
-            d: Fx(sy),
-            tx: Fx(crate::geom::sat(tx)),
-            ty: Fx(crate::geom::sat(ty)),
+            d: Fx::from_raw(sy),
+            tx: Fx::from_raw(crate::geom::sat(tx)),
+            ty: Fx::from_raw(crate::geom::sat(ty)),
         }
     }
 
@@ -253,10 +255,10 @@ impl Default for Style {
 fn parse_opacity(v: &str) -> Option<Opa> {
     let l = length(v)?;
     let raw = match l {
-        Length::Px(f) => i64::from(f.0),
-        Length::Pct(p) => i64::from(p.0) / 100,
+        Length::Px(f) => i64::from(f.raw()),
+        Length::Pct(p) => i64::from(p.raw()) / 100,
     };
-    Some(Opa(((raw.clamp(0, 65_536) * 255 + 32_768) >> 16) as u8))
+    Some(Opa::from_raw(((raw.clamp(0, 65_536) * 255 + 32_768) >> 16) as u8))
 }
 
 // ---------------------------------------------------------------- gradients
@@ -307,7 +309,8 @@ fn collect_gradients(src: &str) -> Result<Vec<GradDef<'_>>, SvgError> {
                     "stop" => {
                         if let Some((gi, d)) = open {
                             if d + 1 == depth {
-                                let s = parse_stop(attrs, &mut buf, out[gi].stops.last().map(|s| s.frac));
+                                let s =
+                                    parse_stop(attrs, &mut buf, out[gi].stops.last().map(|s| s.frac.raw()));
                                 out[gi].stops.push(s);
                             }
                         }
@@ -381,7 +384,7 @@ fn parse_stop(attrs: Attrs<'_>, buf: &mut String, prev: Option<u8>) -> GradStop 
             if let Some(l) = length(v) {
                 offset = match l {
                     Length::Px(f) => f,
-                    Length::Pct(p) => Fx(p.0 / 100),
+                    Length::Pct(p) => Fx::from_raw(p.raw() / 100),
                 };
             }
         }
@@ -411,8 +414,8 @@ fn parse_stop(attrs: Attrs<'_>, buf: &mut String, prev: Option<u8>) -> GradStop 
             apply(k, v);
         }
     }
-    let frac = ((i64::from(offset.0).clamp(0, 65_536) * 255 + 32_768) >> 16) as u8;
-    GradStop::with_opa(color, opa, frac.max(prev.unwrap_or(0)))
+    let frac = ((i64::from(offset.raw()).clamp(0, 65_536) * 255 + 32_768) >> 16) as u8;
+    GradStop::with_opa(color, opa, Fraction::from_raw(frac.max(prev.unwrap_or(0))))
 }
 
 /// A gradient with `href` inheritance resolved.
@@ -509,8 +512,8 @@ fn parse_transform(s: &str) -> Option<Transform> {
                     .then(Transform::rotate(deg_to_angle(args[0])))
                     .then(Transform::translate(cx, cy))
             }
-            (b"skewX", 1) => Transform::skew(deg_to_angle(args[0]), twine_core::Angle(0)),
-            (b"skewY", 1) => Transform::skew(twine_core::Angle(0), deg_to_angle(args[0])),
+            (b"skewX", 1) => Transform::skew(deg_to_angle(args[0]), twine_core::Angle::deci_deg(0)),
+            (b"skewY", 1) => Transform::skew(twine_core::Angle::deci_deg(0), deg_to_angle(args[0])),
             _ => return None,
         };
         // "A B" applies B first, then A.
@@ -549,10 +552,10 @@ struct Frame<'a> {
 
 impl Parser<'_, '_> {
     fn vp_diag(&self) -> Fx {
-        let (w, h) = (i64::from(self.vp.0.0), i64::from(self.vp.1.0));
+        let (w, h) = (i64::from(self.vp.0.raw()), i64::from(self.vp.1.raw()));
         // √((w² + h²) / 2); w, h < 2^31, so the sum of squares fits in u64.
         let s = u64::midpoint(w.unsigned_abs().pow(2), h.unsigned_abs().pow(2));
-        Fx(isqrt64(s) as i32)
+        Fx::from_raw(isqrt64(s) as i32)
     }
 
     fn len_x(&self, v: Option<&str>, default: Fx) -> Fx {
@@ -606,7 +609,8 @@ impl Parser<'_, '_> {
                 }
             }
             "stroke-width" => {
-                if let Some(l) = length(v).filter(|l| !matches!(l, Length::Px(x) | Length::Pct(x) if x.0 < 0))
+                if let Some(l) =
+                    length(v).filter(|l| !matches!(l, Length::Px(x) | Length::Pct(x) if x.raw() < 0))
                 {
                     st.stroke_width = l;
                 }
@@ -638,7 +642,7 @@ impl Parser<'_, '_> {
                 } else {
                     let mut list = heapless::Vec::new();
                     if parse_list(v, &mut list).is_some() {
-                        let valid = list.iter().all(|x| x.0 >= 0) && list.iter().any(|x| x.0 > 0);
+                        let valid = list.iter().all(|x| x.raw() >= 0) && list.iter().any(|x| x.raw() > 0);
                         st.dash = valid.then_some(list);
                     }
                 }
@@ -778,13 +782,13 @@ impl Parser<'_, '_> {
             let vals: Option<[Fx; 4]> =
                 (|| Some([c.number_sep()?, c.number_sep()?, c.number_sep()?, c.number_sep()?]))();
             if let Some([x, y, w, h]) = vals {
-                if w.0 > 0 && h.0 > 0 {
+                if w.raw() > 0 && h.raw() > 0 {
                     vb = Some(FxRect::from_xywh(x, y, w, h));
                 }
             }
         }
         let abs = |v: Option<&str>| match v.and_then(length) {
-            Some(Length::Px(p)) if p.0 > 0 => Some(p),
+            Some(Length::Px(p)) if p.raw() > 0 => Some(p),
             _ => None,
         };
         let (w, h) = (abs(attrs.get("width")), abs(attrs.get("height")));
@@ -866,7 +870,7 @@ impl Parser<'_, '_> {
                     (None, Some(b)) => (b, b),
                     (None, None) => (Fx::ZERO, Fx::ZERO),
                 };
-                if w.0 > 0 && h.0 > 0 {
+                if w.raw() > 0 && h.raw() > 0 {
                     path.rounded_rect(FxRect::from_xywh(x, y, w, h), rx, ry);
                 }
             }
@@ -936,7 +940,7 @@ impl Parser<'_, '_> {
                 let base = if g.user_space {
                     Transform::IDENTITY
                 } else {
-                    if bb.width().0 <= 0 || bb.height().0 <= 0 {
+                    if bb.width().raw() <= 0 || bb.height().raw() <= 0 {
                         return None;
                     }
                     Transform::scale(bb.width(), bb.height()).then(Transform::translate(bb.x0, bb.y0))
@@ -951,7 +955,7 @@ impl Parser<'_, '_> {
                     } else {
                         match l {
                             Length::Px(v) => v,
-                            Length::Pct(p) => Fx(p.0 / 100),
+                            Length::Pct(p) => Fx::from_raw(p.raw() / 100),
                         }
                     }
                 };
@@ -965,7 +969,7 @@ impl Parser<'_, '_> {
                     let fy = g.coords[4].map_or(cy, |l| res(Some(l), 50, h));
                     let c = FxPoint::new(cx, cy);
                     let f = FxPoint::new(fx, fy);
-                    if r.0 <= 0 {
+                    if r.raw() <= 0 {
                         // Zero radius: the last stop color.
                         let s = g.stops[g.stops.len() - 1];
                         return Some((Paint::Solid(s.color), s.opa));
@@ -1000,7 +1004,7 @@ impl Parser<'_, '_> {
             self.paint(st.fill, st, bb)
         };
         let stroke_w = st.stroke_width.resolve(self.vp_diag());
-        let stroke = if stroke_w.0 > 0 {
+        let stroke = if stroke_w.raw() > 0 {
             self.paint(st.stroke, st, bb)
         } else {
             None
@@ -1067,10 +1071,10 @@ mod tests {
 
     #[test]
     fn opacity_values() {
-        assert_eq!(parse_opacity("0.5"), Some(Opa(128)));
-        assert_eq!(parse_opacity("50%"), Some(Opa(128)));
-        assert_eq!(parse_opacity("2"), Some(Opa(255)));
-        assert_eq!(parse_opacity("-1"), Some(Opa(0)));
+        assert_eq!(parse_opacity("0.5"), Some(Opa::from_raw(128)));
+        assert_eq!(parse_opacity("50%"), Some(Opa::from_raw(128)));
+        assert_eq!(parse_opacity("2"), Some(Opa::from_raw(255)));
+        assert_eq!(parse_opacity("-1"), Some(Opa::from_raw(0)));
         assert_eq!(parse_opacity("x"), None);
     }
 

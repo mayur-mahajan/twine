@@ -31,10 +31,28 @@ use twine_extra::{tr, translations};
 pub const CODES: [&str; 8] = ["en", "de", "fr", "zh", "ja", "he", "ar", "fa"];
 
 /// The dropdown options: every language in its own script.
-pub const LANGUAGE_NAMES: &str = if cfg!(feature = "multilang-cjk") {
-    "English\nDeutsch\nFrançais\n中文\n日本語\nעברית\nالعربية\nفارسی"
+pub const LANGUAGE_NAMES: [&str; 8] = if cfg!(feature = "multilang-cjk") {
+    [
+        "English",
+        "Deutsch",
+        "Français",
+        "中文",
+        "日本語",
+        "עברית",
+        "العربية",
+        "فارسی",
+    ]
 } else {
-    "English\nDeutsch\nFrançais\nChinese\nJapanese\nעברית\nالعربية\nفارسی"
+    [
+        "English",
+        "Deutsch",
+        "Français",
+        "Chinese",
+        "Japanese",
+        "עברית",
+        "العربية",
+        "فارسی",
+    ]
 };
 
 /// Base direction per language.
@@ -338,7 +356,7 @@ fn card(i: usize) -> impl View {
         ))
         .gap(10)
         .width(Length::pct(100))
-        .align_items(FlexAlign::Center),
+        .align_items(CrossAlign::Center),
     )
     .base_dir(DIRS[i])
     .width(Length::pct(100))
@@ -384,17 +402,15 @@ pub fn app(cx: Scope) -> impl View {
                 .font(heading_font())
                 .flex_grow(1)
                 .test_id("title"),
-            dropdown_static(LANGUAGE_NAMES, lang)
-                .width(130)
-                .test_id("language"),
-            button(label(symbols::RIGHT))
+            dropdown(LANGUAGE_NAMES, lang).width(130).test_id("language"),
+            button(label(Symbol::Right))
                 .on_click(move || lang.update(|l| *l = (*l + 1) % CODES.len()))
                 .test_id("next"),
         ))
         .base_dir(dir)
         .width(Length::pct(100))
         .gap(8)
-        .align_items(FlexAlign::Center),
+        .align_items(CrossAlign::Center),
         label(tr!("people"))
             .base_dir(dir)
             .width(Length::pct(100))
@@ -414,7 +430,7 @@ pub fn app(cx: Scope) -> impl View {
 #[must_use]
 pub fn languages() -> alloc::vec::Vec<(&'static str, &'static str)> {
     let mut v = vec![];
-    for (code, name) in CODES.iter().zip(LANGUAGE_NAMES.split('\n')) {
+    for (code, name) in CODES.iter().zip(LANGUAGE_NAMES) {
         v.push((*code, name));
     }
     v

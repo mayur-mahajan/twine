@@ -203,3 +203,65 @@ fn missing_clock_is_an_error() {
     let r = Ui::builder(display).try_build(|_| label("x"));
     assert!(r.is_err());
 }
+
+#[test]
+fn display_in_a_disabled_format_is_an_error() {
+    // `A8` is never a draw format, whatever colour features are enabled (R0.S06).
+    let display = MemoryDisplay::new(DisplayInfo::new(32, 32, ColorFormat::A8));
+    let r = Ui::builder(display)
+        .clock(MockClock::new())
+        .try_build(|_| label("x"));
+    assert!(matches!(
+        r,
+        Err(UiError::Engine(twine_engine::EngineError::FormatDisabled(
+            ColorFormat::A8
+        )))
+    ));
+}
+
+static LOOP_FAULTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn count_loop_faults(r: &FaultRecord) {
+    if r.kind == FaultKind::EffectLoopCut {
+        LOOP_FAULTS.fetch_add(r.occurrences, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[test]
+fn reactive_faults_reach_the_ui_fault_stream() {
+    twine_reactive::set_flush_iterations_limit(5);
+    let _ = twine_reactive::take_faults();
+    let display = MemoryDisplay::new(DisplayInfo::new(160, 120, ColorFormat::Rgb565));
+    let mut ui = Ui::builder(display)
+        .clock(MockClock::new())
+        .fault_hook(count_loop_faults)
+        .build(|cx| {
+            let a = cx.signal(0u32);
+            cx.effect(move || a.set(a.get() + 1)); // a loop: cut by the runtime
+            label("x")
+        });
+    let _ = ui.update();
+    assert!(LOOP_FAULTS.load(std::sync::atomic::Ordering::Relaxed) >= 1);
+    let f = ui.take_faults();
+    assert!(f.contains(FaultKind::EffectLoopCut), "{f:?}");
+    assert!(ui.take_faults().is_empty());
+    assert!(ui.fault_counts().get(FaultKind::EffectLoopCut) >= 1);
+    assert!(ui.last_fault(FaultKind::EffectLoopCut).is_some());
+    twine_reactive::set_flush_iterations_limit(100);
+}
+
+#[test]
+fn input_health_and_fault_reach_the_ui() {
+    use twine_core::fault::FaultKind;
+    use twine_hal::DeviceHealth;
+    let (mut ui, _clock, p) = ui(|_| label("x").into_any());
+    ui.update();
+    let id = ui.engine().inputs().next().unwrap();
+    assert_eq!(ui.input_health(id), Some(DeviceHealth::Ok));
+    p.set_health(DeviceHealth::Failed);
+    ui.notify_input();
+    ui.update();
+    assert_eq!(ui.input_health(id), Some(DeviceHealth::Failed));
+    assert!(ui.take_faults().contains(FaultKind::InputDevice));
+    assert_eq!(ui.last_fault(FaultKind::InputDevice).unwrap().input, Some(id));
+}

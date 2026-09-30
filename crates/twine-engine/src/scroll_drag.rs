@@ -5,7 +5,7 @@
 //! Everything works on the integer vectors of the pointer reads and allocates nothing.
 
 use twine_core::{Instant, Point};
-use twine_style::{Dir, ScrollSnap, State};
+use twine_style::{ScrollSnap, Sides, State};
 
 use crate::input::{InputId, PointerProc, Timing};
 use crate::scroll::{Axis, COORD_MAX, COORD_MIN, SCROLL_ELASTIC_FACTOR};
@@ -91,9 +91,9 @@ pub(crate) fn elastic_diff(e: &Engine, obj: NodeId, diff: i32, start: i32, end: 
 impl PointerProc {
     /// Sets the scrolled node (also recorded in the engine for `is_scrolling` and `Active`
     /// scrollbars).
-    pub(crate) fn set_scroll_obj(&mut self, e: &mut Engine, id: InputId, obj: Option<NodeId>, dir: Dir) {
+    pub(crate) fn set_scroll_obj(&mut self, e: &mut Engine, id: InputId, obj: Option<NodeId>, dir: Sides) {
         self.scroll_obj = obj;
-        self.scroll_dir = if obj.is_some() { dir } else { Dir::NONE };
+        self.scroll_dir = if obj.is_some() { dir } else { Sides::empty() };
         e.set_indev_scroll(id, obj.map(|o| (o, dir)));
     }
 
@@ -142,13 +142,13 @@ impl PointerProc {
                 return false;
             }
             if !e.tree.contains(o) {
-                self.set_scroll_obj(e, id, None, Dir::NONE);
+                self.set_scroll_obj(e, id, None, Sides::empty());
                 return true;
             }
             o
         };
         let (mut dx, mut dy) = (0, 0);
-        if self.scroll_dir == Dir::HOR {
+        if self.scroll_dir == Sides::HORIZONTAL {
             let (sl, sr) = (e.scroll_left(obj), e.scroll_right(obj));
             dx = elastic_diff(e, obj, self.vect.x, sl, sr, Axis::X);
         } else {
@@ -156,16 +156,16 @@ impl PointerProc {
             dy = elastic_diff(e, obj, self.vect.y, st, sb, Axis::Y);
         }
         let dir = e.scroll_dir(obj);
-        if !dir.contains(Dir::LEFT) && dx > 0 {
+        if !dir.contains(Sides::LEFT) && dx > 0 {
             dx = 0;
         }
-        if !dir.contains(Dir::RIGHT) && dx < 0 {
+        if !dir.contains(Sides::RIGHT) && dx < 0 {
             dx = 0;
         }
-        if !dir.contains(Dir::TOP) && dy > 0 {
+        if !dir.contains(Sides::TOP) && dy > 0 {
             dy = 0;
         }
-        if !dir.contains(Dir::BOTTOM) && dy < 0 {
+        if !dir.contains(Sides::BOTTOM) && dy < 0 {
             dy = 0;
         }
         self.scroll_limit_diff(Some(&mut dx), Some(&mut dy));
@@ -185,7 +185,7 @@ impl PointerProc {
     /// is used and the direction is locked.
     fn find_scroll_obj(&mut self, e: &mut Engine, id: InputId, t: &Timing) -> Option<NodeId> {
         let lim = t.scroll_limit;
-        let mut candidate: Option<(NodeId, Dir)> = None;
+        let mut candidate: Option<(NodeId, Sides)> = None;
         self.scroll_sum += self.vect;
         let sum = self.scroll_sum;
         let hor_en = sum.x.abs() > sum.y.abs();
@@ -202,10 +202,10 @@ impl PointerProc {
                 continue;
             }
             let dir = e.scroll_dir(o);
-            let mut up_en = ver_en && dir.contains(Dir::TOP);
-            let mut down_en = ver_en && dir.contains(Dir::BOTTOM);
-            let mut left_en = hor_en && dir.contains(Dir::LEFT);
-            let mut right_en = hor_en && dir.contains(Dir::RIGHT);
+            let mut up_en = ver_en && dir.contains(Sides::TOP);
+            let mut down_en = ver_en && dir.contains(Sides::BOTTOM);
+            let mut left_en = hor_en && dir.contains(Sides::LEFT);
+            let mut right_en = hor_en && dir.contains(Sides::RIGHT);
             let room = |axis: Axis| {
                 if e.snap_of(o, axis) == ScrollSnap::None {
                     match axis {
@@ -221,10 +221,10 @@ impl PointerProc {
             let (sl, sr) = room(Axis::X);
             let (st, sb) = room(Axis::Y);
             if (st > 0 || sb > 0) && ((up_en && sum.y >= lim) || (down_en && sum.y <= -lim)) {
-                candidate = Some((o, Dir::VER));
+                candidate = Some((o, Sides::VERTICAL));
             }
             if (sl > 0 || sr > 0) && ((left_en && sum.x >= lim) || (right_en && sum.x <= -lim)) {
-                candidate = Some((o, Dir::HOR));
+                candidate = Some((o, Sides::HORIZONTAL));
             }
             up_en &= st > 0;
             down_en &= sb > 0;
@@ -337,10 +337,10 @@ impl PointerProc {
     }
 
     /// LVGL `lv_indev_scroll_throw_predict`: the distance a throw on `dir` would travel.
-    pub(crate) fn throw_predict(&self, dir: Dir, t: &Timing) -> i32 {
-        let mut v = if dir == Dir::VER {
+    pub(crate) fn throw_predict(&self, dir: Sides, t: &Timing) -> i32 {
+        let mut v = if dir == Sides::VERTICAL {
             self.scroll_throw_vect_ori.y
-        } else if dir == Dir::HOR {
+        } else if dir == Sides::HORIZONTAL {
             self.scroll_throw_vect_ori.x
         } else {
             return 0;
@@ -364,11 +364,11 @@ impl PointerProc {
         let Some(obj) = self.scroll_obj else {
             return true;
         };
-        if self.scroll_dir == Dir::NONE {
+        if self.scroll_dir == Sides::empty() {
             return true;
         }
         if !e.tree.contains(obj) {
-            self.set_scroll_obj(e, id, None, Dir::NONE);
+            self.set_scroll_obj(e, id, None, Sides::empty());
             return true;
         }
         if !e.has_flag(obj, ObjFlags::SCROLL_MOMENTUM) {
@@ -376,7 +376,7 @@ impl PointerProc {
         }
         let keep = 100 - i32::from(t.scroll_throw.min(100));
         let (align_x, align_y) = (e.scroll_snap_x(obj), e.scroll_snap_y(obj));
-        if self.scroll_dir == Dir::VER {
+        if self.scroll_dir == Sides::VERTICAL {
             self.scroll_throw_vect.x = 0;
             if align_y == ScrollSnap::None {
                 let v = self.scroll_throw_vect.y * keep / 100;
@@ -384,14 +384,14 @@ impl PointerProc {
                 self.scroll_throw_vect.y = elastic_diff(e, obj, v, st, sb, Axis::Y);
                 e.scroll_by_raw(obj, 0, self.scroll_throw_vect.y);
             } else {
-                let mut dy = self.throw_predict(Dir::VER, t);
+                let mut dy = self.throw_predict(Sides::VERTICAL, t);
                 self.scroll_throw_vect.y = 0;
                 self.scroll_limit_diff(None, Some(&mut dy));
                 let y = e.find_snap_point_y(obj, COORD_MIN, COORD_MAX, dy);
                 let y = if y == COORD_MAX { 0 } else { y };
                 e.scroll_by(obj, 0, dy + y, true);
             }
-        } else if self.scroll_dir == Dir::HOR {
+        } else if self.scroll_dir == Sides::HORIZONTAL {
             self.scroll_throw_vect.y = 0;
             if align_x == ScrollSnap::None {
                 let v = self.scroll_throw_vect.x * keep / 100;
@@ -399,7 +399,7 @@ impl PointerProc {
                 self.scroll_throw_vect.x = elastic_diff(e, obj, v, sl, sr, Axis::X);
                 e.scroll_by_raw(obj, self.scroll_throw_vect.x, 0);
             } else {
-                let mut dx = self.throw_predict(Dir::HOR, t);
+                let mut dx = self.throw_predict(Sides::HORIZONTAL, t);
                 self.scroll_throw_vect.x = 0;
                 self.scroll_limit_diff(Some(&mut dx), None);
                 let x = e.find_snap_point_x(obj, COORD_MIN, COORD_MAX, dx);
@@ -411,7 +411,7 @@ impl PointerProc {
             return false;
         }
         if !e.tree.contains(obj) {
-            self.set_scroll_obj(e, id, None, Dir::NONE);
+            self.set_scroll_obj(e, id, None, Sides::empty());
             return true;
         }
         if self.scroll_throw_vect != Point::ZERO {
@@ -448,14 +448,14 @@ impl PointerProc {
                 return false;
             }
         }
-        self.set_scroll_obj(e, id, None, Dir::NONE);
+        self.set_scroll_obj(e, id, None, Sides::empty());
         true
     }
 }
 
 impl Engine {
     /// Records (or clears) the node pointer `id` scrolls.
-    pub(crate) fn set_indev_scroll(&mut self, id: InputId, v: Option<(NodeId, Dir)>) {
+    pub(crate) fn set_indev_scroll(&mut self, id: InputId, v: Option<(NodeId, Sides)>) {
         let old = self.indev_scrolls.iter().position(|(i, _, _)| *i == id);
         match (old, v) {
             (Some(i), Some((n, d))) => self.indev_scrolls[i] = (id, n, d),
@@ -479,7 +479,7 @@ impl Engine {
     }
 
     /// The direction a pointer scrolls `node` in, if one does.
-    pub(crate) fn indev_scroll_dir(&self, node: NodeId) -> Option<Dir> {
+    pub(crate) fn indev_scroll_dir(&self, node: NodeId) -> Option<Sides> {
         self.indev_scrolls
             .iter()
             .find(|(_, n, _)| *n == node)

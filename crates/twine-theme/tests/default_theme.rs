@@ -44,7 +44,7 @@ fn screen_bg_matches_lvgl_light() {
         e.style_color(s, Part::Main, PropId::BgColor),
         Color::hex(0xF5F5F5)
     );
-    assert_eq!(e.style_opa(s, Part::Main, PropId::BgOpa), Opa::COVER);
+    assert_eq!(e.style_opa(s, Part::Main, PropId::BgOpacity), Opa::COVER);
     assert_eq!(
         e.style_color(s, Part::Main, PropId::TextColor),
         Color::hex(0x212121)
@@ -81,12 +81,16 @@ fn card_matches_lvgl_small_display() {
     assert_eq!(e.style_i32(card, m, PropId::BorderWidth), 2); // BORDER_WIDTH = LV_DPX_CALC(130, 2)
     assert_eq!(e.style_color(card, m, PropId::BorderColor), Color::hex(0xE0E0E0));
     assert_eq!(e.style_color(card, m, PropId::BgColor), Color::WHITE);
-    assert_eq!(e.style_i32(card, m, PropId::PadTop), 13); // PAD_DEF = LV_DPX_CALC(130, 16)
-    assert_eq!(e.style_i32(card, m, PropId::PadRow), 8); // PAD_SMALL = LV_DPX_CALC(130, 10)
-    assert!(e.style_prop(card, m, PropId::BorderPost).as_bool().unwrap());
+    assert_eq!(e.style_i32(card, m, PropId::PaddingTop), 13); // PAD_DEF = LV_DPX_CALC(130, 16)
+    assert_eq!(e.style_i32(card, m, PropId::RowGap), 8); // PAD_SMALL = LV_DPX_CALC(130, 10)
+    assert!(
+        e.style_prop(card, m, PropId::BorderAboveChildren)
+            .as_bool()
+            .unwrap()
+    );
     // Scrollbar: LV_DPX_CALC(130, 5) wide, grey at 40 %.
     assert_eq!(e.style_i32(card, Part::Scrollbar, PropId::Width), 4);
-    assert_eq!(e.style_opa(card, Part::Scrollbar, PropId::BgOpa), Opa::P40);
+    assert_eq!(e.style_opa(card, Part::Scrollbar, PropId::BgOpacity), Opa::P40);
     assert_eq!(
         e.style_color(card, Part::Scrollbar, PropId::BgColor),
         Palette::Grey.main()
@@ -113,10 +117,10 @@ fn card_radius_scales_with_dpi() {
 fn display_size_follows_resolution() {
     // 800×480 is DISP_LARGE: PAD_DEF = LV_DPX_CALC(130, 24) = 20.
     let (h, card) = card_scene(EngineHarness::new(800, 480));
-    assert_eq!(h.engine().style_i32(card, Part::Main, PropId::PadLeft), 20);
+    assert_eq!(h.engine().style_i32(card, Part::Main, PropId::PaddingLeft), 20);
     // 480×320 is DISP_MEDIUM: PAD_DEF = LV_DPX_CALC(130, 20) = 16.
     let (h, card) = card_scene(EngineHarness::new(480, 320));
-    assert_eq!(h.engine().style_i32(card, Part::Main, PropId::PadLeft), 16);
+    assert_eq!(h.engine().style_i32(card, Part::Main, PropId::PaddingLeft), 16);
 }
 
 #[test]
@@ -129,12 +133,12 @@ fn focus_key_shows_outline() {
     e.add_state(b, State::FOCUSED | State::FOCUS_KEY);
     // outline_primary: OUTLINE_WIDTH = LV_DPX_CALC(130, 3), primary color at 50 %.
     assert_eq!(e.style_i32(b, Part::Main, PropId::OutlineWidth), 2);
-    assert_eq!(e.style_i32(b, Part::Main, PropId::OutlinePad), 2);
+    assert_eq!(e.style_i32(b, Part::Main, PropId::OutlineOffset), 2);
     assert_eq!(
         e.style_color(b, Part::Main, PropId::OutlineColor),
         Palette::Blue.main()
     );
-    assert_eq!(e.style_opa(b, Part::Main, PropId::OutlineOpa), Opa::P50);
+    assert_eq!(e.style_opa(b, Part::Main, PropId::OutlineOpacity), Opa::P50);
 }
 
 #[test]
@@ -149,16 +153,16 @@ fn button_styles_match_lvgl() {
     assert_eq!(e.style_i32(b, m, PropId::Radius), 7); // LV_DPX_CALC(130, 8) (small display)
     assert_eq!(e.style_i32(b, m, PropId::ShadowWidth), 2); // LV_DPX_CALC(130, 3)
     assert_eq!(e.style_i32(b, m, PropId::ShadowOffsetY), 2);
-    assert_eq!(e.style_opa(b, m, PropId::ShadowOpa), Opa::P50);
+    assert_eq!(e.style_opa(b, m, PropId::ShadowOpacity), Opa::P50);
     e.add_state(b, State::PRESSED);
-    assert_eq!(e.style_opa(b, m, PropId::RecolorOpa), Opa(35));
+    assert_eq!(e.style_opa(b, m, PropId::RecolorOpacity), Opa::from_raw(35));
     assert_eq!(e.style_i32(b, m, PropId::TransformWidth), 2);
     e.clear_state(b, State::PRESSED);
     e.add_state(b, State::CHECKED);
     assert_eq!(e.style_color(b, m, PropId::BgColor), Palette::Red.main());
     e.add_state(b, State::DISABLED);
     assert_eq!(e.style_color(b, m, PropId::Recolor), Color::hex(0xE0E0E0));
-    assert_eq!(e.style_opa(b, m, PropId::RecolorOpa), Opa::P50);
+    assert_eq!(e.style_opa(b, m, PropId::RecolorOpacity), Opa::P50);
 }
 
 #[test]

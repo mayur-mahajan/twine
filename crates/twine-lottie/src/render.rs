@@ -554,7 +554,7 @@ impl<'a> Renderer<'a> {
                     };
                     child.vector(&self.s.path, &dsc);
                 }
-                let o = u32::from(opa(mk.o.value(lf) / 100.0).0);
+                let o = u32::from(opa(mk.o.value(lf) / 100.0).raw());
                 for (a, &t) in acc.iter_mut().zip(bufs.tmp[..n].iter()) {
                     let t = if mk.inv { 255 - t } else { t };
                     let mv = div255(u32::from(t) * o);
@@ -1015,7 +1015,11 @@ fn build_stops(data: &[f32], points: usize, out: &mut Vec<GradStop>) {
             j += 1;
         }
         let c = color_at(o);
-        let stop = GradStop::with_opa(color(c), opa(alpha_at(o)), frac(o));
+        let stop = GradStop::with_opa(
+            color(c),
+            opa(alpha_at(o)),
+            twine_core::Fraction::from_raw(frac(o)),
+        );
         if out.last().is_some_and(|l: &GradStop| l.frac > stop.frac) {
             continue; // unsorted input: skip stops that go backwards
         }
@@ -1040,8 +1044,8 @@ mod tests {
         assert_eq!(
             s,
             [
-                GradStop::new(Color::new(255, 0, 0), 0),
-                GradStop::new(Color::new(0, 0, 255), 255)
+                GradStop::new(Color::new(255, 0, 0), twine_core::Fraction::ZERO),
+                GradStop::new(Color::new(0, 0, 255), twine_core::Fraction::ONE)
             ]
         );
         // Three color stops plus alpha stops at 0 (opaque) and 1 (transparent): the alpha
@@ -1054,9 +1058,9 @@ mod tests {
         );
         assert_eq!(s.len(), 3);
         assert_eq!(s[1].color, Color::new(0, 255, 0));
-        assert_eq!(s[1].frac, 128);
-        assert_eq!(s[1].opa, Opa(128));
-        assert_eq!((s[0].opa, s[2].opa), (Opa::COVER, Opa(0)));
+        assert_eq!(s[1].frac.raw(), 128);
+        assert_eq!(s[1].opa, Opa::from_raw(128));
+        assert_eq!((s[0].opa, s[2].opa), (Opa::COVER, Opa::from_raw(0)));
         // Alpha stop between color stops: merged in with the interpolated color.
         let s = stops(
             &[
@@ -1064,9 +1068,9 @@ mod tests {
             ],
             2,
         );
-        assert_eq!(s.iter().map(|g| g.frac).collect::<Vec<_>>(), [0, 128, 255]);
+        assert_eq!(s.iter().map(|g| g.frac.raw()).collect::<Vec<_>>(), [0, 128, 255]);
         assert_eq!(s[1].color, Color::new(128, 128, 128));
-        assert_eq!(s[1].opa, Opa(128));
+        assert_eq!(s[1].opa, Opa::from_raw(128));
         // Garbage: too few values → no stops.
         assert!(stops(&[0.0, 1.0], 2).is_empty());
         assert!(stops(&[], 0).is_empty());
@@ -1103,8 +1107,8 @@ mod tests {
         assert_eq!(radius, twine_core::Fx::from_int(40));
         // Highlight 50 % of the radius at 90° from the start→end direction (+x): straight down.
         let f = focal.unwrap();
-        assert!((f.x.0 - (50 << 16)).abs() < 64, "{f:?}");
-        assert!((f.y.0 - (70 << 16)).abs() < 64, "{f:?}");
+        assert!((f.x.raw() - (50 << 16)).abs() < 64, "{f:?}");
+        assert!((f.y.raw() - (70 << 16)).abs() < 64, "{f:?}");
         assert_eq!(stops.as_slice().len(), 2);
     }
 }

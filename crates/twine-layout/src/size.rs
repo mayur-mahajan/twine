@@ -132,7 +132,7 @@ pub(crate) fn resolve_node<T: LayoutTree + ?Sized>(
             let msum = sum(m, axis);
             let fixed = |l: Length| match l {
                 Length::Content => None,
-                Length::Px(v) => Some(v),
+                Length::Px(v) | Length::Dp(v) => Some(v),
                 l @ Length::Pct(_) => Some(l.resolve(pc, 0).saturating_sub(msum)),
             };
             let mut content: Option<i32> = None;
@@ -279,7 +279,10 @@ mod tests {
     use crate::{LayoutFlags, layout_subtree};
 
     fn pad(s: StyleBuf, v: i32) -> StyleBuf {
-        s.pad_left(v).pad_right(v).pad_top(v).pad_bottom(v)
+        s.padding_left(v)
+            .padding_right(v)
+            .padding_top(v)
+            .padding_bottom(v)
     }
 
     fn run(t: &mut ToyTree) {
@@ -299,11 +302,11 @@ mod tests {
     fn pct_of_parent_content() {
         let mut t = ToyTree::new(300, 200);
         t.style_mut(ToyTree::ROOT)
-            .set(twine_style::StyleProp::PadLeft(10));
+            .set(twine_style::StyleProp::PaddingLeft(Length::Px(10)));
         t.style_mut(ToyTree::ROOT)
-            .set(twine_style::StyleProp::PadRight(40));
+            .set(twine_style::StyleProp::PaddingRight(Length::Px(40)));
         t.style_mut(ToyTree::ROOT)
-            .set(twine_style::StyleProp::BorderWidth(5));
+            .set(twine_style::StyleProp::BorderWidth(Length::Px(5)));
         let a = t.add(
             ToyTree::ROOT,
             StyleBuf::new().width(Length::pct(50)).height(Length::pct(33)),
@@ -366,10 +369,10 @@ mod tests {
         let p = t.add(
             ToyTree::ROOT,
             StyleBuf::new()
-                .pad_left(3)
-                .pad_right(4)
-                .pad_top(5)
-                .pad_bottom(6)
+                .padding_left(3)
+                .padding_right(4)
+                .padding_top(5)
+                .padding_bottom(6)
                 .border_width(1),
         );
         t.add(

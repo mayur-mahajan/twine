@@ -10,6 +10,8 @@
 //!   are active (pointer or button pressed, key or encoder button held). An idle touch UI with
 //!   an interrupt line therefore never wakes the CPU.
 //!
+//! Device health (`InputDevice::health`): see [`Engine::input_health`].
+//!
 //! [`EngineConfig::read_period`]: crate::EngineConfig::read_period
 
 mod button;
@@ -22,16 +24,22 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt;
 
+use twine_core::fault::FaultKind;
 use twine_core::{Duration, Instant, Point};
-use twine_hal::{InputData, InputDevice, InputKind, PollHint};
-use twine_style::Dir;
+use twine_hal::{
+    ButtonData, DeviceHealth, EncoderData, InputData, InputDevice, InputKind, Key, KeypadData, PointerData,
+    PollHint,
+};
+use twine_style::Side;
 
 pub(crate) use button::ButtonProc;
 pub(crate) use encoder::{EncoderProc, is_editable};
 pub(crate) use keypad::KeypadProc;
 pub(crate) use pointer::PointerProc;
 
-use crate::{DisplayId, Engine, EngineError, EventCode, EventParam, GroupId, NodeId, fmt_node_id};
+use crate::{
+    DisplayId, Engine, EngineError, EventCode, EventParam, FaultRecord, GroupId, NodeId, fmt_node_id,
+};
 
 /// Most input devices registered at once.
 pub const MAX_INPUTS: usize = 8;
@@ -65,6 +73,37 @@ impl fmt::Debug for InputId {
 impl fmt::Display for InputId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "i{}", self.0)
+    }
+}
+
+/// The engine's view of a driver: [`InputDevice`] with `read` and `health` fused into one
+/// virtual call.
+///
+/// The blanket impl is monomorphized per driver type, so inside `sample` the calls to `read`
+/// and `health` are static (and a default `health` inlines to a constant). Checking the health
+/// therefore adds no indirect call to a read; the only per-read cost is comparing the returned
+/// value with the last one.
+trait Sampler {
+    fn sample(&mut self) -> (InputData, DeviceHealth);
+    fn poll_hint(&self) -> PollHint;
+    fn rearm(&mut self);
+}
+
+impl<T: InputDevice> Sampler for T {
+    #[inline]
+    fn sample(&mut self) -> (InputData, DeviceHealth) {
+        let data = self.read();
+        (data, self.health())
+    }
+
+    #[inline]
+    fn poll_hint(&self) -> PollHint {
+        InputDevice::poll_hint(self)
+    }
+
+    #[inline]
+    fn rearm(&mut self) {
+        InputDevice::rearm(self);
     }
 }
 
@@ -167,7 +206,9 @@ pub(crate) struct InputState {
     /// Distinguishes devices that reuse a slot.
     serial: u32,
     pub(crate) kind: InputKind,
-    driver: Box<dyn InputDevice>,
+    driver: Box<dyn Sampler>,
+    /// The health the driver reported with its last sample.
+    health: DeviceHealth,
     pub(crate) display: DisplayId,
     pub(crate) enabled: bool,
     notified: bool,
@@ -193,6 +234,36 @@ impl InputState {
             proc.wait_release();
             self.wait_release = false;
         }
+    }
+}
+
+/// The last sample `last` (the last trusted position) as released: what a
+/// [`DeviceHealth::Failed`] device is processed as. Without one (the device failed from its
+/// first read) a released sample of `data`'s kind at the origin: nothing of the untrusted
+/// sample is used, except a button's id.
+fn released(data: InputData, last: Option<InputData>) -> InputData {
+    let last = last.unwrap_or(match data {
+        InputData::Pointer(_) => InputData::Pointer(PointerData::default()),
+        d => d,
+    });
+    match last {
+        InputData::Pointer(p) => InputData::Pointer(PointerData {
+            point: p.point,
+            pressed: false,
+        }),
+        InputData::Keypad(k) => InputData::Keypad(KeypadData {
+            key: k.key,
+            pressed: false,
+            more: false,
+        }),
+        InputData::Encoder(_) => InputData::Encoder(EncoderData {
+            diff: 0,
+            pressed: false,
+        }),
+        InputData::Button(b) => InputData::Button(ButtonData {
+            id: b.id,
+            pressed: false,
+        }),
     }
 }
 
@@ -339,6 +410,7 @@ impl Engine {
             serial: self.input_serial,
             kind,
             driver: Box::new(dev),
+            health: DeviceHealth::Ok,
             display,
             enabled: true,
             notified: false,
@@ -428,7 +500,7 @@ impl Engine {
 
     /// The direction of the last gesture of a pointer (cleared by the next press).
     #[must_use]
-    pub fn gesture_dir(&self, id: InputId) -> Option<Dir> {
+    pub fn gesture_dir(&self, id: InputId) -> Option<Side> {
         match self.input_state(id)?.proc.as_ref()? {
             Proc::Pointer(p) => p.gesture_dir,
             Proc::Button(b) => b.ptr.gesture_dir,
@@ -504,6 +576,68 @@ impl Engine {
             .is_some_and(data_active)
     }
 
+    /// The health device `id` reported with its last read ([`DeviceHealth::Ok`] before the
+    /// first read), `None` for unknown devices.
+    ///
+    /// After every read the engine compares the device's [`InputDevice::health`] with the last
+    /// value it saw (one small compare: the health comes back from the same virtual call as the
+    /// sample, with no extra indirection). Only a *change* (or a `Failed` device) takes the
+    /// cold path, which
+    ///
+    /// - raises [`FaultKind::InputDevice`] when the device gets worse: `Ok` → `Degraded`, or
+    ///   anything → `Failed` (the record's `input` is the device, `code` 1 = degraded,
+    ///   2 = failed); recoveries are logged, not raised;
+    /// - on entering `Failed`, **releases the device without a click**: a held press ends with
+    ///   `PressLost` (pointer and button devices: the pressed node; keypads holding `Enter` and
+    ///   encoders holding their button: the focused node), never `Released`/`Clicked`, and a
+    ///   scroll in progress ends as if released (its throw runs out);
+    /// - on leaving `Failed` while the sample is pressed, ignores the device until it is
+    ///   released (the press began while its samples were not trusted).
+    ///
+    /// While a device is `Failed` every sample it returns is processed as released at the last
+    /// trusted position (so a controller latched "pressed", e.g. by ESD, cannot keep a button
+    /// pressed or fire long-press repeats), but it keeps being read so that a recovery is seen:
+    /// periodic devices every `read_period`, interrupt devices at their next interrupt.
+    ///
+    /// ```
+    /// use twine_core::Point;
+    /// use twine_engine::{Engine, EngineConfig};
+    /// use twine_hal::{DeviceHealth, InputData, InputDevice, InputKind, PointerData};
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_engine::BufferMode;
+    /// # use twine_hal::{DisplayDriver, DisplayInfo, DrawBufferMem};
+    /// # struct Panel(Option<DrawBufferMem>);
+    /// # impl DisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     fn begin_flush(&mut self, _: Rect, b: DrawBufferMem) -> Result<(), ()> { self.0 = Some(b); Ok(()) }
+    /// #     fn poll_flush(&mut self) -> Option<DrawBufferMem> { self.0.take() }
+    /// # }
+    ///
+    /// /// A touch panel whose bus is dead.
+    /// struct Dead;
+    /// impl InputDevice for Dead {
+    ///    fn kind(&self) -> InputKind { InputKind::Pointer }
+    ///    fn read(&mut self) -> InputData {
+    ///        InputData::Pointer(PointerData { point: Point::new(1, 1), pressed: true })
+    ///    }
+    ///    fn health(&self) -> DeviceHealth { DeviceHealth::Failed }
+    /// }
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
+    /// # let display = e.add_display(Panel(None), BufferMode::partial_single(buf)).unwrap();
+    /// let touch = e.add_input(Dead, display).unwrap();
+    /// assert_eq!(e.input_health(touch), Some(DeviceHealth::Ok)); // not read yet
+    /// e.read_inputs(twine_core::Instant::ZERO);
+    /// assert_eq!(e.input_health(touch), Some(DeviceHealth::Failed));
+    /// assert!(!e.input_pressed(touch)); // a failed device is processed as released
+    /// ```
+    #[must_use]
+    pub fn input_health(&self, id: InputId) -> Option<DeviceHealth> {
+        self.input_state(id).map(|s| s.health)
+    }
+
     /// The kind of the device being processed.
     pub(crate) fn active_input_kind(&self) -> Option<InputKind> {
         self.input_active.map(|(_, k)| k)
@@ -547,11 +681,21 @@ impl Engine {
                 let Some(st) = self.inputs[idx].as_mut().filter(|s| s.serial == serial) else {
                     break;
                 };
-                let data = st.driver.read();
-                if st.last_data != Some(data) {
-                    twine_core::debug!(target: "twine::input", "read {:?} -> {:?}", st.id, data);
-                    st.last_data = Some(data);
-                }
+                let (data, health) = st.driver.sample();
+                // Hot path: one compare while the device is healthy (the health is a register
+                // value returned with the sample).
+                let data = if health == st.health && health != DeviceHealth::Failed {
+                    if st.last_data != Some(data) {
+                        twine_core::debug!(target: "twine::input", "read {:?} -> {:?}", st.id, data);
+                        st.last_data = Some(data);
+                    }
+                    data
+                } else {
+                    match self.unhealthy_sample(idx, serial, health, data) {
+                        Some(d) => d,
+                        None => break,
+                    }
+                };
                 self.process_input(idx, serial, data, now);
                 more = matches!(data, InputData::Keypad(k) if k.more);
                 if !more {
@@ -575,6 +719,88 @@ impl Engine {
                     st.next_read = None;
                     st.driver.rearm();
                 }
+            }
+        }
+    }
+
+    /// The sample of slot `idx` (device `serial`) whose health changed or is `Failed`:
+    /// records the new health, raises the fault and ends a held press when the device gets
+    /// worse (see the module docs), records the sample to process (released while the device
+    /// is `Failed`) as the last one and returns it. `None` if an event handler removed the
+    /// device meanwhile.
+    #[cold]
+    #[inline(never)]
+    fn unhealthy_sample(
+        &mut self,
+        idx: usize,
+        serial: u32,
+        health: DeviceHealth,
+        data: InputData,
+    ) -> Option<InputData> {
+        let st = self.inputs[idx].as_mut().filter(|s| s.serial == serial)?;
+        let prev = st.health;
+        if health != prev {
+            st.health = health;
+            let id = st.id;
+            let worse = match health {
+                DeviceHealth::Ok => false,
+                DeviceHealth::Degraded { .. } => prev == DeviceHealth::Ok,
+                DeviceHealth::Failed => true,
+            };
+            if prev == DeviceHealth::Failed && data_active(&data) {
+                // The press began while the samples were not trusted.
+                st.wait_release = true;
+            }
+            match health {
+                DeviceHealth::Failed => {
+                    twine_core::error!(target: "twine::input", "input {} failed: processed as released until it recovers", id);
+                    self.release_failed(idx);
+                }
+                DeviceHealth::Degraded { errors } if worse => {
+                    twine_core::warn!(target: "twine::input", "input {} degraded ({} failed reads)", id, errors);
+                }
+                DeviceHealth::Ok | DeviceHealth::Degraded { .. } => {
+                    if prev == DeviceHealth::Failed {
+                        twine_core::info!(target: "twine::input", "input {} recovered ({:?})", id, health);
+                    }
+                }
+            }
+            if worse {
+                let code = if health == DeviceHealth::Failed { 2 } else { 1 };
+                self.raise_fault(FaultRecord::new(FaultKind::InputDevice).input(id).code(code));
+            }
+        }
+        let st = self.inputs[idx].as_mut().filter(|s| s.serial == serial)?;
+        let data = if health == DeviceHealth::Failed {
+            released(data, st.last_data)
+        } else {
+            data
+        };
+        if st.last_data != Some(data) {
+            twine_core::debug!(target: "twine::input", "read {:?} -> {:?} ({:?})", st.id, data, health);
+            st.last_data = Some(data);
+        }
+        Some(data)
+    }
+
+    /// Ends the held press of slot `idx`, which just failed, without a click: the processor
+    /// waits for the release (a pointer sends `PressLost` to its pressed node when it
+    /// processes the released sample), and a keypad holding `Enter` or an encoder holding its
+    /// button sends `PressLost` to the focused node now.
+    fn release_failed(&mut self, idx: usize) {
+        let Some(st) = self.inputs[idx].as_mut() else {
+            return;
+        };
+        st.wait_release = true;
+        let focus_pressed = match st.proc.as_ref() {
+            Some(Proc::Keypad(k)) => k.pressed && k.last_key == Some(Key::Enter),
+            Some(Proc::Encoder(e)) => e.pressed,
+            _ => false,
+        };
+        let (id, group) = (st.id, st.group);
+        if focus_pressed {
+            if let Some(f) = group.and_then(|g| self.focused(g)) {
+                self.input_send(id, f, EventCode::PressLost, EventParam::None);
             }
         }
     }

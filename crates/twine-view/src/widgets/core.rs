@@ -4,20 +4,20 @@ use core::cell::Cell;
 
 use alloc::rc::Rc;
 
-use twine_core::{Angle, Color, Opa, Point, Scale};
-use twine_engine::{EventCode, EventFilter, EventResult, MeasureCx, State};
+use twine_core::{Angle, Point, Scale};
+use twine_engine::{EventCode, EventFilter, EventResult, MeasureCx, ObjFlags, State};
 use twine_image::ImageSource;
-use twine_style::{Align, StyleProp};
+use twine_style::Align;
 use twine_text::LongMode;
 use twine_widgets::button::Button;
 use twine_widgets::image::{Image, ImageAlign};
 use twine_widgets::label::Label;
 
 use crate::access::EngineAccess;
+use crate::bind::bind_node;
 use crate::build::{WidgetView, widget_view};
 use crate::model::{IntoModel, bind_model};
-use crate::modifiers::ViewExt;
-use crate::prop::IntoProp;
+use crate::prop::{IntoProp, Prop};
 use crate::text::{IntoText, TextProp, bind_label_text};
 use crate::view::ViewSeq;
 
@@ -50,17 +50,20 @@ impl WidgetView<Label> {
 
     /// Lets the pointer select text: pressing and dragging over the label selects the
     /// characters between the press and the pointer (drawn with the `Selected` part's style).
+    /// Turning it off clears the selection.
     #[must_use]
-    pub fn selectable(self, on: bool) -> Self {
-        if !on {
+    pub fn selectable(self, on: impl IntoProp<bool>) -> Self {
+        let on = on.into_prop();
+        if matches!(on, Prop::Static(false)) {
             return self;
         }
-        self.clickable(true).op(|cx, node| {
+        self.op(move |cx, node| {
+            let enabled = Rc::new(Cell::new(false));
             let start = Rc::new(Cell::new(0usize));
-            let s = start.clone();
+            let (en, s) = (enabled.clone(), start.clone());
             let e = cx.engine();
             e.add_event_handler(node, EventFilter::Code(EventCode::Pressed), move |ecx, _| {
-                if let Some(p) = ecx.point() {
+                if let (true, Some(p)) = (en.get(), ecx.point()) {
                     let e = ecx.engine();
                     let origin = e.content_area(node);
                     let rel = Point::new(p.x - origin.x0, p.y - origin.y0);
@@ -70,8 +73,9 @@ impl WidgetView<Label> {
                 }
                 EventResult::Continue
             });
+            let en = enabled.clone();
             e.add_event_handler(node, EventFilter::Code(EventCode::Pressing), move |ecx, _| {
-                if let Some(p) = ecx.point() {
+                if let (true, Some(p)) = (en.get(), ecx.point()) {
                     let e = ecx.engine_mut();
                     let origin = e.content_area(node);
                     let rel = Point::new(p.x - origin.x0, p.y - origin.y0);
@@ -86,6 +90,13 @@ impl WidgetView<Label> {
                     }
                 }
                 EventResult::Continue
+            });
+            bind_node(cx, node, on, move |e, n, on| {
+                enabled.set(on);
+                e.set_flag(n, ObjFlags::CLICKABLE, on);
+                if !on {
+                    e.with_widget_mut(n, |l: &mut Label, wcx| l.clear_selection(wcx));
+                }
             });
         })
     }
@@ -159,11 +170,12 @@ impl WidgetView<Button> {
     }
 }
 
-/// An image showing `src` (any [`IntoProp<ImageSource>`]).
+/// An image showing `src` (any [`IntoProp<ImageSource>`], including a
+/// [`Symbol`](twine_text::Symbol), drawn with the symbol font).
 ///
 /// ```
 /// use twine_view::prelude::*;
-/// let _v = image(ImageSource::Symbol("\u{f00c}")).scale(Scale::ONE);
+/// let _v = image(Symbol::Ok).scale(Scale::ONE);
 /// ```
 pub fn image(src: impl IntoProp<ImageSource>) -> WidgetView<Image> {
     widget_view(Image::new).bind(src, |i: &mut Image, cx, s| i.set_src(cx, s))
@@ -206,12 +218,5 @@ impl WidgetView<Image> {
     #[must_use]
     pub fn svg_cache(self, on: impl IntoProp<bool>) -> Self {
         self.bind(on, |i: &mut Image, cx, on| i.set_svg_cache(cx, on))
-    }
-
-    /// Recolors the image pixels (`ImageRecolor` / `ImageRecolorOpa`).
-    #[must_use]
-    pub fn recolor(self, color: impl IntoProp<Color>, opa: impl IntoProp<Opa>) -> Self {
-        self.style_prop(color, StyleProp::ImageRecolor)
-            .style_prop(opa, StyleProp::ImageRecolorOpa)
     }
 }

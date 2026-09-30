@@ -85,7 +85,7 @@ fn crosshair(x: impl Fn() -> i32 + Clone + 'static, y: impl Fn() -> i32 + Clone 
     ))
     .size(CROSS, CROSS)
     .pos(move || x2() - CROSS / 2, move || y2() - CROSS / 2)
-    .bg_opa(Opa::TRANSP)
+    .bg_opacity(Opa::TRANSP)
     .border(0, Color::BLACK)
     .padding(0)
     .test_id("target")
@@ -108,8 +108,10 @@ pub fn app(cx: Scope) -> impl View {
     })
 }
 
-/// The calibration application; `on_done` receives the calibration (and it is shown).
-pub fn app_with(cx: Scope, on_done: fn(Calibration)) -> impl View {
+/// The calibration application; `on_done` receives the calibration (and it is shown). It is a
+/// closure (it may capture e.g. a signal or a storage handle), `FnMut` because it is called
+/// from the touch-message handler, which may run more than once.
+pub fn app_with(cx: Scope, mut on_done: impl FnMut(Calibration) + 'static) -> impl View {
     let (w, h) = twine::view::EngineAccess::with(|e| {
         e.default_display()
             .and_then(|d| e.display_info(d))
@@ -172,7 +174,7 @@ pub fn app_with(cx: Scope, on_done: fn(Calibration)) -> impl View {
                     crosshair(move || t[4].0, move || t[4].1),
                 ))
                 .size(Length::Pct(100), Length::Pct(100))
-                .bg_opa(Opa::TRANSP)
+                .bg_opacity(Opa::TRANSP)
                 .border(0, Color::BLACK)
                 .padding(0)
             },
@@ -183,7 +185,7 @@ pub fn app_with(cx: Scope, on_done: fn(Calibration)) -> impl View {
     .radius(0)
     .border(0, Color::BLACK)
     .bg(Color::WHITE)
-    .scroll_dir(Dir::NONE)
+    .scrollable(false)
 }
 
 /// Wraps a touch driver that reports raw coordinates: every tap is averaged and sent to
@@ -245,6 +247,10 @@ impl<T: InputDevice> InputDevice for RawTouchInput<T> {
 
     fn rearm(&mut self) {
         self.inner.rearm();
+    }
+
+    fn health(&self) -> twine::hal::DeviceHealth {
+        self.inner.health()
     }
 }
 

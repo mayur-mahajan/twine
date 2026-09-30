@@ -18,7 +18,7 @@ fn star(scene: &mut VectorScene, cx: i32, cy: i32, r: i32, angle: Angle, color: 
     let (path, dsc) = scene.path_mut();
     for k in 0..10 {
         let radius = if k % 2 == 0 { r } else { r * 2 / 5 };
-        let t = Transform::rotate(Angle(k * 360));
+        let t = Transform::rotate(Angle::deci_deg(k * 360));
         let (x, y) = t.map(Fx::ZERO, Fx::from_int(-radius));
         let p = FxPoint::new(x + Fx::from_int(cx), y + Fx::from_int(cy));
         if k == 0 {
@@ -108,9 +108,18 @@ fn star_ui() -> (TestUi, AnimController) {
                 .repeat(Repeat::Infinite),
         );
         s.set(Some(ctrl));
-        vector_canvas(move |scene| star(scene, 60, 60, 40, Angle(angle.get()), Color::hex(0x00F9_A825)))
-            .size(120, 120)
-            .align(Align::TopLeft)
+        vector_canvas(move |scene| {
+            star(
+                scene,
+                60,
+                60,
+                40,
+                Angle::deci_deg(angle.get()),
+                Color::hex(0x00F9_A825),
+            );
+        })
+        .size(120, 120)
+        .align(Align::TopLeft)
     });
     t.advance(Duration::ms(16));
     (t, slot.take().unwrap())

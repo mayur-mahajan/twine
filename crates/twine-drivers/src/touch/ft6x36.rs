@@ -36,7 +36,7 @@
 use embedded_hal::digital::InputPin;
 use embedded_hal::i2c::I2c;
 use twine_core::log::{trace, warn};
-use twine_hal::{InputData, InputDevice, InputKind, PointerData, PollHint};
+use twine_hal::{DeviceHealth, InputData, InputDevice, InputKind, PointerData, PollHint};
 
 use super::{IrqState, TouchTransform, irq_touch_common};
 
@@ -122,6 +122,14 @@ impl<I2C, IRQ> Ft6x36<I2C, IRQ> {
         self
     }
 
+    /// Reports the device [`Failed`](DeviceHealth::Failed) after `n` consecutive bus errors
+    /// (default [`DeviceHealth::DEFAULT_FAIL_AFTER`]; see [`health`](InputDevice::health)).
+    #[must_use]
+    pub fn with_fail_after(mut self, n: u16) -> Self {
+        self.irq.fail_after = n;
+        self
+    }
+
     /// Replaces the coordinate transform.
     pub fn set_transform(&mut self, t: TouchTransform) {
         self.transform = t;
@@ -161,6 +169,7 @@ impl<I2C: I2c, IRQ: InputPin> InputDevice for Ft6x36<I2C, IRQ> {
         if !self.irq.should_read() {
             return InputData::Pointer(self.irq.last);
         }
+        let name = self.model.name();
         let data = match self.read_raw() {
             Ok(Some((x, y))) => PointerData {
                 point: self.transform.apply(i32::from(x), i32::from(y)),
@@ -168,15 +177,19 @@ impl<I2C: I2c, IRQ: InputPin> InputDevice for Ft6x36<I2C, IRQ> {
             },
             Ok(None) => self.irq.released(),
             Err(_) => {
-                warn!(target: "twine::driver", "{}: I2C error", self.model.name());
-                self.irq.released()
+                warn!(target: "twine::driver", "{}: I2C error", name);
+                return InputData::Pointer(self.irq.error(name));
             }
         };
-        InputData::Pointer(self.irq.update(self.model.name(), data))
+        InputData::Pointer(self.irq.ok(name, data))
     }
 
     fn poll_hint(&self) -> PollHint {
         self.irq.poll_hint()
+    }
+
+    fn health(&self) -> DeviceHealth {
+        self.irq.health
     }
 }
 
@@ -300,5 +313,21 @@ mod tests {
         let mut t = dut(&rec);
         block_on(t.wait_for_interrupt());
         assert_eq!(rec.ops(), [BusOp::Wait("int", false)]);
+    }
+
+    #[test]
+    fn ft6x36_bus_failure_degrades_then_fails() {
+        let rec = Recorder::new();
+        let regs = Regs::install(&rec);
+        rec.set_level("int", false);
+        regs.set(0x02, &[0x01, 0x80, 0x10, 0x00, 0x20]);
+        let mut t = dut(&rec);
+        crate::touch::test_util::assert_bus_failure_sequence(&rec, &mut t);
+        // A threshold of 1 fails at the first error.
+        let mut t = dut(&rec).with_fail_after(1);
+        assert!(matches!(t.read(), InputData::Pointer(p) if p.pressed));
+        rec.set_bus_down(true);
+        assert!(matches!(t.read(), InputData::Pointer(p) if !p.pressed));
+        assert_eq!(t.health(), twine_hal::DeviceHealth::Failed);
     }
 }

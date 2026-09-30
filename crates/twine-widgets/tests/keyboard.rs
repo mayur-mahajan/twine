@@ -12,7 +12,7 @@ use twine_core::{Duration, Point, Rect};
 use twine_engine::{EventCode, EventFilter, EventResult, MeasureCx, NodeId, ObjFlags, State};
 use twine_style::Align;
 use twine_testing::{EngineHarness, capture_logs};
-use twine_text::symbols;
+use twine_text::Symbol;
 use twine_widgets::buttonmatrix::BtnCtrl;
 use twine_widgets::keyboard::{self, KEYBOARD_CLASS, Keyboard, KeyboardMode};
 use twine_widgets::textarea::{self, Textarea};
@@ -100,11 +100,11 @@ fn kb_types_into_textarea() {
         tap_key(&mut h, kb, k);
     }
     assert_eq!(text(&h, ta), "hey .");
-    tap_key(&mut h, kb, symbols::LEFT);
+    tap_key(&mut h, kb, Symbol::Left.as_str());
     tap_key(&mut h, kb, "x");
     assert_eq!(text(&h, ta), "hey x.");
-    tap_key(&mut h, kb, symbols::RIGHT);
-    tap_key(&mut h, kb, symbols::NEW_LINE);
+    tap_key(&mut h, kb, Symbol::Right.as_str());
+    tap_key(&mut h, kb, Symbol::NewLine.as_str());
     assert_eq!(text(&h, ta), "hey x.\n");
 }
 
@@ -112,10 +112,10 @@ fn kb_types_into_textarea() {
 fn kb_backspace_deletes() {
     let (mut h, ta, kb) = scene(Mode::Light);
     with(&mut h, ta, |t: &mut Textarea, cx| t.set_text(cx, "abc"));
-    tap_key(&mut h, kb, symbols::BACKSPACE);
+    tap_key(&mut h, kb, Symbol::Backspace.as_str());
     assert_eq!(text(&h, ta), "ab");
     // Backspace (a checked key without NO_REPEAT) repeats while held.
-    let p = key(&h, kb, symbols::BACKSPACE);
+    let p = key(&h, kb, Symbol::Backspace.as_str());
     h.press(p);
     h.advance(Duration::ms(520));
     h.release();
@@ -182,11 +182,11 @@ fn kb_ok_sends_ready() {
         count(&mut h, kb, EventCode::Ready),
         count(&mut h, ta, EventCode::Ready),
     );
-    tap_key(&mut h, kb, symbols::OK);
+    tap_key(&mut h, kb, Symbol::Ok.as_str());
     assert_eq!((*on_kb.borrow(), *on_ta.borrow()), (1, 1));
     // New line in a one-line textarea: Ready too.
     with(&mut h, ta, |t: &mut Textarea, cx| t.set_one_line(cx, true));
-    tap_key(&mut h, kb, symbols::NEW_LINE);
+    tap_key(&mut h, kb, Symbol::NewLine.as_str());
     assert_eq!(*on_ta.borrow(), 2);
     assert_eq!(text(&h, ta), "");
 }
@@ -198,10 +198,10 @@ fn kb_close_sends_cancel() {
         count(&mut h, kb, EventCode::Cancel),
         count(&mut h, ta, EventCode::Cancel),
     );
-    tap_key(&mut h, kb, symbols::KEYBOARD);
+    tap_key(&mut h, kb, Symbol::Keyboard.as_str());
     assert_eq!((*on_kb.borrow(), *on_ta.borrow()), (1, 1));
     tap_key(&mut h, kb, keyboard::MODE_TEXT_UPPER);
-    tap_key(&mut h, kb, symbols::CLOSE);
+    tap_key(&mut h, kb, Symbol::Close.as_str());
     assert_eq!((*on_kb.borrow(), *on_ta.borrow()), (2, 2));
 }
 

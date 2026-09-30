@@ -13,15 +13,15 @@
 //! - Main/track placement: `Start`, `End`, `Center` (`free / 2`), `SpaceEvenly`
 //!   (`free / (n + 1)` before every item), `SpaceAround` (`free / n` between, half before),
 //!   `SpaceBetween` (`free / (n − 1)` between); with ≤ 1 item `SpaceEvenly`/`SpaceAround`
-//!   center. Gaps (`PadColumn`/`PadRow`) are added on top. Negative free space is not
+//!   center. Gaps (`ColumnGap`/`RowGap`) are added on top. Negative free space is not
 //!   special-cased (as in LVGL).
-//! - Cross placement per item within its track: `Start`, `Center`, `End` (the `Space*` values
-//!   act as `Start`); margins are respected.
+//! - Cross placement per item within its track: `Start`, `Center`, `End` (`CrossAlign`; a
+//!   stored distributed code acts as `Start`); margins are respected.
 //! - Right-to-left rows are placed from the right; right-to-left column flows place their
 //!   tracks from the right.
 
 use twine_core::{Rect, Size};
-use twine_style::{FlexAlign, FlexFlow, PropId};
+use twine_style::{CrossAlign, FlexFlow, MainAlign, PropId};
 
 use crate::layout::{Item, LayoutScratch};
 use crate::position::abs_extent_all;
@@ -52,9 +52,9 @@ struct Flex {
     main: Axis,
     wrap: bool,
     rev: bool,
-    main_place: FlexAlign,
-    cross_place: FlexAlign,
-    track_place: FlexAlign,
+    main_place: MainAlign,
+    cross_place: CrossAlign,
+    track_place: MainAlign,
     item_gap: i32,
     track_gap: i32,
 }
@@ -64,16 +64,17 @@ impl Flex {
         let flow = style_enum::<T, FlexFlow>(t, id, PropId::FlexFlow);
         let row = !flow.is_column();
         let (pad_col, pad_row) = (
-            t.style_i32(id, PropId::PadColumn),
-            t.style_i32(id, PropId::PadRow),
+            t.style_i32(id, PropId::ColumnGap),
+            t.style_i32(id, PropId::RowGap),
         );
         Flex {
             main: if row { Axis::X } else { Axis::Y },
             wrap: flow.is_wrap(),
             rev: flow.is_reverse(),
-            main_place: style_enum::<T, FlexAlign>(t, id, PropId::FlexMainPlace),
-            cross_place: style_enum::<T, FlexAlign>(t, id, PropId::FlexCrossPlace),
-            track_place: style_enum::<T, FlexAlign>(t, id, PropId::FlexTrackPlace),
+            main_place: style_enum::<T, MainAlign>(t, id, PropId::FlexMainAlign),
+            // A code without cross-axis meaning (a distributed mode) acts as `Start`.
+            cross_place: style_enum::<T, CrossAlign>(t, id, PropId::FlexCrossAlign),
+            track_place: style_enum::<T, MainAlign>(t, id, PropId::FlexTrackAlign),
             item_gap: if row { pad_col } else { pad_row },
             track_gap: if row { pad_row } else { pad_col },
         }
@@ -84,11 +85,11 @@ impl Flex {
     }
 }
 
-/// `FlexGrow` of a node.
-pub(crate) fn grow_of<T: LayoutTree + ?Sized>(t: &T, id: T::Id) -> u8 {
+/// `FlexGrow` (weight) of a node.
+pub(crate) fn grow_of<T: LayoutTree + ?Sized>(t: &T, id: T::Id) -> u16 {
     t.style_prop(id, PropId::FlexGrow)
-        .get::<u8>()
-        .unwrap_or_else(|| t.style_i32(id, PropId::FlexGrow).clamp(0, 255) as u8)
+        .get::<u16>()
+        .unwrap_or_else(|| t.style_i32(id, PropId::FlexGrow).clamp(0, i32::from(u16::MAX)) as u16)
 }
 
 /// LVGL `div_round_closest` (in `i64`, so `free × grow` cannot overflow).
@@ -156,35 +157,35 @@ fn find_track<I>(
 }
 
 /// LVGL `place_content`: moves `start` and sets the extra `gap` for a placement mode.
-fn place_content(place: FlexAlign, max: i32, content: i32, n: i32, start: &mut i32, gap: &mut i32) {
-    let place = if n <= 1 && matches!(place, FlexAlign::SpaceAround | FlexAlign::SpaceEvenly) {
-        FlexAlign::Center
+fn place_content(place: MainAlign, max: i32, content: i32, n: i32, start: &mut i32, gap: &mut i32) {
+    let place = if n <= 1 && matches!(place, MainAlign::SpaceAround | MainAlign::SpaceEvenly) {
+        MainAlign::Center
     } else {
         place
     };
     match place {
-        FlexAlign::Center => {
+        MainAlign::Center => {
             *gap = 0;
             *start += (max - content) / 2;
         }
-        FlexAlign::End => {
+        MainAlign::End => {
             *gap = 0;
             *start += max - content;
         }
-        FlexAlign::SpaceBetween => {
+        MainAlign::SpaceBetween => {
             if n > 1 {
                 *gap = (max - content) / (n - 1);
             }
         }
-        FlexAlign::SpaceAround => {
+        MainAlign::SpaceAround => {
             *gap += (max - content) / n;
             *start += *gap / 2;
         }
-        FlexAlign::SpaceEvenly => {
+        MainAlign::SpaceEvenly => {
             *gap = (max - content) / (n + 1);
             *start += *gap;
         }
-        FlexAlign::Start => *gap = 0,
+        MainAlign::Start => *gap = 0,
     }
 }
 
@@ -345,15 +346,15 @@ pub(crate) fn arrange<T: LayoutTree + ?Sized>(
 
     // Content-sized cross axis: tracks are packed at the start.
     let mut track_place = if sized[cross.index()] {
-        FlexAlign::Start
+        MainAlign::Start
     } else {
         f.track_place
     };
     let rtl_col = rtl && !f.row();
     if rtl_col {
         track_place = match track_place {
-            FlexAlign::Start => FlexAlign::End,
-            FlexAlign::End => FlexAlign::Start,
+            MainAlign::Start => MainAlign::End,
+            MainAlign::End => MainAlign::Start,
             other => other,
         };
     }
@@ -421,11 +422,11 @@ fn place_track<T: LayoutTree + ?Sized>(
         }
         let (m, size) = (it.margin, it.size);
         let cross_off = match f.cross_place {
-            FlexAlign::Center => {
+            CrossAlign::Center => {
                 (((tr.cross + 1) & !1) - cross.of(size)) / 2 + (start(m, cross) - end(m, cross)) / 2
             }
-            FlexAlign::End => tr.cross - cross.of(size) - end(m, cross),
-            _ => start(m, cross),
+            CrossAlign::End => tr.cross - cross.of(size) - end(m, cross),
+            CrossAlign::Start => start(m, cross),
         };
         if rtl_row {
             main_pos -= main.of(size);

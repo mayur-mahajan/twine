@@ -5,6 +5,7 @@
 use twine_core::{ColorFormat, Rect};
 use twine_hal::DrawBufferMem;
 
+use super::timeout::PendingPresent;
 use super::{MAX_FRAME_AREAS, Strategy};
 use crate::Engine;
 use crate::display::Backend;
@@ -17,8 +18,8 @@ pub(crate) struct FullState {
     pub(crate) back: u8,
     /// Areas rendered by the previous frame (in the current front buffer).
     pub(crate) last_areas: heapless::Vec<Rect, MAX_FRAME_AREAS>,
-    /// A `present` was issued and has not taken effect yet.
-    pub(crate) present_pending: bool,
+    /// A `present` was issued and has not taken effect yet (since when).
+    pub(crate) present: Option<PendingPresent>,
     /// Pixels copied by the last area sync (statistics / tests).
     pub(crate) sync_px: u64,
 }
@@ -29,7 +30,7 @@ impl FullState {
             fb: [Some(a), Some(b)],
             back: 1,
             last_areas: heapless::Vec::new(),
-            present_pending: false,
+            present: None,
             sync_px: 0,
         }
     }
@@ -147,22 +148,50 @@ impl Engine {
             .saturating_add(render_us.min(u64::from(u32::MAX)) as u32);
     }
 
-    /// Ends a `Full` frame: presents the back buffer and swaps.
-    pub(crate) fn present_full(&mut self, d: usize) {
+    /// Ends a `Full` frame: presents the back buffer and swaps. Returns whether the present
+    /// succeeded. On failure nothing was scanned out: the buffers are not swapped, so the
+    /// back buffer — which holds the complete, up-to-date frame — is rendered into again, and
+    /// the frame's areas are redrawn according to the flush policy.
+    pub(crate) fn present_full(&mut self, d: usize) -> bool {
+        let since = self.wait_stamp();
         let disp = &mut self.displays[d];
         let (Strategy::Full(st), Backend::Framebuffer(b)) = (&mut disp.refresher.strategy, &mut disp.backend)
         else {
-            return;
+            return true;
         };
-        let _ = b.present(st.back);
-        st.present_pending = true;
-        st.back ^= 1;
+        match b.present(st.back) {
+            Ok(()) => {
+                st.present = Some(PendingPresent {
+                    since,
+                    timed_out: false,
+                });
+                st.back ^= 1;
+                self.flush_ok(d);
+                true
+            }
+            Err(e) => {
+                if self.flush_failed(d, e.driver_code().unwrap_or_default()) {
+                    self.requeue_job_areas(d, 0);
+                }
+                false
+            }
+        }
     }
 
-    /// Ends a `Direct` frame: `present(0)` (a cache clean or no-op for most drivers).
+    /// Ends a `Direct` frame: `present(0)` (a cache clean or no-op for most drivers). On
+    /// failure the frame's areas are redrawn according to the flush policy.
     pub(crate) fn present_direct(&mut self, d: usize) {
-        if let Backend::Framebuffer(b) = &mut self.displays[d].backend {
-            let _ = b.present(0);
+        let result = match &mut self.displays[d].backend {
+            Backend::Framebuffer(b) => b.present(0),
+            _ => return,
+        };
+        match result {
+            Ok(()) => self.flush_ok(d),
+            Err(e) => {
+                if self.flush_failed(d, e.driver_code().unwrap_or_default()) {
+                    self.requeue_job_areas(d, 0);
+                }
+            }
         }
     }
 

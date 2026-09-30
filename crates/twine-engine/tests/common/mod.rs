@@ -25,7 +25,7 @@ pub fn boxed(e: &mut Engine, parent: NodeId, r: Rect, c: Color) -> NodeId {
         e,
         parent,
         r,
-        &[StyleProp::BgColor(c), StyleProp::BgOpa(Opa::COVER)],
+        &[StyleProp::BgColor(c), StyleProp::BgOpacity(Opa::COVER)],
     )
 }
 
@@ -35,7 +35,7 @@ pub fn white_screen(e: &mut Engine) -> NodeId {
     style(
         e,
         s,
-        &[StyleProp::BgColor(Color::WHITE), StyleProp::BgOpa(Opa::COVER)],
+        &[StyleProp::BgColor(Color::WHITE), StyleProp::BgOpacity(Opa::COVER)],
     );
     s
 }
@@ -83,7 +83,7 @@ pub fn list(e: &mut Engine, parent: NodeId, r: Rect, rows: usize, row_h: i32) ->
             e,
             cont,
             Rect::from_xywh(0, i as i32 * row_h, r.width(), row_h),
-            &[StyleProp::BgColor(c), StyleProp::BgOpa(Opa::COVER)],
+            &[StyleProp::BgColor(c), StyleProp::BgOpacity(Opa::COVER)],
         );
         ids.push(row);
     }

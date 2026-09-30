@@ -7,7 +7,7 @@ mod common;
 use common::{EvLog, list, record, scroll_codes, style, white_screen};
 use twine_core::{Point, Rect};
 use twine_engine::{EventCode as C, InvalidateReason, NodeId, ObjFlags};
-use twine_style::{BaseDir, StyleProp};
+use twine_style::{BaseDir, Length, StyleProp};
 use twine_testing::EngineHarness;
 
 /// A 200×200 screen with a 100×100 container at (20, 20) holding one child of `w`×`h` at the
@@ -59,14 +59,21 @@ fn extents_include_margins_and_padding() {
         e,
         cont,
         &[
-            StyleProp::PadLeft(10),
-            StyleProp::PadTop(10),
-            StyleProp::PadRight(10),
-            StyleProp::PadBottom(10),
-            StyleProp::BorderWidth(2),
+            StyleProp::PaddingLeft(Length::Px(10)),
+            StyleProp::PaddingTop(Length::Px(10)),
+            StyleProp::PaddingRight(Length::Px(10)),
+            StyleProp::PaddingBottom(Length::Px(10)),
+            StyleProp::BorderWidth(Length::Px(2)),
         ],
     );
-    style(e, child, &[StyleProp::MarginBottom(5), StyleProp::MarginRight(7)]);
+    style(
+        e,
+        child,
+        &[
+            StyleProp::MarginBottom(Length::Px(5)),
+            StyleProp::MarginRight(Length::Px(7)),
+        ],
+    );
     e.update_layout();
     // Child: x 32..112, y 32..232; container 20..120 with 12 px of padding + border.
     assert_eq!(e.coords(child), Rect::from_xywh(32, 32, 80, 200));

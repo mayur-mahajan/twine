@@ -68,7 +68,7 @@ fn every_source_on_every_destination_matches_argb_reference() {
             for dsc in [
                 ImageDsc::default(),
                 ImageDsc {
-                    opa: Opa(160),
+                    opa: Opa::from_raw(160),
                     ..ImageDsc::default()
                 },
             ] {
@@ -82,7 +82,7 @@ fn every_source_on_every_destination_matches_argb_reference() {
                 assert!(
                     worst <= 2,
                     "{f} on {dest} opa {}: channel delta {worst}",
-                    dsc.opa.0
+                    dsc.opa.raw()
                 );
             }
         }
@@ -102,7 +102,7 @@ fn blit_same_format_uses_copy_path() {
             area,
             &e.pixels(),
             &ImageDsc {
-                opa: Opa(100),
+                opa: Opa::from_raw(100),
                 ..ImageDsc::default()
             },
         );
@@ -111,7 +111,7 @@ fn blit_same_format_uses_copy_path() {
             &e.pixels(),
             &ImageDsc {
                 recolor: Color::RED,
-                recolor_opa: Opa(100),
+                recolor_opa: Opa::from_raw(100),
                 ..ImageDsc::default()
             },
         );
@@ -140,7 +140,7 @@ fn gallery(p: &mut Painter<'_>, e: &Encoded, a8: &Encoded) {
         at(0),
         &px,
         &ImageDsc {
-            opa: Opa(96),
+            opa: Opa::from_raw(96),
             ..ImageDsc::default()
         },
     );
@@ -149,7 +149,7 @@ fn gallery(p: &mut Painter<'_>, e: &Encoded, a8: &Encoded) {
         &px,
         &ImageDsc {
             recolor: Color::hex(0xE53935),
-            recolor_opa: Opa(160),
+            recolor_opa: Opa::from_raw(160),
             ..ImageDsc::default()
         },
     );
@@ -284,7 +284,7 @@ fn blit_chunk_equivalence() {
                     &ImageDsc {
                         tile: true,
                         clip_radius: 9,
-                        opa: Opa(200),
+                        opa: Opa::from_raw(200),
                         ..ImageDsc::default()
                     },
                 );
@@ -294,7 +294,7 @@ fn blit_chunk_equivalence() {
                     &ImageDsc {
                         bitmap_mask: Some(ImagePixels::new(ColorFormat::A8, 30, 30, &mask)),
                         recolor: Color::GREEN,
-                        recolor_opa: Opa(90),
+                        recolor_opa: Opa::from_raw(90),
                         ..ImageDsc::default()
                     },
                 );
@@ -353,7 +353,11 @@ fn blit_partially_offscreen_negative_coords() {
                     let o = (y * 32 + x) * 4;
                     let a = argb[o + 3];
                     let c = Color::new(argb[o + 2], argb[o + 1], argb[o]);
-                    p.fill(Rect::from_xywh(x0 + x as i32, y0 + y as i32, 1, 1), c, Opa(a));
+                    p.fill(
+                        Rect::from_xywh(x0 + x as i32, y0 + y as i32, 1, 1),
+                        c,
+                        Opa::from_raw(a),
+                    );
                 }
             }
         }
@@ -390,10 +394,10 @@ fn no_alloc_blit() {
                 &ImageDsc {
                     tile: i % 2 == 0,
                     clip_radius: 5,
-                    opa: Opa(200),
+                    opa: Opa::from_raw(200),
                     chroma_key: Some(Color::WHITE),
                     recolor: Color::BLUE,
-                    recolor_opa: Opa(i as u8 * 10),
+                    recolor_opa: Opa::from_raw(i as u8 * 10),
                     bitmap_mask: Some(ImagePixels::new(ColorFormat::A8, 32, 32, &mask)),
                     ..ImageDsc::default()
                 },

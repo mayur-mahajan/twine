@@ -38,7 +38,7 @@
 use embedded_hal::digital::InputPin;
 use embedded_hal::i2c::I2c;
 use twine_core::log::{info, trace, warn};
-use twine_hal::{InputData, InputDevice, InputKind, PointerData, PollHint};
+use twine_hal::{DeviceHealth, InputData, InputDevice, InputKind, PointerData, PollHint};
 
 use super::{IrqState, TouchTransform, irq_touch_common};
 
@@ -74,6 +74,14 @@ impl<I2C, IRQ> Gt911<I2C, IRQ> {
             irq: IrqState::new(irq),
             transform,
         }
+    }
+
+    /// Reports the device [`Failed`](DeviceHealth::Failed) after `n` consecutive bus errors
+    /// (default [`DeviceHealth::DEFAULT_FAIL_AFTER`]; see [`health`](InputDevice::health)).
+    #[must_use]
+    pub fn with_fail_after(mut self, n: u16) -> Self {
+        self.irq.fail_after = n;
+        self
     }
 
     /// Uses another I2C address (e.g. [`ADDR_ALT`]).
@@ -156,14 +164,18 @@ impl<I2C: I2c, IRQ: InputPin> InputDevice for Gt911<I2C, IRQ> {
             Ok(None) => self.irq.last,
             Err(_) => {
                 warn!(target: "twine::driver", "gt911: I2C error");
-                self.irq.released()
+                return InputData::Pointer(self.irq.error("gt911"));
             }
         };
-        InputData::Pointer(self.irq.update("gt911", data))
+        InputData::Pointer(self.irq.ok("gt911", data))
     }
 
     fn poll_hint(&self) -> PollHint {
         self.irq.poll_hint()
+    }
+
+    fn health(&self) -> DeviceHealth {
+        self.irq.health
     }
 }
 
@@ -252,5 +264,35 @@ mod tests {
         assert!(rec.ops().is_empty());
         assert_eq!(t.poll_hint(), PollHint::Interrupt);
         assert_eq!(t.kind(), InputKind::Pointer);
+    }
+
+    #[test]
+    fn gt911_bus_failure_degrades_then_fails() {
+        let rec = Recorder::new();
+        let regs = Regs::install(&rec);
+        regs.set(0x814E, &[0x81]);
+        regs.set(0x8150, &[0x2C, 0x01, 0xC8, 0x00]);
+        let mut t: Gt911<_, crate::NoPin> = Gt911::new(rec.i2c(), None, TouchTransform::identity(800, 480));
+        // The status is cleared by each read: keep it "ready, 1 point" for the recovery read.
+        let r = regs.clone();
+        let mut t = Probe(&mut t, move || r.set(0x814E, &[0x81]));
+        crate::touch::test_util::assert_bus_failure_sequence(&rec, &mut t);
+        let _ =
+            Gt911::<_, crate::NoPin>::new(rec.i2c(), None, TouchTransform::identity(1, 1)).with_fail_after(5);
+    }
+
+    /// Runs `before` ahead of every read of the wrapped driver.
+    struct Probe<'a, D, F>(&'a mut D, F);
+    impl<D: InputDevice, F: FnMut()> InputDevice for Probe<'_, D, F> {
+        fn kind(&self) -> InputKind {
+            self.0.kind()
+        }
+        fn read(&mut self) -> InputData {
+            (self.1)();
+            self.0.read()
+        }
+        fn health(&self) -> twine_hal::DeviceHealth {
+            self.0.health()
+        }
     }
 }

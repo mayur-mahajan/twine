@@ -78,7 +78,11 @@ fn arc_defaults() {
     assert_eq!((x.min(), x.max(), x.value()), (0, 100, 0));
     assert_eq!(
         (x.change_rate(), x.mode(), x.rotation()),
-        (720, ArcMode::Normal, Angle(0))
+        (
+            twine_core::AngularSpeed::deg_per_s(720),
+            ArcMode::Normal,
+            Angle::ZERO
+        )
     );
     h.assert_idle();
 }
@@ -94,8 +98,8 @@ fn arc_setters_same_value_no_invalidate() {
         x.set_bg_angles(cx, Angle::deg(135), Angle::deg(45 + 360));
         x.set_rotation(cx, Angle::deg(360));
         x.set_mode(cx, ArcMode::Normal);
-        x.set_change_rate(cx, 720);
-        x.set_knob_offset(cx, Angle(0));
+        x.set_change_rate(cx, twine_core::AngularSpeed::deg_per_s(720));
+        x.set_knob_offset(cx, Angle::deci_deg(0));
         let (s, e) = (x.angle_start(), x.angle_end());
         x.set_angles(cx, s, e);
     });
@@ -125,7 +129,11 @@ fn arc_value_to_angle_mapping() {
             x.set_value(cx, v);
         });
         let x = w(&h, a);
-        assert_eq!((x.angle_start().0, x.angle_end().0), (s, e), "{mode:?} {v}");
+        assert_eq!(
+            (x.angle_start().as_deci_deg(), x.angle_end().as_deci_deg()),
+            (s, e),
+            "{mode:?} {v}"
+        );
     }
     // A range change re-maps the value.
     with(&mut h, a, |x: &mut Arc, cx| {
@@ -133,7 +141,7 @@ fn arc_value_to_angle_mapping() {
         x.set_value(cx, 50);
         x.set_range(cx, 0, 200);
     });
-    assert_eq!(w(&h, a).angle_end().0, 2025);
+    assert_eq!(w(&h, a).angle_end().as_deci_deg(), 2025);
 }
 
 #[test]
@@ -183,7 +191,7 @@ fn arc_change_rate_limits_speed() {
     let (mut h, a) = scene(Mode::Light);
     with(&mut h, a, |x: &mut Arc, cx| {
         x.set_value(cx, 0);
-        x.set_change_rate(cx, 90);
+        x.set_change_rate(cx, twine_core::AngularSpeed::deg_per_s(90));
     });
     h.press(on_ring(&h, a, 136));
     h.clock().advance(Duration::ms(20));
@@ -356,7 +364,7 @@ fn snapshot_arc() {
     });
     snap("no_knob", |h, a| {
         let e = h.engine_mut();
-        e.set_local_prop(a, Selector::part(Part::Knob), StyleProp::BgOpa(Opa::TRANSP));
+        e.set_local_prop(a, Selector::part(Part::Knob), StyleProp::BgOpacity(Opa::TRANSP));
         e.set_flag(a, ObjFlags::CLICKABLE, false);
     });
 }

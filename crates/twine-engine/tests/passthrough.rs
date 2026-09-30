@@ -24,8 +24,8 @@ fn column(e: &mut Engine, parent: NodeId) -> NodeId {
         c,
         &[
             StyleProp::Layout(LayoutKind::Flex),
-            StyleProp::FlexFlow(FlexFlow::Column),
-            StyleProp::PadRow(4),
+            StyleProp::FlexFlow(FlexFlow::COLUMN),
+            StyleProp::RowGap(Length::Px(4)),
             StyleProp::Width(Length::Px(120)),
         ],
     );
@@ -50,7 +50,7 @@ fn leaf(e: &mut Engine, parent: NodeId, h: i32, c: Color) -> NodeId {
             StyleProp::Width(Length::pct(50)),
             StyleProp::Height(Length::Px(h)),
             StyleProp::BgColor(c),
-            StyleProp::BgOpa(Opa::COVER),
+            StyleProp::BgOpacity(Opa::COVER),
         ],
     );
     n
@@ -157,7 +157,7 @@ fn passthrough_draws_nothing_and_does_not_clip() {
         style(
             e,
             w,
-            &[StyleProp::BgColor(Color::RED), StyleProp::BgOpa(Opa::COVER)],
+            &[StyleProp::BgColor(Color::RED), StyleProp::BgOpacity(Opa::COVER)],
         );
         let n = e.create(w, Box::new(Obj)).unwrap();
         e.set_pos(n, 40, 40);
@@ -165,7 +165,7 @@ fn passthrough_draws_nothing_and_does_not_clip() {
         style(
             e,
             n,
-            &[StyleProp::BgColor(Color::BLUE), StyleProp::BgOpa(Opa::COVER)],
+            &[StyleProp::BgColor(Color::BLUE), StyleProp::BgOpacity(Opa::COVER)],
         );
     }
     h.run_until_idle();
@@ -230,7 +230,7 @@ fn passthrough_never_covers_the_gaps_between_its_children() {
         style(
             e,
             w,
-            &[StyleProp::BgColor(Color::RED), StyleProp::BgOpa(Opa::COVER)],
+            &[StyleProp::BgColor(Color::RED), StyleProp::BgOpacity(Opa::COVER)],
         );
         leaf(e, w, 10, Color::BLUE);
         leaf(e, w, 10, Color::BLUE);

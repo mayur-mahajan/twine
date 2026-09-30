@@ -7,7 +7,7 @@
 //!   and semantics as LVGL's `lv_font_fmt_txt` (LVGL `src/font/lv_font_fmt_txt.h`): 1/2/4/8
 //!   bits per pixel, four cmap kinds, pair and class kerning, optional RLE compression with an
 //!   XOR row prefilter, and subpixel ([`Subpx`]) glyphs. Ready-made fonts (Montserrat with
-//!   Font Awesome [`symbols`], unscii) live in the `twine-assets` crate; the `twine font`
+//!   Font Awesome [`Symbol`]s, unscii) live in the `twine-assets` crate; the `twine font`
 //!   generator (`twine-cli`) produces new ones from TTF files.
 //! - **Glyph cache.** [`GlyphCache`] keeps decoded glyphs of compressed fonts in a fixed byte
 //!   budget (LRU) and owns the scratch memory of text drawing, so drawing never allocates.
@@ -83,7 +83,6 @@ mod font;
 mod hit;
 mod imgfont;
 mod layout;
-pub mod symbols;
 #[cfg(test)]
 mod test_font;
 
@@ -108,6 +107,8 @@ pub use font::{
 };
 pub use hit::{DOTS, Ellipsis, LongMode, TextAlign, TextDecor};
 pub use imgfont::{ImageFontProvider, ImageGlyphLookup};
+pub use twine_core::Symbol;
+
 pub use layout::{BREAK_CHARS, Line, LineIter, TextFlags, TextLayout, is_wide};
 #[cfg(feature = "ttf")]
 pub use ttf::{FontFileSource, TTF_MAX_PX, TtfError, TtfFont, TtfProvider};

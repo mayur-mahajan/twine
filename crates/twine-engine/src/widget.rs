@@ -365,10 +365,10 @@ impl<'a> MeasureCx<'a> {
     #[must_use]
     pub fn padding(&self, part: Part) -> Insets {
         Insets::new(
-            self.style_i32(part, PropId::PadLeft),
-            self.style_i32(part, PropId::PadTop),
-            self.style_i32(part, PropId::PadRight),
-            self.style_i32(part, PropId::PadBottom),
+            self.style_i32(part, PropId::PaddingLeft),
+            self.style_i32(part, PropId::PaddingTop),
+            self.style_i32(part, PropId::PaddingRight),
+            self.style_i32(part, PropId::PaddingBottom),
         )
     }
 

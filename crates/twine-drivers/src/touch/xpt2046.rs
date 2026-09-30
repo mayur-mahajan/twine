@@ -52,8 +52,8 @@
 use embedded_hal::digital::InputPin;
 use embedded_hal::spi::SpiDevice;
 use twine_core::Point;
-use twine_core::log::{debug, trace, warn};
-use twine_hal::{Calibration, InputData, InputDevice, InputKind, PointerData, PollHint};
+use twine_core::log::{debug, error, trace, warn};
+use twine_hal::{Calibration, DeviceHealth, InputData, InputDevice, InputKind, PointerData, PollHint};
 
 /// Control byte: Z1 (12-bit, differential, powered).
 pub const CMD_Z1: u8 = 0xB3;
@@ -80,6 +80,8 @@ pub struct Xpt2046<SPI, IRQ> {
     samples: u8,
     width: u16,
     height: u16,
+    health: DeviceHealth,
+    fail_after: u16,
 }
 
 impl<SPI, IRQ> Xpt2046<SPI, IRQ> {
@@ -96,7 +98,18 @@ impl<SPI, IRQ> Xpt2046<SPI, IRQ> {
             samples: 5,
             width: 320,
             height: 240,
+            health: DeviceHealth::Ok,
+            fail_after: DeviceHealth::DEFAULT_FAIL_AFTER,
         }
+    }
+
+    /// Reports the device [`Failed`](DeviceHealth::Failed) after `n` consecutive SPI errors
+    /// (default [`DeviceHealth::DEFAULT_FAIL_AFTER`]; see [`health`](InputDevice::health)).
+    /// While degraded the last good sample is repeated; once failed, released.
+    #[must_use]
+    pub fn with_fail_after(mut self, n: u16) -> Self {
+        self.fail_after = n;
+        self
     }
 
     /// Sets the calibration (raw → screen).
@@ -198,7 +211,14 @@ impl<SPI: SpiDevice, IRQ: InputPin> Xpt2046<SPI, IRQ> {
     }
 
     fn sample(&mut self) -> PointerData {
-        match self.read_raw() {
+        let result = self.read_raw();
+        if result.is_ok() {
+            if !self.health.is_ok() {
+                debug!(target: "twine::driver", "xpt2046 reads again ({:?} before)", self.health);
+            }
+            self.health = DeviceHealth::Ok;
+        }
+        match result {
             Ok(Some((x, y, _))) => {
                 let (sx, sy) = self.cal.apply(i32::from(x), i32::from(y));
                 let point = Point::new(
@@ -213,6 +233,15 @@ impl<SPI: SpiDevice, IRQ: InputPin> Xpt2046<SPI, IRQ> {
             },
             Err(_) => {
                 warn!(target: "twine::driver", "xpt2046: SPI error");
+                let before = self.health;
+                self.health = before.after_error(self.fail_after);
+                if !self.health.is_failed() {
+                    // Degraded: repeat the last good sample.
+                    return self.last;
+                }
+                if !before.is_failed() {
+                    error!(target: "twine::driver", "xpt2046: failed ({} consecutive SPI errors)", self.fail_after.max(1));
+                }
                 PointerData {
                     point: self.last.point,
                     pressed: false,
@@ -252,6 +281,10 @@ impl<SPI: SpiDevice, IRQ: InputPin> InputDevice for Xpt2046<SPI, IRQ> {
         } else {
             PollHint::Periodic
         }
+    }
+
+    fn health(&self) -> DeviceHealth {
+        self.health
     }
 }
 
@@ -484,5 +517,14 @@ mod tests {
         let mut t = dut(&rec);
         block_on(t.wait_for_interrupt());
         assert_eq!(rec.ops(), [BusOp::Wait("irq", false)]);
+    }
+
+    #[test]
+    fn xpt2046_spi_failure_degrades_then_fails() {
+        let rec = Recorder::new();
+        touch(&rec, 1000, 500, vec![1000], vec![2000]);
+        rec.set_level("irq", false);
+        let mut t = dut(&rec).with_fail_after(DeviceHealth::DEFAULT_FAIL_AFTER);
+        crate::touch::test_util::assert_bus_failure_sequence(&rec, &mut t);
     }
 }

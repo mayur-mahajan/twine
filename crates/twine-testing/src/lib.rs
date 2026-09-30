@@ -74,7 +74,8 @@ pub use logging::{CapturedLog, capture_logs, init_test_logging};
 pub use memory_display::{FlushRecord, MemoryDisplay, MemoryDisplayError, leak_buffer};
 #[cfg(feature = "engine")]
 pub use mock_display::{
-    DmaEvent, MockDmaDisplay, MockFramebufferDisplay, clear_dma_log, dma_log, record_render_start,
+    DmaEvent, MockDmaDisplay, MockFramebufferDisplay, MockPresentError, clear_dma_log, dma_log,
+    record_render_start,
 };
 pub use mock_input::{MockButton, MockEncoder, MockKeypad, MockPointer};
 #[cfg(feature = "render")]

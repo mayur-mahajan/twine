@@ -12,7 +12,7 @@ use twine_engine::{
     WidgetCx,
 };
 use twine_style::{Align, Length, Part, PropId, Selector, StyleProp, TextAlign};
-use twine_text::{TextDir, TextDrawFlags, symbols};
+use twine_text::{Symbol, TextDir, TextDrawFlags};
 
 use crate::label::{self, Label, LabelText};
 use crate::spinbox::Spinbox;
@@ -31,7 +31,7 @@ pub const CURSOR_LAST: i32 = i32::MAX;
 pub const DEFAULT_PWD_SHOW_TIME: Duration = Duration::ms(1500);
 
 /// The password bullet when the font has it (LVGL `LV_SYMBOL_BULLET`, U+2022).
-pub const PWD_BULLET: &str = symbols::BULLET;
+pub const PWD_BULLET: &str = Symbol::Bullet.as_str();
 
 /// The text an [`InsertFilter`] sees for a deletion (LVGL sends `LV_KEY_DEL`).
 pub const DELETE_TEXT: &str = "\u{7f}";
@@ -669,7 +669,7 @@ impl Textarea {
         let lm = MeasureCx::new(e, self.label);
         let m = cx.measure();
         let font = m.font(Part::Main);
-        let line_space = m.style_i32(Part::Main, PropId::TextLineSpace);
+        let line_space = m.style_i32(Part::Main, PropId::LineSpacing);
         let shown = l.shown_text();
         let mut byte = byte_of(shown, self.cursor.pos);
         let letter = shown[byte..].chars().next();
@@ -697,7 +697,7 @@ impl Textarea {
         let pad = m.padding(Part::Cursor);
         let (top, bottom) = (pad.top + bw, pad.bottom + bw);
         let (left, right) = (pad.left + bw, pad.right + bw);
-        let ls = lm.style_i32(Part::Main, PropId::TextLetterSpace);
+        let ls = lm.style_i32(Part::Main, PropId::LetterSpacing);
         // In right-to-left text the character after the cursor is on its left.
         let x0 = if rtl { pos.x - letter_w } else { pos.x };
         let area = Rect::new(
@@ -1043,13 +1043,13 @@ impl Textarea {
         let rs = cx.rect_dsc(Part::Cursor);
         cx.painter().rect(area, &rs.dsc());
         let bw = cx.style_i32(Part::Cursor, PropId::BorderWidth);
-        let left = cx.style_i32(Part::Cursor, PropId::PadLeft) + bw;
-        let top = cx.style_i32(Part::Cursor, PropId::PadTop) + bw;
+        let left = cx.style_i32(Part::Cursor, PropId::PaddingLeft) + bw;
+        let top = cx.style_i32(Part::Cursor, PropId::PaddingTop) + bw;
         let label_color = e.style_color(self.label, Part::Main, PropId::TextColor);
         let mut t = cx.text_dsc(Part::Cursor);
         // Draw the letter again only over a cursor background or in another color, else the
         // letter would look bold (LVGL).
-        if rs.base.bg_opa.0 > 2 || t.color != label_color {
+        if rs.base.bg_opa.raw() > 2 || t.color != label_color {
             let shown = l.shown_text();
             let b = self.cursor.shown_byte.min(shown.len());
             let letter = shown[b..].chars().next().map_or(0, char::len_utf8);

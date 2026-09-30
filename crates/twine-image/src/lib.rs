@@ -23,6 +23,7 @@
 //! | `std` | encoders used by tools and tests |
 //! | `log` / `defmt` | logging backend (target `"twine::image"`) |
 #![no_std]
+#![forbid(unsafe_code)]
 
 extern crate alloc;
 #[cfg(feature = "std")]
@@ -44,4 +45,4 @@ pub use image::{
     Compression, Image, ImageData, ImageFlags, ImageHeader, ImageSource, MAX_PATH_LEN, pixels_of,
 };
 pub use resolve::{FileSource, HEADER_PROBE_BYTES, ImageContext, header_of, with_pixels};
-pub use twine_core::ColorFormat;
+pub use twine_core::{ColorFormat, Symbol};

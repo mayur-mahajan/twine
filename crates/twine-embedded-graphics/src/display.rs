@@ -46,6 +46,12 @@ impl<E: fmt::Debug> core::error::Error for EgError<E> {}
 /// The flush completes before `begin_flush` returns, so `poll_flush` hands the buffer back
 /// immediately.
 ///
+/// The renderer for the format must be compiled in: `Rgb565` needs the `color-rgb565`
+/// feature (of `twine` or `twine-engine`), `Rgb888` `color-rgb888`, `Gray8` `color-l8` and
+/// `BinaryColor` `color-i1`. Otherwise `Engine::add_display` returns
+/// `EngineError::FormatDisabled` (and raises `FaultKind::FormatDisabled`) instead of adding a
+/// display that would stay blank.
+///
 /// ```
 /// use core::convert::Infallible;
 /// use embedded_graphics_core::{pixelcolor::Gray8, prelude::*};

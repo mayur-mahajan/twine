@@ -16,7 +16,7 @@ use twine_widgets::textarea::{self, Textarea};
 fn rtl(h: &mut EngineHarness, id: NodeId) {
     let e = h.engine_mut();
     e.set_local_prop(id, Selector::MAIN, StyleProp::BaseDir(BaseDir::Rtl));
-    e.set_local_prop(id, Selector::MAIN, StyleProp::TextFont(&DEJAVU_16_PERSIAN_HEBREW));
+    e.set_local_prop(id, Selector::MAIN, StyleProp::Font(&DEJAVU_16_PERSIAN_HEBREW));
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn rtl_flex_row_mirrored_snapshot() {
         e.set_size(row, 200, 80);
         e.align(row, Align::Center, 0, 0);
         e.set_local_prop(row, Selector::MAIN, StyleProp::Layout(LayoutKind::Flex));
-        e.set_local_prop(row, Selector::MAIN, StyleProp::FlexFlow(FlexFlow::Row));
+        e.set_local_prop(row, Selector::MAIN, StyleProp::FlexFlow(FlexFlow::ROW));
         e.set_local_prop(row, Selector::MAIN, StyleProp::BaseDir(BaseDir::Rtl));
         let mut first = None;
         for t in ["1", "2", "3"] {

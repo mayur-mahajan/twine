@@ -69,3 +69,38 @@ fn signal_memory_bytes() {
     println!("memory per u32 signal: {per_signal} bytes");
     assert!(per_signal <= 96, "{per_signal} bytes per signal (budget 96)");
 }
+
+#[test]
+fn stored_value_churn_does_not_leak() {
+    // Create and dispose scopes holding heap-owning stored values; after a warm-up the live
+    // heap must stay flat. The warm-up covers more than `Arena::ROTATE_PERIOD` (4 096) reuses
+    // of every slot, so the arenas' wear-leveling reserves (R0.S07) are at their peak size too.
+    let growth = std::thread::spawn(|| {
+        let root = twine_reactive::create_root();
+        let cycle = || {
+            let cx = root.child();
+            for i in 0..16u32 {
+                let v = cx.stored_value(vec![i; 8]);
+                v.with_mut(|v| v.push(i));
+                v.set(vec![i; 4]);
+            }
+            cx.dispose();
+        };
+        for _ in 0..10_000 {
+            cycle();
+        }
+        let before = live();
+        for _ in 0..10_000 {
+            cycle();
+        }
+        let growth = live() - before;
+        root.dispose();
+        growth
+    })
+    .join()
+    .unwrap();
+    assert_eq!(
+        growth, 0,
+        "stored value create/dispose churn leaked {growth} bytes"
+    );
+}

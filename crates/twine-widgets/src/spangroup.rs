@@ -238,7 +238,7 @@ impl SpanStyle<'_> {
     }
 
     fn font(&self) -> &'static Font {
-        match self.span.style.get(PropId::TextFont) {
+        match self.span.style.get(PropId::Font) {
             Some(v) => v
                 .get::<&'static Font>()
                 .unwrap_or_else(|| self.m.font(Part::Main)),
@@ -258,11 +258,13 @@ impl SpanStyle<'_> {
     }
 
     fn opa(&self) -> Opa {
-        self.get(PropId::TextOpa).as_opa().unwrap_or(Opa::COVER)
+        self.get(PropId::TextOpacity).as_opa().unwrap_or(Opa::COVER)
     }
 
     fn decor(&self) -> TextDecor {
-        self.get(PropId::TextDecor).get::<TextDecor>().unwrap_or_default()
+        self.get(PropId::TextDecoration)
+            .get::<TextDecor>()
+            .unwrap_or_default()
     }
 }
 
@@ -493,7 +495,7 @@ impl SpanGroup {
         for (_, sp) in &self.spans {
             let st = SpanStyle { m: cx, span: sp };
             let font = st.font();
-            let ls = st.i32(PropId::TextLetterSpace);
+            let ls = st.i32(PropId::LetterSpacing);
             last_ls = ls;
             let t = sp.text();
             let mut it = t.chars().peekable();
@@ -629,7 +631,7 @@ impl SpanGroup {
         c.snippets.clear();
         c.lines.clear();
         c.height = 0;
-        let line_space = cx.style_i32(Part::Main, PropId::TextLineSpace);
+        let line_space = cx.style_i32(Part::Main, PropId::LineSpacing);
         let indent = self.indent;
         let lines_limit = if self.max_lines < 0 {
             usize::MAX
@@ -654,7 +656,7 @@ impl SpanGroup {
                 }
                 let st = SpanStyle { m: cx, span: sp };
                 let font = st.font();
-                let ls = st.i32(PropId::TextLetterSpace);
+                let ls = st.i32(PropId::LetterSpacing);
                 let line_h = i32::from(font.line_height) + line_space;
                 let (next, w, fill) = snippet(&txt[ofs..], font, ls, max_w, flags);
                 if fill && next > 0 && c.snippets.len() > start {
@@ -722,7 +724,7 @@ impl SpanGroup {
         let c = self.cache.borrow();
         let max_w = content.width();
         let align = Self::align(&m);
-        let line_space = m.style_i32(Part::Main, PropId::TextLineSpace);
+        let line_space = m.style_i32(Part::Main, PropId::LineSpacing);
         let base = cx.text_dsc(Part::Main);
         let obj_opa = cx.opa();
         let n_lines = c.lines.len();

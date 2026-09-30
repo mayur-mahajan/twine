@@ -65,8 +65,8 @@
 //!     .width(300)
 //!     .height(100)
 //!     .layout(LayoutKind::Flex)
-//!     .flex_flow(FlexFlow::Row)
-//!     .pad_column(10);
+//!     .flex_flow(FlexFlow::ROW)
+//!     .column_gap(10);
 //! let mut t = Tree {
 //!     styles: vec![row, StyleBuf::new().width(50).height(20), StyleBuf::new().flex_grow(1).height(20)],
 //!     coords: vec![Rect::ZERO; 3],
@@ -82,6 +82,7 @@
 //! select the logging backend (target `"twine::layout"`; warnings for invalid grid cells);
 //! `std` enables std-only conveniences of the dependencies.
 #![no_std]
+#![forbid(unsafe_code)]
 #![deny(clippy::float_arithmetic)]
 
 extern crate alloc;
@@ -101,7 +102,7 @@ mod tree;
 mod tests;
 
 pub use layout::{LayoutScratch, layout_children, layout_children_with, layout_subtree, layout_subtree_with};
-pub use position::{align_offset, is_outside, resolve_align};
+pub use position::{align_offset, resolve_align};
 pub use size::{clamp_size, content_size_of, resolve_length};
 #[cfg(any(test, feature = "toy"))]
 pub use toy::ToyTree;

@@ -91,7 +91,7 @@ fn label_content_size_matches_measure() {
     assert_eq!((c.width(), c.height()), (m.w, m.h));
     // Letter and line spacing are part of the measurement.
     h.engine_mut()
-        .set_local_prop(l, Selector::MAIN, StyleProp::TextLetterSpace(2));
+        .set_local_prop(l, Selector::MAIN, StyleProp::LetterSpacing(2));
     h.run_until_idle();
     let mut lay = TextLayout::new("Hello, twine!", &MONTSERRAT_14);
     lay.letter_space = 2;
@@ -237,8 +237,8 @@ fn snapshot_label_multiline_underline() {
             });
             let e = h.engine_mut();
             e.set_width(l, 120);
-            e.set_local_prop(l, Selector::MAIN, StyleProp::TextDecor(TextDecor::UNDERLINE));
-            e.set_local_prop(l, Selector::MAIN, StyleProp::TextLineSpace(4));
+            e.set_local_prop(l, Selector::MAIN, StyleProp::TextDecoration(TextDecor::UNDERLINE));
+            e.set_local_prop(l, Selector::MAIN, StyleProp::LineSpacing(4));
         });
         h.assert_snapshot(&format!("label_multiline_underline_{}", m.suffix()));
     }

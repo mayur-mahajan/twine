@@ -4,3 +4,4 @@
 //!
 //! Run with `cargo bench -p twine-bench` (or `--bench refresh|layout|anim`). The library is
 //! empty; the benchmarks are in `benches/`.
+#![forbid(unsafe_code)]

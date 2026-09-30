@@ -51,7 +51,7 @@ pub const LIST_DEFAULT_HEIGHT: i32 = util::DPI_DEF * 2;
 /// let e = h.engine_mut();
 /// let l = list::create(e, screen).unwrap();
 /// list::add_text(e, l, "File").unwrap();
-/// let b = list::add_button(e, l, Some(ImageSource::Symbol(twine_text::symbols::SAVE)), "Save").unwrap();
+/// let b = list::add_button(e, l, Some(ImageSource::symbol(twine_text::Symbol::Save)), "Save").unwrap();
 /// assert_eq!(list::button_text(h.engine(), b), Some("Save"));
 /// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -67,7 +67,7 @@ impl Widget for List {
         let id = cx.node();
         let e = cx.engine_mut();
         e.set_size(id, LIST_DEFAULT_WIDTH, LIST_DEFAULT_HEIGHT);
-        util::set_flex(e, id, FlexFlow::Column);
+        util::set_flex(e, id, FlexFlow::COLUMN);
     }
 }
 
@@ -97,7 +97,7 @@ pub fn init_text(e: &mut Engine, id: NodeId) {
 /// `lv_list_add_button`).
 pub fn init_button(e: &mut Engine, id: NodeId) {
     e.set_size(id, Length::pct(100), Length::Content);
-    util::set_flex(e, id, FlexFlow::Row);
+    util::set_flex(e, id, FlexFlow::ROW);
 }
 
 /// Sets up the label of a list button: scrolling circularly, taking the rest of the row.

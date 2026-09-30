@@ -23,7 +23,7 @@ fn anim_frame_20_nodes(c: &mut Criterion) {
                 r,
                 &[
                     StyleProp::BgColor(Color::hex(0x30_60_90 + i as u32 * 0x0002_0304)),
-                    StyleProp::BgOpa(Opa::COVER),
+                    StyleProp::BgOpacity(Opa::COVER),
                 ],
             );
             let (prop, from, to) = if i % 2 == 0 {

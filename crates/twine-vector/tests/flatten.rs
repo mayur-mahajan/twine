@@ -4,7 +4,7 @@ use twine_core::{Angle, Fx, Transform};
 use twine_vector::{DEFAULT_TOLERANCE, FxPoint, Line, MAX_CURVE_SEGMENTS, Path, flatten};
 
 fn f(p: FxPoint) -> (f64, f64) {
-    (f64::from(p.x.0) / 65536.0, f64::from(p.y.0) / 65536.0)
+    (f64::from(p.x.raw()) / 65536.0, f64::from(p.y.raw()) / 65536.0)
 }
 
 /// Distance from `p` to the polyline `lines`.

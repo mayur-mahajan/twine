@@ -13,7 +13,10 @@ use twine_engine::{
     Engine, EventCode, EventFilter, EventParam, EventResult, MAX_LAYOUT_ITERATIONS, NodeId, Obj, ObjFlags,
     Wake,
 };
-use twine_style::{Align, FlexAlign, FlexFlow, GridAlign, GridTrack, LayoutKind, Length, StyleProp};
+use twine_style::{
+    Align, Anchor, CrossAlign, FlexFlow, GridAlign, GridSpan, GridTrack, LayoutKind, Length, MainAlign,
+    StyleProp,
+};
 use twine_testing::EngineHarness;
 use twine_testing::alloc::{CountingAllocator, count_allocs};
 
@@ -44,7 +47,7 @@ fn node(e: &mut Engine, parent: NodeId, x: i32, y: i32, w: i32, h: i32, c: Color
     let n = e.create(parent, Box::new(Obj)).unwrap();
     e.set_pos(n, x, y);
     e.set_size(n, w, h);
-    style(e, n, &[StyleProp::BgColor(c), StyleProp::BgOpa(Opa::COVER)]);
+    style(e, n, &[StyleProp::BgColor(c), StyleProp::BgOpacity(Opa::COVER)]);
     n
 }
 
@@ -226,10 +229,10 @@ fn content_sized_parent_grows_with_child() {
         e,
         outer,
         &[
-            StyleProp::PadLeft(5),
-            StyleProp::PadTop(5),
-            StyleProp::PadRight(5),
-            StyleProp::PadBottom(5),
+            StyleProp::PaddingLeft(Length::Px(5)),
+            StyleProp::PaddingTop(Length::Px(5)),
+            StyleProp::PaddingRight(Length::Px(5)),
+            StyleProp::PaddingBottom(Length::Px(5)),
         ],
     );
     let inner = e.create(outer, Box::new(Obj)).unwrap(); // content-sized too
@@ -312,7 +315,7 @@ fn flags_and_children_changes_relayout_flex_parent() {
     let e = h.engine_mut();
     let row = node(e, s, 0, 0, 200, 40, Color::hex(0xEE_EE_EE));
     e.set_layout(row, LayoutKind::Flex);
-    e.set_flex_flow(row, FlexFlow::Row);
+    e.set_flex_flow(row, FlexFlow::ROW);
     let items: Vec<NodeId> = (0..3).map(|_| node(e, row, 0, 0, 20, 20, Color::RED)).collect();
     h.run_until_idle();
     let x = |h: &EngineHarness, i: usize| h.engine().coords(items[i]).x0;
@@ -342,7 +345,7 @@ fn align_to_follows_its_base() {
     let e = h.engine_mut();
     let base = node(e, s, 20, 20, 40, 20, Color::BLUE);
     let tip = node(e, s, 0, 0, 30, 10, Color::RED);
-    e.align_to(tip, base, Align::OutBottomMid, 0, 4);
+    e.align_to(tip, base, Anchor::BelowMid, 0, 4);
     h.run_until_idle();
     assert_eq!(h.engine().coords(tip), Rect::from_xywh(25, 44, 30, 10));
     h.engine_mut().set_x(base, 100);
@@ -376,9 +379,16 @@ fn flex_tree(e: &mut Engine, n: usize) -> NodeId {
     let c = e.create(s, Box::new(Obj)).unwrap();
     e.set_size(c, Length::pct(100), Length::pct(100));
     e.set_layout(c, LayoutKind::Flex);
-    e.set_flex_flow(c, FlexFlow::RowWrap);
-    e.set_flex_align(c, FlexAlign::SpaceEvenly, FlexAlign::Center, FlexAlign::Start);
-    style(e, c, &[StyleProp::PadRow(4), StyleProp::PadColumn(4)]);
+    e.set_flex_flow(c, FlexFlow::ROW.wrap(true));
+    e.set_flex_align(c, MainAlign::SpaceEvenly, CrossAlign::Center, MainAlign::Start);
+    style(
+        e,
+        c,
+        &[
+            StyleProp::RowGap(Length::Px(4)),
+            StyleProp::ColumnGap(Length::Px(4)),
+        ],
+    );
     for i in 0..n {
         let w = 8 + (i as i32 * 7) % 20;
         let _ = node(
@@ -435,10 +445,10 @@ fn layout_flex_row_wrap() {
             e,
             c,
             &[
-                StyleProp::PadLeft(6),
-                StyleProp::PadTop(6),
-                StyleProp::PadRight(6),
-                StyleProp::PadBottom(6),
+                StyleProp::PaddingLeft(Length::Px(6)),
+                StyleProp::PaddingTop(Length::Px(6)),
+                StyleProp::PaddingRight(Length::Px(6)),
+                StyleProp::PaddingBottom(Length::Px(6)),
             ],
         );
         let g = e.tree().children(c).nth(5).unwrap();
@@ -459,15 +469,15 @@ fn layout_grid_3x3() {
         e.set_size(g, 150, 110);
         e.align(g, Align::Center, 0, 0);
         e.set_layout(g, LayoutKind::Grid);
-        e.set_grid_dsc_array(g, &COLS, &ROWS);
+        e.set_grid_tracks(g, COLS, ROWS);
         style(
             e,
             g,
             &[
-                StyleProp::PadRow(4),
-                StyleProp::PadColumn(4),
+                StyleProp::RowGap(Length::Px(4)),
+                StyleProp::ColumnGap(Length::Px(4)),
                 StyleProp::BgColor(Color::hex(0xE0_E0_E0)),
-                StyleProp::BgOpa(Opa::COVER),
+                StyleProp::BgOpacity(Opa::COVER),
             ],
         );
         let aligns = [GridAlign::Stretch, GridAlign::Center, GridAlign::End];
@@ -475,7 +485,13 @@ fn layout_grid_3x3() {
             let (col, row) = (i % 3, i / 3);
             let n = node(e, g, 0, 0, 24, 16, Color::hex(0x30_60_90 + i as u32 * 0x15_0B_00));
             let span = if i == 7 { 2 } else { 1 };
-            e.set_grid_cell(n, aligns[col as usize], col, span, aligns[row as usize], row, 1);
+            e.set_grid_cell(
+                n,
+                GridSpan::new(col, span),
+                row,
+                aligns[col as usize],
+                aligns[row as usize],
+            );
         }
     });
     h.run_until_idle();
@@ -489,12 +505,12 @@ fn layout_align_to() {
         let base = node(e, s, 0, 0, 60, 30, Color::hex(0x3F_51_B5));
         e.set_align(base, Align::Center);
         let aligns = [
-            (Align::OutTopLeft, Color::RED),
-            (Align::OutTopRight, Color::GREEN),
-            (Align::OutBottomMid, Color::BLUE),
-            (Align::OutLeftMid, Color::hex(0xFF_98_00)),
-            (Align::OutRightBottom, Color::hex(0x9C_27_B0)),
-            (Align::Center, Color::WHITE),
+            (Anchor::AboveLeft, Color::RED),
+            (Anchor::AboveRight, Color::GREEN),
+            (Anchor::BelowMid, Color::BLUE),
+            (Anchor::LeftMid, Color::hex(0xFF_98_00)),
+            (Anchor::RightBottom, Color::hex(0x9C_27_B0)),
+            (Anchor::Inside(Align::Center), Color::WHITE),
         ];
         for (a, c) in aligns {
             let n = node(e, s, 0, 0, 16, 10, c);

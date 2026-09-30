@@ -4,7 +4,7 @@
 //! Every page draws a 320 × 240 screen; `frame` animates the pages that move.
 #![allow(clippy::unreadable_literal)] // colors read best as 0xRRGGBB
 
-use twine_core::{Angle, Color, Fx, Opa, Point, Rect, Scale, Transform};
+use twine_core::{Angle, Color, Fraction, Fx, Opa, Point, Rect, Scale, Transform};
 use twine_render::{
     ArcDsc, BlendMode, BlitDsc, BorderSide, FillRule, GradExtend, GradKind, GradStop, Gradient, ImagePixels,
     LayerDsc, LayerTransform, LineDsc, LineSide, Mask, Painter, RADIUS_CIRCLE, RectDsc, ShadowDsc,
@@ -129,7 +129,7 @@ pub fn page_fills(p: &mut Painter<'_>, _frame: u32) {
     for (row, &o) in opas.iter().enumerate() {
         for col in 0..6 {
             let r = Rect::from_xywh(10 + col * 50, 8 + row as i32 * 36, 44, 30);
-            p.fill(r, PALETTE[col as usize], Opa(o));
+            p.fill(r, PALETTE[col as usize], Opa::from_raw(o));
         }
     }
     // Stripes, then one rect per blend mode.
@@ -152,7 +152,7 @@ pub fn page_fills(p: &mut Painter<'_>, _frame: u32) {
 pub fn page_rects(p: &mut Painter<'_>, _frame: u32) {
     p.fill(screen(), Color::hex(0xF4F4F4), Opa::COVER);
     let radii = [0, 3, 8, 16, RADIUS_CIRCLE];
-    for (row, opa) in [Opa::COVER, Opa(128)].into_iter().enumerate() {
+    for (row, opa) in [Opa::COVER, Opa::from_raw(128)].into_iter().enumerate() {
         for (i, &r) in radii.iter().enumerate() {
             let a = Rect::from_xywh(10 + i as i32 * 58, 8 + row as i32 * 56, 50, 48);
             p.rect(
@@ -212,7 +212,7 @@ pub fn page_rects(p: &mut Painter<'_>, _frame: u32) {
             radius: 12,
             border_width: 6,
             border_color: Color::BLACK,
-            border_opa: Opa(100),
+            border_opa: Opa::from_raw(100),
             ..rect_dsc(PALETTE[2])
         },
     );
@@ -230,7 +230,7 @@ pub fn page_rects(p: &mut Painter<'_>, _frame: u32) {
 }
 
 fn two_stops(a: Color, b: Color) -> [GradStop; 2] {
-    [GradStop::new(a, 0), GradStop::new(b, 255)]
+    [GradStop::new(a, Fraction::ZERO), GradStop::new(b, Fraction::ONE)]
 }
 
 /// Page 3: gradients.
@@ -238,11 +238,11 @@ pub fn page_gradients(p: &mut Painter<'_>, _frame: u32) {
     p.fill(screen(), Color::WHITE, Opa::COVER);
     let tile = |i: i32| Rect::from_xywh(8 + (i % 3) * 104, 6 + (i / 3) * 78, 96, 72);
     let rainbow = [
-        GradStop::new(Color::RED, 0),
-        GradStop::new(Color::YELLOW, 64),
-        GradStop::new(Color::GREEN, 128),
-        GradStop::new(Color::CYAN, 192),
-        GradStop::new(Color::BLUE, 255),
+        GradStop::new(Color::RED, Fraction::ZERO),
+        GradStop::new(Color::YELLOW, Fraction::from_raw(64)),
+        GradStop::new(Color::GREEN, Fraction::from_raw(128)),
+        GradStop::new(Color::CYAN, Fraction::from_raw(192)),
+        GradStop::new(Color::BLUE, Fraction::ONE),
     ];
     let grads = [
         Gradient::new(GradKind::Hor, &rainbow),
@@ -349,31 +349,31 @@ pub fn page_shadows(p: &mut Painter<'_>, _frame: u32) {
         p,
         Rect::from_xywh(20, 20, 70, 60),
         8,
-        sh(5, 0, 0, 0, Color::BLACK, Opa(160)),
+        sh(5, 0, 0, 0, Color::BLACK, Opa::from_raw(160)),
     );
     card(
         p,
         Rect::from_xywh(125, 20, 70, 60),
         8,
-        sh(15, 0, 0, 0, Color::BLACK, Opa(160)),
+        sh(15, 0, 0, 0, Color::BLACK, Opa::from_raw(160)),
     );
     card(
         p,
         Rect::from_xywh(230, 20, 70, 60),
         8,
-        sh(30, 0, 0, 0, Color::BLACK, Opa(160)),
+        sh(30, 0, 0, 0, Color::BLACK, Opa::from_raw(160)),
     );
     card(
         p,
         Rect::from_xywh(20, 130, 70, 60),
         4,
-        sh(12, 8, 8, 0, Color::BLACK, Opa(140)),
+        sh(12, 8, 8, 0, Color::BLACK, Opa::from_raw(140)),
     );
     card(
         p,
         Rect::from_xywh(125, 130, 70, 60),
         12,
-        sh(10, 0, 0, 6, Color::BLACK, Opa(120)),
+        sh(10, 0, 0, 6, Color::BLACK, Opa::from_raw(120)),
     );
     card(
         p,
@@ -385,7 +385,7 @@ pub fn page_shadows(p: &mut Painter<'_>, _frame: u32) {
         Rect::from_xywh(140, 206, 40, 28),
         &RectDsc {
             radius: RADIUS_CIRCLE,
-            shadow: sh(10, 0, 3, 0, Color::BLACK, Opa(150)),
+            shadow: sh(10, 0, 3, 0, Color::BLACK, Opa::from_raw(150)),
             ..rect_dsc(PALETTE[0])
         },
     );
@@ -473,7 +473,7 @@ pub fn page_masks(p: &mut Painter<'_>, _frame: u32) {
         y_top: t.y0,
         y_bottom: t.y1,
         opa_top: Opa::COVER,
-        opa_bottom: Opa(40),
+        opa_bottom: Opa::from_raw(40),
     });
     stripes(p, t);
     p.pop_mask(b);
@@ -488,12 +488,12 @@ pub fn page_layers(p: &mut Painter<'_>, _frame: u32) {
         p.fill(Rect::from_xywh(x, 20, 70, 60), PALETTE[0], opa);
         p.fill(Rect::from_xywh(x + 40, 50, 70, 60), PALETTE[4], opa);
     };
-    pair(p, 20, Opa(128));
+    pair(p, 20, Opa::from_raw(128));
     // In a layer at 50 %: uniform.
     p.layer(
         Rect::from_xywh(170, 20, 110, 90),
         &LayerDsc {
-            opa: Opa(128),
+            opa: Opa::from_raw(128),
             ..LayerDsc::default()
         },
         |p| pair(p, 170, Opa::COVER),
@@ -503,7 +503,7 @@ pub fn page_layers(p: &mut Painter<'_>, _frame: u32) {
         p.layer(
             a,
             &LayerDsc {
-                opa: Opa(220),
+                opa: Opa::from_raw(220),
                 blend_mode: *mode,
                 transform: None,
             },
@@ -679,7 +679,7 @@ pub fn page_arcs(p: &mut Painter<'_>, frame: u32) {
             color: PALETTE[3],
             width: 14,
             rounded: true,
-            opa: Opa(128),
+            opa: Opa::from_raw(128),
             ..ArcDsc::default()
         },
     );
@@ -729,7 +729,7 @@ pub fn page_arcs(p: &mut Painter<'_>, frame: u32) {
 fn star(c: Point, r_out: i32, r_in: i32, n: i32) -> Vec<Point> {
     (0..2 * n)
         .map(|i| {
-            let a = Angle::decideg(-900 + i * 1800 / n);
+            let a = Angle::deci_deg(-900 + i * 1800 / n);
             let r = if i % 2 == 0 { r_out } else { r_in };
             Point::new(
                 c.x + r * twine_core::math::cos(a) / 32767,
@@ -742,7 +742,7 @@ fn star(c: Point, r_out: i32, r_in: i32, n: i32) -> Vec<Point> {
 fn pentagram(c: Point, r: i32) -> Vec<Point> {
     (0..5)
         .map(|i| {
-            let a = Angle::decideg(-900 + i * 1440);
+            let a = Angle::deci_deg(-900 + i * 1440);
             Point::new(
                 c.x + r * twine_core::math::cos(a) / 32767,
                 c.y + r * twine_core::math::sin(a) / 32767,
@@ -795,7 +795,7 @@ pub fn page_polygons(p: &mut Painter<'_>, _frame: u32) {
         &c,
         &TriangleDsc {
             color: PALETTE[0],
-            opa: Opa(180),
+            opa: Opa::from_raw(180),
             grad: None,
         },
     );
@@ -849,7 +849,7 @@ pub fn page_transforms(p: &mut Painter<'_>, frame: u32) {
         Transform::from_rotate_scale(angle, scale, scale, Point::new(16, 16))
             .then(Transform::translate(Fx::from_int(cx - 16), Fx::from_int(cy - 16)))
     };
-    let two = Scale(512);
+    let two = Scale::from_raw_256(512);
     for (i, aa) in [false, true].into_iter().enumerate() {
         p.blit_transformed(
             &pix,
@@ -863,11 +863,11 @@ pub fn page_transforms(p: &mut Painter<'_>, frame: u32) {
     // Scale pulse (100 % .. 200 %).
     let t = (frame % 60) as i32;
     let tri = if t < 30 { t } else { 60 - t };
-    let s = Scale((256 + tri * 256 / 30) as u16);
+    let s = Scale::from_raw_256((256 + tri * 256 / 30) as u16);
     p.blit_transformed(
         &pix,
         &BlitDsc {
-            transform: place(260, 60, Angle(0), s),
+            transform: place(260, 60, Angle::deci_deg(0), s),
             ..BlitDsc::default()
         },
     );
@@ -881,8 +881,8 @@ pub fn page_transforms(p: &mut Painter<'_>, frame: u32) {
             blend_mode: BlendMode::Normal,
             transform: Some(LayerTransform {
                 rotation: Angle::deg(-((frame as i32 * 3) % 360)),
-                scale_x: Scale((230 + tri) as u16),
-                scale_y: Scale((230 + tri) as u16),
+                scale_x: Scale::from_raw_256((230 + tri) as u16),
+                scale_y: Scale::from_raw_256((230 + tri) as u16),
                 pivot: Point::new(48, 30),
                 ..LayerTransform::default()
             }),
@@ -897,7 +897,7 @@ pub fn page_transforms(p: &mut Painter<'_>, frame: u32) {
                     border_opa: Opa::COVER,
                     shadow: ShadowDsc {
                         width: 8,
-                        opa: Opa(120),
+                        opa: Opa::from_raw(120),
                         ..ShadowDsc::default()
                     },
                     ..rect_dsc(Color::WHITE)

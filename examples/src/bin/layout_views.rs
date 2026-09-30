@@ -5,14 +5,6 @@
 use twine::prelude::*;
 use twine_sim::SimConfig;
 
-static COLS: [GridTrack; 4] = [
-    GridTrack::Fr(1),
-    GridTrack::Fr(1),
-    GridTrack::Fr(1),
-    GridTrack::Fr(1),
-];
-static ROWS: [GridTrack; 2] = [GridTrack::Px(36), GridTrack::Px(36)];
-
 const COLORS: [u32; 8] = [
     0xE5_39_35, 0x8E_24_AA, 0x39_49_AB, 0x03_9B_E5, 0x00_89_7B, 0x7C_B3_42, 0xFD_D8_35, 0xFB_8C_00,
 ];
@@ -29,8 +21,9 @@ fn app(cx: Scope) -> impl View {
         .enumerate()
         .map(|(i, c)| {
             tile(*c)
-                .grid_cell((i % 4) as i32, 1, (i / 4) as i32, 1)
-                .grid_cell_align(GridAlign::Stretch, GridAlign::Stretch)
+                .grid_col(i % 4)
+                .grid_row(i / 4)
+                .grid_align(GridAlign::Stretch, GridAlign::Stretch)
         })
         .collect();
     column((
@@ -39,14 +32,20 @@ fn app(cx: Scope) -> impl View {
             label(text!("gap = {}", gap())),
         ))
         .gap(10)
-        .align_items(FlexAlign::Center),
+        .align_items(CrossAlign::Center),
         row((
             tile(COLORS[0]).size(40, 30),
             tile(COLORS[1]).size(60, 30),
             tile(COLORS[2]).size(30, 30),
         ))
         .gap(gap),
-        grid(&COLS, &ROWS, cells).gap(gap).width(Length::pct(100)),
+        grid(
+            grid_tracks![fr(1), fr(1), fr(1), fr(1)],
+            grid_tracks![px(36), px(36)],
+            cells,
+        )
+        .gap(gap)
+        .width(Length::pct(100)),
     ))
     .gap(gap)
     .padding(8)

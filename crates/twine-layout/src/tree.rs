@@ -1,7 +1,7 @@
 //! The [`LayoutTree`] trait: the boundary between the layout algorithms and a widget tree.
 
 use twine_core::{Insets, Point, Rect, Size};
-use twine_style::{Align, BaseDir, BorderSide, Length, PropId, StyleValue};
+use twine_style::{Anchor, BaseDir, BorderSide, GridTrack, Length, PropId, StyleValue};
 
 /// A layout axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -78,8 +78,8 @@ impl defmt::Format for LayoutFlags {
 /// Alignment of a node relative to another node (LVGL `lv_obj_align_to`), returned by
 /// [`LayoutTree::align_to`].
 ///
-/// The node is placed at `align` relative to `base` (inner alignments use the base's content
-/// area, `Out*` alignments its outer rectangle), shifted by `(x, y)` and by the node's own
+/// The node is placed at `anchor` relative to `base` ([`Anchor::Inside`] uses the base's
+/// content area, the other anchors its outer rectangle), shifted by `(x, y)` and by the node's own
 /// translation. Unlike LVGL, which computes the position once, the relation is kept and
 /// re-evaluated on every layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -87,8 +87,8 @@ impl defmt::Format for LayoutFlags {
 pub struct AlignTo<I> {
     /// The reference node.
     pub base: I,
-    /// Alignment relative to `base`.
-    pub align: Align,
+    /// Where the node is placed relative to `base`.
+    pub anchor: Anchor,
     /// Horizontal offset in pixels.
     pub x: i32,
     /// Vertical offset in pixels.
@@ -111,11 +111,11 @@ pub trait LayoutTree {
     /// Calls `out` for each child of `id`, in z-order (first child first).
     fn children(&self, id: Self::Id, out: &mut dyn FnMut(Self::Id));
 
-    /// An integer property of `id` (paddings, margins, gaps, grid cell positions…). The
-    /// default implementation reads [`style_prop`](Self::style_prop) and returns 0 for
-    /// non-integer values.
+    /// An integer property of `id` in pixels (paddings, margins, gaps, grid cell positions…).
+    /// The default implementation reads [`style_prop`](Self::style_prop) and returns
+    /// integers and pixel lengths ([`StyleValue::as_px`]), 0 for anything else.
     fn style_i32(&self, id: Self::Id, prop: PropId) -> i32 {
-        self.style_prop(id, prop).as_i32().unwrap_or(0)
+        self.style_prop(id, prop).as_px().unwrap_or(0)
     }
 
     /// The resolved value of `prop` for the `Main` part of `id`.
@@ -138,6 +138,17 @@ pub trait LayoutTree {
     fn align_to(&self, id: Self::Id) -> Option<AlignTo<Self::Id>> {
         let _ = id;
         None
+    }
+
+    /// The grid column ([`Axis::X`]) or row ([`Axis::Y`]) template of `id`. The default
+    /// implementation reads the `GridColumnTracks`/`GridRowTracks` style properties; a tree may
+    /// also keep templates it owns (the engine does, for templates built at run time).
+    fn grid_tracks(&self, id: Self::Id, axis: Axis) -> Option<&[GridTrack]> {
+        let prop = match axis {
+            Axis::X => PropId::GridColumnTracks,
+            Axis::Y => PropId::GridRowTracks,
+        };
+        self.style_prop(id, prop).as_grid_tracks()
     }
 
     /// How far the content of `id` is scrolled: children (except `FLOATING` ones) are placed
@@ -213,10 +224,10 @@ pub(crate) fn spaces<T: LayoutTree + ?Sized>(t: &T, id: T::Id) -> Insets {
         .unwrap_or(BorderSide::FULL);
     let b = |s: BorderSide| if side.contains(s) { bw } else { 0 };
     Insets::new(
-        t.style_i32(id, PropId::PadLeft) + b(BorderSide::LEFT),
-        t.style_i32(id, PropId::PadTop) + b(BorderSide::TOP),
-        t.style_i32(id, PropId::PadRight) + b(BorderSide::RIGHT),
-        t.style_i32(id, PropId::PadBottom) + b(BorderSide::BOTTOM),
+        t.style_i32(id, PropId::PaddingLeft) + b(BorderSide::LEFT),
+        t.style_i32(id, PropId::PaddingTop) + b(BorderSide::TOP),
+        t.style_i32(id, PropId::PaddingRight) + b(BorderSide::RIGHT),
+        t.style_i32(id, PropId::PaddingBottom) + b(BorderSide::BOTTOM),
     )
 }
 

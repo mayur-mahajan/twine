@@ -2,17 +2,32 @@
 
 use crate::math::udiv255;
 
-/// Opacity, `0` (transparent) to `255` (fully covering).
+/// Opacity, stored as `0` (transparent) to `255` (fully covering).
+///
+/// The field is private: build opacities with [`Opa::pct`], the constants ([`Opa::COVER`],
+/// [`Opa::P50`], …) or, for the raw 8-bit value, [`Opa::from_raw`]; read it with
+/// [`Opa::raw`]. The newtype is exactly a `u8` (no runtime cost).
 ///
 /// ```
 /// use twine_core::Opa;
-/// assert_eq!(Opa::from_percent(50), Opa(128));
-/// assert_eq!(Opa::COVER.mul(Opa(77)), Opa(77));
-/// assert!(Opa(2).is_transparent() && Opa(253).is_cover());
+/// assert_eq!(Opa::pct(50), Opa::from_raw(128));
+/// assert_eq!(Opa::COVER.mul(Opa::from_raw(77)), Opa::from_raw(77));
+/// assert!(Opa::from_raw(2).is_transparent() && Opa::from_raw(253).is_cover());
+/// assert_eq!(Opa::P50.raw(), 127);
+/// ```
+///
+/// A bare number is not an opacity:
+///
+/// ```compile_fail
+/// let _ = twine_core::Opa(128); // private field: write Opa::pct(50) or Opa::from_raw(128)
+/// ```
+///
+/// ```compile_fail
+/// let _: twine_core::Opa = 128u8.into(); // no `From<u8>`: the unit must be explicit
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Opa(pub u8);
+pub struct Opa(pub(crate) u8);
 
 #[allow(clippy::should_implement_trait)] // `mul` combines opacities; there is no `Mul` impl to confuse it with
 impl Opa {
@@ -47,9 +62,24 @@ impl Opa {
     /// Values `>= MAX` are treated as covering (LVGL `LV_OPA_MAX`).
     pub const MAX: Opa = Opa(253);
 
-    /// `p` percent (clamped to 100), rounded: `p · 255 / 100`.
+    /// The opacity whose 8-bit representation is `raw` (`255` = fully covering).
+    #[inline]
     #[must_use]
-    pub const fn from_percent(p: u8) -> Opa {
+    pub const fn from_raw(raw: u8) -> Opa {
+        Opa(raw)
+    }
+
+    /// The 8-bit representation (`Opa::COVER.raw() == 255`).
+    #[inline]
+    #[must_use]
+    pub const fn raw(self) -> u8 {
+        self.0
+    }
+
+    /// `p` percent (clamped to 100), rounded: `p · 255 / 100`.
+    #[inline]
+    #[must_use]
+    pub const fn pct(p: u8) -> Opa {
         let p = if p > 100 { 100 } else { p as u32 };
         Opa(((p * 255 + 50) / 100) as u8)
     }
@@ -76,12 +106,6 @@ impl Opa {
     #[must_use]
     pub const fn inverse(self) -> Opa {
         Opa(255 - self.0)
-    }
-}
-
-impl From<u8> for Opa {
-    fn from(v: u8) -> Self {
-        Opa(v)
     }
 }
 
@@ -119,7 +143,7 @@ mod tests {
             (200, 255),
         ];
         for (p, v) in table {
-            assert_eq!(Opa::from_percent(p), Opa(v), "{p}%");
+            assert_eq!(Opa::pct(p), Opa(v), "{p}%");
         }
     }
 
@@ -128,6 +152,6 @@ mod tests {
         assert!(Opa(0).is_transparent() && Opa(2).is_transparent() && !Opa(3).is_transparent());
         assert!(Opa(253).is_cover() && !Opa(252).is_cover());
         assert_eq!(Opa(3).inverse(), Opa(252));
-        assert_eq!(u8::from(Opa::from(7)), 7);
+        assert_eq!(u8::from(Opa::from_raw(7)), 7);
     }
 }

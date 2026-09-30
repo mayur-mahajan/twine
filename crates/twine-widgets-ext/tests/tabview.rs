@@ -7,7 +7,7 @@ mod common;
 use common::{Mode, center, class, get, harness_with_group, has_state, values, with};
 use twine_core::{Duration, Point};
 use twine_engine::{Key, NodeId, State};
-use twine_style::{BaseDir, Dir, Part, PropId, Selector, StyleProp};
+use twine_style::{BaseDir, Part, PropId, Selector, Side, StyleProp};
 use twine_testing::EngineHarness;
 use twine_widgets::label::Label;
 use twine_widgets_ext::tabview::{self, Tabview};
@@ -56,7 +56,7 @@ fn tabview_structure_and_defaults() {
     assert_eq!(class(&h, w.tab_bar()), "tabview_tab_bar");
     assert_eq!(class(&h, w.content()), "tabview_content");
     assert_eq!(w.tab_count(e), 3);
-    assert_eq!(w.tab_bar_position(), Dir::TOP);
+    assert_eq!(w.tab_bar_position(), Side::Top);
     assert_eq!(e.coords(tv).size(), twine_core::Size::new(320, 240));
     // The bar: 100 % wide, dpi / 2 high.
     assert_eq!(e.coords(w.tab_bar()).height(), 130 / 2);
@@ -129,7 +129,7 @@ fn tabview_set_active_no_anim_instant() {
 
 #[test]
 fn tabview_bar_positions_layout() {
-    for dir in [Dir::TOP, Dir::BOTTOM, Dir::LEFT, Dir::RIGHT] {
+    for dir in [Side::Top, Side::Bottom, Side::Left, Side::Right] {
         let (h, tv, pages) = scene_with(Mode::Light, |h, tv| {
             with(h, tv, |w: &mut Tabview, cx| w.set_tab_bar_position(cx, dir));
         });
@@ -137,16 +137,16 @@ fn tabview_bar_positions_layout() {
         let e = h.engine();
         let (bar, content) = (e.coords(w.tab_bar()), e.coords(w.content()));
         match dir {
-            Dir::TOP => assert!(bar.y1 <= content.y0 && bar.height() == 65, "{dir:?}"),
-            Dir::BOTTOM => assert!(bar.y0 >= content.y1 && bar.height() == 65, "{dir:?}"),
+            Side::Top => assert!(bar.y1 <= content.y0 && bar.height() == 65, "{dir:?}"),
+            Side::Bottom => assert!(bar.y0 >= content.y1 && bar.height() == 65, "{dir:?}"),
             // LVGL keeps the bar size (`dpi / 2`) when the bar moves to a side.
-            Dir::LEFT => assert!(bar.x1 <= content.x0 && bar.width() == 65, "{dir:?}"),
-            _ => assert!(bar.x0 >= content.x1 && bar.width() == 65, "{dir:?}"),
+            Side::Left => assert!(bar.x1 <= content.x0 && bar.width() == 65, "{dir:?}"),
+            Side::Right => assert!(bar.x0 >= content.x1 && bar.width() == 65, "{dir:?}"),
         }
         // Buttons stack along the bar; pages along the content.
         let (b0, b1) = (e.coords(button(&h, tv, 0)), e.coords(button(&h, tv, 1)));
         let (p0, p1) = (e.coords(pages[0]), e.coords(pages[1]));
-        if dir.intersects(Dir::VER) {
+        if dir.is_vertical() {
             assert!(b1.x0 >= b0.x1 && p1.x0 >= p0.x1, "{dir:?}");
         } else {
             assert!(b1.y0 >= b0.y1 && p1.y0 >= p0.y1, "{dir:?}");
@@ -268,12 +268,12 @@ fn tabview_theme_styles() {
     );
     assert_eq!(
         e.style_i32(b, Part::Main, PropId::BorderWidth),
-        2 * twine_theme::dpx(2, 130)
+        2 * twine_style::dpx(2, 130)
     );
     // Pages are padded (`pad_normal`: `PAD_DEF`, 16 dpx on a small display).
     assert_eq!(
-        e.style_i32(pages[0], Part::Main, PropId::PadLeft),
-        twine_theme::dpx(16, 130)
+        e.style_i32(pages[0], Part::Main, PropId::PaddingLeft),
+        twine_style::dpx(16, 130)
     );
 }
 
@@ -284,7 +284,9 @@ fn snapshot_tabview() {
         h.assert_snapshot(&format!("tabview_top_{}", m.suffix()));
     }
     let (mut h, _, _) = scene_with(Mode::Light, |h, tv| {
-        with(h, tv, |w: &mut Tabview, cx| w.set_tab_bar_position(cx, Dir::LEFT));
+        with(h, tv, |w: &mut Tabview, cx| {
+            w.set_tab_bar_position(cx, Side::Left);
+        });
     });
     h.assert_snapshot("tabview_left");
     let (mut h, tv, _) = scene(Mode::Light);

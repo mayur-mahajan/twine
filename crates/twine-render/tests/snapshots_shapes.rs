@@ -5,7 +5,7 @@
 use std::cell::Cell;
 
 use proptest::prelude::*;
-use twine_core::{Angle, Color, ColorFormat, Fx, Opa, Point, Rect, Scale, Transform};
+use twine_core::{Angle, Color, ColorFormat, Fraction, Fx, Opa, Point, Rect, Scale, Transform};
 use twine_render::{
     AccelResult, ArcDsc, BlendMode, BlitDsc, DrawAccel, DrawBuf, FillRule, GradKind, GradStop, Gradient,
     ImagePixels, LayerDsc, LayerTransform, LineDsc, Painter, RectDsc, RenderCaches, RenderConfig, ShadowDsc,
@@ -120,7 +120,7 @@ fn polyline_zigzag_round() {
                 color: GREEN,
                 round_start: true,
                 round_end: true,
-                opa: Opa(200),
+                opa: Opa::from_raw(200),
                 ..LineDsc::default()
             },
         );
@@ -359,7 +359,7 @@ fn arc_opa_50_rounded() {
             Angle::deg(180),
             Angle::deg(0),
             &ArcDsc {
-                opa: Opa(128),
+                opa: Opa::from_raw(128),
                 ..arc(BLUE, 16, true)
             },
         );
@@ -531,14 +531,17 @@ fn polygon_concave() {
 fn polygon_gradient_fill() {
     let g = Gradient::new(
         GradKind::Ver,
-        &[GradStop::new(Color::YELLOW, 0), GradStop::new(RED, 255)],
+        &[
+            GradStop::new(Color::YELLOW, Fraction::ZERO),
+            GradStop::new(RED, Fraction::ONE),
+        ],
     );
     let h = draw(80, 60, |p| {
         p.polygon(
             &concave(),
             &TriangleDsc {
                 grad: Some(&g),
-                opa: Opa(230),
+                opa: Opa::from_raw(230),
                 ..TriangleDsc::default()
             },
         );
@@ -672,10 +675,10 @@ fn identity_equals_untransformed_blit() {
         // A near-identity (non translation-only) transform takes the transformed path.
         let c = blit(
             Transform {
-                a: Fx(65536),
-                d: Fx(65536),
-                b: Fx(0),
-                c: Fx(0),
+                a: Fx::from_raw(65536),
+                d: Fx::from_raw(65536),
+                b: Fx::from_raw(0),
+                c: Fx::from_raw(0),
                 tx: Fx::from_int(24),
                 ty: Fx::from_int(24),
             }
@@ -733,7 +736,10 @@ fn blit_scale_half() {
 #[test]
 fn blit_skew_x() {
     assert_render_snapshot!(
-        blit(around_center(Transform::skew(Angle::deg(25), Angle(0))), true),
+        blit(
+            around_center(Transform::skew(Angle::deg(25), Angle::deci_deg(0))),
+            true
+        ),
         "blit_skew_x"
     );
 }
@@ -747,7 +753,7 @@ fn blit_recolor() {
             &pix,
             &BlitDsc {
                 transform: Transform::translate(Fx::from_int(4), Fx::from_int(4)),
-                recolor: Some((GREEN, Opa(160))),
+                recolor: Some((GREEN, Opa::from_raw(160))),
                 ..BlitDsc::default()
             },
         );
@@ -756,8 +762,8 @@ fn blit_recolor() {
             &BlitDsc {
                 transform: around_center(Transform::rotate(Angle::deg(15)))
                     .then(Transform::translate(Fx::from_int(14), Fx::from_int(-20))),
-                recolor: Some((RED, Opa(100))),
-                opa: Opa(200),
+                recolor: Some((RED, Opa::from_raw(100))),
+                opa: Opa::from_raw(200),
                 ..BlitDsc::default()
             },
         );
@@ -785,7 +791,7 @@ fn card(p: &mut Painter<'_>, a: Rect) {
             border_opa: Opa::COVER,
             shadow: ShadowDsc {
                 width: 8,
-                opa: Opa(140),
+                opa: Opa::from_raw(140),
                 ..ShadowDsc::default()
             },
             ..RectDsc::default()
@@ -833,7 +839,7 @@ fn layer_rotate_45_card() {
 
 #[test]
 fn layer_scale_150() {
-    let s = Scale::from_percent(150);
+    let s = Scale::pct(150);
     assert_render_snapshot!(
         layer_t(
             LayerTransform {
@@ -869,7 +875,7 @@ fn layer_transform_opa() {
                 rotation: Angle::deg(-20),
                 ..lt()
             },
-            Opa(128)
+            Opa::from_raw(128)
         ),
         "layer_transform_opa"
     );
@@ -909,8 +915,8 @@ proptest! {
         let area = Rect::from_xywh(10, 20, 60, 40);
         let t = LayerTransform {
             rotation: Angle::deg(deg),
-            scale_x: Scale(sx),
-            scale_y: Scale(sy),
+            scale_x: Scale::from_raw_256(sx),
+            scale_y: Scale::from_raw_256(sy),
             pivot: Point::new(px, py),
             ..LayerTransform::default()
         };

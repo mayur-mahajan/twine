@@ -59,7 +59,7 @@ fn playback_advances_frames_at_fps() {
     h.advance(Duration::ms(1000));
     let f = get(h.engine(), l).current_frame();
     assert!((28..=31).contains(&f), "frame {f} after 1 s at 30 fps");
-    with(&mut h, l, |w, cx| w.set_speed(cx, twine_core::Scale(512)));
+    with(&mut h, l, |w, cx| w.set_speed(cx, twine_core::Scale::pct(200)));
     h.advance(Duration::ms(250));
     let g = get(h.engine(), l).current_frame();
     assert!((f + 13..=f + 17).contains(&g), "2x speed: {f} -> {g} in 250 ms");

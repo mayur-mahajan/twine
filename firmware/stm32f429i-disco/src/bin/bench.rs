@@ -11,7 +11,7 @@
 
 use cortex_m::peripheral::DWT;
 use embassy_executor::Spawner;
-use twine::core::{Angle, Color, ColorFormat, Opa, Point, Rect};
+use twine::core::{Angle, Color, ColorFormat, Fraction, Opa, Point, Rect};
 use twine::hal::FramebufferDisplay;
 use twine::render::{
     ArcDsc, DrawAccel, DrawBuf, GradKind, GradStop, Gradient, ImageDsc, ImagePixels, LayerDsc, LineDsc, Mask,
@@ -45,8 +45,8 @@ struct Images {
 const GRAD_VER: Gradient = Gradient::new(
     GradKind::Ver,
     &[
-        GradStop::new(Color::hex(0x10_20_40), 0),
-        GradStop::new(Color::hex(0xF0_A0_20), 255),
+        GradStop::new(Color::hex(0x10_20_40), Fraction::ZERO),
+        GradStop::new(Color::hex(0xF0_A0_20), Fraction::ONE),
     ],
 );
 const GRAD_RADIAL: Gradient = Gradient::new(
@@ -56,7 +56,10 @@ const GRAD_RADIAL: Gradient = Gradient::new(
         focal: Point::new(100, 100),
         focal_radius: 0,
     },
-    &[GradStop::new(Color::WHITE, 0), GradStop::new(Color::BLUE, 255)],
+    &[
+        GradStop::new(Color::WHITE, Fraction::ZERO),
+        GradStop::new(Color::BLUE, Fraction::ONE),
+    ],
 );
 
 const SCENES: &[Scene] = &[
@@ -95,7 +98,7 @@ const SCENES: &[Scene] = &[
                     bg_opa: Opa::COVER,
                     shadow: ShadowDsc {
                         width: 20,
-                        opa: Opa(160),
+                        opa: Opa::from_raw(160),
                         ..ShadowDsc::default()
                     },
                     ..RectDsc::default()
@@ -124,7 +127,7 @@ const SCENES: &[Scene] = &[
                 y_top: 20,
                 y_bottom: H - 20,
                 opa_top: Opa::COVER,
-                opa_bottom: Opa(20),
+                opa_bottom: Opa::from_raw(20),
             });
             p.fill(Rect::from_xywh(0, 0, W, H), Color::hex(0xAA_33_55), Opa::COVER);
             p.pop_mask(b);
@@ -138,7 +141,7 @@ const SCENES: &[Scene] = &[
             p.layer(
                 area,
                 &LayerDsc {
-                    opa: Opa(128),
+                    opa: Opa::from_raw(128),
                     ..LayerDsc::default()
                 },
                 |p| {

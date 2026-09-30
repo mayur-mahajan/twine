@@ -1,7 +1,7 @@
 //! Every built-in font has the glyphs it promises.
 
 use twine_assets::fonts::*;
-use twine_text::{Font, GlyphCache, symbols};
+use twine_text::{Font, GlyphCache, Symbol, has_placeholder};
 
 const MONTSERRAT: &[(&str, &Font)] = &[
     ("8", &MONTSERRAT_8),
@@ -28,6 +28,27 @@ const MONTSERRAT: &[(&str, &Font)] = &[
     ("14-subpx", &MONTSERRAT_14_SUBPX),
 ];
 
+/// The code point of every [`Symbol`] that draws something (all but [`Symbol::Dummy`]).
+fn drawn_symbols() -> impl Iterator<Item = char> {
+    Symbol::ALL
+        .iter()
+        .filter(|&&s| s != Symbol::Dummy)
+        .map(|s| s.as_char())
+}
+
+/// Every `Symbol` variant has a glyph in the built-in (symbol-merged) fonts, so no symbol is
+/// drawn as a missing-glyph box; `Symbol::Dummy` is invisible by design.
+#[test]
+fn every_symbol_variant_has_a_glyph() {
+    let mut cache = GlyphCache::default();
+    for s in Symbol::ALL.iter().copied().filter(|&s| s != Symbol::Dummy) {
+        check_renders(s.name(), &MONTSERRAT_14, s.as_char(), &mut cache);
+        let (_, info) = MONTSERRAT_14.glyph(s.as_char(), None).unwrap();
+        assert!(info.box_w > 0 && info.box_h > 0, "{}: empty glyph", s.name());
+    }
+    assert!(!has_placeholder(Symbol::Dummy.as_char()));
+}
+
 fn check_renders(name: &str, font: &'static Font, c: char, cache: &mut GlyphCache) {
     let (f, info) = font
         .glyph(c, None)
@@ -47,7 +68,7 @@ fn every_font_has_ascii_and_symbols() {
         for c in (0x20u8..0x7F).map(char::from).chain(['°', '•']) {
             check_renders(name, font, c, &mut cache);
         }
-        for &c in symbols::ALL {
+        for c in drawn_symbols() {
             check_renders(name, font, c, &mut cache);
         }
     }
@@ -90,7 +111,7 @@ fn cjk_font_contains_common_chars() {
         for c in sample.iter().copied().chain((0x20u8..0x7F).map(char::from)) {
             check_renders(name, font, c, &mut cache);
         }
-        for &c in symbols::ALL {
+        for c in drawn_symbols() {
             check_renders(name, font, c, &mut cache);
         }
     }

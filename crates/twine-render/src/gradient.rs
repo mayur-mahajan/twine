@@ -3,12 +3,12 @@
 //!
 //! Geometry (points, centers, radii) is relative to the top-left of the drawn area, in pixels;
 //! a gradient's parameter `t` is 0 at the start and 1 at the end. Stops map `t` (as
-//! `frac / 255`) to colors and opacities; the 256-entry color map of the stops is cached.
+//! `frac`, a `Fraction`) to colors and opacities; the 256-entry color map of the stops is cached.
 
 use alloc::vec::Vec;
 
 use twine_core::math::{atan2, isqrt64};
-use twine_core::{Angle, Color, Opa, Point, Rect};
+use twine_core::{Angle, Color, Fraction, Opa, Point, Rect};
 
 use crate::caches::CacheStats;
 
@@ -23,14 +23,14 @@ pub struct GradStop {
     pub color: Color,
     /// Opacity at the stop.
     pub opa: Opa,
-    /// Position, `0..=255` along the gradient.
-    pub frac: u8,
+    /// Position along the gradient (`Fraction::ZERO` = start, `Fraction::ONE` = end).
+    pub frac: Fraction,
 }
 
 impl GradStop {
     /// An opaque stop.
     #[must_use]
-    pub const fn new(color: Color, frac: u8) -> Self {
+    pub const fn new(color: Color, frac: Fraction) -> Self {
         Self {
             color,
             opa: Opa::COVER,
@@ -40,7 +40,7 @@ impl GradStop {
 
     /// A stop with opacity.
     #[must_use]
-    pub const fn with_opa(color: Color, opa: Opa, frac: u8) -> Self {
+    pub const fn with_opa(color: Color, opa: Opa, frac: Fraction) -> Self {
         Self { color, opa, frac }
     }
 }
@@ -99,10 +99,13 @@ pub enum GradExtend {
 /// A gradient with up to [`MAX_STOPS`] stops.
 ///
 /// ```
-/// use twine_core::Color;
+/// use twine_core::{Color, Fraction};
 /// use twine_render::{GradExtend, GradKind, GradStop, Gradient};
 ///
-/// const G: Gradient = Gradient::new(GradKind::Ver, &[GradStop::new(Color::RED, 0), GradStop::new(Color::BLUE, 255)])
+/// const G: Gradient = Gradient::new(
+///     GradKind::Ver,
+///     &[GradStop::new(Color::RED, Fraction::ZERO), GradStop::new(Color::BLUE, Fraction::ONE)],
+/// )
 ///     .extend(GradExtend::Pad)
 ///     .dither(true);
 /// assert_eq!(G.stops().len(), 2);
@@ -128,7 +131,7 @@ impl Gradient {
         let mut s = [GradStop {
             color: Color::BLACK,
             opa: Opa::COVER,
-            frac: 0,
+            frac: Fraction::ZERO,
         }; MAX_STOPS];
         let n = if stops.len() > MAX_STOPS {
             MAX_STOPS
@@ -180,10 +183,11 @@ const fn pack(c: Color, a: u8) -> u32 {
 /// color at gradient position `i / 255` (the color map every gradient is drawn with).
 ///
 /// ```
-/// use twine_core::Color;
+/// use twine_core::{Color, Fraction};
 /// use twine_render::{GradStop, build_color_map};
 /// let mut map = [0u32; 256];
-/// build_color_map(&[GradStop::new(Color::BLACK, 0), GradStop::new(Color::WHITE, 255)], &mut map);
+/// let stops = [GradStop::new(Color::BLACK, Fraction::ZERO), GradStop::new(Color::WHITE, Fraction::ONE)];
+/// build_color_map(&stops, &mut map);
 /// assert_eq!((map[0], map[255]), (0xFF00_0000, 0xFFFF_FFFF));
 /// ```
 pub fn build_color_map(stops: &[GradStop], map: &mut [u32]) {
@@ -199,14 +203,14 @@ pub(crate) fn build_map(stops: &[GradStop], map: &mut [u32]) {
     let last = stops[stops.len() - 1];
     for (i, out) in map.iter_mut().enumerate().take(256) {
         let i = i as i32;
-        let v = match stops.iter().position(|s| i32::from(s.frac) >= i) {
-            None => pack(last.color, last.opa.0),
-            Some(0) => pack(first.color, first.opa.0),
+        let v = match stops.iter().position(|s| i32::from(s.frac.raw()) >= i) {
+            None => pack(last.color, last.opa.raw()),
+            Some(0) => pack(first.color, first.opa.raw()),
             Some(k) => {
                 let (a, b) = (stops[k - 1], stops[k]);
-                let (fa, fb) = (i32::from(a.frac), i32::from(b.frac));
+                let (fa, fb) = (i32::from(a.frac.raw()), i32::from(b.frac.raw()));
                 if fb <= fa {
-                    pack(b.color, b.opa.0)
+                    pack(b.color, b.opa.raw())
                 } else {
                     let t = ((i - fa) * 256 / (fb - fa)) as u32;
                     let l = |x: u8, y: u8| -> u8 {
@@ -218,7 +222,7 @@ pub(crate) fn build_map(stops: &[GradStop], map: &mut [u32]) {
                             l(a.color.g, b.color.g),
                             l(a.color.b, b.color.b),
                         ),
-                        l(a.opa.0, b.opa.0),
+                        l(a.opa.raw(), b.opa.raw()),
                     )
                 }
             }
@@ -403,10 +407,10 @@ impl GradSampler {
                 start_angle,
                 end_angle,
             } => {
-                let s = start_angle.normalized().0;
-                let mut span = end_angle.0 - start_angle.0;
+                let s = start_angle.normalized().as_deci_deg();
+                let mut span = end_angle.as_deci_deg() - start_angle.as_deci_deg();
                 if span <= 0 || span > 3600 {
-                    span = (end_angle.normalized().0 - s).rem_euclid(3600);
+                    span = (end_angle.normalized().as_deci_deg() - s).rem_euclid(3600);
                     if span == 0 {
                         span = 3600;
                     }
@@ -474,7 +478,7 @@ impl GradSampler {
                 }
             }
             Geo::Conical { cx, cy, start, span } => {
-                let ang = atan2((y as i32) - cy, (x as i32) - cx).0;
+                let ang = atan2((y as i32) - cy, (x as i32) - cx).as_deci_deg();
                 let rel = (ang - start).rem_euclid(3600);
                 let rel = if rel > span && rel > span + (3600 - span) / 2 {
                     rel - 3600
@@ -569,9 +573,9 @@ mod tests {
     #[test]
     fn color_map_endpoints_match_stops() {
         let stops = [
-            GradStop::new(Color::RED, 10),
-            GradStop::with_opa(Color::GREEN, Opa(100), 128),
-            GradStop::new(Color::BLUE, 240),
+            GradStop::new(Color::RED, Fraction::from_raw(10)),
+            GradStop::with_opa(Color::GREEN, Opa::from_raw(100), Fraction::from_raw(128)),
+            GradStop::new(Color::BLUE, Fraction::from_raw(240)),
         ];
         let mut map = [0u32; 256];
         build_map(&stops, &mut map);
@@ -592,7 +596,10 @@ mod tests {
                 start: Point::new(0, 0),
                 end: Point::new(40, 30),
             },
-            &[GradStop::new(Color::BLACK, 0), GradStop::new(Color::WHITE, 255)],
+            &[
+                GradStop::new(Color::BLACK, Fraction::ZERO),
+                GradStop::new(Color::WHITE, Fraction::ONE),
+            ],
         );
         let s = GradSampler::new(&g, Rect::from_xywh(0, 0, 50, 40));
         let mut prev = i64::MIN;
@@ -623,7 +630,10 @@ mod tests {
                 focal: Point::new(50, 50),
                 focal_radius: 0,
             },
-            &[GradStop::new(Color::BLACK, 0), GradStop::new(Color::WHITE, 255)],
+            &[
+                GradStop::new(Color::BLACK, Fraction::ZERO),
+                GradStop::new(Color::WHITE, Fraction::ONE),
+            ],
         );
         let s = GradSampler::new(&g, Rect::from_xywh(0, 0, 100, 100));
         assert_eq!(s.t(50, 50), Some(0));
@@ -646,7 +656,7 @@ mod tests {
     #[test]
     fn cache_lru() {
         let mut c = GradientCache::new(2);
-        let g = |c: Color| Gradient::new(GradKind::Ver, &[GradStop::new(c, 0)]);
+        let g = |c: Color| Gradient::new(GradKind::Ver, &[GradStop::new(c, Fraction::ZERO)]);
         let a = c.lookup(&g(Color::RED));
         assert_eq!(c.lookup(&g(Color::RED)), a);
         c.lookup(&g(Color::GREEN));

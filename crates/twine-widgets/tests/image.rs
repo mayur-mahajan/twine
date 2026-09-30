@@ -18,7 +18,7 @@ use twine_engine::{Anim, AnimProp, EngineConfig, MeasureCx, NodeId, ObjFlags};
 use twine_image::{FileSource, ImageSource};
 use twine_style::{Align, Part, Selector, StyleProp};
 use twine_testing::{EngineHarness, capture_logs};
-use twine_text::symbols::OK as SYMBOL_OK;
+const SYMBOL_OK: &str = twine_text::Symbol::Ok.as_str();
 use twine_widgets::image::{self, IMAGE_CLASS, Image, ImageAlign};
 
 static LOGO_QOI: &[u8] = include_bytes!("../../../assets/images/twine_logo.qoi");
@@ -58,7 +58,7 @@ fn image_defaults_match_lvgl() {
     assert_eq!(w.inner_align(), ImageAlign::Center);
     assert_eq!(
         (w.rotation(), w.scale_x(), w.scale_y()),
-        (Angle(0), Scale::ONE, Scale::ONE)
+        (Angle::deci_deg(0), Scale::ONE, Scale::ONE)
     );
     assert!(w.antialias());
     // The default theme gives images no styles.
@@ -112,7 +112,7 @@ fn set_same_src_no_invalidate() {
     assert!(h.engine().invalidation_log().is_empty());
     // Every transform setter is idempotent too.
     with(&mut h, i, |w: &mut Image, cx| {
-        w.set_rotation(cx, Angle(3600));
+        w.set_rotation(cx, Angle::deci_deg(3600));
         w.set_scale(cx, Scale::ONE);
         w.set_antialias(cx, true);
         w.set_inner_align(cx, ImageAlign::Center);
@@ -132,9 +132,13 @@ fn rotation_extends_ext_draw() {
     // A 64 px square rotated by 45°: half diagonal 45.25 - 32 → 14 px (rounded out).
     let ext = h.engine().tree().node(i).unwrap().ext_draw();
     assert!((13..=15).contains(&ext), "ext_draw {ext}");
-    with(&mut h, i, |w: &mut Image, cx| w.set_rotation(cx, Angle(0)));
+    with(&mut h, i, |w: &mut Image, cx| {
+        w.set_rotation(cx, Angle::deci_deg(0));
+    });
     assert_eq!(h.engine().tree().node(i).unwrap().ext_draw(), 0);
-    with(&mut h, i, |w: &mut Image, cx| w.set_scale(cx, Scale(512)));
+    with(&mut h, i, |w: &mut Image, cx| {
+        w.set_scale(cx, Scale::from_raw_256(512));
+    });
     assert_eq!(h.engine().tree().node(i).unwrap().ext_draw(), 32);
 }
 
@@ -155,12 +159,14 @@ fn image_covers_only_when_opaque() {
     assert!(covers(&h), "an opaque RGB565 image covers its area");
     with(&mut h, i, |w: &mut Image, cx| w.set_rotation(cx, Angle::deg(10)));
     assert!(!covers(&h), "not rotated");
-    with(&mut h, i, |w: &mut Image, cx| w.set_rotation(cx, Angle(0)));
+    with(&mut h, i, |w: &mut Image, cx| {
+        w.set_rotation(cx, Angle::deci_deg(0));
+    });
     h.engine_mut()
-        .set_local_prop(i, Selector::MAIN, StyleProp::ImageOpa(Opa(200)));
+        .set_local_prop(i, Selector::MAIN, StyleProp::ImageOpacity(Opa::from_raw(200)));
     assert!(!covers(&h), "not faded");
     h.engine_mut()
-        .set_local_prop(i, Selector::MAIN, StyleProp::ImageOpa(Opa::COVER));
+        .set_local_prop(i, Selector::MAIN, StyleProp::ImageOpacity(Opa::COVER));
     with(&mut h, i, |w: &mut Image, cx| {
         w.set_src(cx, stat(&logo_argb8888::LOGO_ARGB8888));
     });
@@ -265,7 +271,7 @@ fn snapshot_image_argb_on_bg() {
             Selector::MAIN,
             StyleProp::BgColor(twine_theme::Palette::Amber.main()),
         );
-        e.set_local_prop(i, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+        e.set_local_prop(i, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
         e.set_size(i, 80, 80);
     });
 }
@@ -280,7 +286,9 @@ fn snapshot_image_rot45_aa() {
 #[test]
 fn snapshot_image_scale_150() {
     snap("image_scale_150", ImageSource::Encoded(LOGO_QOI), |h, i| {
-        with(h, i, |w: &mut Image, cx| w.set_scale(cx, Scale(384)));
+        with(h, i, |w: &mut Image, cx| {
+            w.set_scale(cx, Scale::from_raw_256(384));
+        });
     });
 }
 
@@ -293,7 +301,7 @@ fn snapshot_image_recolor() {
             Selector::MAIN,
             StyleProp::ImageRecolor(twine_theme::Palette::Green.main()),
         );
-        e.set_local_prop(i, Selector::MAIN, StyleProp::ImageRecolorOpa(Opa::P70));
+        e.set_local_prop(i, Selector::MAIN, StyleProp::ImageRecolorOpacity(Opa::P70));
     });
 }
 
@@ -304,7 +312,7 @@ fn snapshot_image_symbol() {
         e.set_local_prop(
             i,
             Selector::MAIN,
-            StyleProp::TextFont(&twine_assets::fonts::MONTSERRAT_20),
+            StyleProp::Font(&twine_assets::fonts::MONTSERRAT_20),
         );
         e.set_local_prop(
             i,

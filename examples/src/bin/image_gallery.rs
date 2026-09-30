@@ -26,7 +26,7 @@ use twine_image::{
 };
 use twine_render::{DrawBuf, ImageDsc, ImagePixels, Painter, RenderCaches, RenderConfig};
 use twine_sim::{SimConfig, SimFrame, show_framebuffer_with_input};
-use twine_text::{GlyphCache, TextAlign, TextDsc, draw_text, symbols};
+use twine_text::{GlyphCache, Symbol, TextAlign, TextDsc, draw_text};
 use twine_vector::{SvgDocument, parse_svg};
 
 const W: i32 = 480;
@@ -194,7 +194,11 @@ fn page_formats(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
         if let Some(px) = img.pixels() {
             p.image(Rect::from_xywh(x + 7, y, 64, 64), &px, &ImageDsc::default());
         }
-        p.fill(Rect::from_xywh(x, y + 68, 78, 16), Color::WHITE, Opa(200));
+        p.fill(
+            Rect::from_xywh(x, y + 68, 78, 16),
+            Color::WHITE,
+            Opa::from_raw(200),
+        );
         text(
             p,
             cx.glyphs,
@@ -213,7 +217,7 @@ fn page_effects(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
         &bg,
         &ImageDsc {
             tile: true,
-            opa: Opa(60),
+            opa: Opa::from_raw(60),
             ..ImageDsc::default()
         },
     );
@@ -222,14 +226,14 @@ fn page_effects(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
         (
             "opa 25 %",
             ImageDsc {
-                opa: Opa::from_percent(25),
+                opa: Opa::pct(25),
                 ..ImageDsc::default()
             },
         ),
         (
             "opa 50 %",
             ImageDsc {
-                opa: Opa::from_percent(50),
+                opa: Opa::pct(50),
                 ..ImageDsc::default()
             },
         ),
@@ -238,7 +242,7 @@ fn page_effects(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
             "recolor",
             ImageDsc {
                 recolor: Color::hex(0xE65100),
-                recolor_opa: Opa(170),
+                recolor_opa: Opa::from_raw(170),
                 ..ImageDsc::default()
             },
         ),
@@ -289,14 +293,14 @@ fn page_transform(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
     checker(p, Rect::new(0, TOP, W, H));
     let px = logo();
     let f = cx.frame.index;
-    let scale = Scale(pulse(f, 240, 128, 512));
+    let scale = Scale::from_raw_256(pulse(f, 240, 128, 512));
     for (i, aa) in [true, false].into_iter().enumerate() {
         let (x, y) = (88 + i as i32 * 240, TOP + 110);
         p.image(
             Rect::from_xywh(x, y, 64, 64),
             &px,
             &ImageDsc {
-                angle: Angle::decideg((f % 360) as i32 * 10),
+                angle: Angle::deci_deg((f % 360) as i32 * 10),
                 scale_x: scale,
                 scale_y: scale,
                 pivot: Point::new(32, 32),
@@ -314,7 +318,7 @@ fn page_transform(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
             TextAlign::Center,
         );
     }
-    let zoom = format!("zoom {} %", u32::from(scale.0) * 100 / 256);
+    let zoom = format!("zoom {} %", u32::from(scale.raw_256()) * 100 / 256);
     p.fill(
         Rect::from_xywh(W / 2 - 50, TOP + 4, 100, 18),
         Color::WHITE,
@@ -346,8 +350,8 @@ fn page_decoders(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
             x,
             y,
             &ImageDsc {
-                scale_x: Scale(512),
-                scale_y: Scale(512),
+                scale_x: Scale::from_raw_256(512),
+                scale_y: Scale::from_raw_256(512),
                 antialias: false,
                 ..ImageDsc::default()
             },
@@ -394,8 +398,8 @@ fn page_gif(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
         Rect::from_xywh(290, TOP + 110, 48, 48),
         &px,
         &ImageDsc {
-            scale_x: Scale(768),
-            scale_y: Scale(768),
+            scale_x: Scale::from_raw_256(768),
+            scale_y: Scale::from_raw_256(768),
             pivot: Point::new(24, 24),
             ..ImageDsc::default()
         },
@@ -462,11 +466,11 @@ fn page_compressed(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
 }
 
 fn page_svg(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
-    let spin = Angle(((cx.frame.index * 30) % 3600) as i32);
+    let spin = Angle::deci_deg(((cx.frame.index * 30) % 3600) as i32);
     let n = cx.images.svgs.len() as i32;
     for (i, (name, doc)) in cx.images.svgs.iter().enumerate() {
         let x = 16 + i as i32 * (W - 32) / n;
-        let (w, h) = (doc.size.w.0 >> 16, doc.size.h.0 >> 16);
+        let (w, h) = (doc.size.w.raw() >> 16, doc.size.h.raw() >> 16);
         doc.render(p, Rect::from_xywh(x, TOP + 16, w, h));
         doc.render(p, Rect::from_xywh(x, TOP + 76, w * 2, h * 2));
         // Rotating: the document transform, then a rotation around the icon center.
@@ -607,7 +611,7 @@ impl Gallery {
         );
         d.align = TextAlign::Right;
         d.font = &MONTSERRAT_12;
-        let nav = format!("{}  {}", symbols::LEFT, symbols::RIGHT);
+        let nav = format!("{}  {}", Symbol::Left, Symbol::Right);
         draw_text(
             &mut p,
             Rect::new(W - 90, 4, W - 8, TOP - 4),

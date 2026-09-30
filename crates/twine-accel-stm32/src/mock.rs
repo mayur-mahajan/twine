@@ -21,7 +21,9 @@ pub enum Access {
 /// [`with_busy_reads`](Self::with_busy_reads) reads of `CR` (default 0: finishes immediately),
 /// then clears `START` and sets `ISR.TCIF` (plus any flags injected with
 /// [`fail_next_transfer`](Self::fail_next_transfer)). A CLUT load (`FGPFCCR.START`) finishes
-/// immediately. Writing `IFCR` clears the corresponding `ISR` flags. No pixels are moved.
+/// immediately. Writing `IFCR` clears the corresponding `ISR` flags. With
+/// [`hang`](Self::hang) transfers and CLUT loads never end on their own; writing `CR.ABORT`
+/// stops them (clears `START`, sets no flag). No pixels are moved.
 ///
 /// ```
 /// use twine_accel_stm32::{Dma2dRegs, Reg, bits, mock::{Access, MockRegs}};
@@ -41,6 +43,8 @@ pub struct MockRegs {
     inject: u32,
     starts: u32,
     cr_reads: u32,
+    hang: bool,
+    aborts: u32,
 }
 
 impl MockRegs {
@@ -55,6 +59,25 @@ impl MockRegs {
     pub fn with_busy_reads(mut self, n: u32) -> Self {
         self.busy_reads = n;
         self
+    }
+
+    /// Transfers and CLUT loads never complete on their own (a hung DMA2D): only `CR.ABORT`
+    /// stops them.
+    #[must_use]
+    pub fn hang(mut self) -> Self {
+        self.hang = true;
+        self
+    }
+
+    /// Switches [`hang`](Self::hang) on or off (off: a running transfer completes normally).
+    pub fn set_hang(&mut self, hang: bool) {
+        self.hang = hang;
+    }
+
+    /// Number of `CR.ABORT` writes so far.
+    #[must_use]
+    pub fn aborts(&self) -> u32 {
+        self.aborts
     }
 
     /// The next transfer ends with `flags` (e.g. [`bits::ISR_CEIF`]) set in `ISR`.
@@ -111,7 +134,7 @@ impl Dma2dRegs for MockRegs {
     fn read(&mut self, reg: Reg) -> u32 {
         if reg == Reg::Cr {
             self.cr_reads += 1;
-            if self.is_running() {
+            if self.is_running() && !self.hang {
                 if self.remaining > 0 {
                     self.remaining -= 1;
                 } else {
@@ -128,6 +151,12 @@ impl Dma2dRegs for MockRegs {
         match reg {
             Reg::Isr => {}
             Reg::Ifcr => self.regs[Reg::Isr.index()] &= !value,
+            Reg::Cr if value & bits::CR_ABORT != 0 => {
+                self.aborts += 1;
+                self.regs[Reg::Cr.index()] = value & !(bits::CR_START | bits::CR_ABORT);
+                self.regs[Reg::Fgpfccr.index()] &= !bits::PFCCR_START;
+                self.regs[Reg::Bgpfccr.index()] &= !bits::PFCCR_START;
+            }
             Reg::Cr => {
                 if value & bits::CR_START != 0 {
                     self.starts += 1;
@@ -135,7 +164,7 @@ impl Dma2dRegs for MockRegs {
                 }
                 self.regs[Reg::Cr.index()] = value;
             }
-            Reg::Fgpfccr | Reg::Bgpfccr if value & bits::PFCCR_START != 0 => {
+            Reg::Fgpfccr | Reg::Bgpfccr if value & bits::PFCCR_START != 0 && !self.hang => {
                 self.regs[reg.index()] = value & !bits::PFCCR_START;
                 self.regs[Reg::Isr.index()] |= bits::ISR_CTCIF;
             }

@@ -234,7 +234,7 @@ impl Lottie {
 
     /// Sets the playback speed (256 = 1×; 0 is ignored with a warning). Idempotent.
     pub fn set_speed(&mut self, cx: &mut WidgetCx<'_>, speed: Scale) {
-        if speed.0 == 0 {
+        if speed.raw_256() == 0 {
             twine_core::warn!(target: "twine::lottie", "lottie: speed 0 ignored (use pause)");
             return;
         }
@@ -265,7 +265,7 @@ impl Lottie {
         let from = self.frame.min(total - 1);
         // Frames → milliseconds at this speed.
         let ms = |frames: u32| {
-            let v = u64::from(frames) * 1000 * 256 / (u64::from(fr) * u64::from(self.speed.0.max(1)));
+            let v = u64::from(frames) * 1000 * 256 / (u64::from(fr) * u64::from(self.speed.raw_256().max(1)));
             Duration::ms(v.max(1))
         };
         let to_i32 = |v: u32| i32::try_from(v).unwrap_or(i32::MAX);

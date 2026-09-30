@@ -4,7 +4,7 @@
 mod common;
 
 use common::{Mode, get, harness, with};
-use twine_core::{Color, Duration, Opa, Point, Rect, Size};
+use twine_core::{Color, Duration, Fraction, Opa, Point, Rect, Size};
 use twine_engine::ObjFlags;
 use twine_style::{Align, Part, PropId, Selector, StyleProp};
 use twine_testing::EngineHarness;
@@ -40,13 +40,17 @@ fn led_setters_same_value_no_invalidate() {
     h.run_until_idle();
     with(&mut h, l, |w: &mut Led, cx| {
         w.set_color(cx, LED_DEFAULT_COLOR);
-        w.set_brightness(cx, 255);
+        w.set_brightness(cx, Fraction::from_raw(255));
         w.on(cx);
     });
     assert!(h.engine().invalidation_log().is_empty());
-    with(&mut h, l, |w: &mut Led, cx| w.set_brightness(cx, 10)); // clamps to 80
+    with(&mut h, l, |w: &mut Led, cx| {
+        w.set_brightness(cx, Fraction::from_raw(10));
+    }); // clamps to 80
     h.run_until_idle();
-    with(&mut h, l, |w: &mut Led, cx| w.set_brightness(cx, 0));
+    with(&mut h, l, |w: &mut Led, cx| {
+        w.set_brightness(cx, Fraction::from_raw(0));
+    });
     assert!(h.engine().invalidation_log().is_empty());
     h.assert_idle();
 }
@@ -59,16 +63,16 @@ fn led_brightness_mixes_color() {
     let l = led::create(e, screen).unwrap();
     e.align(l, Align::Center, 0, 0);
     // A plain white square: the drawn color is the LED color darkened by the brightness.
-    e.set_local_prop(l, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+    e.set_local_prop(l, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
     e.set_local_prop(l, Selector::MAIN, StyleProp::BgColor(Color::WHITE));
     let red = Color::new(255, 0, 0);
     with(&mut h, l, |w: &mut Led, cx| {
         w.set_color(cx, red);
-        w.set_brightness(cx, 160);
+        w.set_brightness(cx, Fraction::from_raw(160));
     });
     h.run_until_idle();
     let px = h.pixel(20, 20);
-    let expected = Color::mix(red, Color::BLACK, Opa(160));
+    let expected = Color::mix(red, Color::BLACK, Opa::from_raw(160));
     assert!(
         (i32::from(px.r) - i32::from(expected.r)).abs() <= 8,
         "{px:?} vs {expected:?}"
@@ -87,7 +91,7 @@ fn led_toggle() {
     assert_eq!(get::<Led>(&h, l).brightness(), LED_BRIGHT_MAX);
     // LVGL: halfway (167) counts as off, above it as on.
     with(&mut h, l, |w: &mut Led, cx| {
-        w.set_brightness(cx, 167);
+        w.set_brightness(cx, Fraction::from_raw(167));
         w.toggle(cx);
     });
     assert_eq!(get::<Led>(&h, l).brightness(), LED_BRIGHT_MAX);
@@ -121,7 +125,7 @@ fn snapshot_led_on_off() {
         with(&mut h, off, |w: &mut Led, cx| w.off(cx));
         with(&mut h, red, |w: &mut Led, cx| {
             w.set_color(cx, Color::new(0xF4, 0x43, 0x36));
-            w.set_brightness(cx, 200);
+            w.set_brightness(cx, Fraction::from_raw(200));
         });
         h.run_until_idle();
         h.assert_snapshot(&format!("led_on_off_{}", m.suffix()));

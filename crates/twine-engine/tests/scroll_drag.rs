@@ -5,7 +5,7 @@ mod common;
 
 use common::{EvLog, codes_of, list, record, scroll_codes, white_screen};
 use twine_core::{Duration, Point, Rect};
-use twine_engine::{Dir, EventCode as C, NodeId, ObjFlags, SCROLL_ELASTIC_FACTOR, State};
+use twine_engine::{Axis, EventCode as C, NodeId, ObjFlags, SCROLL_ELASTIC_FACTOR, State};
 use twine_testing::EngineHarness;
 use twine_testing::alloc::{CountingAllocator, count_allocs};
 
@@ -121,7 +121,7 @@ fn horizontal_drag_in_vertical_only_container_chains_to_parent() {
         let (pane, _) = list(e, s, Rect::from_xywh(0, 0, 200, 200), 0, 0);
         let wide = twine_testing::scenes::child_box(e, pane, Rect::from_xywh(0, 0, 400, 10), &[]);
         let (inner, _) = list(e, pane, Rect::from_xywh(20, 20, 100, 100), 10, 40);
-        e.set_scroll_dir(inner, Dir::VER);
+        e.set_scroll_dir(inner, Axis::Vertical);
         ids = Some((pane, wide, inner));
     });
     h.run_until_idle();

@@ -24,6 +24,7 @@
 //!
 //! - `log` / `defmt`: logging backend (target `"twine::extra"`); `std`: std conveniences.
 #![no_std]
+#![forbid(unsafe_code)]
 
 #[allow(unused_extern_crates)] // unused when no encoder feature is enabled
 extern crate alloc;

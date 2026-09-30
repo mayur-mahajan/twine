@@ -1,7 +1,7 @@
 //! [`Obj`]: the base object widget (LVGL `lv_obj`), and [`OBJ_CLASS`].
 
 use twine_hal::Key;
-use twine_style::{Dir, Part, ScrollSnap, ScrollbarMode, State};
+use twine_style::{Part, ScrollSnap, ScrollbarMode, Sides, State};
 
 use crate::{Engine, Event, EventCode, EventParam, InputKind, NodeId, ObjFlags, Widget, WidgetClass};
 
@@ -141,7 +141,8 @@ fn arrow_scroll(e: &mut Engine, obj: NodeId, k: Key) {
     let c = e.coords(obj);
     let off = e.scroll_offset(obj);
     let (dy, dx) = (c.height() / 4, c.width() / 4);
-    let hor = e.scroll_dir(obj).intersects(Dir::HOR) && (e.scroll_left(obj) > 0 || e.scroll_right(obj) > 0);
+    let hor = e.scroll_dir(obj).intersects(Sides::HORIZONTAL)
+        && (e.scroll_left(obj) > 0 || e.scroll_right(obj) > 0);
     match k {
         Key::Right if hor => e.scroll_to_x(obj, off.x + dx, false),
         Key::Left if hor => e.scroll_to_x(obj, off.x - dx, false),

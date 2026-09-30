@@ -1,7 +1,7 @@
 //! Property values and bindings.
 
 use twine_engine::{EventCode, EventParam};
-use twine_reactive::debug_stats;
+use twine_reactive::runtime_stats;
 use twine_style::{Part, PropId};
 use twine_testing::{TestUi, by_id};
 use twine_view::prelude::*;
@@ -47,12 +47,12 @@ fn prop_coherence() {
 fn static_prop_applies_once_no_effect_created() {
     let before = std::cell::Cell::new(0);
     let t = TestUi::new(100, 60).mount(|cx| {
-        before.set(debug_stats().nodes);
+        before.set(runtime_stats().nodes);
         let _ = cx;
         label("x").text_color(Color::RED).padding(3).test_id("l")
     });
     // A dynamic text would have created an effect; constants create none.
-    assert_eq!(debug_stats().nodes, before.get());
+    assert_eq!(runtime_stats().nodes, before.get());
     let id = t.find(by_id("l")).id();
     assert_eq!(
         t.engine().style_color(id, Part::Main, PropId::TextColor),
@@ -95,9 +95,9 @@ fn binding_runs_only_for_its_signal() {
     t.run_until_idle();
     let (a, _b) = t.root_scope().expect_context::<(Signal<i32>, Signal<i32>)>();
     a.set(10); // outside the Ui: the binding defers itself to the next update
-    let runs = debug_stats().effect_runs;
+    let runs = runtime_stats().effect_runs;
     t.run_until_idle();
-    assert_eq!(debug_stats().effect_runs - runs, 1, "only a's binding runs");
+    assert_eq!(runtime_stats().effect_runs - runs, 1, "only a's binding runs");
 }
 
 #[test]
@@ -110,11 +110,11 @@ fn binding_disposes_when_node_deleted() {
     t.run_until_idle();
     let n = t.root_scope().expect_context::<Signal<i32>>();
     let id = t.find(by_id("l")).id();
-    let nodes = debug_stats().nodes;
+    let nodes = runtime_stats().nodes;
     t.engine_mut().delete(id).unwrap();
     n.set(5);
     t.run_until_idle();
-    assert_eq!(debug_stats().nodes, nodes - 1, "the binding disposed itself");
+    assert_eq!(runtime_stats().nodes, nodes - 1, "the binding disposed itself");
     n.set(6);
     t.run_until_idle();
 }
@@ -153,4 +153,88 @@ fn handler_writes_run_bindings_in_the_same_update() {
     // Sent outside an update: the binding is deferred, then applied by the next update.
     t.update();
     assert_eq!(t.find(by_id("l")).text(), "1");
+}
+
+/// A user property type (R1.S03): one line makes it a constant property; signals, memos and
+/// closures of it work like for the built-in types.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Gauge(u8);
+twine_view::prop_value!(Gauge);
+
+/// A user model type: a one-line `impl` makes it a plain (owned) model value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Level(u8);
+impl ModelValue for Level {}
+
+fn take_model<T: 'static>(m: impl IntoModel<T>) -> Model<T> {
+    m.into_model()
+}
+
+#[test]
+fn user_type_as_prop_via_prop_value() {
+    fn assert_prop_value<T: PropValue>() {}
+    assert_prop_value::<Gauge>();
+    assert_prop_value::<Option<Gauge>>();
+    assert_prop_value::<Vec<Gauge>>();
+    assert_prop_value::<(Gauge, i32)>();
+    let cx = twine_reactive::create_root();
+    let g = cx.signal(Gauge(1));
+    assert!(matches!(take(Gauge(3)), Prop::Static(Gauge(3))));
+    assert!(is_static(&take(vec![Gauge(1), Gauge(2)])));
+    assert!(is_static(&take(Some(Gauge(1)))));
+    assert!(!is_static(&take(g)));
+    assert!(!is_static(&take(move || Gauge(g.get().0 + 1))));
+    // Bound to a widget through `bind`: constants apply once, signals re-run.
+    cx.dispose();
+    let mut t = TestUi::new(200, 100).mount(|cx| {
+        let g = cx.signal(Gauge(10));
+        cx.provide(g);
+        label("x")
+            .bind(g, |l: &mut Label, wcx, g: Gauge| {
+                l.set_max_lines(wcx, u16::from(g.0));
+            })
+            .bind(Gauge(2), |l: &mut Label, wcx, g: Gauge| {
+                l.set_long_mode(wcx, if g.0 == 2 { LongMode::Dots } else { LongMode::Wrap });
+            })
+            .test_id("l")
+    });
+    t.run_until_idle();
+    let g = t.root_scope().expect_context::<Signal<Gauge>>();
+    let l = t.find(by_id("l")).id();
+    assert_eq!(t.engine().widget::<Label>(l).unwrap().max_lines(), 10);
+    assert_eq!(t.engine().widget::<Label>(l).unwrap().long_mode(), LongMode::Dots);
+    g.set(Gauge(4));
+    t.run_until_idle();
+    assert_eq!(t.engine().widget::<Label>(l).unwrap().max_lines(), 4);
+}
+
+#[test]
+fn user_type_as_model_via_model_value() {
+    let cx = twine_reactive::create_root();
+    let s = cx.signal(Level(1));
+    assert!(matches!(take_model(Level(2)), Model::Owned(Level(2))));
+    assert!(matches!(take_model(s), Model::Bound(_)));
+    assert!(matches!(take_model(Some(Level(1))), Model::Owned(Some(Level(1)))));
+    assert!(matches!(take_model((Level(1), 5u8)), Model::Owned(_)));
+    cx.dispose();
+}
+
+#[test]
+fn constant_props_create_no_binding() {
+    // Every constant of the audited setters stays `Prop::Static`: building runs no effect.
+    let runs = runtime_stats().effect_runs;
+    let mut t = TestUi::new(320, 240).mount(|_| {
+        column((
+            label("a").selectable(true).max_lines(2),
+            arc(10).knob(false).rotation(Angle::deg(90)),
+            bar(5).animated(Duration::ms(200)),
+            dropdown(["a", "b"], 0usize).text("Pick"),
+            roller(["x", "y"], 0usize).mode(RollerMode::Infinite),
+            buttonmatrix([[btn("1"), btn("2")]]),
+            list_button((), "row").grid_col(0).grid_row(0..1),
+            window("w", window_button(Symbol::Close, 30), label("c")).content_padding(0),
+        ))
+    });
+    t.run_until_idle();
+    assert_eq!(runtime_stats().effect_runs, runs, "no binding for constants");
 }

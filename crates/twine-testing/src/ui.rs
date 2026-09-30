@@ -109,8 +109,26 @@ impl TestUi {
 
     /// Builds `app` (once) on the display, like `Ui::build`: a default focus group for the
     /// keypad and the encoder is created first. Updates then run the `Ui` cycle.
+    ///
+    /// # Panics
+    /// When a widget of `app` cannot be created (see [`try_mount`](Self::try_mount)).
     #[must_use]
-    pub fn mount<V: View>(mut self, app: impl FnOnce(Scope) -> V) -> Self {
+    pub fn mount<V: View>(self, app: impl FnOnce(Scope) -> V) -> Self {
+        match self.try_mount(app) {
+            Ok(t) => t,
+            Err(e) => panic!("TestUi::mount: {e}"),
+        }
+    }
+
+    /// [`mount`](Self::mount), returning the build error (see `UiCore::mount`) instead of
+    /// panicking.
+    ///
+    /// # Errors
+    /// [`BuildError`](twine_view::BuildError) when a widget of `app` cannot be created.
+    pub fn try_mount<V: View>(
+        mut self,
+        app: impl FnOnce(Scope) -> V,
+    ) -> Result<Self, twine_view::BuildError> {
         let h = self.h.get_mut();
         let display = h.display();
         let e = h.engine_mut();
@@ -119,11 +137,11 @@ impl TestUi {
                 e.set_default_group(Some(g));
             }
         }
-        let core = Rc::new(RefCell::new(UiCore::mount(e, display, app)));
+        let core = Rc::new(RefCell::new(UiCore::mount(e, display, app)?));
         let c = core.clone();
         h.set_step_fn(Box::new(move |e, now| c.borrow_mut().update(e, now)));
         self.core = Some(core);
-        self
+        Ok(self)
     }
 
     /// Runs `f` on the engine (imperative scenes; can be combined with [`mount`](Self::mount)).
@@ -266,7 +284,7 @@ impl TestUi {
         let mut buf = [0u8; 4];
         for c in s.chars() {
             let label: &str = if c == '\n' {
-                twine_text::symbols::NEW_LINE
+                twine_text::Symbol::NewLine.as_str()
             } else {
                 c.encode_utf8(&mut buf)
             };

@@ -104,6 +104,9 @@ struct Counts {
 impl<T: 'static, K: Eq + Hash + Clone + 'static> View for ForEach<T, K> {
     fn build(self, cx: &mut BuildCx<'_>) -> NodeId {
         let wrapper = cx.create(Wrapper(&FOR_EACH_CLASS));
+        if wrapper == twine_engine::DEAD_NODE {
+            return wrapper; // not created (reported); nothing to keep up to date
+        }
         let scope = cx.scope();
         let rows: Rc<RefCell<Vec<Row<T, K>>>> = Rc::default();
         let r = rows.clone();

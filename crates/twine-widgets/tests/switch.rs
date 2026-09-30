@@ -168,8 +168,11 @@ fn switch_set_checked_no_anim() {
 #[test]
 fn switch_anim_duration_from_style() {
     let (mut h, s) = scene(Mode::Light);
-    h.engine_mut()
-        .set_local_prop(s, Selector::MAIN, StyleProp::AnimDuration(400));
+    h.engine_mut().set_local_prop(
+        s,
+        Selector::MAIN,
+        StyleProp::AnimDuration(Duration::ms(400).into()),
+    );
     h.run_until_idle();
     h.tap(center(&h, s));
     h.advance(Duration::ms(300));
@@ -178,7 +181,7 @@ fn switch_anim_duration_from_style() {
     assert!(!get::<Switch>(&h, s).is_animating());
     // No duration: no animation.
     h.engine_mut()
-        .set_local_prop(s, Selector::MAIN, StyleProp::AnimDuration(0));
+        .set_local_prop(s, Selector::MAIN, StyleProp::AnimDuration(Duration::ms(0).into()));
     h.tap(center(&h, s));
     assert!(!get::<Switch>(&h, s).is_animating());
 }
@@ -249,8 +252,11 @@ fn snapshot_switch_states() {
     }
     // Halfway through the knob animation.
     let (mut h, s) = scene(Mode::Light);
-    h.engine_mut()
-        .set_local_prop(s, Selector::MAIN, StyleProp::AnimDuration(200));
+    h.engine_mut().set_local_prop(
+        s,
+        Selector::MAIN,
+        StyleProp::AnimDuration(Duration::ms(200).into()),
+    );
     h.run_until_idle();
     h.tap(center(&h, s));
     h.advance(Duration::ms(100));

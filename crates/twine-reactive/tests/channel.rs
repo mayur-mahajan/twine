@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Wake, Waker};
 
 use twine_reactive::{
-    Channel, UiWaker, any_channel_pending, create_root, debug_stats, drain_channels, register_waker,
+    Channel, UiWaker, WakerLease, any_channel_pending, create_root, drain_channels, runtime_stats,
 };
 
 struct CountWaker(AtomicUsize);
@@ -132,16 +132,16 @@ fn channel_dispose_scope_unregisters_channel() {
     let n = Rc::new(Cell::new(0));
     let c = n.clone();
     child.on_message(ch, move |_| c.set(c.get() + 1));
-    assert_eq!(debug_stats().channels, 1);
+    assert_eq!(runtime_stats().channels, 1);
     child.dispose();
-    assert_eq!(debug_stats().channels, 0);
+    assert_eq!(runtime_stats().channels, 0);
     ch.try_send(1).unwrap();
     assert_eq!(drain_channels(8), 0);
     assert_eq!(n.get(), 0);
     assert!(!any_channel_pending());
     // Registering on a dead scope is ignored.
     child.on_message(ch, |_| panic!("never"));
-    assert_eq!(debug_stats().channels, 0);
+    assert_eq!(runtime_stats().channels, 0);
 }
 
 #[test]
@@ -176,22 +176,26 @@ fn channel_drain_reentrancy_registering_inside_handler() {
     ch.try_send(10).unwrap();
     assert_eq!(drain_channels(1), 1);
     assert!(!child.is_alive());
-    assert_eq!(debug_stats().channels, 1);
+    assert_eq!(runtime_stats().channels, 1);
     assert_eq!(drain_channels(8), 0, "ch is no longer registered");
 }
 
 #[test]
-fn channel_register_waker_reaches_every_registered_channel() {
+fn channel_root_waker_reaches_every_registered_channel() {
+    static W: UiWaker = UiWaker::new();
     let ch1 = static_channel!(u8, 2);
     let ch2 = static_channel!(u8, 2);
     let cx = create_root();
     cx.on_message(ch1, |_| {});
-    cx.on_message(ch2, |_| {});
+    cx.child().on_message(ch2, |_| {});
     let (count, waker) = count_waker();
-    register_waker(&waker);
+    W.register(&waker);
+    cx.set_ui_waker(&W);
     ch1.try_send(1).unwrap();
     ch2.try_send(1).unwrap();
     assert_eq!(count.0.load(Ordering::SeqCst), 2);
+    assert!(W.take());
+    cx.dispose();
 }
 
 #[test]
@@ -257,13 +261,123 @@ fn channel_is_const_constructible_in_static() {
 }
 
 #[test]
-fn channel_register_waker_reaches_channels_registered_later() {
+fn channel_root_waker_reaches_channels_registered_later() {
+    static W: UiWaker = UiWaker::new();
     let ch: &'static Channel<u8, 2> = static_channel!(u8, 2);
     let cx = create_root();
+    cx.set_ui_waker(&W);
     let (count, waker) = count_waker();
-    register_waker(&waker);
-    cx.on_message(ch, |_| {});
+    W.register(&waker);
+    cx.child().child().on_message(ch, |_| {});
     ch.try_send(1).unwrap();
     assert_eq!(count.0.load(Ordering::SeqCst), 1);
+    assert!(W.take());
     cx.dispose();
+    assert!(cx.ui_waker().is_none());
+}
+
+#[test]
+fn channel_each_root_wakes_only_its_own_waker() {
+    static W1: UiWaker = UiWaker::new();
+    static W2: UiWaker = UiWaker::new();
+    let ch1 = static_channel!(u8, 2);
+    let ch2 = static_channel!(u8, 2);
+    let a = create_root();
+    let b = create_root();
+    a.set_ui_waker(&W1);
+    b.set_ui_waker(&W2);
+    a.on_message(ch1, |_| {});
+    b.child().on_message(ch2, |_| {});
+    ch1.try_send(1).unwrap();
+    assert!(W1.take());
+    assert!(!W2.is_set());
+    ch2.try_send(1).unwrap();
+    assert!(W2.take());
+    assert!(!W1.is_set());
+    assert!(a.ui_waker().is_some_and(|w| core::ptr::addr_eq(w, &raw const W1)));
+    assert!(
+        b.child()
+            .ui_waker()
+            .is_some_and(|w| core::ptr::addr_eq(w, &raw const W2))
+    );
+    a.dispose();
+    b.dispose();
+}
+
+#[test]
+fn channel_disposed_handler_stops_waking_its_ui() {
+    static W: UiWaker = UiWaker::new();
+    let ch = static_channel!(u8, 4);
+    let root = create_root();
+    root.set_ui_waker(&W);
+    let row1 = root.child();
+    let row2 = root.child();
+    row1.on_message(ch, |_| {});
+    row2.on_message(ch, |_| {});
+    // One of two handlers gone: the channel still wakes the UI.
+    row1.dispose();
+    ch.try_send(1).unwrap();
+    assert!(W.take());
+    // The last one gone: it does not.
+    row2.dispose();
+    ch.try_send(2).unwrap();
+    assert!(!W.is_set());
+    root.dispose();
+}
+
+#[test]
+fn channel_set_ui_waker_on_child_scope_is_ignored() {
+    static W: UiWaker = UiWaker::new();
+    let root = create_root();
+    root.child().set_ui_waker(&W);
+    assert!(root.ui_waker().is_none());
+    root.dispose();
+    root.set_ui_waker(&W); // dead: ignored
+    assert!(root.ui_waker().is_none());
+}
+
+#[test]
+fn channel_send_from_another_thread_wakes_the_owning_root() {
+    static W1: UiWaker = UiWaker::new();
+    static W2: UiWaker = UiWaker::new();
+    static CH1: Channel<u32, 4> = Channel::new();
+    static CH2: Channel<u32, 4> = Channel::new();
+    let a = create_root();
+    let b = create_root();
+    a.set_ui_waker(&W1);
+    b.set_ui_waker(&W2);
+    a.on_message(&CH1, |_| {});
+    b.on_message(&CH2, |_| {});
+    // An "interrupt handler" on another thread: only `Channel` is touched there.
+    std::thread::spawn(|| CH2.try_send(7).unwrap()).join().unwrap();
+    assert!(W2.take());
+    assert!(!W1.is_set());
+    assert_eq!(drain_channels(4), 1);
+    a.dispose();
+    b.dispose();
+}
+
+#[test]
+fn waker_lease_reuses_slots_and_resets_them() {
+    let first = WakerLease::STATIC_SLOTS + 2; // static slots and heap slots
+    let leases: Vec<_> = (0..first).map(|_| UiWaker::lease()).collect();
+    for (i, l) in leases.iter().enumerate() {
+        for m in &leases[i + 1..] {
+            assert!(!core::ptr::eq(l.get(), m.get()), "leases are distinct");
+        }
+        l.get().wake();
+    }
+    let ptrs: Vec<*const UiWaker> = leases.iter().map(|l| core::ptr::from_ref(l.get())).collect();
+    drop(leases);
+    // Returned wakers are handed out again, cleared.
+    let again: Vec<_> = (0..first).map(|_| UiWaker::lease()).collect();
+    for l in &again {
+        assert!(!l.get().is_set());
+    }
+    let reused = again
+        .iter()
+        .filter(|l| ptrs.contains(&core::ptr::from_ref(l.get())))
+        .count();
+    // Other tests of this binary lease concurrently; most slots come back to us.
+    assert!(reused >= 1);
 }

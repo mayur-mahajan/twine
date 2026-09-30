@@ -3,20 +3,22 @@
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 use alloc::vec::Vec;
-use core::task::{RawWaker, RawWakerVTable, Waker};
 
+use twine_core::fault::{FaultCounts, FaultKind, Faults};
 use twine_core::{Instant, Rotation};
 use twine_engine::{
-    BufferMode, DisplayId, Engine, EngineConfig, EngineError, InputId, InputKind, ThemeHook, Wake,
+    BufferMode, DisplayId, Engine, EngineConfig, EngineError, FaultHook, FaultRecord, InputId, InputKind,
+    ThemeHook, Wake,
 };
 use twine_hal::{Clock, DisplayDriver, FramebufferDisplay, InputDevice};
 use twine_reactive::{
-    Scope, UiWaker, any_channel_pending, batch, create_root, drain_channels, flush_effects_with,
-    has_pending_effects, register_waker,
+    Scope, UiWaker, WakerLease, any_channel_pending, batch, create_root, drain_channels, flush_effects_with,
+    has_pending_effects,
 };
 
 use crate::access::{EffectCx, EngineAccess};
 use crate::build::BuildCx;
+use crate::error::{BuildError, BuildFailure, UiError};
 use crate::hooks::{StyleAnchor, UiDisplay};
 use crate::view::View;
 
@@ -42,13 +44,24 @@ const MAX_MESSAGES_PER_CHANNEL: usize = 16;
 /// # }
 /// let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
 /// let d = engine.add_display(Nop(None), BufferMode::partial_single(buf)).unwrap();
-/// let mut core = UiCore::mount(&mut engine, d, |_cx| label("hi"));
+/// let mut core = UiCore::mount(&mut engine, d, |_cx| label("hi")).unwrap();
 /// let _wake = core.update(&mut engine, twine_core::Instant::from_millis(0));
 /// ```
+///
+/// **Waker.** Every `UiCore` has its own [`UiWaker`], set on its root scope
+/// ([`Scope::set_ui_waker`]): channel handlers of this application wake this `UiCore` only.
+/// [`mount`](Self::mount) leases one from a process-wide pool ([`WakerLease`]: `static`
+/// slots first, no heap for the first few UIs, and returned on drop, so remounting does not
+/// grow the heap); [`mount_with_waker`](Self::mount_with_waker) uses a `static` the
+/// application declares (no pool, and interrupt handlers can name it before the UI exists).
+/// Either way the update cycle reads it through one `&'static` reference.
 pub struct UiCore {
     root: Scope,
     display: DisplayId,
     waker: &'static UiWaker,
+    /// Returns a pooled waker when the `UiCore` is dropped (`None` for an application's
+    /// `static`). Declared after `root`'s disposal in `Drop`.
+    lease: Option<WakerLease>,
 }
 
 impl core::fmt::Debug for UiCore {
@@ -60,49 +73,83 @@ impl core::fmt::Debug for UiCore {
     }
 }
 
-static WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(waker_clone, waker_wake, waker_wake, waker_drop);
-
-#[allow(unsafe_code)]
-unsafe fn waker_clone(p: *const ()) -> RawWaker {
-    RawWaker::new(p, &WAKER_VTABLE)
-}
-
-#[allow(unsafe_code)]
-unsafe fn waker_wake(p: *const ()) {
-    // SAFETY: every `RawWaker` with this vtable is created by `ui_waker` (or cloned from one)
-    // from a `&'static UiWaker`, so `p` points to a live `UiWaker` forever. `UiWaker` is
-    // `Sync` (an atomic flag and a critical-section mutex), so waking it from any thread or
-    // interrupt is sound.
-    let w = unsafe { &*p.cast::<UiWaker>() };
-    w.wake();
-}
-
-#[allow(unsafe_code)]
-unsafe fn waker_drop(_p: *const ()) {}
-
-/// A task [`Waker`] that wakes `w` (sets its flag and wakes the task registered in it).
-fn ui_waker(w: &'static UiWaker) -> Waker {
-    let raw = RawWaker::new(core::ptr::from_ref(w).cast::<()>(), &WAKER_VTABLE);
-    // SAFETY: the vtable functions uphold the `RawWaker` contract: the data pointer is a
-    // `&'static UiWaker` (valid for the program's lifetime, so clones and drops need no
-    // bookkeeping), and `wake`/`wake_by_ref` only call `UiWaker::wake`, which is thread- and
-    // interrupt-safe (`UiWaker: Sync`).
-    #[allow(unsafe_code)]
-    unsafe {
-        Waker::from_raw(raw)
+/// Moves the faults the reactive runtime recorded since the last call into the engine's fault
+/// stream (one record per kind, with the number of occurrences), so the application sees every
+/// fault in one place and through one hook.
+fn forward_reactive_faults(engine: &mut Engine) {
+    let counts = twine_reactive::take_faults();
+    for kind in counts.kinds().iter() {
+        engine.raise_fault(FaultRecord::new(kind).occurrences(counts.get(kind)));
     }
 }
 
 impl UiCore {
     /// Builds `app` on the active screen of `display` (inside one batch, with the engine lent
-    /// to [`EngineAccess`]), lays it out, and registers the `Ui`'s waker with the reactive
-    /// channels.
-    pub fn mount<V: View>(engine: &mut Engine, display: DisplayId, app: impl FnOnce(Scope) -> V) -> UiCore {
+    /// to [`EngineAccess`]), lays it out, and sets a waker leased from the pool
+    /// ([`UiWaker::lease`]) on the root scope, so the application's channels wake this UI.
+    ///
+    /// # Errors
+    ///
+    /// [`BuildError`] when a widget could not be created while `app` was built (each failure
+    /// was also raised as a [`FaultKind::BuildFailed`] fault; see
+    /// [`BuildCx::create`](crate::BuildCx::create)). The application is then taken down
+    /// again: its scope is disposed and the nodes it created are deleted, so the engine is
+    /// left as before (apart from the fault stream).
+    pub fn mount<V: View>(
+        engine: &mut Engine,
+        display: DisplayId,
+        app: impl FnOnce(Scope) -> V,
+    ) -> Result<UiCore, BuildError> {
+        Self::mount_inner(engine, display, None, app)
+    }
+
+    /// [`mount`](Self::mount) with the application's own waker (typically a
+    /// `static UiWaker`) instead of a pooled one. The waker should not be shared with another
+    /// live UI (both would be woken by each other's channels).
+    ///
+    /// ```
+    /// # use twine_engine::{Engine, EngineConfig};
+    /// # use twine_view::{UiCore, prelude::*};
+    /// # struct Nop(Option<twine_hal::DrawBufferMem>);
+    /// # impl twine_hal::DisplayDriver for Nop {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> twine_hal::DisplayInfo { twine_hal::DisplayInfo::new(64, 32, twine_core::ColorFormat::Rgb565) }
+    /// #     fn begin_flush(&mut self, _: twine_core::Rect, b: twine_hal::DrawBufferMem) -> Result<(), ()> { self.0 = Some(b); Ok(()) }
+    /// #     fn poll_flush(&mut self) -> Option<twine_hal::DrawBufferMem> { self.0.take() }
+    /// # }
+    /// static WAKER: UiWaker = UiWaker::new(); // an input interrupt may call `WAKER.wake()`
+    /// # let mut engine = Engine::new(EngineConfig::default()).unwrap();
+    /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
+    /// # let d = engine.add_display(Nop(None), BufferMode::partial_single(buf)).unwrap();
+    /// let core = UiCore::mount_with_waker(&mut engine, d, &WAKER, |_cx| label("hi")).unwrap();
+    /// assert!(core::ptr::eq(core.waker(), &WAKER));
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// As [`mount`](Self::mount).
+    pub fn mount_with_waker<V: View>(
+        engine: &mut Engine,
+        display: DisplayId,
+        waker: &'static UiWaker,
+        app: impl FnOnce(Scope) -> V,
+    ) -> Result<UiCore, BuildError> {
+        Self::mount_inner(engine, display, Some(waker), app)
+    }
+
+    fn mount_inner<V: View>(
+        engine: &mut Engine,
+        display: DisplayId,
+        app_waker: Option<&'static UiWaker>,
+        app: impl FnOnce(Scope) -> V,
+    ) -> Result<UiCore, BuildError> {
+        let failed_before = engine.fault_counts().get(FaultKind::BuildFailed);
         let root = create_root();
         root.provide(UiDisplay(display));
         let anchor = StyleAnchor::default();
         root.provide(anchor.clone());
         let parent = engine.active_screen(display);
+        let mut built = None;
         EngineAccess::provide(engine, || {
             batch(|| {
                 let view = app(root);
@@ -111,27 +158,69 @@ impl UiCore {
                         p
                     } else {
                         twine_core::warn!(target: "twine::view", "Ui: display {} has no screen", display);
-                        let Ok(r) = e.create_root(Box::new(twine_engine::Obj)) else {
-                            return;
-                        };
-                        r
+                        match e.create_root(Box::new(twine_engine::Obj)) {
+                            Ok(r) => r,
+                            Err(err) => {
+                                let cause = BuildFailure::of(&err);
+                                e.raise_fault(FaultRecord::new(FaultKind::BuildFailed).code(cause.code()));
+                                return;
+                            }
+                        }
                     };
                     let mut cx = BuildCx::new(e, parent, root);
-                    anchor.set(view.build(&mut cx));
+                    let node = view.build(&mut cx);
+                    anchor.set(node);
+                    built = Some(node);
                 });
             });
         });
-        let waker: &'static UiWaker = Box::leak(Box::new(UiWaker::new()));
-        register_waker(&ui_waker(waker));
+        forward_reactive_faults(engine);
+        let failures = engine
+            .fault_counts()
+            .get(FaultKind::BuildFailed)
+            .saturating_sub(failed_before);
+        if failures > 0 {
+            let last = engine.last_fault(FaultKind::BuildFailed);
+            let err = BuildError::new(
+                failures,
+                last.and_then(|r| BuildFailure::from_code(r.code))
+                    .unwrap_or(BuildFailure::Engine),
+                last.and_then(|r| r.node),
+            );
+            twine_core::error!(
+                target: "twine::view",
+                "ui build failed on display {}: {} widget(s) not created",
+                display,
+                failures
+            );
+            EngineAccess::provide(engine, || root.dispose());
+            if let Some(n) = built.filter(|&n| engine.tree().contains(n)) {
+                let _ = engine.delete(n);
+            }
+            return Err(err);
+        }
+        // The waker is taken only once the build succeeded (a failed mount holds none).
+        let (waker, lease) = if let Some(w) = app_waker {
+            (w, None)
+        } else {
+            let lease = UiWaker::lease();
+            (lease.get(), Some(lease))
+        };
+        root.set_ui_waker(waker);
         engine.update_layout();
         twine_core::info!(
             target: "twine::view",
             "ui built on display {}: {} nodes, {} reactive nodes",
             display,
             engine.tree().len(),
-            twine_reactive::debug_stats().nodes
+            twine_reactive::runtime_stats().nodes
         );
-        UiCore { root, display, waker }
+        Ok(UiCore {
+            root,
+            display,
+            waker,
+            lease,
+        })
     }
 
     /// One update at `now`, in the documented order: 1 time, 2 channel messages, 3 inputs,
@@ -153,6 +242,7 @@ impl UiCore {
             EffectCx::scoped(engine, |ecx| flush_effects_with(ecx));
             messages
         });
+        forward_reactive_faults(engine);
         let t1 = engine.config().hires_timer.map(|f| f());
         let wake = engine.finish_step(now);
         let busy = has_pending_effects() || any_channel_pending() || self.waker.is_set();
@@ -185,7 +275,7 @@ impl UiCore {
     }
 
     /// The waker: set by channel sends and [`notify_input`](Self::notify_input); register a
-    /// task [`Waker`] in it to be woken.
+    /// task [`Waker`](core::task::Waker) in it to be woken.
     #[must_use]
     pub fn waker(&self) -> &'static UiWaker {
         self.waker
@@ -195,6 +285,13 @@ impl UiCore {
     /// the [`waker`](Self::waker)).
     pub fn notify_input(&self) {
         self.waker.wake();
+    }
+
+    /// The faults raised since the last call (engine faults and the reactive runtime's, which
+    /// are forwarded to the engine first), clearing them. See [`Ui::take_faults`].
+    pub fn take_faults(&self, engine: &mut Engine) -> Faults {
+        forward_reactive_faults(engine);
+        engine.take_faults()
     }
 
     /// Disposes the application's scope with the engine lent to its cleanups.
@@ -209,6 +306,9 @@ impl Drop for UiCore {
         if self.root.is_alive() {
             self.root.dispose();
         }
+        // The root (and with it every channel routed to the waker) is gone: the pooled waker
+        // can go back, reset, for the next UI.
+        drop(self.lease.take());
     }
 }
 
@@ -268,6 +368,8 @@ pub struct UiBuilder<S: DisplaySetup> {
     inputs: Vec<InputAdder>,
     clock: Option<Box<dyn Clock>>,
     theme: Option<Rc<dyn ThemeHook>>,
+    fault_hook: Option<FaultHook>,
+    waker: Option<&'static UiWaker>,
 }
 
 impl<S: DisplaySetup> core::fmt::Debug for UiBuilder<S> {
@@ -289,6 +391,8 @@ impl<S: DisplaySetup> UiBuilder<S> {
             inputs: Vec::new(),
             clock: None,
             theme: None,
+            fault_hook: None,
+            waker: None,
         }
     }
 
@@ -330,6 +434,21 @@ impl<S: DisplaySetup> UiBuilder<S> {
         self
     }
 
+    /// The function called for every fault (see [`Ui::set_fault_hook`]). Set here, it also sees
+    /// the faults raised while the application is built.
+    pub fn fault_hook(mut self, hook: FaultHook) -> Self {
+        self.fault_hook = Some(hook);
+        self
+    }
+
+    /// The `Ui`'s waker: the application's own (typically a `static UiWaker` that interrupt
+    /// handlers name directly) instead of one leased from the pool (see
+    /// [`UiCore::mount_with_waker`]).
+    pub fn waker(mut self, waker: &'static UiWaker) -> Self {
+        self.waker = Some(waker);
+        self
+    }
+
     /// Binds the reactive runtime to the calling execution context (needed once without the
     /// `std` feature, where the runtime is a `static`; a no-op with `std`).
     ///
@@ -353,9 +472,13 @@ impl<S: DisplaySetup> UiBuilder<S> {
     /// builds `app` (once) on the active screen.
     ///
     /// # Errors
-    /// [`EngineError::InvalidConfig`] without a clock; the engine's errors for the display,
-    /// buffers and inputs.
-    pub fn try_build<V: View>(self, app: impl FnOnce(Scope) -> V) -> Result<Ui, EngineError> {
+    /// [`UiError::Engine`]: [`EngineError::InvalidConfig`] without a clock; the engine's
+    /// errors for the display, buffers and inputs. [`UiError::Build`]: a widget of `app`
+    /// could not be created (e.g. more nodes than
+    /// [`EngineConfig::max_nodes`](twine_engine::EngineConfig::max_nodes)); see
+    /// [`UiCore::mount`]. The fault hook set with [`fault_hook`](Self::fault_hook) has seen
+    /// every fault by then.
+    pub fn try_build<V: View>(self, app: impl FnOnce(Scope) -> V) -> Result<Ui, UiError> {
         let (engine, core, clock) = self.build_parts(app)?;
         Ok(Ui { engine, core, clock })
     }
@@ -365,12 +488,13 @@ impl<S: DisplaySetup> UiBuilder<S> {
     pub(crate) fn build_parts<V: View>(
         self,
         app: impl FnOnce(Scope) -> V,
-    ) -> Result<(Engine, UiCore, Box<dyn Clock>), EngineError> {
+    ) -> Result<(Engine, UiCore, Box<dyn Clock>), UiError> {
         let Some(clock) = self.clock else {
             twine_core::error!(target: "twine::view", "Ui: no clock (UiBuilder::clock)");
-            return Err(EngineError::InvalidConfig("Ui needs a clock"));
+            return Err(EngineError::InvalidConfig("Ui needs a clock").into());
         };
         let mut engine = Engine::new(self.config)?;
+        engine.set_fault_hook(self.fault_hook);
         let display = self.display.add(&mut engine, self.buffers)?;
         if let Some(t) = self.theme {
             engine.set_theme(display, t);
@@ -392,14 +516,15 @@ impl<S: DisplaySetup> UiBuilder<S> {
                 engine.set_input_group(id, Some(g));
             }
         }
-        let core = UiCore::mount(&mut engine, display, app);
+        let core = UiCore::mount_inner(&mut engine, display, self.waker, app)?;
         Ok((engine, core, clock))
     }
 
-    /// [`try_build`](Self::try_build), panicking on a configuration error.
+    /// [`try_build`](Self::try_build), panicking on a configuration or build error.
     ///
     /// # Panics
-    /// Without a clock or when the engine rejects the display, buffers or inputs.
+    /// Without a clock, when the engine rejects the display, buffers or inputs, or when a
+    /// widget of `app` cannot be created.
     pub fn build<V: View>(self, app: impl FnOnce(Scope) -> V) -> Ui {
         match self.try_build(app) {
             Ok(ui) => ui,
@@ -484,6 +609,73 @@ impl Ui {
         &mut self.engine
     }
 
+    /// The faults raised since the last call, clearing them: the engine's (display flush
+    /// errors, capacity, build failures, …) and the reactive runtime's (effect loop cuts, the
+    /// depth guard, dropped channel messages). [`Ui::update`] forwards the runtime's faults to
+    /// the engine, so the fault hook sees them too.
+    ///
+    /// Twine only reports: what a fault means for the product and how to react is the
+    /// application's decision.
+    ///
+    /// ```no_run
+    /// # use twine_view::prelude::*;
+    /// # fn check(ui: &mut Ui) {
+    /// let faults = ui.take_faults();
+    /// if faults.contains(FaultKind::FlushError)
+    ///     && ui.display_health().is_some_and(|h| h.state == DisplayState::Failed)
+    /// {
+    ///     // e.g. re-initialise the panel, then redraw everything:
+    ///     ui.recover_display();
+    /// }
+    /// # }
+    /// ```
+    pub fn take_faults(&mut self) -> Faults {
+        self.core.take_faults(&mut self.engine)
+    }
+
+    /// Occurrences of every fault kind since start-up (saturating, never reset).
+    #[must_use]
+    pub fn fault_counts(&self) -> FaultCounts {
+        self.engine.fault_counts()
+    }
+
+    /// The last record of `kind` (display, node, time, occurrences, detail code).
+    #[must_use]
+    pub fn last_fault(&self, kind: twine_core::fault::FaultKind) -> Option<&FaultRecord> {
+        self.engine.last_fault(kind)
+    }
+
+    /// Sets the function called for every fault as it is raised (`None` removes it); see
+    /// [`FaultHook`] for what it may do.
+    pub fn set_fault_hook(&mut self, hook: Option<FaultHook>) {
+        self.engine.set_fault_hook(hook);
+    }
+
+    /// The flush health of the display (see [`Engine::display_health`] and
+    /// [`FlushPolicy`](twine_engine::FlushPolicy)).
+    #[must_use]
+    pub fn display_health(&self) -> Option<twine_engine::DisplayHealth> {
+        self.engine.display_health(self.core.display())
+    }
+
+    /// The health of input device `id` as the engine last read it (see
+    /// [`Engine::input_health`]; devices added with [`UiBuilder::input`] are numbered in the
+    /// order they were added, see [`Engine::inputs`]). A device entering
+    /// [`Degraded`](twine_hal::DeviceHealth::Degraded) or
+    /// [`Failed`](twine_hal::DeviceHealth::Failed) also raises
+    /// [`FaultKind::InputDevice`].
+    #[must_use]
+    pub fn input_health(&self, id: InputId) -> Option<twine_hal::DeviceHealth> {
+        self.engine.input_health(id)
+    }
+
+    /// Recovers the display after flush failures: clears its error count, resumes a display
+    /// halted by [`FlushPolicy::Halt`](twine_engine::FlushPolicy::Halt) and redraws it (see
+    /// [`Engine::recover_display`]).
+    pub fn recover_display(&mut self) {
+        let _ = self.engine.recover_display(self.core.display());
+    }
+
     /// Switches the theme (every node is re-styled; the display is redrawn once).
     pub fn set_theme(&mut self, t: impl ThemeHook + 'static) {
         let d = self.core.display();
@@ -509,24 +701,5 @@ impl Drop for Ui {
         if root.is_alive() {
             EngineAccess::provide(&mut self.engine, || root.dispose());
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ui_waker_sets_the_flag_through_clones() {
-        static W: UiWaker = UiWaker::new();
-        let w: &'static UiWaker = &W;
-        let waker = ui_waker(w);
-        let clone = waker.clone();
-        drop(waker);
-        clone.wake_by_ref();
-        assert!(w.take());
-        clone.wake();
-        assert!(w.take());
-        assert!(!w.is_set());
     }
 }

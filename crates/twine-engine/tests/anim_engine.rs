@@ -113,7 +113,10 @@ fn anim_wake_is_refresh_period_while_running_then_idle() {
     assert!((frames - expect).abs() <= 1, "{frames} frames");
     assert!(h.now() >= t0 + Duration::ms(100));
     assert_eq!(h.engine().anim_count(), 0);
-    assert_eq!(h.engine().style_opa(b, Part::Main, PropId::Opa), Opa::TRANSP);
+    assert_eq!(
+        h.engine().style_opa(b, Part::Main, PropId::PartOpacity),
+        Opa::TRANSP
+    );
     h.assert_idle();
 }
 
@@ -356,11 +359,11 @@ fn style_prop_and_transform_targets() {
     assert_eq!(e.style_i32(b, Part::Main, PropId::Radius), 6);
     assert_eq!(
         e.style_prop(b, Part::Main, PropId::TransformScaleX),
-        StyleValue::Scale(twine_core::Scale(512))
+        StyleValue::Scale(twine_core::Scale::from_raw_256(512))
     );
     assert_eq!(
         e.style_prop(b, Part::Main, PropId::TransformRotation),
-        StyleValue::Angle(twine_core::Angle(900))
+        StyleValue::Angle(twine_core::Angle::deci_deg(900))
     );
     assert_eq!(e.coords(b).y0, 15);
 }

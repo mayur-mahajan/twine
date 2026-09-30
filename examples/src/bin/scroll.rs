@@ -24,7 +24,9 @@ use twine_examples::scenes::scrollbar_style;
 use twine_examples::tile::{PALETTE, tile};
 use twine_hal::Key;
 use twine_sim::{SimConfig, run_engine};
-use twine_style::{Dir, FlexAlign, FlexFlow, LayoutKind, Length, ScrollSnap, Selector, StyleProp};
+use twine_style::{
+    Axis, CrossAlign, FlexFlow, LayoutKind, Length, MainAlign, Radius, ScrollSnap, Selector, StyleProp,
+};
 
 const W: i32 = 320;
 const H: i32 = 240;
@@ -39,10 +41,10 @@ fn set(e: &mut Engine, id: NodeId, props: &[StyleProp]) {
 
 fn pad(p: i32) -> [StyleProp; 4] {
     [
-        StyleProp::PadLeft(p),
-        StyleProp::PadTop(p),
-        StyleProp::PadRight(p),
-        StyleProp::PadBottom(p),
+        StyleProp::PaddingLeft(Length::Px(p)),
+        StyleProp::PaddingTop(Length::Px(p)),
+        StyleProp::PaddingRight(Length::Px(p)),
+        StyleProp::PaddingBottom(Length::Px(p)),
     ]
 }
 
@@ -76,28 +78,36 @@ fn list(e: &mut Engine, page: NodeId) -> NodeId {
     e.set_test_id(list, "list");
     e.set_size(list, Length::pct(100), 200);
     e.set_layout(list, LayoutKind::Flex);
-    e.set_flex_flow(list, FlexFlow::Column);
+    e.set_flex_flow(list, FlexFlow::COLUMN);
     set(
         e,
         list,
-        &[StyleProp::BgColor(Color::WHITE), StyleProp::BgOpa(Opa::COVER)],
+        &[StyleProp::BgColor(Color::WHITE), StyleProp::BgOpacity(Opa::COVER)],
     );
-    set(e, list, &[StyleProp::Radius(6), StyleProp::ClipCorner(true)]);
+    set(
+        e,
+        list,
+        &[StyleProp::Radius(Radius::Px(6)), StyleProp::ClipCorner(true)],
+    );
     scrollbar_style(e, list, 4);
-    e.set_scroll_dir(list, Dir::VER);
+    e.set_scroll_dir(list, Axis::Vertical);
     let group = e.default_group();
     for i in 0..100 {
         let c = if i % 2 == 0 { 0x42_72_C4 } else { 0x9E_A7_B3 };
         let row = tile(e, list, format!("Row {}", i + 1), Color::hex(c));
         e.set_flag(row, ITEM_FLAGS, true);
         e.set_size(row, Length::pct(100), 40);
-        set(e, row, &[StyleProp::Radius(0)]);
+        set(e, row, &[StyleProp::Radius(Radius::Px(0))]);
         e.set_local_prop(
             row,
             Selector::state(State::PRESSED),
             StyleProp::BgColor(Color::hex(0x1A_23_7E)),
         );
-        e.set_local_prop(row, Selector::state(State::FOCUS_KEY), StyleProp::BorderWidth(3));
+        e.set_local_prop(
+            row,
+            Selector::state(State::FOCUS_KEY),
+            StyleProp::BorderWidth(Length::Px(3)),
+        );
         e.set_local_prop(
             row,
             Selector::state(State::FOCUS_KEY),
@@ -121,17 +131,17 @@ fn carousel(e: &mut Engine, page: NodeId) -> NodeId {
     e.set_test_id(car, "carousel");
     e.set_size(car, Length::pct(100), 120);
     e.set_layout(car, LayoutKind::Flex);
-    e.set_flex_flow(car, FlexFlow::Row);
-    e.set_flex_align(car, FlexAlign::Start, FlexAlign::Center, FlexAlign::Center);
+    e.set_flex_flow(car, FlexFlow::ROW);
+    e.set_flex_align(car, MainAlign::Start, CrossAlign::Center, MainAlign::Center);
     // Side paddings let the first and the last card reach the center.
     let side = (W - 2 * GAP - 160) / 2;
     set(
         e,
         car,
         &[
-            StyleProp::PadLeft(side),
-            StyleProp::PadRight(side),
-            StyleProp::PadColumn(12),
+            StyleProp::PaddingLeft(Length::Px(side)),
+            StyleProp::PaddingRight(Length::Px(side)),
+            StyleProp::ColumnGap(Length::Px(12)),
         ],
     );
     set(
@@ -139,19 +149,19 @@ fn carousel(e: &mut Engine, page: NodeId) -> NodeId {
         car,
         &[
             StyleProp::BgColor(Color::hex(0x26_32_38)),
-            StyleProp::BgOpa(Opa::COVER),
-            StyleProp::Radius(6),
+            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::Radius(Radius::Px(6)),
         ],
     );
     scrollbar_style(e, car, 4);
-    e.set_scroll_dir(car, Dir::HOR);
+    e.set_scroll_dir(car, Axis::Horizontal);
     e.set_scroll_snap_x(car, ScrollSnap::Center);
     e.set_flag(car, ObjFlags::SCROLL_ONE, true);
     for (i, &c) in PALETTE.iter().enumerate() {
         let card = tile(e, car, format!("Card {}", i + 1), Color::hex(c));
         e.set_flag(card, ITEM_FLAGS.difference(ObjFlags::CLICK_FOCUSABLE), true);
         e.set_size(card, 160, 100);
-        set(e, card, &[StyleProp::Radius(10)]);
+        set(e, card, &[StyleProp::Radius(Radius::Px(10))]);
     }
     log_scroll(e, car, "carousel");
     car
@@ -167,8 +177,8 @@ fn panel(e: &mut Engine, page: NodeId) -> NodeId {
         p,
         &[
             StyleProp::BgColor(Color::WHITE),
-            StyleProp::BgOpa(Opa::COVER),
-            StyleProp::BorderWidth(2),
+            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::BorderWidth(Length::Px(2)),
         ],
     );
     set(e, p, &[StyleProp::BorderColor(Color::hex(0x26_32_38))]);
@@ -198,15 +208,15 @@ fn scene(e: &mut Engine) {
         page,
         &[
             StyleProp::BgColor(Color::hex(0xEC_EF_F1)),
-            StyleProp::BgOpa(Opa::COVER),
+            StyleProp::BgOpacity(Opa::COVER),
         ],
     );
     set(e, page, &pad(GAP));
-    set(e, page, &[StyleProp::PadRow(GAP)]);
+    set(e, page, &[StyleProp::RowGap(Length::Px(GAP))]);
     e.set_layout(page, LayoutKind::Flex);
-    e.set_flex_flow(page, FlexFlow::Column);
-    e.set_flex_align(page, FlexAlign::Start, FlexAlign::Center, FlexAlign::Start);
-    e.set_scroll_dir(page, Dir::VER);
+    e.set_flex_flow(page, FlexFlow::COLUMN);
+    e.set_flex_align(page, MainAlign::Start, CrossAlign::Center, MainAlign::Start);
+    e.set_scroll_dir(page, Axis::Vertical);
     scrollbar_style(e, page, 3);
     list(e, page);
     carousel(e, page);

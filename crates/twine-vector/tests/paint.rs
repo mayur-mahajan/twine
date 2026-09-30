@@ -1,18 +1,21 @@
 //! Paints: gradients, image patterns, opacity and blend modes, in fills and strokes.
 #![allow(clippy::unreadable_literal)] // colors read best as 0xRRGGBB
 
-use twine_core::{Angle, Color, ColorFormat, Fx, Opa, Rect, Transform};
+use twine_core::{Angle, Color, ColorFormat, Fraction, Fx, Opa, Rect, Transform};
 use twine_render::{BlendMode, GradExtend, GradStop, ImagePixels};
 use twine_testing::{RenderHarness, assert_render_snapshot};
 use twine_vector::{FillRule, FxPoint, LineJoin, Paint, PainterVectorExt, Path, Stops, Stroke, VectorDsc};
 
 static SUNSET: [GradStop; 3] = [
-    GradStop::new(Color::hex(0x3949AB), 0),
-    GradStop::new(Color::hex(0xE91E63), 140),
-    GradStop::new(Color::hex(0xFFC107), 255),
+    GradStop::new(Color::hex(0x3949AB), Fraction::ZERO),
+    GradStop::new(Color::hex(0xE91E63), Fraction::from_raw(140)),
+    GradStop::new(Color::hex(0xFFC107), Fraction::ONE),
 ];
 
-static BW: [GradStop; 2] = [GradStop::new(Color::BLACK, 0), GradStop::new(Color::WHITE, 255)];
+static BW: [GradStop; 2] = [
+    GradStop::new(Color::BLACK, Fraction::ZERO),
+    GradStop::new(Color::WHITE, Fraction::ONE),
+];
 
 fn pt(x: i32, y: i32) -> FxPoint {
     FxPoint::from_int(x, y)
@@ -284,7 +287,7 @@ fn gradient_lut_cached() {
     assert_eq!(s2.hits, s1.hits + 1);
     // More than 8 stops: built directly (no cache entry), still drawn.
     let many: Vec<GradStop> = (0..12)
-        .map(|i| GradStop::new(Color::new(i * 20, 0, 0), i * 23))
+        .map(|i| GradStop::new(Color::new(i * 20, 0, 0), twine_core::Fraction::from_raw(i * 23)))
         .collect();
     let d = fill(Paint::Linear {
         start: pt(5, 0),

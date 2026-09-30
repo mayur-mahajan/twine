@@ -1,7 +1,7 @@
 //! `style!` macro tests (integration tests: the macro is used from another crate, as by users).
 
 use twine_core::{Color, Opa, Scale};
-use twine_style::{Length, PropId, Style, StyleProp, StyleValue, style};
+use twine_style::{Length, PropId, Radius, Style, StyleProp, StyleValue, style};
 
 fn ids(s: &Style) -> Vec<PropId> {
     s.props().iter().map(StyleProp::id).collect()
@@ -13,14 +13,19 @@ fn values(s: &Style) -> Vec<StyleValue> {
 
 #[test]
 fn macro_basic_props() {
-    static S: Style = style! { bg_color: Color::RED, bg_opa: Opa::COVER, radius: 8, clip_corner: true };
+    static S: Style = style! { bg_color: Color::RED, bg_opacity: Opa::COVER, radius: 8, clip_corner: true };
     static EMPTY: Style = style! {};
     assert_eq!(
         ids(&S),
-        [PropId::BgColor, PropId::BgOpa, PropId::Radius, PropId::ClipCorner]
+        [
+            PropId::BgColor,
+            PropId::BgOpacity,
+            PropId::Radius,
+            PropId::ClipCorner
+        ]
     );
     assert_eq!(S.get(PropId::BgColor), Some(StyleValue::Color(Color::RED)));
-    assert_eq!(S.get(PropId::Radius), Some(StyleValue::Int(8)));
+    assert_eq!(S.get(PropId::Radius), Some(StyleValue::Length(Length::Px(8))));
     assert_eq!(S.get(PropId::ClipCorner), Some(StyleValue::Bool(true)));
     assert!(EMPTY.is_empty());
 }
@@ -28,31 +33,31 @@ fn macro_basic_props() {
 #[test]
 fn macro_shorthands_expand_to_expected_props() {
     static S: Style = style! {
-        pad_all: 1,
-        pad_hor: 2,
-        pad_ver: 3,
-        pad_gap: 4,
-        margin_all: 5,
-        margin_hor: 6,
-        margin_ver: 7,
+        padding: 1,
+        padding_x: 2,
+        padding_y: 3,
+        gap: 4,
+        margin: 5,
+        margin_x: 6,
+        margin_y: 7,
         size: (100, Length::pct(50)),
-        transform_scale: 300,
+        transform_scale: Scale::from_raw_256(300),
         border: (2, Color::BLUE),
     };
     use PropId as P;
     assert_eq!(
         ids(&S),
         [
-            P::PadTop,
-            P::PadBottom,
-            P::PadLeft,
-            P::PadRight, // pad_all
-            P::PadLeft,
-            P::PadRight, // pad_hor
-            P::PadTop,
-            P::PadBottom, // pad_ver
-            P::PadRow,
-            P::PadColumn, // pad_gap
+            P::PaddingTop,
+            P::PaddingBottom,
+            P::PaddingLeft,
+            P::PaddingRight, // pad_all
+            P::PaddingLeft,
+            P::PaddingRight, // pad_hor
+            P::PaddingTop,
+            P::PaddingBottom, // pad_ver
+            P::RowGap,
+            P::ColumnGap, // pad_gap
             P::MarginTop,
             P::MarginBottom,
             P::MarginLeft,
@@ -66,11 +71,12 @@ fn macro_shorthands_expand_to_expected_props() {
             P::TransformScaleX,
             P::TransformScaleY, // transform_scale
             P::BorderWidth,
-            P::BorderColor, // border
+            P::BorderColor,
+            P::BorderOpacity, // border
         ]
     );
     let v = values(&S);
-    assert_eq!(&v[..4], &[StyleValue::Int(1); 4]);
+    assert_eq!(&v[..4], &[StyleValue::Length(Length::Px(1)); 4]);
     assert_eq!(
         &v[18..20],
         &[
@@ -78,11 +84,18 @@ fn macro_shorthands_expand_to_expected_props() {
             StyleValue::Length(Length::Pct(50))
         ]
     );
-    assert_eq!(&v[20..22], &[StyleValue::Scale(Scale(300)); 2]);
-    assert_eq!(&v[22..], &[StyleValue::Int(2), StyleValue::Color(Color::BLUE)]);
+    assert_eq!(&v[20..22], &[StyleValue::Scale(Scale::from_raw_256(300)); 2]);
+    assert_eq!(
+        &v[22..],
+        &[
+            StyleValue::Length(Length::Px(2)),
+            StyleValue::Color(Color::BLUE),
+            StyleValue::Opa(Opa::COVER)
+        ]
+    );
     // Later shorthands override earlier ones.
-    assert_eq!(S.get(P::PadLeft), Some(StyleValue::Int(2)));
-    assert_eq!(S.get(P::PadTop), Some(StyleValue::Int(3)));
+    assert_eq!(S.get(P::PaddingLeft), Some(StyleValue::Length(Length::Px(2))));
+    assert_eq!(S.get(P::PaddingTop), Some(StyleValue::Length(Length::Px(3))));
 }
 
 #[test]
@@ -97,7 +110,7 @@ fn macro_length_literal_and_pct() {
         translate_x: Length::pct(10),
         transform_pivot_x: 5,
         transform_scale_x: Scale::ONE,
-        transform_scale_y: 128,
+        transform_scale_y: Scale::pct(50),
     };
     assert_eq!(S.get(PropId::Width), Some(StyleValue::Length(Length::Px(100))));
     assert_eq!(S.get(PropId::Height), Some(StyleValue::Length(Length::Pct(25))));
@@ -118,7 +131,35 @@ fn macro_length_literal_and_pct() {
     );
     assert_eq!(
         S.get(PropId::TransformScaleY),
-        Some(StyleValue::Scale(Scale(128)))
+        Some(StyleValue::Scale(Scale::from_raw_256(128)))
+    );
+}
+
+#[test]
+fn macro_dp_lengths_and_radius() {
+    static S: Style = style! {
+        padding: Length::dp(8),
+        gap: 4,
+        radius: Radius::Circle,
+        border_width: Length::dp(1),
+    };
+    static R: Style = style! { radius: 6 };
+    assert_eq!(
+        S.get(PropId::PaddingLeft),
+        Some(StyleValue::Length(Length::Dp(8)))
+    );
+    assert_eq!(S.get(PropId::RowGap), Some(StyleValue::Length(Length::Px(4))));
+    assert_eq!(
+        S.get(PropId::Radius).and_then(StyleValue::get::<Radius>),
+        Some(Radius::Circle)
+    );
+    assert_eq!(
+        S.get(PropId::BorderWidth),
+        Some(StyleValue::Length(Length::Dp(1)))
+    );
+    assert_eq!(
+        R.get(PropId::Radius).and_then(StyleValue::get::<Radius>),
+        Some(Radius::Px(6))
     );
 }
 
@@ -126,18 +167,18 @@ fn macro_length_literal_and_pct() {
 fn macro_trailing_comma() {
     static A: Style = style! { radius: 1, };
     static B: Style = style! { radius: 1 };
-    static C: Style = style! { pad_all: 2, };
+    static C: Style = style! { padding: 2, };
     static D: Style = style! { size: (1, 2,), border: (1, Color::RED,) };
     assert_eq!(values(&A), values(&B));
     assert_eq!(C.props().len(), 4);
-    assert_eq!(D.props().len(), 4);
+    assert_eq!(D.props().len(), 5);
 }
 
 #[test]
 fn macro_duplicate_last_wins() {
     static S: Style = style! { radius: 1, bg_color: Color::RED, radius: 2 };
     assert_eq!(S.props().len(), 3, "the static keeps both entries");
-    assert_eq!(S.get(PropId::Radius), Some(StyleValue::Int(2)));
+    assert_eq!(S.get(PropId::Radius), Some(StyleValue::Length(Length::Px(2))));
 }
 
 #[test]
@@ -147,9 +188,9 @@ fn macro_covers_every_property() {
     static S: Style = style! {
         grid_cell_y_align: twine_style::GridAlign::End,
         text_leading_trim: twine_style::TextLeadingTrim::Capital,
-        rotary_sensitivity: 512u32,
-        flex_grow: 2u8,
-        anim_duration: 300u32,
+        rotary_sensitivity: Scale::pct(200),
+        flex_grow: 2u16,
+        anim_duration: twine_core::Duration::ms(300),
         drop_shadow_quality: twine_style::BlurQuality::Speed,
         base_dir: twine_style::BaseDir::Rtl,
     };
@@ -157,4 +198,75 @@ fn macro_covers_every_property() {
     for id in PropId::ALL {
         assert!(!id.meta().snake_name.is_empty());
     }
+}
+
+#[test]
+fn macro_new_shorthands_are_const() {
+    use twine_core::{Insets, Point};
+    use twine_render::ShadowDsc;
+    use twine_style::{GridAlign, GridSpan};
+    const SHADOW: ShadowDsc = ShadowDsc {
+        width: 4,
+        ofs_x: 1,
+        ofs_y: 2,
+        spread: 0,
+        color: Color::BLACK,
+        opa: Opa::P30,
+    };
+    // `const` (not only `static`): every shorthand stays a constant expression in flash.
+    const S: Style = style! {
+        bg: Color::RED,
+        pos: (1, Length::pct(2)),
+        translate: (3, 4),
+        offset: Point::new(5, 6),
+        padding_each: Insets::new(1, 2, 3, 4),
+        margin_each: Insets::new(5, 6, 7, 8),
+        outline: (2, Color::BLUE, 3),
+        shadow: SHADOW,
+        shadow_offset: (7, 8),
+        transform_pivot: Point::new(9, 10),
+        grid_col: GridSpan::new(1, 2),
+        grid_row: GridSpan::range(3..7),
+        grid_align: (GridAlign::Center, GridAlign::End),
+        radius: (4),
+    };
+    static STATIC: Style = S;
+    use PropId as P;
+    assert_eq!(STATIC.get(P::BgOpacity), Some(StyleValue::Opa(Opa::COVER)));
+    assert_eq!(STATIC.get(P::Y), Some(StyleValue::Length(Length::Pct(2))));
+    // `offset` comes after `translate`: the later entry wins.
+    assert_eq!(STATIC.get(P::TranslateX), Some(StyleValue::Length(Length::Px(5))));
+    assert_eq!(STATIC.get(P::PaddingTop), Some(StyleValue::Length(Length::Px(2))));
+    assert_eq!(
+        STATIC.get(P::MarginRight),
+        Some(StyleValue::Length(Length::Px(7)))
+    );
+    assert_eq!(STATIC.get(P::OutlineOpacity), Some(StyleValue::Opa(Opa::COVER)));
+    assert_eq!(STATIC.get(P::ShadowOpacity), Some(StyleValue::Opa(Opa::P30)));
+    // `shadow_offset` comes after `shadow`.
+    assert_eq!(STATIC.get(P::ShadowOffsetY), Some(StyleValue::Int(8)));
+    assert_eq!(
+        STATIC.get(P::TransformPivotY),
+        Some(StyleValue::Length(Length::Px(10)))
+    );
+    assert_eq!(STATIC.get(P::GridCellRowSpan), Some(StyleValue::Int(4)));
+    assert_eq!(
+        STATIC.get(P::GridCellYAlign),
+        Some(StyleValue::from(GridAlign::End))
+    );
+    assert_eq!(STATIC.get(P::Radius), Some(StyleValue::Length(Length::Px(4))));
+}
+
+#[test]
+fn macro_and_builder_agree_on_every_shorthand() {
+    use twine_style::{SHORTHANDS, StyleBuf};
+    // The shorthand list is generated; spot-check that `StyleBuf` and `style!` expand one the
+    // same way (the full check over the table is `twine-view/tests/style_vocabulary.rs`).
+    static S: Style = style! { padding: 3, gap: 2, border: (1, Color::RED) };
+    let b = StyleBuf::new().padding(3).gap(2).border(1, Color::RED);
+    for p in S.props() {
+        assert_eq!(b.get(p.id()), Some(p.value()), "{:?}", p.id());
+    }
+    assert_eq!(b.len(), S.props().len());
+    assert!(SHORTHANDS.iter().any(|s| s.name == "padding_x"));
 }

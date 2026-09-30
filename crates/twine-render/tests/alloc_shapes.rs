@@ -99,7 +99,7 @@ fn polygons_do_not_allocate() {
             p.triangle(
                 [Point::new(0, 0), Point::new(150, 20), Point::new(30, 140)],
                 &TriangleDsc {
-                    opa: Opa(100),
+                    opa: Opa::from_raw(100),
                     ..TriangleDsc::default()
                 },
             );

@@ -254,7 +254,8 @@ pub trait DisplayDriver {
     /// engine calls this only when it holds the buffer, and at most as many times without an
     /// intervening successful [`poll_flush`](Self::poll_flush) as it has buffers.
     ///
-    /// On error the buffer must be returned by the next `poll_flush`.
+    /// On error the buffer must be returned by the next `poll_flush`. The engine treats the
+    /// area as not shown: by default it redraws it on a later frame (its flush policy decides).
     fn begin_flush(&mut self, area: Rect, buf: DrawBufferMem) -> Result<(), Self::Error>;
 
     /// Polls for completion of the oldest flush in progress.
@@ -272,6 +273,14 @@ pub trait DisplayDriver {
     /// Called when the refresher becomes idle, for power saving (e.g. put the bus to sleep).
     /// Default: no-op. The next `begin_flush` must wake the bus again.
     fn idle(&mut self) {}
+
+    /// A numeric code for `error`, reported with the flush fault (the engine's `FaultRecord`
+    /// `code` and its `DriverErrorCode`) so the application can tell errors apart without
+    /// parsing text. Default: `0` (no code). Called only on the error path.
+    fn error_code(&self, error: &Self::Error) -> u32 {
+        let _ = error;
+        0
+    }
 }
 
 /// Async display driver (embassy / embedded-hal-async), feature `async`.
@@ -279,6 +288,12 @@ pub trait DisplayDriver {
 /// The future returned by [`flush`](Self::flush) **MUST start the transfer on its first poll**
 /// (before returning `Pending`), so that `join(driver.flush(..), render_next_chunk)` overlaps the
 /// DMA transfer with rendering.
+///
+/// **The future must complete in bounded time.** The runtime awaits it and has no timer of its
+/// own (it assumes no executor), so `EngineConfig::flush_timeout` does not apply: a transfer
+/// that never ends stalls the UI task. Bound the wait in the driver with the executor's timer
+/// (e.g. `embassy_time::with_timeout`) and return an error on timeout; the engine then applies
+/// its flush policy and health tracking (`FaultKind::FlushError`).
 #[cfg(feature = "async")]
 #[allow(async_fn_in_trait)]
 pub trait AsyncDisplayDriver {
@@ -294,6 +309,12 @@ pub trait AsyncDisplayDriver {
 
     /// Waits for the tearing-effect / vsync signal. Default: completes immediately.
     async fn wait_vsync(&mut self) {}
+
+    /// A numeric code for `error` (see [`DisplayDriver::error_code`]). Default: `0`.
+    fn error_code(&self, error: &Self::Error) -> u32 {
+        let _ = error;
+        0
+    }
 }
 
 /// A memory-mapped panel with one or two framebuffers owned by the driver / display controller
@@ -312,11 +333,21 @@ pub trait FramebufferDisplay {
 
     /// Scans out framebuffer `index` (0 = first, 1 = second) from the next vsync on.
     /// Non-blocking.
+    ///
+    /// On error the engine assumes nothing was scanned out: it does not swap, keeps rendering
+    /// into the same back buffer and never waits for [`present_done`](Self::present_done) of
+    /// the failed call.
     fn present(&mut self, index: u8) -> Result<(), Self::Error>;
 
     /// `true` once the last [`present`](Self::present) has taken effect (the buffer swap
     /// happened and the previous buffer may be drawn into).
     fn present_done(&mut self) -> bool;
+
+    /// A numeric code for `error` (see [`DisplayDriver::error_code`]). Default: `0`.
+    fn error_code(&self, error: &Self::Error) -> u32 {
+        let _ = error;
+        0
+    }
 }
 
 #[cfg(test)]

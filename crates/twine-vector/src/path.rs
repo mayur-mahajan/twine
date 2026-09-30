@@ -23,7 +23,7 @@ use twine_core::{Angle, Fx, Rect, Transform};
 use crate::geom::{FxPoint, FxRect, fxp, muldiv, sat};
 
 /// Cubic Bézier circle constant `4/3 · (√2 − 1) ≈ 0.5523` in 16.16.
-pub const KAPPA: Fx = Fx(36_195);
+pub const KAPPA: Fx = Fx::from_raw(36_195);
 
 /// A path command. Each verb consumes points from [`Path::points`]: `MoveTo`/`LineTo` one,
 /// `QuadTo` two (control, end), `CubicTo` three (control 1, control 2, end), `Close` none.
@@ -201,7 +201,7 @@ impl Path {
         if p0 == p {
             return self;
         }
-        let (rx, ry) = (i64::from(radii.x.0).abs(), i64::from(radii.y.0).abs());
+        let (rx, ry) = (i64::from(radii.x.raw()).abs(), i64::from(radii.y.raw()).abs());
         if rx == 0 || ry == 0 {
             return self.line_to(p);
         }
@@ -223,8 +223,8 @@ impl Path {
         if r.is_empty() {
             return self;
         }
-        let rx = rx.max(Fx::ZERO).min(Fx(r.width().0 / 2));
-        let ry = ry.max(Fx::ZERO).min(Fx(r.height().0 / 2));
+        let rx = rx.max(Fx::ZERO).min(Fx::from_raw(r.width().raw() / 2));
+        let ry = ry.max(Fx::ZERO).min(Fx::from_raw(r.height().raw() / 2));
         let (x0, y0, x1, y1) = (r.x0, r.y0, r.x1, r.y1);
         let p = FxPoint::new;
         if rx == Fx::ZERO || ry == Fx::ZERO {
@@ -255,7 +255,7 @@ impl Path {
 
     /// Appends a closed axis-aligned ellipse (4 cubics, clockwise on screen).
     pub fn ellipse(&mut self, c: FxPoint, rx: Fx, ry: Fx) -> &mut Self {
-        if rx.0 <= 0 || ry.0 <= 0 {
+        if rx.raw() <= 0 || ry.raw() <= 0 {
             return self;
         }
         let (kx, ky) = (rx * KAPPA, ry * KAPPA);
@@ -374,7 +374,7 @@ fn arc_segments(
     large: bool,
     sweep: bool,
 ) {
-    let (c, s) = (i64::from(cos_fx(x_rot).0), i64::from(sin_fx(x_rot).0));
+    let (c, s) = (i64::from(cos_fx(x_rot).raw()), i64::from(sin_fx(x_rot).raw()));
     let (x0, y0) = p0.raw();
     let (x1, y1) = p.raw();
     let (hx, hy) = ((x0 - x1) / 2, (y0 - y1) / 2);
@@ -429,8 +429,8 @@ fn arc_segments(
         unit(muldiv(-xp - cxp, 1 << 16, rx)),
         unit(muldiv(-yp - cyp, 1 << 16, ry)),
     );
-    let th1 = atan2(sat(u.1), sat(u.0)).0;
-    let th2 = atan2(sat(v.1), sat(v.0)).0;
+    let th1 = atan2(sat(u.1), sat(u.0)).as_deci_deg();
+    let th2 = atan2(sat(v.1), sat(v.0)).as_deci_deg();
     let mut dth = (th2 - th1).rem_euclid(3600);
     if !sweep && dth > 0 {
         dth -= 3600;
@@ -453,14 +453,18 @@ fn arc_segments(
         )
     };
     // k = 4/3 · tan(δ/4), signed.
-    let q = Angle(delta / 4);
-    let k = muldiv(4 << 16, i64::from(sin_fx(q).0), 3 * i64::from(cos_fx(q).0).max(1));
+    let q = Angle::deci_deg(delta / 4);
+    let k = muldiv(
+        4 << 16,
+        i64::from(sin_fx(q).raw()),
+        3 * i64::from(cos_fx(q).raw()).max(1),
+    );
     let point_at = |i: i32| -> (i64, i64) {
         if i == n {
             return v;
         }
-        let a = Angle(delta * i);
-        let (ca, sa) = (i64::from(cos_fx(a).0), i64::from(sin_fx(a).0));
+        let a = Angle::deci_deg(delta * i);
+        let (ca, sa) = (i64::from(cos_fx(a).raw()), i64::from(sin_fx(a).raw()));
         // u·cos a + perp(u)·sin a, perp(x, y) = (−y, x).
         ((u.0 * ca - u.1 * sa) >> 16, (u.1 * ca + u.0 * sa) >> 16)
     };
@@ -509,7 +513,7 @@ mod tests {
         p.move_to(FxPoint::from_int(0, 0));
         p.arc_to(
             FxPoint::from_int(0, 5),
-            Angle(0),
+            Angle::deci_deg(0),
             false,
             true,
             FxPoint::from_int(10, 0),
@@ -518,7 +522,7 @@ mod tests {
         let n = p.verbs().len();
         p.arc_to(
             FxPoint::from_int(5, 5),
-            Angle(0),
+            Angle::deci_deg(0),
             false,
             true,
             FxPoint::from_int(10, 0),
@@ -527,7 +531,7 @@ mod tests {
         // Radii too small: scaled to a half circle (2 cubics).
         p.arc_to(
             FxPoint::from_int(1, 1),
-            Angle(0),
+            Angle::deci_deg(0),
             false,
             true,
             FxPoint::from_int(30, 0),

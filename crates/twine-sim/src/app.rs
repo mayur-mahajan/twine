@@ -39,6 +39,8 @@ pub enum SimError {
     Window(String),
     /// The engine or its display could not be created.
     Engine(twine_engine::EngineError),
+    /// The application's views could not be built (see `twine_view::UiCore::mount`).
+    Build(twine_view::BuildError),
 }
 
 impl fmt::Display for SimError {
@@ -51,6 +53,7 @@ impl fmt::Display for SimError {
             SimError::Io(e) => write!(f, "I/O error: {e}"),
             SimError::Window(e) => write!(f, "window error: {e}"),
             SimError::Engine(e) => write!(f, "engine error: {e}"),
+            SimError::Build(e) => write!(f, "build error: {e}"),
         }
     }
 }
@@ -61,6 +64,7 @@ impl std::error::Error for SimError {
             SimError::Script { error, .. } => Some(error),
             SimError::Io(e) => Some(e),
             SimError::Engine(e) => Some(e),
+            SimError::Build(e) => Some(e),
             SimError::Window(_) => None,
         }
     }
@@ -69,6 +73,12 @@ impl std::error::Error for SimError {
 impl From<twine_engine::EngineError> for SimError {
     fn from(e: twine_engine::EngineError) -> Self {
         SimError::Engine(e)
+    }
+}
+
+impl From<twine_view::BuildError> for SimError {
+    fn from(e: twine_view::BuildError) -> Self {
+        SimError::Build(e)
     }
 }
 

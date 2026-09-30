@@ -11,6 +11,24 @@ use crate::tree::Node;
 /// Tree dumps print it as `n<index>g<generation>` (see [`fmt_node_id`]).
 pub type NodeId = twine_core::Id<Node>;
 
+/// A [`NodeId`] that is never valid in any tree: the node id of a widget that could not be
+/// created (the view layer returns it from `BuildCx::create` instead of aliasing another node).
+///
+/// It is [`Id::INVALID`](twine_core::Id::INVALID): the tree's arena never hands it out (its
+/// slot index is out of range and its generation is 0), so every engine call given it behaves
+/// as for a deleted node — lookups return `None`, mutations are ignored (logged) — and no
+/// other node is ever touched by mistake. Checking for it is one integer comparison.
+///
+/// ```
+/// use twine_engine::{DEAD_NODE, Engine, EngineConfig, Obj};
+/// let mut e = Engine::new(EngineConfig::default()).unwrap();
+/// let n = e.create_root(Box::new(Obj)).unwrap();
+/// assert_ne!(n, DEAD_NODE);
+/// assert!(!e.tree().contains(DEAD_NODE));
+/// assert!(e.create(DEAD_NODE, Box::new(Obj)).is_err());
+/// ```
+pub const DEAD_NODE: NodeId = NodeId::INVALID;
+
 /// Formats a [`NodeId`] as `n<index>g<generation>` (e.g. `n12g3`), the notation of tree dumps
 /// and engine logs.
 ///

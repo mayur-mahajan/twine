@@ -23,7 +23,7 @@ pub fn counter(cx: Scope) -> impl View {
     ))
     .gap(12)
     .padding(16)
-    .align_items(FlexAlign::Center)
+    .align_items(CrossAlign::Center)
     .size(Length::Pct(100), Length::Pct(100))
 }
 

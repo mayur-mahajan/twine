@@ -28,7 +28,8 @@ impl<T: core::fmt::Debug + 'static> core::fmt::Debug for Model<T> {
     }
 }
 
-/// Anything usable as the value of an editable widget: a plain value or a [`Signal`].
+/// Anything usable as the value of an editable widget: a plain value (any [`ModelValue`]) or
+/// a [`Signal`].
 ///
 /// ```
 /// use twine_view::prelude::*;
@@ -40,9 +41,40 @@ impl<T: core::fmt::Debug + 'static> core::fmt::Debug for Model<T> {
 ///     .on_change(|checked: bool| { let _ = checked; });
 /// cx.dispose();
 /// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be used as the value of type `{T}` of an editable widget",
+    label = "not a `{T}` or a `Signal<{T}>`",
+    note = "declare your own value types with `impl twine_view::ModelValue for MyType {{}}`"
+)]
 pub trait IntoModel<T: 'static> {
     /// The model.
     fn into_model(self) -> Model<T>;
+}
+
+/// A type usable as the plain (widget-owned) value of an editable widget. Declare your own
+/// types with a one-line impl:
+///
+/// ```
+/// use twine_view::prelude::*;
+///
+/// #[derive(Clone, Copy, PartialEq)]
+/// pub struct Level(pub u8);
+/// impl ModelValue for Level {}
+///
+/// fn take<T: 'static>(m: impl IntoModel<T>) -> Model<T> { m.into_model() }
+/// assert!(matches!(take(Level(2)), Model::Owned(Level(2))));
+/// ```
+///
+/// Unlike [`PropValue`](crate::PropValue) this is a true blanket
+/// (`impl<T: ModelValue> IntoModel<T> for T`): models have no closure form, so nothing overlaps
+/// (`Signal<T>` and `Model<T>` would have to equal their own `T`).
+pub trait ModelValue: 'static {}
+
+impl<T: ModelValue> IntoModel<T> for T {
+    #[inline]
+    fn into_model(self) -> Model<T> {
+        Model::Owned(self)
+    }
 }
 
 impl<T: 'static> IntoModel<T> for Signal<T> {
@@ -57,27 +89,20 @@ impl<T: 'static> IntoModel<T> for Model<T> {
     }
 }
 
-/// Implements [`IntoModel<T>`] for plain values of each listed type.
-#[macro_export]
-macro_rules! impl_into_model {
-    ($($t:ty),* $(,)?) => {
-        $(
-            impl $crate::IntoModel<$t> for $t {
-                fn into_model(self) -> $crate::Model<$t> {
-                    $crate::Model::Owned(self)
-                }
-            }
-        )*
-    };
-}
-
-impl_into_model!(bool, i32, u8, u16, u32, usize, String, (u8, u8));
-
-impl<T: 'static> IntoModel<Option<T>> for Option<T> {
-    fn into_model(self) -> Model<Option<T>> {
-        Model::Owned(self)
-    }
-}
+impl ModelValue for bool {}
+impl ModelValue for u8 {}
+impl ModelValue for u16 {}
+impl ModelValue for u32 {}
+impl ModelValue for u64 {}
+impl ModelValue for usize {}
+impl ModelValue for i8 {}
+impl ModelValue for i16 {}
+impl ModelValue for i32 {}
+impl ModelValue for i64 {}
+impl ModelValue for char {}
+impl ModelValue for String {}
+impl<T: 'static> ModelValue for Option<T> {}
+impl<A: ModelValue, B: ModelValue> ModelValue for (A, B) {}
 
 /// Wires a model to a widget: `show` displays the value (once for owned values, as a binding
 /// for bound signals); for bound signals, every `ValueChanged` of the node reads the widget's

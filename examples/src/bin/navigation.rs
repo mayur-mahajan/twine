@@ -18,30 +18,26 @@ fn home(cx: Scope) -> impl View {
     let nav = use_navigator(cx);
     let buttons: Vec<_> = ScreenAnim::all(D)
         .into_iter()
-        .map(|a| anim_button(nav.clone(), a))
+        .map(|a| anim_button(nav, a))
         .collect();
     column((
         label("Home").font(&fonts::MONTSERRAT_20),
         button(label("Open modal")).on_click(move || {
-            let handle: std::rc::Rc<std::cell::RefCell<Option<ModalHandle>>> = std::rc::Rc::default();
-            let h2 = handle.clone();
-            let m = cx.show_modal(move |_cx| {
+            let _ = cx.show_modal(|_cx, modal: ModalHandle| {
                 container(
                     column((
                         label("A modal on the top layer"),
-                        button(label("Close")).on_click(move || {
-                            if let Some(h) = h2.borrow().as_ref() {
-                                h.close();
-                            }
-                        }),
+                        button(label("Close")).on_click(move || modal.close()),
                     ))
                     .gap(8)
-                    .align_items(FlexAlign::Center),
+                    .align_items(CrossAlign::Center),
                 )
             });
-            *handle.borrow_mut() = Some(m);
         }),
-        flex(FlexFlow::RowWrap, buttons).gap(4).width(Length::pct(100)),
+        flex(FlexDirection::Row, buttons)
+            .wrap(true)
+            .gap(4)
+            .width(Length::pct(100)),
     ))
     .gap(8)
     .padding(8)
@@ -57,7 +53,7 @@ fn settings(cx: Scope) -> impl View {
     ))
     .gap(12)
     .padding(16)
-    .align_items(FlexAlign::Center)
+    .align_items(CrossAlign::Center)
     .size(Length::pct(100), Length::pct(100))
 }
 

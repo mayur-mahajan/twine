@@ -10,7 +10,7 @@
 
 use twine_core::Point;
 use twine_hal::Key;
-use twine_style::{Dir, State};
+use twine_style::{Side, State};
 
 use crate::{Engine, InputId, NodeId, WidgetCx};
 
@@ -223,8 +223,8 @@ pub enum EventParam {
     Point(Point),
     /// A key (`Key`).
     Key(Key),
-    /// A direction (`Gesture`: exactly one of `LEFT`, `RIGHT`, `TOP`, `BOTTOM`).
-    Dir(Dir),
+    /// A direction (`Gesture`: the side the swipe moved towards).
+    Dir(Side),
     /// Encoder steps (`Rotary`).
     Rotary(i32),
     /// A value.
@@ -290,7 +290,7 @@ impl Event {
 
     /// The direction of a `Gesture` event.
     #[must_use]
-    pub fn dir(&self) -> Option<Dir> {
+    pub fn dir(&self) -> Option<Side> {
         match self.param {
             EventParam::Dir(d) => Some(d),
             _ => None,

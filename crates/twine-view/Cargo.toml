@@ -80,6 +80,9 @@ twine-engine = { path = "../twine-engine" }
 twine-theme = { path = "../twine-theme", default-features = false }
 twine-widgets = { path = "../twine-widgets" }
 twine-widgets-ext = { path = "../twine-widgets-ext" }
+# Debug-build diagnostics only (`EngineAccess`'s "warned once per call site" table); the
+# application already supplies the implementation for `twine-reactive`.
+critical-section = "1"
 hashbrown = { version = "0.15", default-features = false, features = ["default-hasher"] }
 defmt = { version = "1", optional = true }
 

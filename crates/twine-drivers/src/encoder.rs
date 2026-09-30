@@ -72,7 +72,7 @@ use embedded_hal::digital::InputPin;
 use portable_atomic::{AtomicI16, AtomicU8, Ordering};
 use twine_core::Duration;
 use twine_core::log::trace;
-use twine_hal::{Clock, EncoderData, InputData, InputDevice, InputKind};
+use twine_hal::{Clock, DeviceHealth, EncoderData, InputData, InputDevice, InputKind};
 
 use crate::NoPin;
 use crate::debounce::Debouncer;
@@ -149,6 +149,8 @@ pub struct GpioQuadrature<'d, A, B, BTN, C> {
     btn_active_high: bool,
     button: Debouncer,
     clock: C,
+    health: DeviceHealth,
+    fail_after: u16,
 }
 
 impl<'d, A: InputPin, B: InputPin, BTN: InputPin, C: Clock> GpioQuadrature<'d, A, B, BTN, C> {
@@ -164,6 +166,8 @@ impl<'d, A: InputPin, B: InputPin, BTN: InputPin, C: Clock> GpioQuadrature<'d, A
             btn_active_high: false,
             button: Debouncer::default(),
             clock,
+            health: DeviceHealth::Ok,
+            fail_after: DeviceHealth::DEFAULT_FAIL_AFTER,
         }
     }
 }
@@ -182,6 +186,8 @@ impl<'d, BTN: InputPin, C: Clock> GpioQuadrature<'d, NoPin, NoPin, BTN, C> {
             btn_active_high: false,
             button: Debouncer::default(),
             clock,
+            health: DeviceHealth::Ok,
+            fail_after: DeviceHealth::DEFAULT_FAIL_AFTER,
         }
     }
 }
@@ -191,6 +197,16 @@ impl<A: InputPin, B: InputPin, BTN: InputPin, C: Clock> GpioQuadrature<'_, A, B,
     #[must_use]
     pub fn with_debounce(mut self, debounce: Duration) -> Self {
         self.button = Debouncer::new(debounce);
+        self
+    }
+
+    /// Reports the encoder [`Failed`](DeviceHealth::Failed) after `n` consecutive
+    /// [`update`](Self::update)s with pin errors (default
+    /// [`DeviceHealth::DEFAULT_FAIL_AFTER`]; see [`health`](InputDevice::health)). MCU pins
+    /// that cannot fail (`Error = Infallible`) compile the checks away.
+    #[must_use]
+    pub fn with_fail_after(mut self, n: u16) -> Self {
+        self.fail_after = n;
         self
     }
 
@@ -204,17 +220,28 @@ impl<A: InputPin, B: InputPin, BTN: InputPin, C: Clock> GpioQuadrature<'_, A, B,
     /// Samples A/B (polled mode) and the button. Call from a periodic task (≥ 1 kHz when
     /// polling A/B) or rely on `read`.
     pub fn update(&mut self) {
+        let mut failed = false;
         if self.poll_pins {
             // A read error counts as "low"; the state machine ignores the invalid transitions
             // this may cause.
-            let a = self.a.is_high().unwrap_or(false);
-            let b = self.b.is_high().unwrap_or(false);
-            self.decoder.on_edge(a, b);
+            let (a, b) = (self.a.is_high(), self.b.is_high());
+            failed = a.is_err() || b.is_err();
+            self.decoder.on_edge(a.unwrap_or(false), b.unwrap_or(false));
         }
         if let Some(btn) = self.btn.as_mut() {
-            let raw = btn.is_high().is_ok_and(|high| high == self.btn_active_high);
-            self.button.update(raw, self.clock.now());
+            match btn.is_high() {
+                Ok(high) => {
+                    self.button.update(high == self.btn_active_high, self.clock.now());
+                }
+                // An unreadable button keeps its debounced state.
+                Err(_) => failed = true,
+            }
         }
+        self.health = if failed {
+            self.health.after_error(self.fail_after)
+        } else {
+            DeviceHealth::Ok
+        };
     }
 
     /// Returns the pins and the clock.
@@ -240,6 +267,10 @@ impl<A: InputPin, B: InputPin, BTN: InputPin, C: Clock> InputDevice for GpioQuad
             diff,
             pressed: self.button.level(),
         })
+    }
+
+    fn health(&self) -> DeviceHealth {
+        self.health
     }
 }
 
@@ -369,5 +400,29 @@ mod tests {
         let _ = e.read();
         clock.0.set(Instant::from_millis(200));
         assert!(pressed(&mut e));
+    }
+
+    #[test]
+    fn pin_errors_degrade_then_fail_and_hold_the_button() {
+        let rec = Recorder::new();
+        let clock = TestClock(Cell::new(Instant::from_millis(0)));
+        let dec = QuadratureDecoder::new(4);
+        let mut e = GpioQuadrature::new_isr(&dec, Some(rec.quiet_pin("btn")), &clock)
+            .with_debounce(Duration::ms(0))
+            .with_fail_after(2);
+        rec.set_level("btn", false); // active low: pressed
+        let pressed =
+            |e: &mut GpioQuadrature<'_, _, _, _, _>| matches!(e.read(), InputData::Encoder(d) if d.pressed);
+        clock.0.set(Instant::from_millis(1));
+        assert!(pressed(&mut e));
+        assert_eq!(e.health(), DeviceHealth::Ok);
+        rec.fail_next();
+        assert!(pressed(&mut e), "an unreadable button keeps its state");
+        assert_eq!(e.health(), DeviceHealth::Degraded { errors: 1 });
+        rec.fail_next();
+        let _ = e.read();
+        assert_eq!(e.health(), DeviceHealth::Failed);
+        let _ = e.read();
+        assert_eq!(e.health(), DeviceHealth::Ok);
     }
 }

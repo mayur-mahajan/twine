@@ -1,5 +1,5 @@
 //! Criterion benchmarks of the runtime's performance targets (host): untracked read, set with one
-//! effect, a 10-memo chain, and scope create/dispose.
+//! effect, a 10-memo chain, scope create/dispose, and a stored value read.
 //!
 //! Run with `cargo bench -p twine-reactive --bench reactive`.
 #![allow(missing_docs)] // the harness macros generate undocumented public items
@@ -75,9 +75,18 @@ fn scope_10_signals_10_effects(c: &mut Criterion) {
     root.dispose();
 }
 
+/// `stored_value.get()` (same path as an untracked signal read: target < 20 ns).
+fn stored_value_get(c: &mut Criterion) {
+    let cx = create_root();
+    let v = cx.stored_value(1u32);
+    c.bench_function("stored_value_get", |b| b.iter(|| black_box(v).get()));
+    cx.dispose();
+}
+
 criterion_group!(
     benches,
     get_untracked,
+    stored_value_get,
     set_with_one_effect,
     memo_chain_10,
     scope_10_signals_10_effects

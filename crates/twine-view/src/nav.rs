@@ -2,14 +2,12 @@
 //! ([`ModalHandle`]).
 
 use alloc::boxed::Box;
-use alloc::rc::Rc;
 use alloc::vec::Vec;
-use core::cell::{Cell, RefCell};
 
 use twine_core::{Color, Opa};
 use twine_engine::{Engine, GroupId, InputId, NodeId, Obj, ObjFlags, ScreenLoad, fmt_node_id};
-use twine_reactive::{Scope, Signal, defer_current_effect, dispose_current_effect, untrack};
-use twine_style::{Align, Length, Selector, StyleProp};
+use twine_reactive::{Scope, Signal, StoredValue, defer_current_effect, dispose_current_effect, untrack};
+use twine_style::{Align, Length, Radius, Selector, StyleProp};
 
 use crate::access::EngineAccess;
 use crate::build::{BuildCx, on_delete};
@@ -49,14 +47,25 @@ struct Entry {
     group: Option<GroupId>,
 }
 
-/// A stack of screens (see [`navigator`]). `Clone`; obtained with [`use_navigator`].
+/// A stack of screens (see [`navigator`]), obtained with [`use_navigator`].
+///
+/// `Copy`, like a signal: move it into any number of handlers without cloning. Its state is a
+/// [`StoredValue`] owned by the navigator's scope; once that scope is disposed every method
+/// logs `warn!` and does nothing (`depth` is 0).
 ///
 /// `push`, `pop` and `replace` are queued and applied at the `Ui`'s next effect flush, so they
 /// are safe anywhere, e.g. in click handlers. Each screen is its own engine screen with its own
 /// child scope, disposed when the screen is deleted.
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Navigator {
-    inner: Rc<RefCell<NavState>>,
+    state: StoredValue<NavState>,
+}
+
+/// Logs a navigator used after its scope was disposed.
+#[cold]
+#[inline(never)]
+fn nav_disposed(what: &str) {
+    twine_core::warn!(target: "twine::view", "Navigator::{} after the navigator was disposed; ignored", what);
 }
 
 impl core::fmt::Debug for Navigator {
@@ -66,11 +75,12 @@ impl core::fmt::Debug for Navigator {
 }
 
 impl Navigator {
-    fn enqueue(&self, op: NavOp) {
-        let tick = {
-            let mut s = self.inner.borrow_mut();
+    fn enqueue(&self, op: NavOp, what: &str) {
+        let Some(tick) = self.state.try_with_mut(|s| {
             s.queue.push(op);
             s.tick
+        }) else {
+            return nav_disposed(what);
         };
         if tick.is_alive() {
             tick.update(|t| *t = t.wrapping_add(1));
@@ -79,8 +89,16 @@ impl Navigator {
 
     /// Shows `screen` on top of the current one with `anim` (a [`ScreenAnim`](crate::ScreenAnim)
     /// or a [`ScreenLoad`]); the current screen stays alive below.
-    pub fn push<V: View>(&self, screen: fn(Scope) -> V, anim: impl Into<ScreenLoad>) {
-        self.enqueue(NavOp::Push(Box::new(move |s| screen(s).into_any()), anim.into()));
+    ///
+    /// `screen` is any `FnOnce(Scope) -> V`: a `fn` item or a closure capturing what the screen
+    /// needs (an id, a signal). It is called once, with the new screen's scope, when the push is
+    /// applied. It is boxed once, when queued (no allocation for a `fn` item or a closure that
+    /// captures nothing).
+    pub fn push<V: View>(&self, screen: impl FnOnce(Scope) -> V + 'static, anim: impl Into<ScreenLoad>) {
+        self.enqueue(
+            NavOp::Push(Box::new(move |s| screen(s).into_any()), anim.into()),
+            "push",
+        );
     }
 
     /// Goes back to the previous screen with `anim`; the current one is deleted (and its scope
@@ -90,42 +108,46 @@ impl Navigator {
             twine_core::debug!(target: "twine::view", "navigator: pop at the root ignored");
             return false;
         }
-        self.enqueue(NavOp::Pop(anim.into()));
+        self.enqueue(NavOp::Pop(anim.into()), "pop");
         true
     }
 
     /// Replaces the current screen with `screen` (the old one is deleted after `anim`).
-    pub fn replace<V: View>(&self, screen: fn(Scope) -> V, anim: impl Into<ScreenLoad>) {
-        self.enqueue(NavOp::Replace(
-            Box::new(move |s| screen(s).into_any()),
-            anim.into(),
-        ));
+    /// `screen` is called once, like in [`push`](Self::push).
+    pub fn replace<V: View>(&self, screen: impl FnOnce(Scope) -> V + 'static, anim: impl Into<ScreenLoad>) {
+        self.enqueue(
+            NavOp::Replace(Box::new(move |s| screen(s).into_any()), anim.into()),
+            "replace",
+        );
     }
 
-    /// Number of screens, counting queued operations.
+    /// Number of screens, counting queued operations (0 once the navigator is disposed).
     #[must_use]
     pub fn depth(&self) -> usize {
-        let s = self.inner.borrow();
-        let mut d = s.stack.len();
-        for op in &s.queue {
-            match op {
-                NavOp::Push(..) => d += 1,
-                NavOp::Pop(_) => d = d.saturating_sub(1).max(1),
-                NavOp::Replace(..) => {}
-            }
-        }
-        d
+        self.state
+            .try_with(|s| {
+                let mut d = s.stack.len();
+                for op in &s.queue {
+                    match op {
+                        NavOp::Push(..) => d += 1,
+                        NavOp::Pop(_) => d = d.saturating_sub(1).max(1),
+                        NavOp::Replace(..) => {}
+                    }
+                }
+                d
+            })
+            .unwrap_or(0)
     }
 
     /// Applies the queued operations (engine required).
     fn apply(&self, e: &mut Engine) {
         loop {
-            let op = {
-                let mut s = self.inner.borrow_mut();
-                if s.queue.is_empty() {
-                    break;
-                }
-                s.queue.remove(0)
+            // The borrow ends before the screen is built (user code may use the navigator).
+            let Some(Some(op)) = self
+                .state
+                .try_with_mut(|s| (!s.queue.is_empty()).then(|| s.queue.remove(0)))
+            else {
+                break;
             };
             match op {
                 NavOp::Push(f, load) => {
@@ -137,18 +159,18 @@ impl Navigator {
                                 ..load
                             },
                         );
-                        self.inner.borrow_mut().stack.push(entry);
+                        self.state.with_mut(|s| s.stack.push(entry));
                     }
                 }
                 NavOp::Pop(load) => {
-                    let (top, prev) = {
-                        let mut s = self.inner.borrow_mut();
+                    let popped = self.state.with_mut(|s| {
                         if s.stack.len() <= 1 {
-                            continue;
+                            return None;
                         }
                         let top = s.stack.pop();
-                        (top, s.stack.last().map(|x| (x.node, x.group)))
-                    };
+                        Some((top, s.stack.last().map(|x| (x.node, x.group))))
+                    });
+                    let Some((top, prev)) = popped else { continue };
                     if let (Some(top), Some((prev, prev_group))) = (top, prev) {
                         switch_group(e, top.group, prev_group);
                         if let Some(g) = top.group.filter(|g| Some(*g) != prev_group) {
@@ -172,8 +194,7 @@ impl Navigator {
                                 ..load
                             },
                         );
-                        let old = {
-                            let mut s = self.inner.borrow_mut();
+                        let old = self.state.with_mut(|s| {
                             let old = s.stack.pop();
                             s.stack.push(Entry {
                                 node: entry.node,
@@ -181,14 +202,14 @@ impl Navigator {
                                 group: entry.group,
                             });
                             old
-                        };
+                        });
                         if let Some(g) = old.and_then(|o| o.group) {
                             e.delete_group(g);
                         }
                     }
                 }
             }
-            twine_core::debug!(target: "twine::view", "navigator: depth {}", self.inner.borrow().stack.len());
+            twine_core::debug!(target: "twine::view", "navigator: depth {}", self.state.with(|s| s.stack.len()));
         }
     }
 
@@ -196,10 +217,7 @@ impl Navigator {
     /// `own_group` the screen gets a focus group of its own, which becomes the default group
     /// and the keypads' and encoders' group.
     fn build_screen(&self, e: &mut Engine, f: ScreenFn, own_group: bool) -> Option<Entry> {
-        let (parent, anchor) = {
-            let s = self.inner.borrow();
-            (s.scope, s.anchor)
-        };
+        let (parent, anchor) = self.state.with(|s| (s.scope, s.anchor));
         let display = display_of(parent, e)?;
         let Ok(screen) = e.create_screen(display) else {
             twine_core::warn!(target: "twine::view", "navigator: cannot create a screen");
@@ -233,6 +251,8 @@ impl Navigator {
 
 /// A navigation root: provides a [`Navigator`] in `cx` (see [`use_navigator`]) and shows
 /// `initial` as the display's active screen. The view itself is an empty anchor node.
+/// `initial` is any `FnOnce(Scope) -> V` (a `fn` item or a capturing closure), called once
+/// with the screen's scope when the navigator is built.
 ///
 /// ```
 /// use twine_view::prelude::*;
@@ -250,17 +270,17 @@ impl Navigator {
 /// }
 /// # let _ = app;
 /// ```
-pub fn navigator<V: View>(cx: Scope, initial: fn(Scope) -> V) -> impl View {
+pub fn navigator<V: View>(cx: Scope, initial: impl FnOnce(Scope) -> V + 'static) -> impl View {
     let nav = Navigator {
-        inner: Rc::new(RefCell::new(NavState {
+        state: cx.stored_value(NavState {
             scope: cx,
             stack: Vec::new(),
             queue: Vec::new(),
             tick: cx.signal(0),
             anchor: None,
-        })),
+        }),
     };
-    cx.provide(nav.clone());
+    cx.provide(nav);
     NavigatorView {
         nav,
         initial: Box::new(move |s| initial(s).into_any()),
@@ -276,25 +296,29 @@ struct NavigatorView {
 impl View for NavigatorView {
     fn build(self, cx: &mut BuildCx<'_>) -> NodeId {
         let anchor = cx.create(Wrapper(&NAVIGATOR_CLASS));
+        if anchor == twine_engine::DEAD_NODE {
+            return anchor; // not created (reported): build no screens for it
+        }
         let nav = self.nav;
-        nav.inner.borrow_mut().anchor = Some(anchor);
+        nav.state.with_mut(|s| s.anchor = Some(anchor));
         let e = cx.engine();
         if let Some(entry) = nav.build_screen(e, self.initial, false) {
             e.load_screen(entry.node);
-            nav.inner.borrow_mut().stack.push(entry);
+            nav.state.with_mut(|s| s.stack.push(entry));
         }
-        let n2 = nav.clone();
         cx.on_delete(anchor, move || {
-            for entry in n2.inner.borrow_mut().stack.drain(..) {
+            // The navigator's scope may be gone already (its state with it).
+            let stack = nav.state.try_with_mut(|s| core::mem::take(&mut s.stack));
+            for entry in stack.into_iter().flatten() {
                 entry.scope.dispose();
             }
         });
         let scope = cx.scope();
-        let tick = nav.inner.borrow().tick;
+        let tick = nav.state.with(|s| s.tick);
         cx.provide(|| {
             scope.effect_with_cx(move |_| {
                 tick.get();
-                if nav.inner.borrow().queue.is_empty() {
+                if nav.state.try_with(|s| s.queue.is_empty()).unwrap_or(true) {
                     return;
                 }
                 if EngineAccess::with(|e| nav.apply(e)).is_none() {
@@ -315,49 +339,63 @@ pub fn use_navigator(cx: Scope) -> Navigator {
     cx.expect_context::<Navigator>()
 }
 
-/// A modal opened with [`ScopeExt::show_modal`](crate::ScopeExt::show_modal). `Clone`.
-#[derive(Clone)]
+/// A modal opened with [`ScopeExt::show_modal`](crate::ScopeExt::show_modal), also passed to
+/// the modal's view closure (and provided as context in the modal's scope).
+///
+/// `Copy`, like a signal. Its state is owned by the scope that opened the modal; once that
+/// scope is disposed, `close` does nothing, `is_open` is `false` and `node` is `None`.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ModalHandle {
-    inner: Rc<ModalState>,
+    open: Signal<bool>,
+    state: StoredValue<ModalState>,
 }
 
+/// The engine side of an open modal.
+#[derive(Default)]
 struct ModalState {
-    open: Signal<bool>,
-    node: Cell<Option<NodeId>>,
+    /// The backdrop node, once shown.
+    node: Option<NodeId>,
+    /// `(modal group, previous default group)` while open.
+    groups: Option<(GroupId, Option<GroupId>)>,
+}
+
+impl ModalState {
+    /// Takes the node and groups (to close the modal).
+    fn take(&mut self) -> (Option<NodeId>, Option<(GroupId, Option<GroupId>)>) {
+        (self.node.take(), self.groups.take())
+    }
 }
 
 impl core::fmt::Debug for ModalHandle {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ModalHandle")
-            .field("node", &self.inner.node.get().map(fmt_node_id))
+            .field("node", &self.node().map(fmt_node_id))
             .finish()
     }
 }
 
 impl ModalHandle {
     /// Closes the modal (disposes its scope, deletes its nodes, restores the focus group) at
-    /// the next effect flush. Closing twice does nothing.
+    /// the next effect flush. Closing twice, or after the opening scope was disposed, does
+    /// nothing.
     pub fn close(&self) {
-        if self.inner.open.is_alive() {
-            self.inner.open.set_if_changed(false);
+        if self.open.is_alive() {
+            self.open.set_if_changed(false);
         }
     }
 
     /// The backdrop node (once shown).
     #[must_use]
     pub fn node(&self) -> Option<NodeId> {
-        self.inner.node.get()
+        self.state.try_with(|s| s.node).flatten()
     }
 
     /// Whether the modal is open.
     #[must_use]
     pub fn is_open(&self) -> bool {
-        self.inner.open.try_get().unwrap_or(false)
+        self.open.try_get().unwrap_or(false)
     }
 }
-
-/// `(modal group, previous default group)` of an open modal.
-type ModalGroups = Rc<Cell<Option<(GroupId, Option<GroupId>)>>>;
 
 /// Makes `to` the default group and the group of the inputs attached to `from`.
 fn switch_group(e: &mut Engine, from: Option<GroupId>, to: Option<GroupId>) {
@@ -377,26 +415,23 @@ fn move_inputs(e: &mut Engine, from: Option<GroupId>, to: Option<GroupId>) {
 }
 
 /// See [`ScopeExt::show_modal`](crate::ScopeExt::show_modal).
-pub(crate) fn show_modal<V: View>(cx: Scope, view: impl FnOnce(Scope) -> V + 'static) -> ModalHandle {
+pub(crate) fn show_modal<V: View>(
+    cx: Scope,
+    view: impl FnOnce(Scope, ModalHandle) -> V + 'static,
+) -> ModalHandle {
     let content = cx.child();
     let open = cx.signal(true);
-    let state = Rc::new(ModalState {
-        open,
-        node: Cell::new(None),
-    });
+    let state = cx.stored_value(ModalState::default());
+    let handle = ModalHandle { open, state };
     // The views inside can close their modal (a message box's close button).
-    content.provide(ModalHandle { inner: state.clone() });
+    content.provide(handle);
     let mut view = Some(view);
-    // `(modal group, previous default group)` while open.
-    let groups: ModalGroups = Rc::default();
-    let st = state.clone();
-    let g2 = groups.clone();
     cx.on_cleanup(move || {
-        let node = st.node.take();
-        let grp = g2.take();
-        EngineAccess::with(|e| close_modal(e, node, grp));
+        // Cleanups run before the scope's stored values are dropped.
+        if let Some((node, grp)) = state.try_with_mut(ModalState::take) {
+            EngineAccess::with(|e| close_modal(e, node, grp));
+        }
     });
-    let st = state.clone();
     cx.effect_with_cx(move |_| {
         let is_open = open.get();
         if !EngineAccess::available() {
@@ -404,7 +439,7 @@ pub(crate) fn show_modal<V: View>(cx: Scope, view: impl FnOnce(Scope) -> V + 'st
         }
         if is_open {
             let Some(v) = view.take() else { return };
-            let v = untrack(|| v(content));
+            let v = untrack(|| v(content, handle));
             EngineAccess::with(|e| {
                 let Some(display) = display_of(content, e) else {
                     return;
@@ -418,13 +453,13 @@ pub(crate) fn show_modal<V: View>(cx: Scope, view: impl FnOnce(Scope) -> V + 'st
                     StyleProp::Width(Length::pct(100)),
                     StyleProp::Height(Length::pct(100)),
                     StyleProp::BgColor(Color::BLACK),
-                    StyleProp::BgOpa(Opa::P50),
-                    StyleProp::BorderWidth(0),
-                    StyleProp::Radius(0),
-                    StyleProp::PadTop(0),
-                    StyleProp::PadBottom(0),
-                    StyleProp::PadLeft(0),
-                    StyleProp::PadRight(0),
+                    StyleProp::BgOpacity(Opa::P50),
+                    StyleProp::BorderWidth(Length::Px(0)),
+                    StyleProp::Radius(Radius::Px(0)),
+                    StyleProp::PaddingTop(Length::Px(0)),
+                    StyleProp::PaddingBottom(Length::Px(0)),
+                    StyleProp::PaddingLeft(Length::Px(0)),
+                    StyleProp::PaddingRight(Length::Px(0)),
                     StyleProp::ShadowWidth(0),
                 ] {
                     e.set_local_prop(backdrop, Selector::MAIN, p);
@@ -436,7 +471,7 @@ pub(crate) fn show_modal<V: View>(cx: Scope, view: impl FnOnce(Scope) -> V + 'st
                 if let Ok(g) = e.create_group() {
                     e.set_default_group(Some(g));
                     move_inputs(e, prev, Some(g));
-                    groups.set(Some((g, prev)));
+                    state.with_mut(|s| s.groups = Some((g, prev)));
                 }
                 let root = {
                     let mut bcx = BuildCx::new(e, backdrop, content);
@@ -449,15 +484,14 @@ pub(crate) fn show_modal<V: View>(cx: Scope, view: impl FnOnce(Scope) -> V + 'st
                     e.set_style_parent(root, Some(a));
                 }
                 content.provide(StyleAnchor::new(root));
-                if let Some((_, prev)) = groups.get() {
+                if let Some((_, prev)) = state.with(|s| s.groups) {
                     e.set_default_group(prev);
                 }
-                st.node.set(Some(backdrop));
+                state.with_mut(|s| s.node = Some(backdrop));
                 twine_core::debug!(target: "twine::view", "modal {} shown", fmt_node_id(backdrop));
             });
         } else {
-            let node = st.node.take();
-            let grp = groups.take();
+            let (node, grp) = state.with_mut(ModalState::take);
             EngineAccess::with(|e| {
                 dispose_with(e, content);
                 close_modal(e, node, grp);
@@ -465,7 +499,7 @@ pub(crate) fn show_modal<V: View>(cx: Scope, view: impl FnOnce(Scope) -> V + 'st
             dispose_current_effect();
         }
     });
-    ModalHandle { inner: state }
+    handle
 }
 
 /// Deletes the backdrop and the modal's focus group, re-attaching the inputs to the previous

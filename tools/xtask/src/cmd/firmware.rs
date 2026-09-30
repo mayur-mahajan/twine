@@ -20,7 +20,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::util::{R, display_command, warn, which, workspace_root};
+use crate::util::{R, display_command, no_incremental, warn, which, workspace_root};
 
 /// One built binary and its section sizes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -350,6 +350,7 @@ fn esp_export_env() -> Vec<(String, String)> {
 /// variables `cargo xtask` runs with would otherwise pin the workspace toolchain).
 fn example_cargo(dir: &Path, env: &[(String, String)]) -> Command {
     let mut cmd = Command::new("cargo");
+    no_incremental(&mut cmd);
     cmd.current_dir(dir);
     for k in [
         "RUSTUP_TOOLCHAIN",

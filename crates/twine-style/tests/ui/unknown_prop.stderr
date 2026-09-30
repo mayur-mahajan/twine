@@ -1,4 +1,4 @@
-error: unknown style property: bg_colr
+error: unknown style property: bg_colr (the keys and the former names they replace are listed in twine-style/PROPERTIES.md)
  --> tests/ui/unknown_prop.rs:3:19
   |
 3 | static S: Style = style! { radius: 4, bg_colr: 5 };

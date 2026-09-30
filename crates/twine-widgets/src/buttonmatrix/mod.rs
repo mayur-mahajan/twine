@@ -99,37 +99,32 @@ impl BtnCtrl {
 }
 
 /// The texts of a button matrix: rows of button labels separated by `"\n"` entries (LVGL's
-/// map format). The map ends at the end of the slice; an empty string also ends it (LVGL's
-/// `""` terminator, accepted for compatibility).
+/// map format). The map ends at the end of the slice; in a static map an empty string also
+/// ends it (LVGL's `""` terminator, accepted for compatibility).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum MapSrc {
     /// A map in flash (no allocation).
     Static(&'static [&'static str]),
-    /// An owned map.
+    /// An owned map (built at run time, e.g. by `twine-view`): every entry is a button or a
+    /// row break; an empty string is a button without text, not a terminator.
     Owned(Vec<String>),
 }
 
 impl MapSrc {
-    /// The number of entries (row breaks included, the terminator and anything after it
-    /// excluded).
+    /// The number of entries (row breaks included; in a static map the terminator and
+    /// anything after it excluded).
     #[must_use]
     pub fn len(&self) -> usize {
-        (0..self.raw_len())
-            .find(|&i| self.get(i).is_empty())
-            .unwrap_or(self.raw_len())
+        match self {
+            MapSrc::Static(m) => m.iter().position(|s| s.is_empty()).unwrap_or(m.len()),
+            MapSrc::Owned(m) => m.len(),
+        }
     }
 
     /// Whether the map has no entries.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-
-    fn raw_len(&self) -> usize {
-        match self {
-            MapSrc::Static(m) => m.len(),
-            MapSrc::Owned(m) => m.len(),
-        }
     }
 
     /// Entry `i` (`""` past the end).
@@ -540,8 +535,8 @@ impl ButtonMatrix {
         let pad = m.padding(Part::Main);
         let sleft = pad.left + border;
         let stop = pad.top + border;
-        let prow = m.style_i32(Part::Main, PropId::PadRow);
-        let pcol = m.style_i32(Part::Main, PropId::PadColumn);
+        let prow = m.style_i32(Part::Main, PropId::RowGap);
+        let pcol = m.style_i32(Part::Main, PropId::ColumnGap);
         let content = m.content_area();
         let max_w = content.width();
         let max_h = content.height();
@@ -597,8 +592,8 @@ impl ButtonMatrix {
         let (w, h) = (c.width(), c.height());
         let pad = m.padding(Part::Main);
         let pleft = pad.left;
-        let prow = m.style_i32(Part::Main, PropId::PadRow);
-        let pcol = m.style_i32(Part::Main, PropId::PadColumn);
+        let prow = m.style_i32(Part::Main, PropId::RowGap);
+        let pcol = m.style_i32(Part::Main, PropId::ColumnGap);
         let prow = ((prow / 2) + 1 + (prow & 1)).min(BTN_EXTRA_CLICK_AREA_MAX);
         let pcol = ((pcol / 2) + 1 + (pcol & 1)).min(BTN_EXTRA_CLICK_AREA_MAX);
         let pright = pad.right.min(BTN_EXTRA_CLICK_AREA_MAX);
@@ -650,8 +645,8 @@ impl ButtonMatrix {
         let a = *self.areas.get(usize::from(idx))?;
         let c = m.coords();
         let dpi = i32::from(util::display_dpi(m.engine(), m.node()));
-        let row_gap = m.style_i32(Part::Main, PropId::PadRow).max(dpi / 10);
-        let col_gap = m.style_i32(Part::Main, PropId::PadColumn).max(dpi / 10);
+        let row_gap = m.style_i32(Part::Main, PropId::RowGap).max(dpi / 10);
+        let col_gap = m.style_i32(Part::Main, PropId::ColumnGap).max(dpi / 10);
         // LVGL grows x by the row gap and y by the column gap.
         let b = Area {
             x1: a.x1 + c.x0 - row_gap,
@@ -856,7 +851,7 @@ impl ButtonMatrix {
                 self.selected = found.and_then(|s| u16::try_from(s).ok());
             }
             Key::Down | Key::Up => {
-                let col_gap = m.style_i32(Part::Main, PropId::PadColumn);
+                let col_gap = m.style_i32(Part::Main, PropId::ColumnGap);
                 let Some(cur) = self.selected.map(usize::from) else {
                     self.selected = (0..n).find(|&i| !inactive(i)).and_then(|i| u16::try_from(i).ok());
                     return;
@@ -912,9 +907,9 @@ impl ButtonMatrix {
         let pad = m.padding(Part::Main);
         let dpi_margin = i32::from(util::display_dpi(e, node)) / 10;
         let clip_margin = m
-            .style_i32(Part::Main, PropId::PadRow)
+            .style_i32(Part::Main, PropId::RowGap)
             .max(dpi_margin)
-            .max(m.style_i32(Part::Main, PropId::PadColumn).max(dpi_margin));
+            .max(m.style_i32(Part::Main, PropId::ColumnGap).max(dpi_margin));
         let def_rect = e.rect_dsc_for_state(node, Part::Items, State::DEFAULT, opa);
         let def_text = e.text_dsc_for_state(node, Part::Items, State::DEFAULT, opa);
         for (i, a) in self.areas.iter().enumerate() {

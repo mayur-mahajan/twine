@@ -1,7 +1,10 @@
 //! Text and number entry: [`buttonmatrix`], [`keyboard`], [`textarea`] and [`spinbox`].
 
 use alloc::boxed::Box;
+use alloc::rc::Rc;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::cell::RefCell;
 use core::ops::RangeInclusive;
 
 use twine_engine::{EventCode, NodeId};
@@ -10,39 +13,201 @@ use twine_widgets::keyboard::{Keyboard, KeyboardMode};
 use twine_widgets::spinbox::Spinbox;
 use twine_widgets::textarea::{AcceptedChars, InsertCx, Textarea, text_of};
 
+use crate::bind::bind_effect;
 use crate::build::{WidgetView, widget_view};
 use crate::model::{IntoModel, bind_model, event_value, on_value_changed};
 use crate::modifiers::ViewExt;
 use crate::node_ref::NodeRef;
 use crate::prop::{IntoProp, Prop};
-use crate::text::{IntoText, bind_str};
+use crate::text::{IntoText, TextProp, bind_str};
 
 // ---- Button matrix --------------------------------------------------------------------------
 
-/// A matrix of buttons from an LVGL-style map: button texts, rows separated by `"\n"`.
+/// A button of a [`buttonmatrix`]: its text and control settings (relative width, checkable,
+/// hidden, …). Created with [`btn`].
+#[must_use]
+pub struct Btn {
+    text: TextProp,
+    ctrl: BtnCtrl,
+}
+
+impl core::fmt::Debug for Btn {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Btn")
+            .field("text", &self.text)
+            .field("ctrl", &self.ctrl)
+            .finish()
+    }
+}
+
+/// A button of a [`buttonmatrix`] showing `text` (any [`IntoText`]; dynamic texts, e.g.
+/// translations, update the matrix's map when they change). One width unit by default.
+pub fn btn(text: impl IntoText) -> Btn {
+    Btn {
+        text: text.into_text(),
+        ctrl: BtnCtrl::empty(),
+    }
+}
+
+impl Btn {
+    /// The relative width in units (1…15, clamped; default 1): a row's width is shared by
+    /// units.
+    pub fn width(mut self, units: u8) -> Self {
+        self.ctrl = (self.ctrl & !BtnCtrl::WIDTH_MASK) | BtnCtrl::width(units);
+        self
+    }
+
+    fn with(mut self, c: BtnCtrl) -> Self {
+        self.ctrl |= c;
+        self
+    }
+
+    /// Toggles its checked state when clicked.
+    pub fn checkable(self) -> Self {
+        self.with(BtnCtrl::CHECKABLE)
+    }
+
+    /// Starts checked.
+    pub fn checked(self) -> Self {
+        self.with(BtnCtrl::CHECKED)
+    }
+
+    /// Not drawn and not pressable; it still takes its width.
+    pub fn hidden(self) -> Self {
+        self.with(BtnCtrl::HIDDEN)
+    }
+
+    /// Drawn disabled and not pressable.
+    pub fn disabled(self) -> Self {
+        self.with(BtnCtrl::DISABLED)
+    }
+
+    /// No repeated selection while long pressed.
+    pub fn no_repeat(self) -> Self {
+        self.with(BtnCtrl::NO_REPEAT)
+    }
+
+    /// Selected on release instead of on press.
+    pub fn click_trig(self) -> Self {
+        self.with(BtnCtrl::CLICK_TRIG)
+    }
+
+    /// Shows an enlarged copy above the button while pressed (selected on release).
+    pub fn popover(self) -> Self {
+        self.with(BtnCtrl::POPOVER)
+    }
+
+    /// The first application-defined flag (e.g. a theme's control-key look).
+    pub fn custom_1(self) -> Self {
+        self.with(BtnCtrl::CUSTOM_1)
+    }
+
+    /// The second application-defined flag.
+    pub fn custom_2(self) -> Self {
+        self.with(BtnCtrl::CUSTOM_2)
+    }
+}
+
+/// The map of a button matrix: the buttons' texts with `"\n"` entries between rows (the
+/// widget's compact format), written into `map` (whose strings are reused).
+fn write_map(rows: &[Vec<TextProp>], map: &mut Vec<String>) {
+    let mut i = 0;
+    let mut next = |map: &mut Vec<String>| {
+        if map.len() <= i {
+            map.push(String::new());
+        }
+        let s = &mut map[i];
+        s.clear();
+        i += 1;
+        i - 1
+    };
+    for (r, row) in rows.iter().enumerate() {
+        if r > 0 {
+            let k = next(map);
+            map[k].push('\n');
+        }
+        for t in row {
+            let k = next(map);
+            t.write_to(&mut map[k]);
+        }
+    }
+    map.truncate(i);
+}
+
+/// A matrix of buttons drawn by one widget (no node per button): `rows` of [`btn`]s, each
+/// with its text and settings. Rows of equal length can be arrays; rows of different lengths
+/// are `Vec`s (any iterable of iterables works).
+///
+/// The buttons are numbered in reading order (the index [`on_select`](WidgetView::on_select)
+/// reports).
 ///
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// static MAP: [&str; 7] = ["1", "2", "3", "\n", "4", "5", "6"];
-/// let _v = buttonmatrix(&MAP)
-///     .ctrl(0, BtnCtrl::CHECKABLE)
-///     .on_select(|idx| { let _ = idx; });
+/// let _v = buttonmatrix([
+///     vec![btn("1"), btn("2"), btn("3")],
+///     vec![btn("OK").width(2).checkable()],
+/// ])
+/// .on_select(|idx| { let _ = idx; });
 /// ```
-pub fn buttonmatrix(map: &'static [&'static str]) -> WidgetView<ButtonMatrix> {
-    widget_view(move || ButtonMatrix::new(MapSrc::Static(map)))
+pub fn buttonmatrix<R, I>(rows: R) -> WidgetView<ButtonMatrix>
+where
+    R: IntoIterator<Item = I>,
+    I: IntoIterator<Item = Btn>,
+{
+    let mut ctrl: Vec<BtnCtrl> = Vec::new();
+    let rows: Vec<Vec<TextProp>> = rows
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(|b| {
+                    ctrl.push(b.ctrl);
+                    b.text
+                })
+                .collect()
+        })
+        .collect();
+    widget_view(|| ButtonMatrix::new(MapSrc::Static(&[]))).op(move |cx, node| {
+        let scope = cx.scope();
+        let rows: Vec<Vec<TextProp>> = rows
+            .into_iter()
+            .map(|r| r.into_iter().map(|t| t.resolve(scope)).collect())
+            .collect();
+        let set_map = |e: &mut twine_engine::Engine, n: NodeId, map: &[String]| {
+            e.with_widget_mut(n, |m: &mut ButtonMatrix, wcx| {
+                let m_map = m.map();
+                let same = m_map.len() == map.len() && map.iter().enumerate().all(|(i, s)| m_map.get(i) == s);
+                if !same {
+                    m.set_map(wcx, MapSrc::Owned(map.to_vec()));
+                }
+            });
+        };
+        if rows.iter().flatten().all(TextProp::is_constant) {
+            let mut map = Vec::new();
+            write_map(&rows, &mut map);
+            set_map(cx.engine(), node, &map);
+        } else {
+            // One binding for the whole map: the texts are written into reused strings, the
+            // widget's map is replaced only when one of them changed.
+            let scratch = Rc::new(RefCell::new(Vec::<String>::new()));
+            cx.provide(|| {
+                bind_effect(
+                    scope,
+                    node,
+                    move || {
+                        write_map(&rows, &mut scratch.borrow_mut());
+                        scratch.clone()
+                    },
+                    move |e, n, map: Rc<RefCell<Vec<String>>>| set_map(e, n, &map.borrow()),
+                );
+            });
+        }
+        cx.engine()
+            .with_widget_mut(node, |m: &mut ButtonMatrix, wcx| m.set_ctrl_map(wcx, &ctrl));
+    })
 }
 
 impl WidgetView<ButtonMatrix> {
-    /// Sets control bits of button `idx` (width units, hidden, checkable, …).
-    #[must_use]
-    pub fn ctrl(self, idx: u16, ctrl: BtnCtrl) -> Self {
-        self.op(move |cx, node| {
-            cx.engine()
-                .with_widget_mut(node, |m: &mut ButtonMatrix, wcx| m.set_btn_ctrl(wcx, idx, ctrl));
-        })
-    }
-
     /// At most one checkable button is checked at a time.
     #[must_use]
     pub fn one_checked(self, on: impl IntoProp<bool>) -> Self {
@@ -247,13 +412,29 @@ impl WidgetView<Textarea> {
         self.bind(n, |t: &mut Textarea, cx, n| t.set_max_length(cx, n))
     }
 
-    /// Accepts only the characters of `chars` (e.g. `"0123456789."`).
+    /// Accepts only the characters of `chars` (e.g. `"0123456789."`; any [`IntoText`]).
     #[must_use]
-    pub fn accepted_chars(self, chars: &'static str) -> Self {
+    pub fn accepted_chars(self, chars: impl IntoText) -> Self {
+        let chars = chars.into_text();
         self.op(move |cx, node| {
-            cx.engine().with_widget_mut(node, |t: &mut Textarea, wcx| {
-                t.set_accepted_chars(wcx, Some(AcceptedChars::Static(chars)));
-            });
+            bind_str(
+                cx,
+                node,
+                chars,
+                |e, n, s| {
+                    e.with_widget_mut(n, |t: &mut Textarea, wcx| {
+                        t.set_accepted_chars(wcx, Some(AcceptedChars::Static(s)));
+                    });
+                },
+                |e, n, s| {
+                    e.with_widget_mut(n, |t: &mut Textarea, wcx| {
+                        // Compared first: no copy for an unchanged list.
+                        if t.accepted_chars().map(AcceptedChars::as_str) != Some(s) {
+                            t.set_accepted_chars(wcx, Some(AcceptedChars::Owned(s.into())));
+                        }
+                    });
+                },
+            );
         })
     }
 
@@ -359,12 +540,23 @@ impl WidgetView<Spinbox> {
     /// `total` digits (1…10, leading zeros shown) with the decimal point after `sep_pos`
     /// digits (0 = none).
     #[must_use]
-    pub fn digits(self, total: u8, sep_pos: u8) -> Self {
-        self.op(move |cx, node| {
-            cx.engine().with_widget_mut(node, |s: &mut Spinbox, wcx| {
-                s.set_digit_format(wcx, total, sep_pos);
-            });
-        })
+    pub fn digits(self, total: impl IntoProp<u8>, sep_pos: impl IntoProp<u8>) -> Self {
+        match (total.into_prop(), sep_pos.into_prop()) {
+            (Prop::Static(total), Prop::Static(sep)) => self.op(move |cx, node| {
+                cx.engine().with_widget_mut(node, |s: &mut Spinbox, wcx| {
+                    s.set_digit_format(wcx, total, sep);
+                });
+            }),
+            (total, sep) => self
+                .bind(total, |s: &mut Spinbox, cx, total| {
+                    let sep = s.dec_point_pos();
+                    s.set_digit_format(cx, total, sep);
+                })
+                .bind(sep, |s: &mut Spinbox, cx, sep| {
+                    let total = s.digit_count();
+                    s.set_digit_format(cx, total, sep);
+                }),
+        }
     }
 
     /// The step of one increment (a power of ten: the digit being edited).

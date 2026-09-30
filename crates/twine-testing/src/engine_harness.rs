@@ -113,7 +113,7 @@ pub type StepFn = Box<dyn FnMut(&mut Engine, Instant) -> Wake>;
 ///     e.set_pos(b, 4, 4);
 ///     e.set_size(b, 10, 10);
 ///     e.set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::RED));
-///     e.set_local_prop(b, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+///     e.set_local_prop(b, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
 /// });
 /// h.run_until_idle();
 /// assert_eq!(h.pixel(5, 5), Color::RED);
@@ -149,6 +149,8 @@ struct Settings {
     kind: Kind,
     rotation: Rotation,
     align: u8,
+    /// `DisplayInfo::dpi` of the panel.
+    dpi: u16,
     /// Installed on the display after it is added.
     theme: Option<Rc<dyn ThemeHook>>,
 }
@@ -159,6 +161,7 @@ impl Settings {
             .with_rotation(self.rotation)
             .with_hw_rotation(false)
             .with_align(self.align)
+            .with_dpi(self.dpi)
     }
 
     /// A fresh engine with the harness display.
@@ -192,7 +195,14 @@ impl Settings {
                 }
             }
         };
-        let display = display.expect("harness display");
+        let display = display.unwrap_or_else(|e| {
+            // e.g. `EngineError::FormatDisabled`: the test crate must enable the `color-*`
+            // feature of the harness format.
+            panic!(
+                "harness display ({}x{} {}): {e}",
+                info.width, info.height, info.format
+            )
+        });
         if let Some(t) = &self.theme {
             engine.set_theme(display, t.clone());
         }
@@ -222,6 +232,7 @@ impl EngineHarness {
             kind: Kind::Memory,
             rotation: Rotation::Deg0,
             align: 1,
+            dpi: twine_style::DEFAULT_DPI,
             theme: Some(Rc::new(DefaultTheme::light())),
         };
         let (engine, display) = s.build();
@@ -345,6 +356,15 @@ impl EngineHarness {
     #[must_use]
     pub fn align(mut self, a: u8) -> Self {
         self.s.align = a;
+        self.rebuild();
+        self
+    }
+
+    /// DPI of the panel (`DisplayInfo::dpi`, default 130; rebuilds the engine). Themes and
+    /// density-independent lengths (`Length::dp`) scale with it.
+    #[must_use]
+    pub fn dpi(mut self, dpi: u16) -> Self {
+        self.s.dpi = dpi;
         self.rebuild();
         self
     }

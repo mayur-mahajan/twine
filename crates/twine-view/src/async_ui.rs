@@ -4,6 +4,11 @@
 //!
 //! Built with [`Ui::builder_async`]; run by `twine-embassy` (or any executor: call
 //! [`update_async`](AsyncUi::update_async) and sleep as the returned [`Wake`] says).
+//!
+//! Waiting for a flush is cooperative by construction: the flush future is awaited, so the
+//! executor runs other tasks meanwhile (`EngineConfig::cooperative_flush` does not apply). Its
+//! duration is bounded by the driver (see [`AsyncDisplayDriver`]), not by
+//! `EngineConfig::flush_timeout`.
 
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -12,14 +17,19 @@ use core::future::{Future, poll_fn};
 use core::pin::pin;
 use core::task::Poll;
 
+use twine_core::fault::{FaultCounts, FaultKind, Faults};
 use twine_core::{Instant, Rect};
-use twine_engine::{BufferMode, DisplayId, Engine, EngineConfig, EngineError, ThemeHook, Wake};
+use twine_engine::{
+    BufferMode, DisplayId, DriverErrorCode, Engine, EngineConfig, EngineError, FaultHook, FaultRecord,
+    ThemeHook, Wake,
+};
 use twine_hal::{
     AsyncDisplayDriver, AsyncInputWait, Clock, DrawBufferMem, InputData, InputDevice, InputKind, PollHint,
 };
 use twine_reactive::{Scope, UiWaker};
 
 use crate::Ui;
+use crate::error::UiError;
 use crate::ui::{DisplaySetup, UiBuilder, UiCore};
 use crate::view::View;
 
@@ -47,6 +57,9 @@ impl<W: InputDevice> InputDevice for SharedInput<W> {
     }
     fn poll_hint(&self) -> PollHint {
         self.0.borrow().poll_hint()
+    }
+    fn health(&self) -> twine_hal::DeviceHealth {
+        self.0.borrow().health()
     }
 }
 
@@ -140,6 +153,19 @@ impl<D: AsyncDisplayDriver + 'static, W: AsyncInputWait + 'static> AsyncUiBuilde
         self
     }
 
+    /// The `AsyncUi`'s waker, the application's own instead of a pooled one (see
+    /// [`UiBuilder::waker`]).
+    pub fn waker(mut self, waker: &'static UiWaker) -> Self {
+        self.inner = self.inner.waker(waker);
+        self
+    }
+
+    /// The function called for every fault (see [`UiBuilder::fault_hook`]).
+    pub fn fault_hook(mut self, hook: FaultHook) -> Self {
+        self.inner = self.inner.fault_hook(hook);
+        self
+    }
+
     /// Binds the reactive runtime to the calling execution context (see
     /// [`UiBuilder::bind_to_current_context`]).
     ///
@@ -158,15 +184,17 @@ impl<D: AsyncDisplayDriver + 'static, W: AsyncInputWait + 'static> AsyncUiBuilde
     /// Builds the `AsyncUi` (engine, display, theme, inputs; `app` built once).
     ///
     /// # Errors
-    /// [`EngineError::InvalidConfig`] without a clock or buffers, [`EngineError::BufferModeMismatch`]
-    /// for non-partial buffers; the engine's errors for the display and inputs.
-    pub fn try_build<V: View>(mut self, app: impl FnOnce(Scope) -> V) -> Result<AsyncUi<D, W>, EngineError> {
+    /// [`UiError::Engine`]: [`EngineError::InvalidConfig`] without a clock or buffers,
+    /// [`EngineError::BufferModeMismatch`] for non-partial buffers; the engine's errors for the
+    /// display and inputs. [`UiError::Build`]: a widget of `app` could not be created (see
+    /// [`UiBuilder::try_build`](crate::UiBuilder::try_build)).
+    pub fn try_build<V: View>(mut self, app: impl FnOnce(Scope) -> V) -> Result<AsyncUi<D, W>, UiError> {
         let (a, b) = match self.buffers.take() {
             Some(BufferMode::Partial { a, b }) => (a, b),
-            Some(_) => return Err(EngineError::BufferModeMismatch),
+            Some(_) => return Err(EngineError::BufferModeMismatch.into()),
             None => {
                 twine_core::error!(target: "twine::view", "AsyncUi: no buffers (AsyncUiBuilder::buffers)");
-                return Err(EngineError::InvalidConfig("AsyncUi needs buffers"));
+                return Err(EngineError::InvalidConfig("AsyncUi needs buffers").into());
             }
         };
         let chunk_bytes = b.as_ref().map_or(a.len(), |b| a.len().min(b.len()));
@@ -188,10 +216,11 @@ impl<D: AsyncDisplayDriver + 'static, W: AsyncInputWait + 'static> AsyncUiBuilde
         })
     }
 
-    /// [`try_build`](Self::try_build), panicking on a configuration error.
+    /// [`try_build`](Self::try_build), panicking on a configuration or build error.
     ///
     /// # Panics
-    /// Without a clock or buffers, or when the engine rejects the display or inputs.
+    /// Without a clock or buffers, when the engine rejects the display or inputs, or when a
+    /// widget of `app` cannot be created.
     pub fn build<V: View>(self, app: impl FnOnce(Scope) -> V) -> AsyncUi<D, W> {
         match self.try_build(app) {
             Ok(ui) => ui,
@@ -252,6 +281,11 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
         if self.engine.refresh_begin(now).is_some() {
             self.render_frame().await;
             self.engine.refresh_end();
+            // A failed flush marks its area dirty again (`FlushPolicy::Reinvalidate`): wake up
+            // for the frame that redraws it.
+            if let Some(due) = self.engine.refresh_due() {
+                return wake.min(Wake::At(due));
+            }
         }
         wake
     }
@@ -262,8 +296,10 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
             engine,
             display,
             bufs,
+            core,
             ..
         } = self;
+        let did = core.display();
         let timer = engine.config().hires_timer;
         let us = move || timer.map(|f| f().as_micros());
         let (a, b) = bufs;
@@ -271,9 +307,10 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
             // One buffer: render, flush, repeat (no overlap: all flush time is waiting).
             while let Some(area) = engine.render_chunk(a.as_mut_slice()) {
                 let t0 = us();
-                flush_logged(display, area, a.as_slice()).await;
+                let result = display.flush(area, a.as_slice()).await;
                 let t = elapsed(t0, us());
                 engine.refresh_add_flush_time(t, t);
+                report(engine, display, did, area, result);
             }
             return;
         };
@@ -292,20 +329,21 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
                         (&*hi[0], &mut *lo[0])
                     };
                     let t0 = us();
-                    let mut flush = pin!(display.flush(area, prev_buf.as_slice()));
-                    // The first poll starts the transfer (DMA); render while it runs.
-                    let done = poll_once(&mut flush).await;
-                    let next = engine.render_chunk(free_buf.as_mut_slice());
-                    let t1 = us();
-                    let result = match done {
-                        Some(r) => r,
-                        None => flush.await,
+                    let (next, t1, result) = {
+                        let mut flush = pin!(display.flush(area, prev_buf.as_slice()));
+                        // The first poll starts the transfer (DMA); render while it runs.
+                        let done = poll_once(&mut flush).await;
+                        let next = engine.render_chunk(free_buf.as_mut_slice());
+                        let t1 = us();
+                        let result = match done {
+                            Some(r) => r,
+                            None => flush.await,
+                        };
+                        (next, t1, result)
                     };
                     let t2 = us();
                     engine.refresh_add_flush_time(elapsed(t0, t2), elapsed(t1, t2));
-                    if let Err(e) = result {
-                        log_flush_error(area, &e);
-                    }
+                    report(engine, display, did, area, result);
                     next
                 }
             };
@@ -365,6 +403,45 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
         &mut self.engine
     }
 
+    /// The faults raised since the last call, clearing them (see [`Ui::take_faults`]).
+    pub fn take_faults(&mut self) -> Faults {
+        self.core.take_faults(&mut self.engine)
+    }
+
+    /// Occurrences of every fault kind since start-up (see [`Ui::fault_counts`]).
+    #[must_use]
+    pub fn fault_counts(&self) -> FaultCounts {
+        self.engine.fault_counts()
+    }
+
+    /// The last record of `kind` (see [`Ui::last_fault`]).
+    #[must_use]
+    pub fn last_fault(&self, kind: FaultKind) -> Option<&FaultRecord> {
+        self.engine.last_fault(kind)
+    }
+
+    /// Sets the function called for every fault (see [`Ui::set_fault_hook`]).
+    pub fn set_fault_hook(&mut self, hook: Option<FaultHook>) {
+        self.engine.set_fault_hook(hook);
+    }
+
+    /// The flush health of the display (see [`Ui::display_health`]).
+    #[must_use]
+    pub fn display_health(&self) -> Option<twine_engine::DisplayHealth> {
+        self.engine.display_health(self.core.display())
+    }
+
+    /// The health of input device `id` (see [`Engine::input_health`]).
+    #[must_use]
+    pub fn input_health(&self, id: twine_engine::InputId) -> Option<twine_hal::DeviceHealth> {
+        self.engine.input_health(id)
+    }
+
+    /// Recovers the display after flush failures (see [`Ui::recover_display`]).
+    pub fn recover_display(&mut self) {
+        let _ = self.engine.recover_display(self.core.display());
+    }
+
     /// The display driver (e.g. to change the brightness of an AMOLED).
     pub fn display_driver_mut(&mut self) -> &mut D {
         &mut self.display
@@ -377,14 +454,6 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
     }
 }
 
-/// Logs a failed flush with the driver error's `Debug` output (the next frame redraws nothing
-/// of it: the pixels are lost until the area changes again).
-fn log_flush_error(area: Rect, e: &dyn core::fmt::Debug) {
-    if let EngineError::Driver(msg) = EngineError::driver(e) {
-        twine_core::error!(target: "twine::driver", "async flush {} failed: {}", area, msg.as_str());
-    }
-}
-
 /// Microseconds between two optional timestamps (0 without a timer).
 fn elapsed(a: Option<u64>, b: Option<u64>) -> u32 {
     match (a, b) {
@@ -393,8 +462,21 @@ fn elapsed(a: Option<u64>, b: Option<u64>) -> u32 {
     }
 }
 
-async fn flush_logged<D: AsyncDisplayDriver>(display: &mut D, area: Rect, buf: &[u8]) {
-    if let Err(e) = display.flush(area, buf).await {
-        log_flush_error(area, &e);
-    }
+/// Reports the outcome of the flush of `area` to the engine (health, retry of the area,
+/// [`FaultKind::FlushError`] with the driver's error code), logging a failure.
+fn report<D: AsyncDisplayDriver>(
+    engine: &mut Engine,
+    display: &D,
+    did: DisplayId,
+    area: Rect,
+    result: Result<(), D::Error>,
+) {
+    let result = result.map_err(|e| {
+        let code = DriverErrorCode::new(display.error_code(&e));
+        if let EngineError::Driver { message, .. } = EngineError::driver(code, &e) {
+            twine_core::error!(target: "twine::driver", "async flush {} failed ({}): {}", area, code, message.as_str());
+        }
+        code
+    });
+    engine.report_flush(did, area, result);
 }

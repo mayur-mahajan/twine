@@ -8,7 +8,7 @@ use core::cell::RefCell;
 use twine_core::Opa;
 use twine_engine::{Engine, EventCode, EventFilter, EventResult, NodeId, Obj, ObjFlags};
 use twine_reactive::{Scope, defer_current_effect, dispose_current_effect, untrack};
-use twine_style::{Dir, Length, ScrollbarMode, Selector, StyleProp};
+use twine_style::{Axis, Length, ScrollbarMode, Selector, StyleProp};
 
 use super::dispose_with;
 use crate::access::EngineAccess;
@@ -47,18 +47,18 @@ pub fn virtual_list<V: View>(
     let inner = widget_view(|| Obj).op(move |cx, node| {
         let e = cx.engine();
         for p in [
-            StyleProp::BgOpa(Opa::TRANSP),
-            StyleProp::BorderWidth(0),
-            StyleProp::PadTop(0),
-            StyleProp::PadBottom(0),
-            StyleProp::PadLeft(0),
-            StyleProp::PadRight(0),
+            StyleProp::BgOpacity(Opa::TRANSP),
+            StyleProp::BorderWidth(Length::Px(0)),
+            StyleProp::PaddingTop(Length::Px(0)),
+            StyleProp::PaddingBottom(Length::Px(0)),
+            StyleProp::PaddingLeft(Length::Px(0)),
+            StyleProp::PaddingRight(Length::Px(0)),
             StyleProp::Width(Length::pct(100)),
             StyleProp::Height(Length::pct(100)),
         ] {
             e.set_local_prop(node, Selector::MAIN, p);
         }
-        e.set_scroll_dir(node, Dir::VER);
+        e.set_scroll_dir(node, Axis::Vertical);
         e.set_scrollbar_mode(node, ScrollbarMode::Auto);
         // The content: an invisible spacer as tall as all rows.
         let Ok(content) = e.create(node, Box::new(Obj)) else {
@@ -66,8 +66,8 @@ pub fn virtual_list<V: View>(
         };
         e.set_flag(content, ObjFlags::all(), false);
         for p in [
-            StyleProp::BgOpa(Opa::TRANSP),
-            StyleProp::BorderWidth(0),
+            StyleProp::BgOpacity(Opa::TRANSP),
+            StyleProp::BorderWidth(Length::Px(0)),
             StyleProp::Width(Length::Px(1)),
             StyleProp::Height(Length::Px(0)),
         ] {

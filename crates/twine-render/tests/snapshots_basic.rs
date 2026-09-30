@@ -61,8 +61,8 @@ fn gallery_pages_chunked_identical() {
 #[test]
 fn paint_chunked_equals_full_fill_scene() {
     let scene = |p: &mut twine_render::Painter<'_>| {
-        p.fill(Rect::from_xywh(3, 5, 40, 30), Color::RED, Opa(200));
-        p.fill(Rect::from_xywh(20, 1, 10, 50), Color::BLUE, Opa(90));
+        p.fill(Rect::from_xywh(3, 5, 40, 30), Color::RED, Opa::from_raw(200));
+        p.fill(Rect::from_xywh(20, 1, 10, 50), Color::BLUE, Opa::from_raw(90));
     };
     let mut a = RenderHarness::new(64, 48, ColorFormat::Rgb888);
     a.paint(scene);

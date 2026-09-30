@@ -1,5 +1,6 @@
 //! Generational arena ([`Arena<T>`]) with stale-handle detection ([`Id<T>`]).
 
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::fmt;
@@ -29,6 +30,25 @@ pub struct Id<T> {
 impl<T> Id<T> {
     /// A handle that never resolves (index 0, generation 0; generations start at 1).
     pub const DANGLING: Id<T> = Id::from_raw(0);
+
+    /// A handle that no [`Arena`] ever hands out, whatever it stored before: its index
+    /// (`u16::MAX`) is outside the slot range (an arena has at most [`Arena::MAX_LEN`] =
+    /// 65 535 slots, indices `0..=65 534`) **and** its generation is 0 (generations start at 1
+    /// and never wrap: a slot retires instead). So it never resolves, is never equal to a live
+    /// or stale handle, and — unlike [`DANGLING`](Self::DANGLING), which only its generation
+    /// separates from slot 0 — it stays invalid under any generation scheme.
+    ///
+    /// Layers above use it as a "this was never created" marker (e.g. the view layer's dead
+    /// node for a widget whose creation failed). Looking it up costs one bounds check.
+    ///
+    /// ```
+    /// use twine_core::{Arena, Id};
+    /// let a: Arena<u8> = Arena::new();
+    /// assert!(!a.contains(Id::INVALID));
+    /// assert_eq!(Id::<u8>::INVALID.index(), u16::MAX);
+    /// assert_ne!(Id::<u8>::INVALID, Id::DANGLING);
+    /// ```
+    pub const INVALID: Id<T> = Id::new(u16::MAX, 0);
 
     const fn new(index: u16, gen_: u16) -> Self {
         Id {
@@ -136,11 +156,42 @@ struct Slot<T> {
     value: Option<T>,
 }
 
+// `remove` tests `gen & (ROTATE_PERIOD - 1)`.
+const _: () = assert!(Arena::<()>::ROTATE_PERIOD.is_power_of_two());
+
 /// Storage for up to 65 535 live values, addressed by generational [`Id`]s.
 ///
-/// Freed slots are reused (LIFO) with a bumped generation, so stale ids are detected. A slot
-/// whose generation would wrap past `u16::MAX` is **retired** (never reused) to rule out ABA.
-/// Insert and remove are O(1) (amortized: the slot storage grows by a quarter at a time).
+/// Freed slots are reused with a bumped generation, so stale ids are detected. A slot whose
+/// generation would wrap past `u16::MAX` is **retired** (never reused) to rule out ABA; the
+/// number of retired slots is [`retired`](Self::retired). Insert and remove are O(1)
+/// worst case apart from the amortized growth of the storage (slots and free-index lists
+/// grow geometrically; never in steady state).
+///
+/// # Reuse order and generation budget
+///
+/// Freed slots go on a **stack** and the most recently freed one is reused first, so churn
+/// stays on cache-hot slots. Every [`ROTATE_PERIOD`](Self::ROTATE_PERIOD) (4 096) generations
+/// a slot is instead parked at the back of a FIFO **reserve**, and the reserve is used only
+/// when the stack is empty. A hot slot thus serves at most 4 096 values in a row before every
+/// parked slot has had its turn, which spreads the 16-bit generations over all free slots. The
+/// only cost on the common path is one bit test in `remove`.
+///
+/// Each slot serves at most 65 535 values (generations `1..=u16::MAX`), so the total budget is
+/// *slots × 65 535* insertions (≈ 4.29 × 10⁹ for a full-size arena). With `S` slots, never more
+/// than `L < S` values live, `P` = `ROTATE_PERIOD` and `K = ⌊65 534 / P⌋` = 15 parkings per
+/// slot lifetime, **no slot retires before `(P − 1) × (K × (S − L + 1) + 1)` insertions**
+/// ≈ `(S − L) × 61 425` — within one rotation period per slot of the ideal `(S − L) × 65 534`
+/// (e.g. ≥ 3.5 × 10⁶ for 64 slots with at most 8 live). Proof sketch: the reserve is used
+/// only when the stack is empty, i.e. when at most `L − 1` slots are outside the reserve, so a
+/// parked slot leaves the reserve only after at least `S − L` other slots were parked behind
+/// it; a slot must be reused `P − 1` times between two parkings, and a slot that retires was
+/// parked `K` times. Past that point slots retire one by one and are replaced by new ones:
+/// memory grows by one slot per 65 535 insertions into it, never faster. Wider generations
+/// are a later option (R5.S04).
+///
+/// Looking a value up ([`get`](Self::get), [`get_mut`](Self::get_mut),
+/// [`contains`](Self::contains)) is one bounds check plus one generation compare, whatever
+/// the reuse order.
 ///
 /// ```
 /// use twine_core::Arena;
@@ -156,8 +207,13 @@ struct Slot<T> {
 #[derive(Clone, Debug)]
 pub struct Arena<T> {
     slots: Vec<Slot<T>>,
+    /// Indices of free slots, reused LIFO (most recently freed first: cache-hot).
     free: Vec<u16>,
+    /// Free slots parked after `ROTATE_PERIOD` generations, reused FIFO when `free` is empty.
+    reserve: VecDeque<u16>,
     len: u16,
+    /// Slots whose generation reached `u16::MAX` and that are never reused.
+    retired: u16,
 }
 
 impl<T> Default for Arena<T> {
@@ -167,8 +223,14 @@ impl<T> Default for Arena<T> {
 }
 
 impl<T> Arena<T> {
-    /// Maximum number of live values and of slots.
+    /// Maximum number of live values and of slots. Slot indices are `0..MAX_LEN`, so index
+    /// `u16::MAX` is never used (see [`Id::INVALID`]).
     pub const MAX_LEN: usize = u16::MAX as usize;
+
+    /// A slot is parked in the FIFO reserve each time its generation reaches a multiple of
+    /// this (a power of two), so it serves at most this many values in a row (see
+    /// [reuse order](Self#reuse-order-and-generation-budget)).
+    pub const ROTATE_PERIOD: u16 = 4096;
 
     /// An empty arena (no allocation).
     #[must_use]
@@ -176,7 +238,9 @@ impl<T> Arena<T> {
         Arena {
             slots: Vec::new(),
             free: Vec::new(),
+            reserve: VecDeque::new(),
             len: 0,
+            retired: 0,
         }
     }
 
@@ -186,19 +250,22 @@ impl<T> Arena<T> {
         Arena {
             slots: Vec::with_capacity(usize::from(n)),
             free: Vec::new(),
+            reserve: VecDeque::new(),
             len: 0,
+            retired: 0,
         }
     }
 
     /// Stores `v`, returning its handle; [`Error::CapacityExceeded`] when 65 535 values are
     /// live (or every slot is retired).
     pub fn insert(&mut self, v: T) -> Result<Id<T>, Error> {
+        // Hot path: the most recently freed slot (same code as a plain LIFO free list).
         if let Some(index) = self.free.pop() {
-            let slot = &mut self.slots[usize::from(index)];
-            debug_assert!(slot.value.is_none());
-            slot.value = Some(v);
-            self.len += 1;
-            return Ok(Id::new(index, slot.gen_));
+            return Ok(self.fill(index, v));
+        }
+        // The stack is empty: the oldest parked slot, else a new slot.
+        if let Some(index) = self.reserve.pop_front() {
+            return Ok(self.fill(index, v));
         }
         if self.slots.len() >= Self::MAX_LEN {
             crate::warn!(target: "twine::core", "Arena::insert: capacity exceeded ({} live)", self.len);
@@ -220,6 +287,16 @@ impl<T> Arena<T> {
         Ok(Id::new(index, 1))
     }
 
+    /// Stores `v` in the free slot `index`.
+    #[inline(always)]
+    fn fill(&mut self, index: u16, v: T) -> Id<T> {
+        let slot = &mut self.slots[usize::from(index)];
+        debug_assert!(slot.value.is_none());
+        slot.value = Some(v);
+        self.len += 1;
+        Id::new(index, slot.gen_)
+    }
+
     fn slot(&self, id: Id<T>) -> Option<&Slot<T>> {
         self.slots
             .get(usize::from(id.index))
@@ -227,6 +304,9 @@ impl<T> Arena<T> {
     }
 
     /// Removes and returns the value of `id`; `None` if the id is stale or unknown.
+    // `#[inline]`: without the hint the rotation branch tips LLVM into an out-of-line call at
+    // every call site (+5 % on the reactive runtime's scope create/dispose bench).
+    #[inline]
     pub fn remove(&mut self, id: Id<T>) -> Option<T> {
         let slot = self.slots.get_mut(usize::from(id.index))?;
         if slot.gen_ != id.gen_ {
@@ -234,13 +314,32 @@ impl<T> Arena<T> {
         }
         let v = slot.value.take()?;
         self.len -= 1;
-        if slot.gen_ == u16::MAX {
-            crate::debug!(target: "twine::core", "Arena: slot {} retired", id.index);
-        } else {
-            slot.gen_ += 1;
+        // One add and one bit test, as cheap as the old `gen == u16::MAX` check: a generation
+        // that wraps to 0 (retirement) or hits a multiple of ROTATE_PERIOD (parking) takes the
+        // cold path.
+        let next = slot.gen_.wrapping_add(1);
+        if next & (Self::ROTATE_PERIOD - 1) != 0 {
+            slot.gen_ = next;
             self.free.push(id.index);
+        } else {
+            self.park_or_retire(id.index);
         }
         Some(v)
+    }
+
+    /// `remove` of a slot whose generation reaches a multiple of `ROTATE_PERIOD` (parked in
+    /// the reserve) or would wrap (retired).
+    #[cold]
+    #[inline(never)]
+    fn park_or_retire(&mut self, index: u16) {
+        let slot = &mut self.slots[usize::from(index)];
+        if slot.gen_ == u16::MAX {
+            self.retired += 1;
+            crate::debug!(target: "twine::core", "Arena: slot {} retired", index);
+        } else {
+            slot.gen_ += 1;
+            self.reserve.push_back(index);
+        }
     }
 
     /// The value of `id`, if it is live.
@@ -339,6 +438,36 @@ impl<T> Arena<T> {
     pub fn capacity(&self) -> usize {
         self.slots.capacity()
     }
+
+    /// Number of slots in use or ever used (live, free and retired): the high-water mark of
+    /// the slot storage, at most [`capacity`](Self::capacity).
+    #[must_use]
+    pub fn slot_count(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Number of **retired** slots: slots that served all 65 535 generations and are never
+    /// reused (see the [generation budget](Self#generation-budget)). Each one is dead memory
+    /// until the arena is dropped; a non-zero value on a device means the arena's working set
+    /// is too small for its churn.
+    ///
+    /// ```
+    /// use twine_core::Arena;
+    /// let mut a = Arena::new();
+    /// let mut id = a.insert(()).unwrap();
+    /// while id.generation() < u16::MAX {
+    ///     a.remove(id);
+    ///     id = a.insert(()).unwrap();
+    /// }
+    /// assert_eq!(a.retired(), 0);
+    /// a.remove(id);
+    /// assert_eq!(a.retired(), 1);
+    /// ```
+    #[doc(alias = "wear")]
+    #[must_use]
+    pub fn retired(&self) -> usize {
+        usize::from(self.retired)
+    }
 }
 
 #[cfg(test)]
@@ -367,11 +496,12 @@ mod tests {
         let y = a.insert(2).unwrap();
         a.remove(x);
         a.remove(y);
-        // LIFO reuse: y's slot first.
+        // LIFO reuse: y's slot (freed last) first.
         let z = a.insert(3).unwrap();
         assert_eq!((z.index(), z.generation()), (y.index(), 2));
         let w = a.insert(4).unwrap();
         assert_eq!((w.index(), w.generation()), (x.index(), 2));
+        assert_eq!(a.get(x), None);
         assert_eq!(a.get(y), None);
         assert_eq!(a.get(z), Some(&3));
         assert_eq!(a.len(), 2);
@@ -387,11 +517,40 @@ mod tests {
             assert_eq!(id.index(), 0);
         }
         assert_eq!(id.generation(), u16::MAX);
+        assert_eq!(a.retired(), 0);
         a.remove(id).unwrap();
+        assert_eq!(a.retired(), 1);
         let next = a.insert(1).unwrap();
         assert_eq!(next.index(), 1, "retired slot 0 must not be reused");
+        assert_eq!((a.retired(), a.slot_count()), (1, 2));
         assert_eq!(a.get(id), None);
         assert_eq!(a.len(), 1);
+    }
+
+    #[test]
+    fn invalid_id_is_never_handed_out() {
+        // Fill every slot, churn some of them (bumping generations), and check that no handle
+        // ever equals `Id::INVALID` and that it never resolves.
+        let mut a: Arena<()> = Arena::new();
+        let mut ids = Vec::with_capacity(Arena::<()>::MAX_LEN);
+        while let Ok(id) = a.insert(()) {
+            assert_ne!(id, Id::INVALID);
+            ids.push(id);
+        }
+        assert_eq!(ids.len(), Arena::<()>::MAX_LEN);
+        assert!(ids.iter().all(|id| id.index() < u16::MAX && id.generation() >= 1));
+        assert!(!a.contains(Id::INVALID));
+        assert!(a.get(Id::INVALID).is_none());
+        assert!(a.get_mut(Id::INVALID).is_none());
+        assert!(a.remove(Id::INVALID).is_none());
+        for &id in ids.iter().rev().take(64) {
+            a.remove(id);
+            let again = a.insert(()).unwrap();
+            assert_ne!(again, Id::INVALID);
+            assert!(again.generation() >= 1);
+        }
+        assert_eq!(a.len(), Arena::<()>::MAX_LEN);
+        assert!(!a.contains(Id::INVALID));
     }
 
     #[test]

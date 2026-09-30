@@ -6,11 +6,11 @@ use twine_vector::{FxPoint, FxRect, Path, PathEl, Verb};
 
 fn fx(v: f64) -> Fx {
     #[allow(clippy::cast_possible_truncation)]
-    Fx((v * 65536.0).round() as i32)
+    Fx::from_raw((v * 65536.0).round() as i32)
 }
 
 fn near(a: FxPoint, b: FxPoint, lsb: i32) -> bool {
-    (a.x.0 - b.x.0).abs() <= lsb && (a.y.0 - b.y.0).abs() <= lsb
+    (a.x.raw() - b.x.raw()).abs() <= lsb && (a.y.raw() - b.y.raw()).abs() <= lsb
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn arc_to_quarter_circle_endpoint_exact() {
     let mut p = Path::new();
     let end = FxPoint::from_int(0, 100);
     p.move_to(FxPoint::from_int(100, 0));
-    p.arc_to(FxPoint::from_int(100, 100), Angle(0), false, true, end);
+    p.arc_to(FxPoint::from_int(100, 100), Angle::deci_deg(0), false, true, end);
     assert_eq!(p.verbs(), &[Verb::MoveTo, Verb::CubicTo]);
     assert_eq!(p.current_point(), end);
     // Compare with the ideal quarter circle around the origin (clockwise on screen).
@@ -59,13 +59,13 @@ fn arc_to_quarter_circle_endpoint_exact() {
     // The large arc the other way round: 270° → 3 cubics, same end point.
     let mut q = Path::new();
     q.move_to(FxPoint::from_int(100, 0));
-    q.arc_to(FxPoint::from_int(100, 100), Angle(0), true, false, end);
+    q.arc_to(FxPoint::from_int(100, 100), Angle::deci_deg(0), true, false, end);
     assert_eq!(q.verbs().len(), 4);
     assert_eq!(q.current_point(), end);
     // Every curve point stays near the circle of radius 100 around (0, 0).
     for el in &q {
         if let PathEl::CubicTo(_, _, e) = el {
-            let (x, y) = (f64::from(e.x.0) / 65536.0, f64::from(e.y.0) / 65536.0);
+            let (x, y) = (f64::from(e.x.raw()) / 65536.0, f64::from(e.y.raw()) / 65536.0);
             assert!(((x * x + y * y).sqrt() - 100.0).abs() < 0.05, "{x} {y}");
         }
     }
@@ -114,7 +114,8 @@ fn clear_keeps_capacity() {
 }
 
 fn arb_point() -> impl Strategy<Value = FxPoint> {
-    (-20_000_000i32..20_000_000, -20_000_000i32..20_000_000).prop_map(|(x, y)| FxPoint::new(Fx(x), Fx(y)))
+    (-20_000_000i32..20_000_000, -20_000_000i32..20_000_000)
+        .prop_map(|(x, y)| FxPoint::new(Fx::from_raw(x), Fx::from_raw(y)))
 }
 
 proptest! {
@@ -129,7 +130,7 @@ proptest! {
                 1 => { p.line_to(a); }
                 2 => { p.quad_to(a, b); }
                 3 => { p.cubic_to(a, b, c); }
-                4 => { p.arc_to(FxPoint::new(b.x.abs(), b.y.abs()), Angle(c.x.0 % 3600), f1, f2, a); }
+                4 => { p.arc_to(FxPoint::new(b.x.abs(), b.y.abs()), Angle::deci_deg(c.x.raw() % 3600), f1, f2, a); }
                 _ => { p.close(); }
             }
         }
@@ -151,20 +152,23 @@ fn arc_tiny_radii_far_points_do_not_overflow() {
     use twine_vector::{FxPoint, Path};
     for (r, rot) in [(1, 0), (3, 450), (1, -1200), (255, 1)] {
         let mut p = Path::new();
-        p.move_to(FxPoint::new(Fx(i32::MIN / 2), Fx(i32::MAX / 2)));
+        p.move_to(FxPoint::new(
+            Fx::from_raw(i32::MIN / 2),
+            Fx::from_raw(i32::MAX / 2),
+        ));
         p.arc_to(
-            FxPoint::new(Fx(r), Fx(r)),
-            Angle(rot),
+            FxPoint::new(Fx::from_raw(r), Fx::from_raw(r)),
+            Angle::deci_deg(rot),
             true,
             false,
-            FxPoint::new(Fx(i32::MAX / 2), Fx(-7)),
+            FxPoint::new(Fx::from_raw(i32::MAX / 2), Fx::from_raw(-7)),
         );
         p.arc_to(
-            FxPoint::new(Fx(r), Fx(1)),
-            Angle(rot),
+            FxPoint::new(Fx::from_raw(r), Fx::from_raw(1)),
+            Angle::deci_deg(rot),
             false,
             true,
-            FxPoint::new(Fx(0), Fx(i32::MIN / 3)),
+            FxPoint::new(Fx::from_raw(0), Fx::from_raw(i32::MIN / 3)),
         );
         let _ = p.bounds();
     }

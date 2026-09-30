@@ -2,7 +2,7 @@
 
 use alloc::boxed::Box;
 
-use twine_core::{Color, Opa};
+use twine_core::{Color, Fraction, Opa};
 use twine_engine::{DrawCx, Engine, EngineError, NodeId, OBJ_FLAGS, Widget, WidgetClass, WidgetCx};
 use twine_render::{GradStop, Gradient, MAX_STOPS};
 use twine_style::Part;
@@ -10,10 +10,10 @@ use twine_style::Part;
 use crate::log_set;
 use crate::util::{self, log_value};
 
-/// LVGL `LV_LED_BRIGHT_MIN`: the brightness of an LED that is off.
-pub const LED_BRIGHT_MIN: u8 = 80;
-/// LVGL `LV_LED_BRIGHT_MAX`: the brightness of an LED that is on.
-pub const LED_BRIGHT_MAX: u8 = 255;
+/// LVGL `LV_LED_BRIGHT_MIN` (80 of 255): the brightness of an LED that is off.
+pub const LED_BRIGHT_MIN: Fraction = Fraction::from_raw(80);
+/// LVGL `LV_LED_BRIGHT_MAX` (255 of 255): the brightness of an LED that is on.
+pub const LED_BRIGHT_MAX: Fraction = Fraction::ONE;
 /// LVGL `lv_led_class.width_def` / `height_def`: `LV_DPI_DEF / 5`.
 pub const LED_DEFAULT_SIZE: i32 = util::DPI_DEF / 5;
 /// The LED color without a theme: LVGL's default primary color (blue 500). With a theme a new
@@ -67,7 +67,7 @@ impl Led {
     pub const fn new() -> Self {
         Self {
             color: LED_DEFAULT_COLOR,
-            bright: LED_BRIGHT_MAX,
+            bright: LED_BRIGHT_MAX.raw(),
         }
     }
 
@@ -79,14 +79,15 @@ impl Led {
 
     /// The brightness (`LED_BRIGHT_MIN ..= LED_BRIGHT_MAX`).
     #[must_use]
-    pub fn brightness(&self) -> u8 {
-        self.bright
+    pub fn brightness(&self) -> Fraction {
+        Fraction::from_raw(self.bright)
     }
 
     /// Whether the LED is brighter than halfway (LVGL `lv_led_toggle`'s test).
     #[must_use]
     pub fn is_on(&self) -> bool {
-        u16::from(self.bright) > u16::midpoint(u16::from(LED_BRIGHT_MIN), u16::from(LED_BRIGHT_MAX))
+        u16::from(self.bright)
+            > u16::midpoint(u16::from(LED_BRIGHT_MIN.raw()), u16::from(LED_BRIGHT_MAX.raw()))
     }
 
     /// Sets the color. Idempotent.
@@ -99,9 +100,10 @@ impl Led {
         cx.invalidate_for("led.color");
     }
 
-    /// Sets the brightness, clamped to `LED_BRIGHT_MIN ..= LED_BRIGHT_MAX`. Idempotent.
-    pub fn set_brightness(&mut self, cx: &mut WidgetCx<'_>, b: u8) {
-        let b = b.clamp(LED_BRIGHT_MIN, LED_BRIGHT_MAX);
+    /// Sets the brightness, clamped to `LED_BRIGHT_MIN ..= LED_BRIGHT_MAX` (LVGL's 80…255 of
+    /// 255: an LED is never fully black). Idempotent.
+    pub fn set_brightness(&mut self, cx: &mut WidgetCx<'_>, b: Fraction) {
+        let b = b.raw().clamp(LED_BRIGHT_MIN.raw(), LED_BRIGHT_MAX.raw());
         if self.bright == b {
             return;
         }
@@ -132,8 +134,8 @@ impl Led {
 
     /// A style color turned into the LED's color at this brightness.
     fn tint(self, c: Color) -> Color {
-        let c = Color::mix(self.color, Color::BLACK, Opa(color_brightness(c)));
-        Color::mix(c, Color::BLACK, Opa(self.bright))
+        let c = Color::mix(self.color, Color::BLACK, Opa::from_raw(color_brightness(c)));
+        Color::mix(c, Color::BLACK, Opa::from_raw(self.bright))
     }
 }
 
@@ -164,7 +166,7 @@ impl Widget for Led {
         d.bg_color = self.tint(d.bg_color);
         let grad = d.bg_grad.map(|g| {
             let src = g.stops();
-            let mut stops = [GradStop::new(Color::BLACK, 0); MAX_STOPS];
+            let mut stops = [GradStop::new(Color::BLACK, Fraction::ZERO); MAX_STOPS];
             stops[..src.len()].copy_from_slice(src);
             for s in stops.iter_mut().take(2.min(src.len())) {
                 s.color = self.tint(s.color);
@@ -178,8 +180,8 @@ impl Widget for Led {
         d.shadow.color = self.tint(d.shadow.color);
         d.border_color = self.tint(d.border_color);
         d.outline_color = self.tint(d.outline_color);
-        let span = i32::from(LED_BRIGHT_MAX - LED_BRIGHT_MIN);
-        let b = i32::from(self.bright - LED_BRIGHT_MIN);
+        let span = i32::from(LED_BRIGHT_MAX.raw() - LED_BRIGHT_MIN.raw());
+        let b = i32::from(self.bright - LED_BRIGHT_MIN.raw());
         d.shadow.width = b * d.shadow.width / span;
         d.shadow.spread = b * d.shadow.spread / span;
         let area = cx.engine().draw_area(cx.node());

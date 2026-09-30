@@ -53,7 +53,7 @@ impl FxPoint {
     /// Raw 16.16 coordinates as `i64`.
     #[must_use]
     pub(crate) const fn raw(self) -> (i64, i64) {
-        (self.x.0 as i64, self.y.0 as i64)
+        (self.x.raw() as i64, self.y.raw() as i64)
     }
 }
 
@@ -267,7 +267,7 @@ pub(crate) const fn sat(v: i64) -> i32 {
 /// Saturating conversion of raw 16.16 `i64` values into an [`FxPoint`].
 #[inline]
 pub(crate) const fn fxp(x: i64, y: i64) -> FxPoint {
-    FxPoint::new(Fx(sat(x)), Fx(sat(y)))
+    FxPoint::new(Fx::from_raw(sat(x)), Fx::from_raw(sat(y)))
 }
 
 /// `a · b / c` in `i128`, rounded half away from zero, saturated (`c == 0` → 0).

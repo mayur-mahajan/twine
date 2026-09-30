@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use twine_reactive::debug_stats;
+use twine_reactive::runtime_stats;
 use twine_testing::{TestUi, by_class, by_id, by_text};
 use twine_view::prelude::*;
 
@@ -142,11 +142,11 @@ fn regions_release_everything_on_switch() {
     t.run_until_idle_bounded();
     let on = t.root_scope().expect_context::<Signal<bool>>();
     let nodes_on = t.engine().tree().len();
-    let reactive_on = debug_stats().nodes;
+    let reactive_on = runtime_stats().nodes;
     on.set(false);
     t.run_until_idle();
     assert!(t.engine().tree().len() < nodes_on);
-    assert!(debug_stats().nodes < reactive_on);
+    assert!(runtime_stats().nodes < reactive_on);
     assert_eq!(
         t.engine().timer_count(),
         0,
@@ -172,7 +172,7 @@ fn wrappers_pass_drags_and_events_to_their_parent() {
     let mut t = TestUi::new(200, 120).mount(|cx| {
         let items = cx.signal((0..30u32).collect::<Vec<_>>());
         scroll_view(
-            Dir::VER,
+            Axis::Vertical,
             for_each(move || items.get(), |i| *i, |_, i| label(format!("Row {i}"))),
         )
         .size(200, 120)

@@ -11,20 +11,20 @@ static PROPS: [PropId; 4] = [
     PropId::BgColor,
     PropId::TransformScaleX,
     PropId::TransformScaleY,
-    PropId::BgGradDir,
+    PropId::BgGradientDir,
 ];
 static TR: TransitionDsc = TransitionDsc::new(&PROPS, Duration::ms(100), Easing::Linear);
 static BASE: Style = Style::new(&[
     StyleProp::BgColor(Color::RED),
-    StyleProp::BgOpa(Opa::COVER),
+    StyleProp::BgOpacity(Opa::COVER),
     StyleProp::Transition(&TR),
 ]);
 static PRESSED: Style = Style::new(&[
     StyleProp::BgColor(Color::BLUE),
-    StyleProp::TransformScaleX(Scale(320)),
-    StyleProp::TransformScaleY(Scale(320)),
-    StyleProp::BgGradDir(GradDir::Ver),
-    StyleProp::BgGradColor(Color::BLUE),
+    StyleProp::TransformScaleX(Scale::from_raw_256(320)),
+    StyleProp::TransformScaleY(Scale::from_raw_256(320)),
+    StyleProp::BgGradientDir(GradDir::Ver),
+    StyleProp::BgGradientColor(Color::BLUE),
 ]);
 static PRESSED_SAME: Style = Style::new(&[StyleProp::BgColor(Color::RED)]);
 
@@ -58,7 +58,7 @@ fn at(h: &mut EngineHarness, t0: twine_core::Instant, ms: u64) {
 /// Mix of LVGL's `trans_anim_cb` at `ms` of a 100 ms linear transition.
 fn mixed(to: Color, from: Color, ms: u64) -> Color {
     let v = (255 * ((ms * 1024 / 100) as i32)) >> 10;
-    Color::mix(to, from, Opa(v as u8))
+    Color::mix(to, from, Opa::from_raw(v as u8))
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn pressed_bg_color_transitions_over_duration() {
     assert_eq!(bg(&h, b), Color::BLUE);
     assert_eq!(
         h.engine().style_prop(b, Part::Main, PropId::TransformScaleX),
-        StyleValue::Scale(Scale(320))
+        StyleValue::Scale(Scale::from_raw_256(320))
     );
     assert_eq!(h.engine().transition_count(), 0);
     h.run_until_idle();
@@ -113,7 +113,7 @@ fn release_mid_transition_starts_from_current_value() {
 fn non_interpolable_prop_switches_at_end() {
     let (mut h, b) = scene(&PRESSED);
     let t0 = h.now();
-    let dir = |h: &EngineHarness| h.engine().style_prop(b, Part::Main, PropId::BgGradDir);
+    let dir = |h: &EngineHarness| h.engine().style_prop(b, Part::Main, PropId::BgGradientDir);
     h.engine_mut().add_state(b, State::PRESSED);
     h.update();
     assert_eq!(dir(&h), StyleValue::from(GradDir::None));
@@ -268,7 +268,7 @@ fn dsc_for_state_applies_ancestor_recolor_and_own_state_recolor() {
     let e = h.engine_mut();
     let parent = e.tree().parent(b).unwrap();
     e.set_local_prop(parent, Selector::MAIN, StyleProp::Recolor(Color::BLACK));
-    e.set_local_prop(parent, Selector::MAIN, StyleProp::RecolorOpa(Opa::P50));
+    e.set_local_prop(parent, Selector::MAIN, StyleProp::RecolorOpacity(Opa::P50));
     let items = Selector::part(Part::Items);
     e.set_local_prop(b, items, StyleProp::TextColor(Color::WHITE));
     e.set_local_prop(
@@ -279,7 +279,7 @@ fn dsc_for_state_applies_ancestor_recolor_and_own_state_recolor() {
     e.set_local_prop(
         b,
         Selector::state(State::CHECKED),
-        StyleProp::RecolorOpa(Opa::COVER),
+        StyleProp::RecolorOpacity(Opa::COVER),
     );
     let e = h.engine();
     let plain = e.text_dsc_for_state(b, Part::Items, State::DEFAULT, Opa::COVER);

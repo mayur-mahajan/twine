@@ -11,8 +11,7 @@ use twine_render::{
     ArcDsc, BlendMode, BorderSide, GradKind, GradStop, Gradient, ImageDsc, LineDsc, RectDsc, ShadowDsc,
 };
 use twine_style::{
-    BaseDir, GradDir, Length, Part, PropId, ResolveOptions, State, StyleValue, TextAlign, TextDecor,
-    resolve_with,
+    BaseDir, GradDir, Part, PropId, ResolveOptions, State, StyleValue, TextAlign, TextDecor, resolve_with,
 };
 use twine_text::{Font, TextDir, TextDsc};
 
@@ -64,7 +63,7 @@ fn mix32(fg: Color32, bg: Color32) -> Color32 {
         return bg;
     }
     Color32 {
-        color: Color::mix(fg.color, bg.color, Opa(fg.alpha)),
+        color: Color::mix(fg.color, bg.color, Opa::from_raw(fg.alpha)),
         alpha: bg.alpha,
     }
 }
@@ -109,28 +108,25 @@ impl Props<'_> {
     fn get(&self, part: Part, p: PropId) -> StyleValue {
         match self.state {
             None => self.e.style_prop(self.id, part, p),
-            Some(state) => resolve_with(
-                &self.e.tree,
+            Some(state) => self.e.dp_to_px(
                 self.id,
-                part,
-                p,
-                &self.e.style_defaults(),
-                ResolveOptions {
-                    state: Some(state),
-                    skip_transitions: true,
-                },
+                resolve_with(
+                    &self.e.tree,
+                    self.id,
+                    part,
+                    p,
+                    &self.e.style_defaults(),
+                    ResolveOptions {
+                        state: Some(state),
+                        skip_transitions: true,
+                    },
+                ),
             ),
         }
     }
 
     fn i32(&self, part: Part, p: PropId) -> i32 {
-        let v = self.get(part, p);
-        v.as_i32()
-            .or_else(|| match v.as_length() {
-                Some(Length::Px(x)) => Some(x),
-                _ => None,
-            })
-            .unwrap_or(0)
+        self.get(part, p).as_px().unwrap_or(0)
     }
 
     fn color(&self, part: Part, p: PropId) -> Color {
@@ -142,7 +138,7 @@ impl Props<'_> {
     }
 
     fn font(&self, part: Part) -> &'static Font {
-        self.get(part, PropId::TextFont)
+        self.get(part, PropId::Font)
             .get::<&'static Font>()
             .unwrap_or(self.e.style_defaults().font)
     }
@@ -155,7 +151,7 @@ impl Props<'_> {
         } else {
             (
                 self.color(Part::Main, PropId::Recolor),
-                self.opa(Part::Main, PropId::RecolorOpa),
+                self.opa(Part::Main, PropId::RecolorOpacity),
             )
         }
     }
@@ -170,11 +166,17 @@ impl Engine {
         } else {
             (
                 self.style_color(id, part, PropId::Recolor),
-                self.style_opa(id, part, PropId::RecolorOpa),
+                self.style_opa(id, part, PropId::RecolorOpacity),
             )
         };
-        if opa.0 > 0 {
-            over32(c, Color32 { color, alpha: opa.0 })
+        if opa.raw() > 0 {
+            over32(
+                c,
+                Color32 {
+                    color,
+                    alpha: opa.raw(),
+                },
+            )
         } else {
             c
         }
@@ -200,14 +202,23 @@ impl Engine {
         } else {
             (
                 props.color(part, PropId::Recolor),
-                props.opa(part, PropId::RecolorOpa),
+                props.opa(part, PropId::RecolorOpacity),
             )
         };
-        let mut r = Color32 { color, alpha: opa.0 };
+        let mut r = Color32 {
+            color,
+            alpha: opa.raw(),
+        };
         if part != Part::Main {
             let (color, opa) = props.main_recolor();
-            if opa.0 > 0 {
-                r = over32(r, Color32 { color, alpha: opa.0 });
+            if opa.raw() > 0 {
+                r = over32(
+                    r,
+                    Color32 {
+                        color,
+                        alpha: opa.raw(),
+                    },
+                );
             }
         }
         let mut cur = self.tree.parent(id);
@@ -312,7 +323,7 @@ impl Engine {
             } else {
                 (
                     props.color(part, PropId::BgColor),
-                    props.opa(part, PropId::BgOpa),
+                    props.opa(part, PropId::BgOpacity),
                     props.i32(part, PropId::Radius),
                     props.i32(part, PropId::BorderWidth),
                     props.color(part, PropId::BorderColor),
@@ -323,15 +334,15 @@ impl Engine {
             if rc.alpha == 0 {
                 c
             } else {
-                Color::mix(rc.color, c, Opa(rc.alpha))
+                Color::mix(rc.color, c, Opa::from_raw(rc.alpha))
             }
         };
         let o = |p| props.opa(part, p).mul(opa);
         let bg_opa = bg_opa.mul(opa);
-        let bg_grad = props.get(part, PropId::BgGrad).get::<&'static Gradient>();
+        let bg_grad = props.get(part, PropId::BgGradient).get::<&'static Gradient>();
         let simple_grad = if bg_grad.is_none() && !bg_opa.is_transparent() {
             let kind = match props
-                .get(part, PropId::BgGradDir)
+                .get(part, PropId::BgGradientDir)
                 .get::<GradDir>()
                 .unwrap_or_default()
             {
@@ -340,19 +351,19 @@ impl Engine {
                 _ => None,
             };
             kind.map(|k| {
-                let stop = |p| props.i32(part, p).clamp(0, 255) as u8;
+                let stop = |p| twine_core::Fraction::from_raw(props.i32(part, p).clamp(0, 255) as u8);
                 Gradient::new(
                     k,
                     &[
                         GradStop::with_opa(
                             recolor(bg_color),
-                            props.opa(part, PropId::BgMainOpa),
-                            stop(PropId::BgMainStop),
+                            props.opa(part, PropId::BgGradientStartOpacity),
+                            stop(PropId::BgGradientStart),
                         ),
                         GradStop::with_opa(
-                            recolor(props.color(part, PropId::BgGradColor)),
-                            props.opa(part, PropId::BgGradOpa),
-                            stop(PropId::BgGradStop),
+                            recolor(props.color(part, PropId::BgGradientColor)),
+                            props.opa(part, PropId::BgGradientEndOpacity),
+                            stop(PropId::BgGradientEnd),
                         ),
                     ],
                 )
@@ -371,20 +382,23 @@ impl Engine {
             bg_grad,
             border_color: recolor(border_color),
             border_width,
-            border_opa: o(PropId::BorderOpa),
+            border_opa: o(PropId::BorderOpacity),
             border_side,
-            border_post: props.get(part, PropId::BorderPost).as_bool().unwrap_or(false),
+            border_post: props
+                .get(part, PropId::BorderAboveChildren)
+                .as_bool()
+                .unwrap_or(false),
             outline_color: recolor(props.color(part, PropId::OutlineColor)),
             outline_width: props.i32(part, PropId::OutlineWidth),
-            outline_opa: o(PropId::OutlineOpa),
-            outline_pad: props.i32(part, PropId::OutlinePad),
+            outline_opa: o(PropId::OutlineOpacity),
+            outline_pad: props.i32(part, PropId::OutlineOffset),
             shadow: ShadowDsc {
                 width: props.i32(part, PropId::ShadowWidth),
                 ofs_x: props.i32(part, PropId::ShadowOffsetX),
                 ofs_y: props.i32(part, PropId::ShadowOffsetY),
                 spread: props.i32(part, PropId::ShadowSpread),
                 color: recolor(props.color(part, PropId::ShadowColor)),
-                opa: o(PropId::ShadowOpa),
+                opa: o(PropId::ShadowOpacity),
             },
         };
         RectStyle { base, simple_grad }
@@ -401,7 +415,7 @@ impl Engine {
         if rc.alpha == 0 {
             c
         } else {
-            Color::mix(rc.color, c, Opa(rc.alpha))
+            Color::mix(rc.color, c, Opa::from_raw(rc.alpha))
         }
     }
 
@@ -442,19 +456,19 @@ impl Engine {
         d.color = if rc.alpha == 0 {
             c
         } else {
-            Color::mix(rc.color, c, Opa(rc.alpha))
+            Color::mix(rc.color, c, Opa::from_raw(rc.alpha))
         };
-        d.opa = props.opa(part, PropId::TextOpa).mul(opa);
+        d.opa = props.opa(part, PropId::TextOpacity).mul(opa);
         d.align = props
             .get(part, PropId::TextAlign)
             .get::<TextAlign>()
             .unwrap_or(TextAlign::Auto);
         d.decor = props
-            .get(part, PropId::TextDecor)
+            .get(part, PropId::TextDecoration)
             .get::<TextDecor>()
             .unwrap_or_default();
-        d.letter_space = props.i32(part, PropId::TextLetterSpace);
-        d.line_space = props.i32(part, PropId::TextLineSpace);
+        d.letter_space = props.i32(part, PropId::LetterSpacing);
+        d.line_space = props.i32(part, PropId::LineSpacing);
         // The inherited base direction (LVGL `lv_obj_get_style_base_dir`); the neutral and
         // weak values are resolved from the text like `Auto`.
         d.base_dir = match props.get(part, PropId::BaseDir).get::<BaseDir>() {
@@ -470,19 +484,25 @@ impl Engine {
     #[must_use]
     pub fn image_dsc(&self, id: NodeId, part: Part, opa: Opa) -> ImageDsc<'static> {
         let color = self.style_color(id, part, PropId::ImageRecolor);
-        let copa = self.style_opa(id, part, PropId::ImageRecolorOpa);
+        let copa = self.style_opa(id, part, PropId::ImageRecolorOpacity);
         let rc = self.recolor_recursive(id, part);
         // LVGL `image_apply_layer_recolor`.
-        let (recolor, recolor_opa) = if copa.0 > 0 && rc.alpha > 0 {
-            let r = over32(rc, Color32 { color, alpha: copa.0 });
-            (r.color, Opa(r.alpha))
+        let (recolor, recolor_opa) = if copa.raw() > 0 && rc.alpha > 0 {
+            let r = over32(
+                rc,
+                Color32 {
+                    color,
+                    alpha: copa.raw(),
+                },
+            );
+            (r.color, Opa::from_raw(r.alpha))
         } else if rc.alpha > 0 {
-            (rc.color, Opa(rc.alpha))
+            (rc.color, Opa::from_raw(rc.alpha))
         } else {
             (color, copa)
         };
         ImageDsc {
-            opa: self.style_opa(id, part, PropId::ImageOpa).mul(opa),
+            opa: self.style_opa(id, part, PropId::ImageOpacity).mul(opa),
             recolor,
             recolor_opa,
             blend_mode: self.blend_of(id, part),
@@ -499,7 +519,7 @@ impl Engine {
             .unwrap_or(false);
         LineDsc {
             color: self.recolored(id, part, self.style_color(id, part, PropId::LineColor)),
-            opa: self.style_opa(id, part, PropId::LineOpa).mul(opa),
+            opa: self.style_opa(id, part, PropId::LineOpacity).mul(opa),
             width: self.style_i32(id, part, PropId::LineWidth),
             dash_width: self.style_i32(id, part, PropId::LineDashWidth),
             dash_gap: self.style_i32(id, part, PropId::LineDashGap),
@@ -515,7 +535,7 @@ impl Engine {
     pub fn arc_dsc(&self, id: NodeId, part: Part, opa: Opa) -> ArcDsc<'static> {
         ArcDsc {
             color: self.recolored(id, part, self.style_color(id, part, PropId::ArcColor)),
-            opa: self.style_opa(id, part, PropId::ArcOpa).mul(opa),
+            opa: self.style_opa(id, part, PropId::ArcOpacity).mul(opa),
             width: self.style_i32(id, part, PropId::ArcWidth),
             rounded: self
                 .style_prop(id, part, PropId::ArcRounded)
@@ -529,13 +549,19 @@ impl Engine {
     /// The background-image recolor of `part` of `id` combined with the style recolor.
     pub(crate) fn bg_image_recolor(&self, id: NodeId, part: Part) -> (Color, Opa) {
         let color = self.style_color(id, part, PropId::BgImageRecolor);
-        let copa = self.style_opa(id, part, PropId::BgImageRecolorOpa);
+        let copa = self.style_opa(id, part, PropId::BgImageRecolorOpacity);
         let rc = self.recolor_recursive(id, part);
-        if copa.0 > 0 && rc.alpha > 0 {
-            let r = over32(rc, Color32 { color, alpha: copa.0 });
-            (r.color, Opa(r.alpha))
+        if copa.raw() > 0 && rc.alpha > 0 {
+            let r = over32(
+                rc,
+                Color32 {
+                    color,
+                    alpha: copa.raw(),
+                },
+            );
+            (r.color, Opa::from_raw(r.alpha))
         } else if rc.alpha > 0 {
-            (rc.color, Opa(rc.alpha))
+            (rc.color, Opa::from_raw(rc.alpha))
         } else {
             (color, copa)
         }

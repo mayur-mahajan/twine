@@ -13,7 +13,7 @@ use twine_image::ImageSource;
 use twine_style::{Part, PropId};
 use twine_testing::EngineHarness;
 use twine_testing::MemoryDisplay;
-use twine_text::{LongMode, symbols};
+use twine_text::{LongMode, Symbol};
 use twine_widgets::label::Label;
 use twine_widgets_ext::window::{self, Window};
 
@@ -23,9 +23,9 @@ fn scene(mode: Mode) -> (EngineHarness, NodeId, NodeId, NodeId) {
     let w = window::create(h.engine_mut(), screen).unwrap();
     let (title, btn) = with(&mut h, w, |win: &mut Window, cx| {
         let t = win.add_title(cx, "A window with a rather long title").unwrap();
-        win.add_button(cx, ImageSource::Symbol(symbols::LEFT), 40);
+        win.add_button(cx, ImageSource::symbol(Symbol::Left), 40);
         let b = win
-            .add_button(cx, ImageSource::Symbol(symbols::CLOSE), 60)
+            .add_button(cx, ImageSource::symbol(Symbol::Close), 60)
             .unwrap();
         (t, b)
     });
@@ -132,16 +132,16 @@ fn window_theme_styles() {
         twine_theme::default::colors::LIGHT_GREY
     );
     assert_eq!(
-        e.style_i32(win.header(), Part::Main, PropId::PadLeft),
-        twine_theme::dpx(2, 130)
+        e.style_i32(win.header(), Part::Main, PropId::PaddingLeft),
+        twine_style::dpx(2, 130)
     );
     assert_eq!(
         e.style_color(win.content(), Part::Main, PropId::BgColor),
         twine_theme::default::colors::LIGHT_SCR
     );
     assert_eq!(
-        e.style_i32(win.content(), Part::Main, PropId::PadLeft),
-        twine_theme::dpx(16, 130)
+        e.style_i32(win.content(), Part::Main, PropId::PaddingLeft),
+        twine_style::dpx(16, 130)
     );
 }
 

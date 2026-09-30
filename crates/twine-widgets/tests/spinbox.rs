@@ -9,7 +9,7 @@ use std::rc::Rc;
 use common::{Mode, get, harness, with};
 use twine_core::{Duration, Point};
 use twine_engine::{EventCode, EventFilter, EventParam, EventResult, Key, MeasureCx, NodeId, State};
-use twine_style::{Align, Dir, Part, PropId};
+use twine_style::{Align, Part, PropId, Side};
 use twine_testing::EngineHarness;
 use twine_widgets::label::Label;
 use twine_widgets::spinbox::{self, SPINBOX_CLASS, Spinbox, format_value};
@@ -62,7 +62,7 @@ fn spinbox_defaults() {
     assert_eq!(w.range(), (-99_999, 99_999));
     assert_eq!((w.digit_count(), w.dec_point_pos(), w.step()), (5, 0, 1));
     assert!(!w.rollover());
-    assert_eq!(w.digit_step_direction(), Dir::RIGHT);
+    assert_eq!(w.digit_step_direction(), Side::Right);
     assert_eq!(text(&h, s), "+00000");
     // The cursor on the last digit, the width LVGL's `LV_DPI_DEF`, one line high.
     assert_eq!(w.textarea().cursor_pos(), 5);

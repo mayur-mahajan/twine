@@ -7,8 +7,8 @@ use twine_core::{Color, ColorFormat, Opa, Rect};
 use twine_render::{AccelResult, DrawAccel, DrawBuf, ImagePixels};
 
 use crate::bits::{
-    AM_MULTIPLY, AM_NO_MODIFY, AM_REPLACE, CM_A8, CM_ARGB8888, CM_L8, CM_RGB565, CM_RGB888, CR_MODE_SHIFT,
-    CR_START, IFCR_ALL, ISR_CAEIF, ISR_CEIF, ISR_ERRORS, MAX_NL, MAX_OFFSET, MAX_PL, MODE_M2M,
+    AM_MULTIPLY, AM_NO_MODIFY, AM_REPLACE, CM_A8, CM_ARGB8888, CM_L8, CM_RGB565, CM_RGB888, CR_ABORT,
+    CR_MODE_SHIFT, CR_START, IFCR_ALL, ISR_CAEIF, ISR_CEIF, ISR_ERRORS, MAX_NL, MAX_OFFSET, MAX_PL, MODE_M2M,
     MODE_M2M_BLEND, MODE_M2M_PFC, MODE_R2M, NLR_PL_SHIFT, PFCCR_ALPHA_SHIFT, PFCCR_AM_SHIFT, PFCCR_CS_SHIFT,
     PFCCR_START,
 };
@@ -93,6 +93,10 @@ struct Fg {
 /// cost exceeds the software path there. Results may differ from the software renderer by ±1
 /// per channel (DMA2D rounds blending differently).
 ///
+/// **Bounded waits**: [`new`](Self::new) polls `CR.START` until the hardware clears it, so a
+/// hung DMA2D (bus fault, clock gated) hangs the renderer. [`with_timeout`](Self::with_timeout)
+/// bounds every wait to a number of register polls; see there for what happens on a timeout.
+///
 /// ```
 /// use twine_accel_stm32::{Dma2d, Reg, bits, mock::MockRegs};
 /// use twine_core::{Color, ColorFormat, Opa, Rect};
@@ -115,7 +119,19 @@ pub struct Dma2d<R: Dma2dRegs> {
     /// Destination range of the running transfer (invalidated from the D-cache when it ends).
     pending: (usize, usize),
     errors: u32,
+    /// Maximum polls of a completion flag (`None`: unbounded).
+    max_polls: Option<u32>,
+    /// A wait timed out: the hardware is not used until `recover`.
+    faulted: bool,
+    /// Timeouts since creation.
+    timeouts: u32,
+    /// Timeouts not yet taken by `take_timeouts`.
+    unreported: u32,
 }
+
+/// A wait for the DMA2D exceeded [`Dma2d::with_timeout`].
+#[derive(Clone, Copy, Debug)]
+struct TimedOut;
 
 impl<R: Dma2dRegs> Dma2d<R> {
     /// Default [`min_px`](Self::min_px): below 256 pixels the software path is faster.
@@ -130,7 +146,83 @@ impl<R: Dma2dRegs> Dma2d<R> {
             min_px: Self::DEFAULT_MIN_PX,
             pending: (0, 0),
             errors: 0,
+            max_polls: None,
+            faulted: false,
+            timeouts: 0,
+            unreported: 0,
         }
+    }
+
+    /// Bounds every wait for the hardware to `max_polls` reads of the completion flag
+    /// (`CR.START`, `FGPFCCR.START` for CLUT loads; at least 1). One poll is one register
+    /// read, so the bound in time is `max_polls` × (read latency + loop), a few tens of
+    /// nanoseconds per poll on a 180 MHz Cortex-M4: pick it well above the longest transfer
+    /// (a full-screen fill), e.g. `1_000_000` polls ≈ tens of milliseconds.
+    ///
+    /// The bound costs nothing while the hardware works: fills still run in the background
+    /// ([`Queued`](AccelResult::Queued)) and the poll loop is the same, with a counter.
+    ///
+    /// On a timeout the transfer is aborted (`CR.ABORT`), the timeout is counted
+    /// ([`timeout_count`](Self::timeout_count), and [`DrawAccel::take_timeouts`]) and the
+    /// accelerator stops using the hardware ([`is_faulted`](Self::is_faulted): every later
+    /// operation is `Unsupported`, i.e. drawn in software) until [`recover`](Self::recover).
+    /// What the aborted transfer should have drawn is lost — for a queued fill the timeout is
+    /// only seen at the next wait, after the painter moved on. Correcting it is the caller's
+    /// job: the engine checks `take_timeouts` after every chunk and, when it is non-zero,
+    /// raises `FaultKind::AccelTimeout` and renders the whole chunk again in software. A
+    /// caller driving a `Painter` itself must do the same.
+    ///
+    /// ```
+    /// use twine_accel_stm32::{Dma2d, mock::MockRegs};
+    /// use twine_core::{Color, ColorFormat, Opa, Rect};
+    /// use twine_render::{AccelResult, DrawAccel, DrawBuf};
+    ///
+    /// let mut dma = Dma2d::new(MockRegs::new().hang()).with_timeout(100);
+    /// let mut px = vec![0u8; 32 * 32 * 2];
+    /// let mut buf = DrawBuf::new_packed(&mut px, ColorFormat::Rgb565, Rect::from_xywh(0, 0, 32, 32)).unwrap();
+    /// let area = Rect::from_xywh(0, 0, 32, 16);
+    /// // The fill is queued as usual; the transfer never ends and the wait gives up.
+    /// assert_eq!(dma.fill(&mut buf, area, Color::RED, Opa::COVER), AccelResult::Queued);
+    /// dma.wait();
+    /// assert!(dma.is_faulted());
+    /// // Everything is drawn in software now (and the fill must be redrawn by the caller).
+    /// assert_eq!(dma.fill(&mut buf, area, Color::RED, Opa::COVER), AccelResult::Unsupported);
+    /// assert_eq!(dma.take_timeouts(), 1);
+    /// dma.recover(); // after resetting the peripheral
+    /// assert!(!dma.is_faulted());
+    /// ```
+    #[must_use]
+    pub fn with_timeout(mut self, max_polls: u32) -> Self {
+        self.max_polls = Some(max_polls.max(1));
+        self
+    }
+
+    /// The bound set with [`with_timeout`](Self::with_timeout) (`None`: waits are unbounded).
+    #[must_use]
+    pub fn timeout(&self) -> Option<u32> {
+        self.max_polls
+    }
+
+    /// Whether a wait timed out: the hardware is not used (every operation is drawn in
+    /// software) until [`recover`](Self::recover).
+    #[must_use]
+    pub fn is_faulted(&self) -> bool {
+        self.faulted
+    }
+
+    /// Number of waits that timed out since creation.
+    #[must_use]
+    pub fn timeout_count(&self) -> u32 {
+        self.timeouts
+    }
+
+    /// Uses the hardware again after a timeout. Reset the peripheral first (e.g. through its
+    /// `RCC` reset bit): Twine cannot tell whether a hung DMA2D works again.
+    pub fn recover(&mut self) {
+        if self.faulted {
+            twine_core::info!(target: "twine::accel", "dma2d: recovered after {} timeouts", self.timeouts);
+        }
+        self.faulted = false;
     }
 
     /// Sets the smallest area (in pixels) handled by the hardware.
@@ -165,26 +257,72 @@ impl<R: Dma2dRegs> Dma2d<R> {
         &self.regs
     }
 
-    /// The register interface, mutably (waits for the running transfer first).
+    /// The register interface, mutably (waits for the running transfer first; bounded by
+    /// [`with_timeout`](Self::with_timeout)).
     pub fn regs_mut(&mut self) -> &mut R {
         self.wait();
         &mut self.regs
     }
 
-    /// Waits for the running transfer and returns the register interface.
+    /// Waits for the running transfer (bounded by [`with_timeout`](Self::with_timeout)) and
+    /// returns the register interface.
     pub fn release(mut self) -> R {
         self.wait();
         self.regs
     }
 
-    /// Spins until `CR.START` clears, then clears all `ISR` flags. Returns the error flags.
-    fn finish(&mut self) -> u32 {
+    /// Polls `reg` until `bit` clears: at most `max_polls` reads when bounded, else until the
+    /// hardware clears it. Returns whether it cleared.
+    fn poll_clear(&mut self, reg: Reg, bit: u32) -> bool {
+        let Some(max) = self.max_polls else {
+            while self.regs.read(reg) & bit != 0 {
+                core::hint::spin_loop();
+            }
+            return true;
+        };
+        for _ in 0..max {
+            if self.regs.read(reg) & bit == 0 {
+                return true;
+            }
+            core::hint::spin_loop();
+        }
+        false
+    }
+
+    /// A wait timed out: aborts the transfer or CLUT load (RM0090 §9.3.9: `CR.ABORT`; START
+    /// is reset with it), clears the flags and stops using the hardware until `recover`.
+    fn abort(&mut self, what: &str) {
+        let cr = self.regs.read(Reg::Cr);
+        self.regs.write(Reg::Cr, cr | CR_ABORT);
+        let stopped = self.poll_clear(Reg::Cr, CR_START);
+        self.regs.write(Reg::Ifcr, IFCR_ALL);
+        if self.busy {
+            let (addr, len) = self.pending;
+            self.regs.clean_invalidate_dcache(addr, len);
+        }
+        self.busy = false;
+        self.faulted = true;
+        self.timeouts = self.timeouts.saturating_add(1);
+        self.unreported = self.unreported.saturating_add(1);
+        twine_core::error!(
+            target: "twine::accel",
+            "dma2d: {} timed out after {} polls (aborted: {}); drawing in software until recover()",
+            what,
+            self.max_polls.unwrap_or(0),
+            stopped
+        );
+    }
+
+    /// Waits until `CR.START` clears, then clears all `ISR` flags. Returns the error flags, or
+    /// [`TimedOut`] (transfer aborted) when the bound of `with_timeout` was exceeded.
+    fn finish(&mut self) -> Result<u32, TimedOut> {
         if !self.busy {
-            return 0;
+            return Ok(0);
         }
         // RM0090 §9.3.9: START is reset by hardware when the transfer completes or on error.
-        while self.regs.read(Reg::Cr) & CR_START != 0 {
-            core::hint::spin_loop();
+        if !self.poll_clear(Reg::Cr, CR_START) {
+            self.abort("transfer");
+            return Err(TimedOut);
         }
         let isr = self.regs.read(Reg::Isr);
         self.regs.write(Reg::Ifcr, IFCR_ALL);
@@ -197,11 +335,14 @@ impl<R: Dma2dRegs> Dma2d<R> {
             self.errors = self.errors.saturating_add(1);
             twine_core::warn!(target: "twine::accel", "dma2d: transfer error, ISR = {:#x}", isr);
         }
-        err
+        Ok(err)
     }
 
     /// The output geometry of `area` in `dst`, or `None` when DMA2D cannot write it.
     fn output(&self, dst: &mut DrawBuf<'_>, area: Rect) -> Option<Out> {
+        if self.faulted {
+            return None; // drawn in software until `recover`
+        }
         if area.area() < u64::from(self.min_px) || !dst.area().contains_rect(&area) || area.is_empty() {
             return None;
         }
@@ -240,7 +381,8 @@ impl<R: Dma2dRegs> Dma2d<R> {
         })
     }
 
-    /// Loads the foreground CLUT (RM0090 §9.3.5) and waits for it. `false` on a CLUT error.
+    /// Loads the foreground CLUT (RM0090 §9.3.5) and waits for it. `false` on a CLUT error or
+    /// a timeout.
     fn load_clut(&mut self, fg: &Fg, addr: usize, entries: u32) -> bool {
         self.regs.clean_dcache(addr, entries as usize * 4);
         self.regs.write(Reg::Fgcmar, addr as u32); // FGCMAR.MA
@@ -249,8 +391,9 @@ impl<R: Dma2dRegs> Dma2d<R> {
             Reg::Fgpfccr,
             fg.cm | ((entries - 1) << PFCCR_CS_SHIFT) | PFCCR_START,
         );
-        while self.regs.read(Reg::Fgpfccr) & PFCCR_START != 0 {
-            core::hint::spin_loop();
+        if !self.poll_clear(Reg::Fgpfccr, PFCCR_START) {
+            self.abort("CLUT load");
+            return false;
         }
         let isr = self.regs.read(Reg::Isr);
         self.regs.write(Reg::Ifcr, IFCR_ALL);
@@ -265,7 +408,9 @@ impl<R: Dma2dRegs> Dma2d<R> {
     /// Programs and starts one transfer. `fg`: foreground (none for register-to-memory);
     /// `ocolr`: output color (register-to-memory only). Returns `false` if nothing was started.
     fn start(&mut self, mode: u32, out: &Out, fg: Option<&Fg>, ocolr: u32) -> bool {
-        self.finish();
+        if self.finish().is_err() {
+            return false;
+        }
         if let Some(fg) = fg {
             self.regs.clean_dcache(fg.addr, fg.len);
             if let Some((addr, entries)) = fg.clut {
@@ -316,11 +461,15 @@ impl<R: Dma2dRegs> Dma2d<R> {
         if !self.start(mode, out, Some(fg), 0) {
             return AccelResult::Unsupported;
         }
-        // A configuration error means nothing was written: let the software path draw.
-        if self.finish() & ISR_CEIF != 0 {
-            AccelResult::Unsupported
-        } else {
-            AccelResult::Done
+        self.completed()
+    }
+
+    /// Waits for the transfer just started: `Done`, or `Unsupported` (drawn in software) after
+    /// a configuration error (nothing was written) or a timeout (aborted).
+    fn completed(&mut self) -> AccelResult {
+        match self.finish() {
+            Ok(err) if err & ISR_CEIF == 0 => AccelResult::Done,
+            _ => AccelResult::Unsupported,
         }
     }
 }
@@ -376,7 +525,7 @@ fn source(src: &ImagePixels<'_>, opa: Opa) -> Option<Fg> {
     if src.data.len() < len || offset > MAX_OFFSET || !aligned(addr, bytes) {
         return None;
     }
-    let alpha = if opa.is_cover() { 255 } else { opa.0 };
+    let alpha = if opa.is_cover() { 255 } else { opa.raw() };
     let am = if src.format == ColorFormat::Xrgb8888 {
         AM_REPLACE // the alpha byte is undefined: use ALPHA (= opa)
     } else if alpha == 255 {
@@ -426,7 +575,7 @@ impl<R: Dma2dRegs> DrawAccel for Dma2d<R> {
             offset: line_bytes - out.w,
             cm: CM_A8,
             am: AM_REPLACE,
-            alpha: opa.0,
+            alpha: opa.raw(),
             color: rgb(color),
             clut: None,
             has_alpha: true,
@@ -496,6 +645,12 @@ impl<R: Dma2dRegs> DrawAccel for Dma2d<R> {
     }
 
     fn wait(&mut self) {
-        self.finish();
+        // A timeout is counted and logged by `finish` and reported through `take_timeouts`:
+        // the caller redraws what the aborted transfer missed.
+        let _ = self.finish();
+    }
+
+    fn take_timeouts(&mut self) -> u32 {
+        core::mem::take(&mut self.unreported)
     }
 }

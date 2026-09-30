@@ -180,7 +180,11 @@ fn symbols_are_merged_and_centered() {
     o.symbols = Symbols::Fa;
     let g = generate(&o, &root()).unwrap();
     let font = load_generated_for_test(&g.data);
-    for &c in twine_text::symbols::ALL {
+    for c in twine_text::Symbol::ALL
+        .iter()
+        .filter(|s| s.is_font_awesome())
+        .map(|s| s.as_char())
+    {
         let (_, info) = font.glyph(c, None).unwrap();
         assert!(info.box_h > 0, "{c:?}");
         // Centered on the line box [-base_line, line_height - base_line].

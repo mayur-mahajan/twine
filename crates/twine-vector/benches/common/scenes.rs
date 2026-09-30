@@ -17,12 +17,12 @@ static STOPS: [GradStop; 2] = [
     GradStop {
         color: Color::hex(0x00FF_E082),
         opa: twine_core::Opa::COVER,
-        frac: 0,
+        frac: twine_core::Fraction::ZERO,
     },
     GradStop {
         color: Color::hex(0x00E6_5100),
         opa: twine_core::Opa::COVER,
-        frac: 255,
+        frac: twine_core::Fraction::ONE,
     },
 ];
 

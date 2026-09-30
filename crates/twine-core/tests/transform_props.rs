@@ -16,7 +16,7 @@ proptest! {
         x in -1000i32..1000,
         y in -1000i32..1000,
     ) {
-        let t = Transform::from_rotate_scale(Angle(angle), Scale(sx), Scale(sy), Point::new(px, py))
+        let t = Transform::from_rotate_scale(Angle::deci_deg(angle), Scale::from_raw_256(sx), Scale::from_raw_256(sy), Point::new(px, py))
             .then(Transform::translate(Fx::from_int(tx), Fx::from_int(ty)));
         let inv = t.invert().expect("scale >= 0.25 is invertible");
         let p = Point::new(x, y);

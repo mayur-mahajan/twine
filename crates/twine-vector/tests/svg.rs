@@ -135,13 +135,13 @@ fn gradient_href_inheritance() {
     assert_eq!(extend, GradExtend::Reflect);
     let s = stops.as_slice();
     assert_eq!(s.len(), 3);
-    assert_eq!((s[0].color, s[0].frac), (Color::RED, 0));
+    assert_eq!((s[0].color, s[0].frac.raw()), (Color::RED, 0));
     assert_eq!(
-        (s[1].color, s[1].opa, s[1].frac),
-        (Color::hex(0x00FF00), Opa(128), 128)
+        (s[1].color, s[1].opa, s[1].frac.raw()),
+        (Color::hex(0x00FF00), Opa::from_raw(128), 128)
     );
     // Offsets never decrease.
-    assert_eq!(s[2].frac, 128);
+    assert_eq!(s[2].frac.raw(), 128);
     // objectBoundingBox: unit square → the rect.
     assert_eq!(transform.map_point(Point::new(1, 1)), Point::new(30, 50));
     let Some(Paint::Radial {
@@ -192,9 +192,9 @@ fn styles_and_strokes() {
     );
     assert_eq!(d.scene.len(), 2);
     let (_, dsc) = d.scene.items().next().unwrap();
-    assert_eq!(dsc.opa, Opa(64));
-    assert_eq!(dsc.fill_opa, Opa(128));
-    assert_eq!(dsc.stroke_opa, Opa(64));
+    assert_eq!(dsc.opa, Opa::from_raw(64));
+    assert_eq!(dsc.fill_opa, Opa::from_raw(128));
+    assert_eq!(dsc.stroke_opa, Opa::from_raw(64));
     assert_eq!(dsc.fill.as_ref().unwrap().1, FillRule::EvenOdd);
     let s = &dsc.stroke.as_ref().unwrap().1;
     assert_eq!(

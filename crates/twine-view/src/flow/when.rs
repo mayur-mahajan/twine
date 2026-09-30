@@ -104,6 +104,9 @@ fn build_switch(
     make: impl Fn(Scope, bool) -> Option<AnyView> + 'static,
 ) -> NodeId {
     let wrapper = cx.create(Wrapper(&WHEN_CLASS));
+    if wrapper == twine_engine::DEAD_NODE {
+        return wrapper; // not created (reported); nothing to keep up to date
+    }
     let scope = cx.scope();
     let memo = scope.memo(cond);
     let content: Rc<RefCell<Option<Scope>>> = Rc::default();

@@ -1,6 +1,6 @@
 //! `cargo xtask nostd`: builds every `no_std` crate for every embedded target (P4, P11).
 
-use crate::util::{R, cargo, has_target, run as run_cmd};
+use crate::util::{R, cargo_ci, has_target, run as run_cmd};
 
 /// Every layered crate except the std-only ones (`twine-sim`, `twine-testing`).
 pub const NOSTD_CRATES: &[&str] = &[
@@ -121,7 +121,7 @@ pub const NO_CAS_TARGETS: &[&str] = &["thumbv6m-none-eabi", "riscv32imc-unknown-
 /// A `cargo` command for building for `target` (with the `portable-atomic` single-core cfg on
 /// targets without compare-and-swap).
 fn target_cargo(target: &str) -> std::process::Command {
-    let mut cmd = cargo();
+    let mut cmd = cargo_ci();
     if NO_CAS_TARGETS.contains(&target) {
         let var = format!(
             "CARGO_TARGET_{}_RUSTFLAGS",

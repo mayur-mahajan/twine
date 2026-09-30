@@ -183,13 +183,13 @@ pub(crate) fn powf(b: f32, e: f32) -> f32 {
 /// `v` as 16.16 fixed point (rounded, saturating; NaN → 0).
 #[inline]
 pub(crate) fn fx(v: f32) -> Fx {
-    Fx(round_i32(v * 65_536.0))
+    Fx::from_raw(round_i32(v * 65_536.0))
 }
 
 /// A `0..=1` fraction as an [`Opa`] (clamped; NaN → transparent).
 #[inline]
 pub(crate) fn opa(v: f32) -> Opa {
-    Opa(round_i32(clamp(v, 0.0, 1.0) * 255.0) as u8)
+    Opa::from_raw(round_i32(clamp(v, 0.0, 1.0) * 255.0) as u8)
 }
 
 /// A `0..=1` color channel as a byte.
@@ -246,10 +246,10 @@ mod tests {
         assert_eq!(floor(-1.5), -2.0);
         assert_eq!(floor(-2.0), -2.0);
         assert_eq!(floor(1e20), 1e20);
-        assert_eq!(fx(1.5), Fx(98_304));
-        assert_eq!(fx(f32::NAN), Fx(0));
-        assert_eq!(fx(1e30), Fx(i32::MAX));
-        assert_eq!(opa(0.5), Opa(128));
+        assert_eq!(fx(1.5), Fx::from_raw(98_304));
+        assert_eq!(fx(f32::NAN), Fx::from_raw(0));
+        assert_eq!(fx(1e30), Fx::from_raw(i32::MAX));
+        assert_eq!(opa(0.5), Opa::from_raw(128));
         assert_eq!(channel(2.0), 255);
     }
 }

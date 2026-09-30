@@ -195,7 +195,7 @@ pub(crate) fn draw_node(
         };
         let layer_area = n.coords().expand(i32::from(base_ext));
         let dsc = LayerDsc {
-            opa: engine.style_opa(id, Part::Main, PropId::OpaLayered),
+            opa: engine.style_opa(id, Part::Main, PropId::Opacity),
             blend_mode: engine
                 .style_prop(id, Part::Main, PropId::BlendMode)
                 .get::<BlendMode>()
@@ -229,7 +229,7 @@ static WARN_MASK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBoo
 fn bitmap_mask(engine: &Engine, id: NodeId) -> Option<Mask<'static>> {
     use core::sync::atomic::Ordering;
     let src = engine
-        .style_prop(id, Part::Main, PropId::BitmapMaskSrc)
+        .style_prop(id, Part::Main, PropId::BitmapMask)
         .get::<&'static twine_image::ImageSource>()?;
     let mask = match src {
         twine_image::ImageSource::Static(img)

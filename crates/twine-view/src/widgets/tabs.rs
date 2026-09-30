@@ -3,7 +3,7 @@
 use alloc::boxed::Box;
 
 use twine_engine::{NodeId, fmt_node_id};
-use twine_style::Dir;
+use twine_style::{Side, Sides};
 use twine_widgets::label::Label;
 use twine_widgets_ext::tabview::Tabview;
 use twine_widgets_ext::tileview::{self, Tile, Tileview};
@@ -33,7 +33,7 @@ fn shown(e: &twine_engine::Engine, node: NodeId) -> bool {
 ///         tab("Home", label("Welcome")),
 ///         tab("Settings", label("Nothing yet")),
 ///     ))
-///     .bar_position(Dir::BOTTOM)
+///     .bar_position(Side::Bottom)
 /// }
 /// # let _ = app;
 /// ```
@@ -64,10 +64,10 @@ pub fn tabview(selected: impl IntoModel<usize>, tabs: impl ViewSeq) -> WidgetVie
 }
 
 impl WidgetView<Tabview> {
-    /// Where the bar is (`Dir::TOP` by default, `BOTTOM`, `LEFT`, `RIGHT`).
+    /// Where the bar is ([`Side::Top`] by default).
     #[must_use]
-    pub fn bar_position(self, dir: impl IntoProp<Dir>) -> Self {
-        self.bind(dir, |t: &mut Tabview, cx, d| t.set_tab_bar_position(cx, d))
+    pub fn bar_position(self, side: impl IntoProp<Side>) -> Self {
+        self.bind(side, |t: &mut Tabview, cx, d| t.set_tab_bar_position(cx, d))
     }
 
     /// The bar's height (top / bottom) or width (left / right).
@@ -121,6 +121,9 @@ impl core::fmt::Debug for TabView {
 impl View for TabView {
     fn build(self, cx: &mut BuildCx<'_>) -> NodeId {
         let tv = cx.parent();
+        if tv == twine_engine::DEAD_NODE {
+            return tv; // the parent failed (reported)
+        }
         let initial = match &self.title {
             TextProp::Static(s) => s,
             _ => "",
@@ -156,23 +159,49 @@ impl View for TabView {
 
 // ---- Tileview -------------------------------------------------------------------------------
 
-/// A 2D grid of full-size [`tile`]s swiped in the directions each tile allows; the
-/// `(column, row)` of the tile in view in `active` (a plain value or a signal kept in sync both
-/// ways).
+/// The position of a [`tile`] in a [`tileview()`] grid: a column and a row (named, so the two
+/// can never be swapped by accident).
+///
+/// ```
+/// use twine_view::TilePos;
+/// let p = TilePos::new(2, 1);
+/// assert_eq!((p.col, p.row), (2, 1));
+/// assert_eq!(TilePos { col: 2, row: 1 }, p);
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TilePos {
+    /// Column (0 = leftmost).
+    pub col: u8,
+    /// Row (0 = top).
+    pub row: u8,
+}
+
+impl TilePos {
+    /// The tile at column `col`, row `row`.
+    #[must_use]
+    pub const fn new(col: u8, row: u8) -> Self {
+        Self { col, row }
+    }
+}
+
+impl crate::model::ModelValue for TilePos {}
+
+/// A 2D grid of full-size [`tile`]s swiped in the directions each tile allows; the position
+/// of the tile in view in `active` (a plain value or a signal kept in sync both ways).
 ///
 /// ```
 /// use twine_view::prelude::*;
 ///
 /// fn app(cx: Scope) -> impl View {
-///     let at = cx.signal((0u8, 0u8));
+///     let at = cx.signal(TilePos::new(0, 0));
 ///     tileview(at, (
-///         tile(0, 0, Dir::RIGHT, label("Swipe left")),
-///         tile(1, 0, Dir::LEFT, label("Swipe right")),
+///         tile(TilePos::new(0, 0), Side::Right, label("Swipe left")),
+///         tile(TilePos::new(1, 0), Side::Left, label("Swipe right")),
 ///     ))
 /// }
 /// # let _ = app;
 /// ```
-pub fn tileview(active: impl IntoModel<(u8, u8)>, tiles: impl ViewSeq) -> WidgetView<Tileview> {
+pub fn tileview(active: impl IntoModel<TilePos>, tiles: impl ViewSeq) -> WidgetView<Tileview> {
     let model = active.into_model();
     widget_view(Tileview::new)
         .children(tiles)
@@ -181,7 +210,7 @@ pub fn tileview(active: impl IntoModel<(u8, u8)>, tiles: impl ViewSeq) -> Widget
                 cx,
                 node,
                 model,
-                |e, n, (col, row): (u8, u8)| {
+                |e, n, TilePos { col, row }: TilePos| {
                     let anim = shown(e, n);
                     let current = e
                         .widget::<Tileview>(n)
@@ -198,19 +227,20 @@ pub fn tileview(active: impl IntoModel<(u8, u8)>, tiles: impl ViewSeq) -> Widget
                     e.widget::<Tileview>(n)
                         .and_then(Tileview::tile_active)
                         .and_then(|t| e.widget::<Tile>(t))
-                        .map_or((0, 0), |t| (t.col(), t.row()))
+                        .map_or(TilePos::default(), |t| TilePos::new(t.col(), t.row()))
                 },
             );
         })
 }
 
-/// A tile of a [`tileview()`] at `(col, row)` that the user may leave in `dirs`, holding
-/// `content`. Outside a tileview it logs `warn!` and builds a plain container.
-pub fn tile(col: u8, row: u8, dirs: Dir, content: impl ViewSeq) -> TileView {
+/// A tile of a [`tileview()`] at `pos` that the user may leave towards `dirs` (one [`Side`]
+/// or a set of [`Sides`], e.g. `Sides::RIGHT | Sides::BOTTOM`), holding `content`. Outside a
+/// tileview it logs `warn!` and builds a plain container.
+pub fn tile(pos: TilePos, dirs: impl Into<Sides>, content: impl ViewSeq) -> TileView {
     TileView {
-        col,
-        row,
-        dirs,
+        col: pos.col,
+        row: pos.row,
+        dirs: dirs.into(),
         content: Box::new(move |cx: &mut BuildCx<'_>| content.build_seq(cx)),
     }
 }
@@ -219,7 +249,7 @@ pub fn tile(col: u8, row: u8, dirs: Dir, content: impl ViewSeq) -> TileView {
 pub struct TileView {
     col: u8,
     row: u8,
-    dirs: Dir,
+    dirs: Sides,
     content: Box<dyn FnOnce(&mut BuildCx<'_>)>,
 }
 
@@ -235,6 +265,9 @@ impl core::fmt::Debug for TileView {
 impl View for TileView {
     fn build(self, cx: &mut BuildCx<'_>) -> NodeId {
         let tv = cx.parent();
+        if tv == twine_engine::DEAD_NODE {
+            return tv; // the parent failed (reported)
+        }
         let t = if cx.engine().widget::<Tileview>(tv).is_some() {
             tileview::add_tile(cx.engine(), tv, self.col, self.row, self.dirs).ok()
         } else {

@@ -13,7 +13,7 @@ use twine_engine::{
 use twine_image::{ImageHeader, ImageSource, with_pixels};
 use twine_render::{BlendMode, RectDsc, transformed_area};
 use twine_style::{Part, PropId, TextAlign};
-use twine_text::TextLayout;
+use twine_text::{Symbol, TextLayout};
 
 use crate::log_set;
 
@@ -84,8 +84,8 @@ impl ImageAlign {
 ///
 /// Its content size is the source's size (untransformed). Rotation and scale happen around
 /// the pivot (default: the image center) with optional anti-aliasing; the widget's extra draw
-/// size covers the transformed bounds. `ImageRecolor` / `ImageRecolorOpa` recolor the pixels
-/// and `ImageOpa` fades them (styles of `Part::Main`). The theme gives images no styles
+/// size covers the transformed bounds. `ImageRecolor` / `ImageRecolorOpacity` recolor the pixels
+/// and `ImageOpacity` fades them (styles of `Part::Main`). The theme gives images no styles
 /// (LVGL).
 ///
 /// ```
@@ -170,7 +170,7 @@ fn draw_missing(cx: &mut DrawCx<'_, '_>, area: Rect) {
     let y = area.y0 + (area.height() - h) / 2;
     cx.draw_text(
         Rect::new(area.x0, y, area.x1, y + h),
-        twine_text::symbols::IMAGE,
+        Symbol::Image.as_str(),
         &dsc,
     );
 }
@@ -200,7 +200,7 @@ impl Image {
             src: None,
             header: None,
             size: Size::ZERO,
-            rotation: Angle(0),
+            rotation: Angle::deci_deg(0),
             scale_x: Scale::ONE,
             scale_y: Scale::ONE,
             pivot: None,
@@ -282,7 +282,9 @@ impl Image {
 
     /// Whether a rotation or scale is in effect.
     fn transformed(&self) -> bool {
-        self.rotation.normalized().0 != 0 || self.scale_x != Scale::ONE || self.scale_y != Scale::ONE
+        self.rotation.normalized().as_deci_deg() != 0
+            || self.scale_x != Scale::ONE
+            || self.scale_y != Scale::ONE
     }
 
     /// The transformed bounds of the widget's area (LVGL `lv_image_buf_get_transformed_area`
@@ -332,7 +334,8 @@ impl Image {
         use twine_vector::DrawParams;
         let natural = Rect::from_xywh(area.x0, area.y0, self.size.w, self.size.h);
         let pivot = Point::new(area.x0 + dsc.pivot.x, area.y0 + dsc.pivot.y);
-        let transformed = dsc.angle.0 != 0 || dsc.scale_x != Scale::ONE || dsc.scale_y != Scale::ONE;
+        let transformed =
+            dsc.angle.as_deci_deg() != 0 || dsc.scale_x != Scale::ONE || dsc.scale_y != Scale::ONE;
         let r = cx.with_clip(clip, |cx| {
             if self.svg_cache {
                 cx.with_svg_images(bytes, |p, doc, icx| {
@@ -355,7 +358,7 @@ impl Image {
                     let params = DrawParams {
                         transform: t,
                         opa: dsc.opa,
-                        recolor: (dsc.recolor_opa.0 > 0).then_some(dsc.recolor),
+                        recolor: (dsc.recolor_opa.raw() > 0).then_some(dsc.recolor),
                     };
                     doc.scene.draw_with(p, &params);
                 })
@@ -448,7 +451,7 @@ impl Image {
     /// alignment scales the image itself. Idempotent.
     pub fn set_rotation(&mut self, cx: &mut WidgetCx<'_>, angle: Angle) {
         let angle = if self.align.transforms() {
-            Angle(0)
+            Angle::deci_deg(0)
         } else {
             angle.normalized()
         };
@@ -485,7 +488,10 @@ impl Image {
     }
 
     fn set_scale_xy(&mut self, cx: &mut WidgetCx<'_>, x: Scale, y: Scale) {
-        let (x, y) = (Scale(x.0.max(1)), Scale(y.0.max(1)));
+        let (x, y) = (
+            Scale::from_raw_256(x.raw_256().max(1)),
+            Scale::from_raw_256(y.raw_256().max(1)),
+        );
         if (x, y) == (self.scale_x, self.scale_y) {
             return;
         }
@@ -590,11 +596,14 @@ impl Image {
         } else {
             (256, 256)
         };
-        let clamp = |v: i32| Scale(u16::try_from(v.clamp(1, i32::from(u16::MAX))).unwrap_or(u16::MAX));
+        let clamp =
+            |v: i32| Scale::from_raw_256(u16::try_from(v.clamp(1, i32::from(u16::MAX))).unwrap_or(u16::MAX));
         let (sx, sy) = (clamp(sx), clamp(sy));
-        if (sx, sy, self.rotation, self.pivot) != (self.scale_x, self.scale_y, Angle(0), Some(Point::ZERO)) {
+        if (sx, sy, self.rotation, self.pivot)
+            != (self.scale_x, self.scale_y, Angle::deci_deg(0), Some(Point::ZERO))
+        {
             self.update_transform(cx, |s| {
-                s.rotation = Angle(0);
+                s.rotation = Angle::deci_deg(0);
                 s.pivot = Some(Point::ZERO);
                 s.scale_x = sx;
                 s.scale_y = sy;
@@ -608,10 +617,10 @@ impl Image {
             return false;
         };
         if h.format.has_alpha()
-            || self.rotation.normalized().0 != 0
+            || self.rotation.normalized().as_deci_deg() != 0
             || self.blend != BlendMode::Normal
             || !cx
-                .style(Part::Main, PropId::ImageOpa)
+                .style(Part::Main, PropId::ImageOpacity)
                 .as_opa()
                 .is_some_and(twine_core::Opa::is_cover)
             || !cx.engine().opa_recursive(cx.node()).is_cover()
@@ -729,7 +738,7 @@ impl Widget for Image {
         let size = self.size;
         let (area, clip) = match self.align {
             ImageAlign::Contain | ImageAlign::Cover => {
-                let s = i32::from(self.scale_x.0);
+                let s = i32::from(self.scale_x.raw_256());
                 let ox = (c.width() - size.w * s / 256) / 2 + self.offset.x;
                 let oy = (c.height() - size.h * s / 256) / 2 + self.offset.y;
                 // Clipped to the widget (the scaled image of `Cover` is larger).
@@ -773,13 +782,13 @@ impl Widget for Image {
 
     /// `AnimProp::Value` animates the rotation (0.1°).
     fn anim_value(&mut self, cx: &mut WidgetCx<'_>, v: i32) {
-        self.set_rotation(cx, Angle(v));
+        self.set_rotation(cx, Angle::deci_deg(v));
     }
 
     /// `AnimProp::Custom(ANIM_SCALE)` animates the scale (256 = 1×).
     fn anim_custom(&mut self, cx: &mut WidgetCx<'_>, id: u16, v: i32) {
         if id == ANIM_SCALE {
-            let s = Scale(u16::try_from(v.clamp(1, i32::from(u16::MAX))).unwrap_or(u16::MAX));
+            let s = Scale::from_raw_256(u16::try_from(v.clamp(1, i32::from(u16::MAX))).unwrap_or(u16::MAX));
             self.set_scale(cx, s);
         }
     }

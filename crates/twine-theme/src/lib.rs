@@ -17,7 +17,8 @@
 //! a theme for. Themes chain like LVGL's `lv_theme_set_parent`: `with_parent` applies another
 //! theme first, so the child theme only adds or overrides styles.
 //!
-//! [`Palette`] is LVGL's material palette with identical values, and [`dpx`] its DPI scaling.
+//! [`Palette`] is LVGL's material palette with identical values; DPI scaling is
+//! [`twine_style::dpx`] (also used by the engine for `Length::dp` values).
 //!
 //! ## Example
 //!
@@ -45,14 +46,12 @@
 extern crate alloc;
 
 pub mod default;
-mod dpx;
 mod mono;
 mod palette;
 mod simple;
 mod theme;
 
 pub use default::{DefaultTheme, DisplaySize, ThemeMode};
-pub use dpx::{DPI_DEF, dpx};
 pub use mono::MonoTheme;
 pub use palette::Palette;
 pub use simple::SimpleTheme;

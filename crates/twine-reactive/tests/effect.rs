@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use twine_reactive::{batch, create_root, debug_stats, flush_effects_with, set_flush_iterations_limit};
+use twine_reactive::{batch, create_root, flush_effects_with, runtime_stats, set_flush_iterations_limit};
 
 fn counter() -> (Rc<Cell<u32>>, Rc<Cell<u32>>) {
     let c = Rc::new(Cell::new(0));
@@ -101,7 +101,7 @@ fn effect_creates_signal_inside() {
     });
     a.set(4);
     assert_eq!(*made.borrow(), [2, 8]);
-    assert_eq!(debug_stats().nodes, 4); // a, effect, two inner signals
+    assert_eq!(runtime_stats().nodes, 4); // a, effect, two inner signals
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn effect_sets_other_signal_triggers_second_effect_in_same_flush() {
     let l2 = log.clone();
     cx.effect(move || l2.borrow_mut().push(format!("e2 {}", b.get())));
     log.borrow_mut().clear();
-    let runs_before = debug_stats().effect_runs;
+    let runs_before = runtime_stats().effect_runs;
     let mut ctx = 0u8;
     batch(|| {
         a.set(2);
@@ -127,7 +127,7 @@ fn effect_sets_other_signal_triggers_second_effect_in_same_flush() {
         // Both effects ran within this one flush.
         assert_eq!(*log.borrow(), ["e1 2", "e2 102"]);
     });
-    assert_eq!(debug_stats().effect_runs - runs_before, 2);
+    assert_eq!(runtime_stats().effect_runs - runs_before, 2);
 }
 
 #[test]
@@ -200,8 +200,13 @@ fn effect_infinite_loop_is_cut_and_logged() {
         a.set(v + 1);
     });
     assert_eq!(runs.get(), 11); // limit + 1
-    assert_eq!(debug_stats().loop_cuts, 1);
-    assert_eq!(debug_stats().pending, 0);
+    assert_eq!(
+        runtime_stats()
+            .faults
+            .get(twine_core::fault::FaultKind::EffectLoopCut),
+        1
+    );
+    assert_eq!(runtime_stats().pending, 0);
     // The runtime is still usable afterwards.
     let (runs2, r2) = counter();
     let b = cx.signal(0);
@@ -229,7 +234,12 @@ fn effect_many_independent_effects_are_not_a_loop() {
     }
     a.set(1);
     assert_eq!(runs.get(), 2 * N);
-    assert_eq!(debug_stats().loop_cuts, 0);
+    assert_eq!(
+        runtime_stats()
+            .faults
+            .get(twine_core::fault::FaultKind::EffectLoopCut),
+        0
+    );
 }
 
 #[test]
@@ -258,7 +268,7 @@ fn effect_disposed_effect_never_runs() {
         e2.dispose();
     });
     assert_eq!(runs2.get(), 1);
-    assert_eq!(debug_stats().pending, 0);
+    assert_eq!(runtime_stats().pending, 0);
 }
 
 #[test]

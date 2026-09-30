@@ -86,7 +86,9 @@ async fn main(_spawner: Spawner) {
         .theme(DefaultTheme::light())
         .build(demo::app);
     if cfg!(not(feature = "no-dma2d")) {
-        let dma2d = twine_accel_stm32::Dma2d::new(twine_accel_stm32::PacRegs::new());
+        // Bounded waits: a hung DMA2D is aborted after ~1M polls (tens of ms at 180 MHz), the
+        // operation is drawn in software and the engine raises `FaultKind::AccelTimeout`.
+        let dma2d = twine_accel_stm32::Dma2d::new(twine_accel_stm32::PacRegs::new()).with_timeout(1_000_000);
         ui.engine_mut().set_accel(Some(Box::new(dma2d)));
     }
     defmt::info!(

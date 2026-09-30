@@ -463,7 +463,7 @@ impl Painter<'_> {
                         if k == 1 {
                             let v = row[qw as usize - 1];
                             if v != 0 {
-                                let o = Opa(udiv255(u32::from(v) * u32::from(sd.opa.0)) as u8);
+                                let o = Opa::from_raw(udiv255(u32::from(v) * u32::from(sd.opa.raw())) as u8);
                                 self.span(&mut sc, y, p0, p1, &paint, o, BlendMode::Normal, None);
                             }
                         } else {

@@ -19,7 +19,7 @@ use twine_engine::{Engine, NodeId};
 use twine_examples::tile::{PALETTE, tile};
 use twine_hal::Key;
 use twine_sim::{SimConfig, run_engine};
-use twine_style::{Align, GridAlign, GridTrack, LayoutKind, Length, Selector, StyleProp};
+use twine_style::{Align, GridAlign, GridSpan, GridTrack, LayoutKind, Length, Radius, Selector, StyleProp};
 
 const ALIGNS: [GridAlign; 7] = [
     GridAlign::Start,
@@ -119,19 +119,17 @@ impl Playground {
     /// Applies everything (idempotent setters: only changes mark the layout).
     fn apply(&self, e: &mut Engine) {
         let (_, cols, rows) = TEMPLATES[self.cfg.template];
-        e.set_grid_dsc_array(self.grid, cols, rows);
+        e.set_grid_tracks(self.grid, cols, rows);
         e.set_grid_align(self.grid, ALIGNS[self.cfg.col_align], ALIGNS[self.cfg.row_align]);
         for (i, c) in self.cells.iter().enumerate() {
             let Some(n) = self.child(e, i) else { continue };
             let (col, row) = ((i % 3) as i32, (i / 3) as i32);
             e.set_grid_cell(
                 n,
+                GridSpan::new(col, c.col_span),
+                GridSpan::new(row, c.row_span),
                 CELL_ALIGNS[c.x_align],
-                col,
-                c.col_span,
                 CELL_ALIGNS[c.y_align],
-                row,
-                c.row_span,
             );
             let w = if i == self.cfg.selected { 2 } else { 0 };
             e.set_local_prop(n, Selector::MAIN, StyleProp::OutlineWidth(w));
@@ -164,30 +162,30 @@ fn scene(e: &mut Engine) -> Playground {
     let d = e.default_display().expect("display");
     let screen = e.active_screen(d).expect("screen");
     e.set_local_prop(screen, Selector::MAIN, StyleProp::BgColor(Color::hex(0xEC_EF_F1)));
-    e.set_local_prop(screen, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+    e.set_local_prop(screen, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
     let grid = e.create(screen, Box::new(twine_engine::Obj)).expect("grid");
     e.set_size(grid, Length::pct(94), Length::pct(92));
     e.align(grid, Align::Center, 0, 0);
     e.set_layout(grid, LayoutKind::Grid);
     for p in [
         StyleProp::BgColor(Color::WHITE),
-        StyleProp::BgOpa(Opa::COVER),
-        StyleProp::Radius(8),
-        StyleProp::BorderWidth(1),
+        StyleProp::BgOpacity(Opa::COVER),
+        StyleProp::Radius(Radius::Px(8)),
+        StyleProp::BorderWidth(Length::Px(1)),
         StyleProp::BorderColor(Color::hex(0xB0_BE_C5)),
-        StyleProp::PadLeft(8),
-        StyleProp::PadRight(8),
-        StyleProp::PadTop(8),
-        StyleProp::PadBottom(8),
-        StyleProp::PadRow(6),
-        StyleProp::PadColumn(6),
+        StyleProp::PaddingLeft(Length::Px(8)),
+        StyleProp::PaddingRight(Length::Px(8)),
+        StyleProp::PaddingTop(Length::Px(8)),
+        StyleProp::PaddingBottom(Length::Px(8)),
+        StyleProp::RowGap(Length::Px(6)),
+        StyleProp::ColumnGap(Length::Px(6)),
     ] {
         e.set_local_prop(grid, Selector::MAIN, p);
     }
     for (i, label) in LABELS.iter().enumerate() {
         let t = tile(e, grid, *label, Color::hex(PALETTE[i % PALETTE.len()]));
         e.set_local_prop(t, Selector::MAIN, StyleProp::OutlineColor(Color::hex(0x21_21_21)));
-        e.set_local_prop(t, Selector::MAIN, StyleProp::OutlinePad(1));
+        e.set_local_prop(t, Selector::MAIN, StyleProp::OutlineOffset(1));
         // Content-sized with a minimum, so `Content` tracks follow the labels.
         e.set_local_prop(t, Selector::MAIN, StyleProp::MinWidth(Length::Px(24)));
         e.set_local_prop(t, Selector::MAIN, StyleProp::MinHeight(Length::Px(24)));

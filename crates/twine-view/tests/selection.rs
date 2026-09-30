@@ -4,8 +4,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use twine_reactive::debug_stats;
+use twine_reactive::runtime_stats;
 use twine_testing::{TestUi, by_id};
+use twine_view::TextProp;
 use twine_view::prelude::*;
 
 fn node(t: &TestUi, id: &'static str) -> NodeId {
@@ -57,7 +58,12 @@ fn dropdown_view_two_way() {
     t.tap(p);
     t.run_until_idle();
     assert_eq!(sel.get_untracked(), 3);
-    assert_eq!(debug_stats().loop_cuts, 0);
+    assert_eq!(
+        runtime_stats()
+            .faults
+            .get(twine_reactive::FaultKind::EffectLoopCut),
+        0
+    );
     // Signal → widget.
     sel.set(0);
     t.run_until_idle();
@@ -93,12 +99,12 @@ fn dropdown_view_options_signal_keeps_selection() {
 }
 
 #[test]
-fn dropdown_static_view_on_change_and_modifiers() {
+fn dropdown_fixed_list_view_on_change_and_modifiers() {
     let log = Rc::new(RefCell::new(Vec::new()));
     let l = log.clone();
     let mut t = TestUi::new(320, 240).mount(move |_| {
-        dropdown_static("Low\nMedium\nHigh", 0usize)
-            .dir(Dir::RIGHT)
+        dropdown(["Low", "Medium", "High"], 0usize)
+            .dir(Side::Right)
             .text("Level")
             .highlight(false)
             .on_change(move |i| l.borrow_mut().push(i))
@@ -110,13 +116,10 @@ fn dropdown_static_view_on_change_and_modifiers() {
     {
         let e = t.engine();
         let w = e.widget::<Dropdown>(d).unwrap();
-        assert!(matches!(
-            w.options_storage(),
-            twine_widgets_ext::Options::Static(_)
-        ));
+        assert_eq!(w.options(), "Low\nMedium\nHigh");
         assert_eq!(
             (w.dir(), w.text(), w.selected_highlight()),
-            (Dir::RIGHT, Some("Level"), false)
+            (Side::Right, Some("Level"), false)
         );
     }
     t.tap(center_of(&t, d));
@@ -159,7 +162,7 @@ fn roller_view_two_way() {
     let unit = {
         let e = t.engine();
         let m = MeasureCx::new(&e, r);
-        i32::from(m.font(Part::Main).line_height) + m.style_i32(Part::Main, PropId::TextLineSpace)
+        i32::from(m.font(Part::Main).line_height) + m.style_i32(Part::Main, PropId::LineSpacing)
     };
     t.tap(Point::new(c.x, c.y + unit));
     t.run_until_idle();
@@ -170,25 +173,30 @@ fn roller_view_two_way() {
     sel.set(0);
     t.run_until_idle();
     assert_eq!(t.engine().widget::<Roller>(r).unwrap().selected(), 0);
-    assert_eq!(debug_stats().loop_cuts, 0);
+    assert_eq!(
+        runtime_stats()
+            .faults
+            .get(twine_reactive::FaultKind::EffectLoopCut),
+        0
+    );
     t.assert_idle();
 }
 
 #[test]
-fn roller_static_view_on_change() {
+fn roller_fixed_list_view_on_change() {
     let log = Rc::new(RefCell::new(Vec::new()));
     let l = log.clone();
     let mut t = TestUi::new(320, 240).mount(move |_| {
-        roller_static("Red\nGreen\nBlue", 0usize)
+        roller(["Red", "Green", "Blue"], 0usize)
             .on_change(move |i| l.borrow_mut().push(i))
             .test_id("r")
     });
     t.run_until_idle();
     let r = node(&t, "r");
-    assert!(matches!(
-        t.engine().widget::<Roller>(r).unwrap().options_storage(),
-        twine_widgets_ext::Options::Static(_)
-    ));
+    assert_eq!(
+        t.engine().widget::<Roller>(r).unwrap().options(),
+        "Red\nGreen\nBlue"
+    );
     t.engine_mut().focus(r);
     t.key(Key::Down);
     t.key(Key::Enter);
@@ -208,7 +216,7 @@ fn list_view_for_each_reorder_minimal_moves() {
             for_each(
                 move || items.get(),
                 |k| *k,
-                |_, k| list_button(Some(ImageSource::Symbol(symbols::FILE)), format!("Item {k}")),
+                |_, k| list_button(Symbol::File, format!("Item {k}")),
             ),
         ))
         .test_id("list")
@@ -246,7 +254,7 @@ fn list_view_button_click_and_modifiers() {
     let c = clicks.clone();
     let mut t = TestUi::new(320, 240).mount(move |_| {
         list(
-            list_button(None, "Tap me")
+            list_button((), "Tap me")
                 .test_id("b")
                 .on_click(move || c.set(c.get() + 1)),
         )
@@ -266,10 +274,13 @@ fn menu_view_page_refs_resolve_after_build() {
         // The row refers to a page defined after it.
         let display = cx.menu_page_ref();
         menu(menu_page(
-            None,
             menu_cont(label("Display")).loads(display).test_id("row"),
         ))
-        .pages(menu_page(Some("Display"), menu_section(menu_cont(label("Brightness")))).page_ref(display))
+        .pages(
+            menu_page(menu_section(menu_cont(label("Brightness"))))
+                .title("Display")
+                .page_ref(display),
+        )
         .test_id("menu")
     });
     t.run_until_idle();
@@ -293,12 +304,13 @@ fn menu_view_page_refs_resolve_after_build() {
 fn menu_view_sidebar_and_modes() {
     let mut t = TestUi::new(320, 240).mount(|cx| {
         let a = cx.menu_page_ref();
-        menu(menu_page(None, label("Pick a page")))
-            .sidebar(menu_page(
-                Some("Settings"),
-                menu_cont(label("A")).loads(a).test_id("a"),
-            ))
-            .pages(menu_page(Some("A"), (label("Page A"), menu_separator())).page_ref(a))
+        menu(menu_page(label("Pick a page")))
+            .sidebar(menu_page(menu_cont(label("A")).loads(a).test_id("a")).title("Settings"))
+            .pages(
+                menu_page((label("Page A"), menu_separator()))
+                    .title("A")
+                    .page_ref(a),
+            )
             .header_mode(MenuHeaderMode::BottomFixed)
             .root_back_button(false)
             .test_id("menu")
@@ -339,7 +351,7 @@ fn tabview_model_two_way() {
                 tab("Three", label("Third")),
             ),
         )
-        .bar_position(Dir::TOP)
+        .bar_position(Side::Top)
         .animated(false)
         .test_id("tv")
     });
@@ -372,7 +384,12 @@ fn tabview_model_two_way() {
         "Renamed"
     );
     drop(e);
-    assert_eq!(debug_stats().loop_cuts, 0);
+    assert_eq!(
+        runtime_stats()
+            .faults
+            .get(twine_reactive::FaultKind::EffectLoopCut),
+        0
+    );
     t.assert_idle();
 }
 
@@ -390,26 +407,26 @@ fn tab_outside_tabview_warns() {
 #[test]
 fn tileview_model_two_way() {
     let mut t = TestUi::new(240, 200).mount(|cx| {
-        let at = cx.signal((0u8, 0u8));
+        let at = cx.signal(TilePos::new(0, 0));
         cx.provide(at);
         tileview(
             at,
             (
-                tile(0, 0, Dir::RIGHT, label("A")),
-                tile(1, 0, Dir::LEFT | Dir::BOTTOM, label("B")),
-                tile(1, 1, Dir::TOP, label("C")),
+                tile(TilePos::new(0, 0), Side::Right, label("A")),
+                tile(TilePos::new(1, 0), Sides::LEFT | Sides::BOTTOM, label("B")),
+                tile(TilePos::new(1, 1), Side::Top, label("C")),
             ),
         )
         .test_id("tv")
     });
     t.run_until_idle();
-    let at = t.root_scope().expect_context::<Signal<(u8, u8)>>();
+    let at = t.root_scope().expect_context::<Signal<TilePos>>();
     let tv = node(&t, "tv");
     let c = center_of(&t, tv);
     t.drag(c, Point::new(c.x - 150, c.y), Duration::ms(150));
     t.run_until_idle();
-    assert_eq!(at.get_untracked(), (1, 0));
-    at.set((1, 1));
+    assert_eq!(at.get_untracked(), TilePos::new(1, 0));
+    at.set(TilePos::new(1, 1));
     t.run_until_idle();
     let e = t.engine();
     let active = e.widget::<Tileview>(tv).unwrap().tile_active().unwrap();
@@ -426,7 +443,7 @@ fn window_view_builds_header_and_content() {
     let mut t = TestUi::new(320, 240).mount(move |_| {
         window(
             "Title",
-            window_button(ImageSource::Symbol(symbols::CLOSE), 40)
+            window_button(Symbol::Close, 40)
                 .test_id("close")
                 .on_click(move || c.set(c.get() + 1)),
             column((label("Body").test_id("body"),)),
@@ -458,9 +475,9 @@ fn msgbox_view_modal_buttons_and_close() {
     let mut t = TestUi::new(320, 240).mount(move |cx| {
         let p3 = p2.clone();
         let c3 = c2.clone();
-        let h = cx.show_modal(move |_| {
+        let h = cx.show_modal(move |_, _| {
             msgbox("Delete?", "This cannot be undone.")
-                .buttons(&["Yes", "No"])
+                .buttons(["Yes", "No"])
                 .close_button(true)
                 .on_button(move |i| p3.borrow_mut().push(i))
                 .on_close(move || c3.set(true))
@@ -488,4 +505,126 @@ fn msgbox_view_modal_buttons_and_close() {
     assert!(!modal.is_open());
     assert!(t.find_all(twine_testing::by_class("msgbox")).is_empty());
     t.assert_idle();
+}
+
+// ---- Reactive options and translated texts (R1.S03) ---------------------------------------------
+
+/// A two-language table: the text of `key` in language `lang` (0 = English, 1 = German).
+fn tr(lang: usize, key: &'static str) -> &'static str {
+    match (lang, key) {
+        (1, "yes") => "Ja",
+        (1, "no") => "Nein",
+        (1, "low") => "Niedrig",
+        (1, "high") => "Hoch",
+        (_, "yes") => "Yes",
+        (_, "no") => "No",
+        (_, "low") => "Low",
+        (_, "high") => "High",
+        _ => key,
+    }
+}
+
+#[test]
+fn msgbox_buttons_translated_by_text_fn() {
+    let mut t = TestUi::new(320, 240).mount(|cx| {
+        let lang = cx.signal(0usize);
+        cx.provide(lang);
+        let _ = cx.show_modal(move |_, _| {
+            msgbox("?", "Delete?").buttons([
+                text!("{}", tr(lang.get(), "yes")),
+                text!("{}", tr(lang.get(), "no")),
+            ])
+        });
+        label("behind")
+    });
+    t.run_until_idle();
+    let lang = t.root_scope().expect_context::<Signal<usize>>();
+    let labels = |t: &TestUi| -> Vec<String> {
+        let e = t.engine();
+        t.find_all(twine_testing::by_class("msgbox_footer_button"))
+            .iter()
+            .map(|b| {
+                let l = e.tree().children(b.id()).next().unwrap();
+                e.widget::<Label>(l).unwrap().text().to_string()
+            })
+            .collect()
+    };
+    assert_eq!(labels(&t), ["Yes", "No"]);
+    lang.set(1); // outside the Ui: deferred to the next update
+    let runs = runtime_stats().effect_runs;
+    t.run_until_idle();
+    assert_eq!(labels(&t), ["Ja", "Nein"]);
+    assert_eq!(runtime_stats().effect_runs - runs, 2, "one binding per button");
+    t.assert_idle();
+}
+
+#[test]
+fn dropdown_items_are_texts_translated_in_one_binding() {
+    let mut t = TestUi::new(320, 240).mount(|cx| {
+        let lang = cx.signal(0usize);
+        cx.provide(lang);
+        dropdown(
+            [
+                TextProp::StaticFn(Box::new(move || tr(lang.get(), "low"))),
+                TextProp::Static("--"),
+                TextProp::StaticFn(Box::new(move || tr(lang.get(), "high"))),
+            ],
+            2usize,
+        )
+        .test_id("dd")
+    });
+    t.run_until_idle();
+    let lang = t.root_scope().expect_context::<Signal<usize>>();
+    let d = node(&t, "dd");
+    assert_eq!(
+        t.engine().widget::<Dropdown>(d).unwrap().options(),
+        "Low\n--\nHigh"
+    );
+    lang.set(1); // outside the Ui: deferred to the next update
+    let runs = runtime_stats().effect_runs;
+    t.run_until_idle();
+    let e = t.engine();
+    let w = e.widget::<Dropdown>(d).unwrap();
+    assert_eq!(w.options(), "Niedrig\n--\nHoch");
+    assert_eq!(w.selected(), 2, "the selection is kept");
+    assert_eq!(runtime_stats().effect_runs - runs, 1, "one binding for all items");
+}
+
+#[test]
+fn roller_options_from_a_closure_and_a_memo() {
+    let mut t = TestUi::new(320, 240).mount(|cx| {
+        let n = cx.signal(3u32);
+        cx.provide(n);
+        let names = cx.memo(move || (0..n.get()).map(|i| format!("#{i}")).collect::<Vec<_>>());
+        row((
+            roller(
+                move || (0..n.get()).map(|i| i.to_string()).collect::<Vec<_>>(),
+                1usize,
+            )
+            .mode(RollerMode::Infinite)
+            .test_id("closure"),
+            roller(names, 0usize).test_id("memo"),
+            // A fixed list from an iterator.
+            roller((1..=2).map(|i| format!("{i} h")), 0usize).test_id("iter"),
+        ))
+    });
+    t.run_until_idle();
+    let n = t.root_scope().expect_context::<Signal<u32>>();
+    let opts = |t: &TestUi, id| {
+        t.engine()
+            .widget::<Roller>(node(t, id))
+            .unwrap()
+            .options()
+            .to_string()
+    };
+    assert_eq!(opts(&t, "closure"), "0\n1\n2");
+    assert_eq!(opts(&t, "memo"), "#0\n#1\n#2");
+    assert_eq!(opts(&t, "iter"), "1 h\n2 h");
+    n.set(4);
+    t.run_until_idle();
+    assert_eq!(opts(&t, "closure"), "0\n1\n2\n3");
+    assert_eq!(opts(&t, "memo"), "#0\n#1\n#2\n#3");
+    let e = t.engine();
+    let r = e.widget::<Roller>(node(&t, "closure")).unwrap();
+    assert_eq!((r.mode(), r.selected()), (RollerMode::Infinite, 1));
 }

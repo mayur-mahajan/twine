@@ -6,7 +6,7 @@ use twine_engine::{
     DrawCx, Editable, Engine, EngineError, Event, EventCode, EventCx, EventParam, EventResult, GroupDef,
     InputKind, Key, MeasureCx, NodeId, Widget, WidgetClass, WidgetCx,
 };
-use twine_style::{Dir, Length};
+use twine_style::{Length, Side};
 
 use crate::textarea::{self, Textarea};
 use crate::{log_set, util};
@@ -138,7 +138,7 @@ pub struct Spinbox {
     digit_count: u8,
     dec_point_pos: u8,
     step: u32,
-    digit_step_dir: Dir,
+    digit_step_dir: Side,
     rollover: bool,
 }
 
@@ -162,7 +162,7 @@ impl Spinbox {
             digit_count: 5,
             dec_point_pos: 0,
             step: 1,
-            digit_step_dir: Dir::RIGHT,
+            digit_step_dir: Side::Right,
             rollover: false,
         }
     }
@@ -216,7 +216,7 @@ impl Spinbox {
 
     /// The direction the step digit moves on an encoder click.
     #[must_use]
-    pub fn digit_step_direction(&self) -> Dir {
+    pub fn digit_step_direction(&self) -> Side {
         self.digit_step_dir
     }
 
@@ -285,9 +285,9 @@ impl Spinbox {
         }
     }
 
-    /// The direction an encoder click moves the step digit (`Dir::RIGHT` or `Dir::LEFT`;
-    /// LVGL `lv_spinbox_set_digit_step_direction`). Idempotent.
-    pub fn set_digit_step_direction(&mut self, cx: &mut WidgetCx<'_>, dir: Dir) {
+    /// The direction an encoder click moves the step digit ([`Side::Right`] or [`Side::Left`];
+    /// `Top`/`Bottom` act as `Left`; LVGL `lv_spinbox_set_digit_step_direction`). Idempotent.
+    pub fn set_digit_step_direction(&mut self, cx: &mut WidgetCx<'_>, dir: Side) {
         if self.digit_step_dir != dir {
             log_set(SPINBOX_CLASS.name, cx.node(), "digit_step_direction");
             self.digit_step_dir = dir;
@@ -402,7 +402,7 @@ impl Spinbox {
         if encoder && editing {
             if self.digit_count > 1 {
                 let top = pow10(u32::from(self.digit_count) - 1);
-                if self.digit_step_dir == Dir::RIGHT {
+                if self.digit_step_dir == Side::Right {
                     if self.step > 1 {
                         self.step_next(&mut wcx);
                     } else {

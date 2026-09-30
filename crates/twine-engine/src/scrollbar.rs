@@ -7,21 +7,13 @@
 
 use twine_core::{Opa, Rect};
 use twine_render::Painter;
-use twine_style::{Dir, Part, PropId, ScrollbarMode};
+use twine_style::{Part, PropId, ScrollbarMode, Sides};
 
 use crate::draw_cx::AuxRes;
 use crate::{DrawCx, Engine, InvalidateReason, NodeId, ObjFlags};
 
 /// LVGL `LV_OPA_MIN`: parts at or below this opacity are not drawn.
 const OPA_MIN: u8 = 2;
-
-/// LVGL `LV_DPX_CALC(dpi, n)`: `n` pixels at 160 dpi scaled to `dpi` (at least 1).
-fn dpx(dpi: u16, n: i32) -> i32 {
-    if n == 0 {
-        return 0;
-    }
-    ((i32::from(dpi) * n + 80) / 160).max(1)
-}
 
 /// `v · factor / divisor` in 64 bits (LVGL `mul_div`).
 fn mul_div(v: i32, factor: i32, divisor: i32) -> i32 {
@@ -67,32 +59,32 @@ impl Engine {
         let part = Part::Scrollbar;
         let thickness = self.style_i32(id, part, PropId::Width);
         if thickness <= 0
-            || (self.style_opa(id, part, PropId::BgOpa).0 <= OPA_MIN
-                && self.style_opa(id, part, PropId::BorderOpa).0 <= OPA_MIN)
+            || (self.style_opa(id, part, PropId::BgOpacity).raw() <= OPA_MIN
+                && self.style_opa(id, part, PropId::BorderOpacity).raw() <= OPA_MIN)
         {
             return (None, None);
         }
         let (st, sb) = (self.scroll_top(id), self.scroll_bottom(id));
         let (sl, sr) = (self.scroll_left(id), self.scroll_right(id));
         let dir = n.scroll_attrs.dir;
-        let ver_draw = dir.intersects(Dir::VER)
+        let ver_draw = dir.intersects(Sides::VERTICAL)
             && (sm == ScrollbarMode::On
                 || (sm == ScrollbarMode::Auto && (st > 0 || sb > 0))
-                || (sm == ScrollbarMode::Active && indev_dir == Some(Dir::VER)));
-        let hor_draw = dir.intersects(Dir::HOR)
+                || (sm == ScrollbarMode::Active && indev_dir == Some(Sides::VERTICAL)));
+        let hor_draw = dir.intersects(Sides::HORIZONTAL)
             && (sm == ScrollbarMode::On
                 || (sm == ScrollbarMode::Auto && (sl > 0 || sr > 0))
-                || (sm == ScrollbarMode::Active && indev_dir == Some(Dir::HOR)));
+                || (sm == ScrollbarMode::Active && indev_dir == Some(Sides::HORIZONTAL)));
         if !hor_draw && !ver_draw {
             return (None, None);
         }
         let rtl = self.is_rtl(id, part);
-        let top_space = self.style_i32(id, part, PropId::PadTop);
-        let bottom_space = self.style_i32(id, part, PropId::PadBottom);
-        let left_space = self.style_i32(id, part, PropId::PadLeft);
-        let right_space = self.style_i32(id, part, PropId::PadRight);
+        let top_space = self.style_i32(id, part, PropId::PaddingTop);
+        let bottom_space = self.style_i32(id, part, PropId::PaddingBottom);
+        let left_space = self.style_i32(id, part, PropId::PaddingLeft);
+        let right_space = self.style_i32(id, part, PropId::PaddingRight);
         let length = self.style_i32(id, part, PropId::Length);
-        let min_size = dpx(self.display_dpi(id), 10);
+        let min_size = twine_style::dpx(10, self.node_dpi(id));
         let c = n.coords;
         // Inclusive coordinates as in LVGL.
         let (x1, y1, x2, y2) = (c.x0, c.y0, c.x1 - 1, c.y1 - 1);
@@ -185,14 +177,6 @@ impl Engine {
         (hor, ver)
     }
 
-    /// The dpi of the display showing `id` (130 when it is on none).
-    fn display_dpi(&self, id: NodeId) -> u16 {
-        self.display_of(id)
-            .or(self.default_display)
-            .and_then(|d| self.displays.get(d.index()))
-            .map_or(130, |d| d.info.dpi)
-    }
-
     /// Invalidates the strips along the edges of `id` where its scrollbars can be (the
     /// vertical and horizontal track, any length), after its content changed size or place:
     /// the bars' old and new geometry both lie there. Nothing when the node cannot show
@@ -210,9 +194,9 @@ impl Engine {
         if thickness <= 0 {
             return;
         }
-        let pad_l = self.style_i32(id, part, PropId::PadLeft).max(0);
-        let pad_r = self.style_i32(id, part, PropId::PadRight).max(0);
-        let pad_b = self.style_i32(id, part, PropId::PadBottom).max(0);
+        let pad_l = self.style_i32(id, part, PropId::PaddingLeft).max(0);
+        let pad_r = self.style_i32(id, part, PropId::PaddingRight).max(0);
+        let pad_b = self.style_i32(id, part, PropId::PaddingBottom).max(0);
         let ver = if self.is_rtl(id, part) {
             Rect::new(c.x0, c.y0, c.x0 + pad_l + thickness, c.y1)
         } else {
@@ -241,11 +225,11 @@ pub(crate) fn draw_scrollbars(engine: &Engine, p: &mut Painter<'_>, aux: &mut Au
     }
     let cx = DrawCx::new(p, engine, aux, id, opa);
     let rs = cx.rect_dsc(Part::Scrollbar);
-    let part_opa = engine.style_opa(id, Part::Scrollbar, PropId::Opa);
+    let part_opa = engine.style_opa(id, Part::Scrollbar, PropId::PartOpacity);
     let mut d = rs.base;
     d.outline_width = 0;
     d.border_post = false;
-    if part_opa.0 < Opa::COVER.0 {
+    if part_opa.raw() < Opa::COVER.raw() {
         d.bg_opa = d.bg_opa.mul(part_opa);
         d.border_opa = d.border_opa.mul(part_opa);
         d.shadow.opa = d.shadow.opa.mul(part_opa);

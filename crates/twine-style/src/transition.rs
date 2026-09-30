@@ -24,7 +24,7 @@ use crate::value_types::Length;
 /// use twine_style::{PropId, TransitionDsc};
 ///
 /// static FADE: TransitionDsc =
-///     TransitionDsc::new(&[PropId::BgColor, PropId::BgOpa], Duration::ms(200), Easing::EaseOut).delay(Duration::ms(50));
+///     TransitionDsc::new(&[PropId::BgColor, PropId::BgOpacity], Duration::ms(200), Easing::EaseOut).delay(Duration::ms(50));
 /// assert_eq!(FADE.props.len(), 2);
 /// assert_eq!(FADE.delay, Duration::ms(50));
 /// ```
@@ -108,17 +108,17 @@ fn lerp(from: i32, to: i32, t: u8) -> i32 {
 ///
 /// ```
 /// use twine_core::Color;
-/// use twine_style::{PropId, StyleValue, interpolate};
+/// use twine_style::{Length, PropId, StyleValue, interpolate};
 ///
 /// let mid = interpolate(PropId::BgColor, &StyleValue::Color(Color::BLACK), &StyleValue::Color(Color::WHITE), 128);
 /// assert_eq!(mid, StyleValue::Color(Color::hex(0x808080)));
-/// assert_eq!(interpolate(PropId::Radius, &StyleValue::Int(0), &StyleValue::Int(100), 64), StyleValue::Int(25));
+/// assert_eq!(interpolate(PropId::Radius, &StyleValue::Length(Length::Px(0)), &StyleValue::Length(Length::Px(100)), 64), StyleValue::Length(Length::Px(25)));
 /// ```
 #[must_use]
 pub fn interpolate(prop: PropId, from: &StyleValue, to: &StyleValue, t: u8) -> StyleValue {
     use StyleValue as V;
     let switch = || if t == 255 { *to } else { *from };
-    if prop == PropId::ColorFilterDsc {
+    if prop == PropId::ColorFilter {
         return match (from, to) {
             (V::None, _) => *to,
             (_, V::None) => *from,
@@ -130,12 +130,18 @@ pub fn interpolate(prop: PropId, from: &StyleValue, to: &StyleValue, t: u8) -> S
         (V::Color(a), V::Color(b)) => match t {
             0 => V::Color(a),
             255 => V::Color(b),
-            _ => V::Color(Color::mix(b, a, Opa(t))),
+            _ => V::Color(Color::mix(b, a, Opa::from_raw(t))),
         },
         (V::Int(a), V::Int(b)) => V::Int(lerp(a, b, t)),
-        (V::Opa(a), V::Opa(b)) => V::Opa(Opa(lerp(i32::from(a.0), i32::from(b.0), t) as u8)),
-        (V::Angle(a), V::Angle(b)) => V::Angle(Angle(lerp(a.0, b.0, t))),
-        (V::Scale(a), V::Scale(b)) => V::Scale(Scale(lerp(i32::from(a.0), i32::from(b.0), t) as u16)),
+        (V::Opa(a), V::Opa(b)) => V::Opa(Opa::from_raw(
+            lerp(i32::from(a.raw()), i32::from(b.raw()), t) as u8
+        )),
+        (V::Angle(a), V::Angle(b)) => V::Angle(Angle::deci_deg(lerp(a.as_deci_deg(), b.as_deci_deg(), t))),
+        (V::Scale(a), V::Scale(b)) => {
+            V::Scale(Scale::from_raw_256(
+                lerp(i32::from(a.raw_256()), i32::from(b.raw_256()), t) as u16,
+            ))
+        }
         (V::Length(Length::Px(a)), V::Length(Length::Px(b))) => V::Length(Length::Px(lerp(a, b, t))),
         (V::Length(Length::Pct(a)), V::Length(Length::Pct(b))) => {
             V::Length(Length::Pct(lerp(i32::from(a), i32::from(b), t) as i16))
@@ -156,12 +162,12 @@ mod tests {
         assert_eq!(interpolate(PropId::BgColor, &a, &b, 255), b);
         assert_eq!(
             interpolate(PropId::TextColor, &a, &b, 128),
-            StyleValue::Color(Color::mix(Color::BLUE, Color::RED, Opa(128)))
+            StyleValue::Color(Color::mix(Color::BLUE, Color::RED, Opa::from_raw(128)))
         );
         // Every color property mixes (LVGL mixes only its 8 listed color props).
         assert_eq!(
             interpolate(PropId::LineColor, &a, &b, 128),
-            StyleValue::Color(Color::mix(Color::BLUE, Color::RED, Opa(128)))
+            StyleValue::Color(Color::mix(Color::BLUE, Color::RED, Opa::from_raw(128)))
         );
     }
 
@@ -170,7 +176,7 @@ mod tests {
         fn interpolate_int_monotonic(a in -100_000i32..100_000, b in -100_000i32..100_000) {
             let mut prev = a;
             for t in 0..=255u8 {
-                let StyleValue::Int(v) = interpolate(PropId::Radius, &StyleValue::Int(a), &StyleValue::Int(b), t) else {
+                let StyleValue::Length(Length::Px(v)) = interpolate(PropId::Radius, &StyleValue::Length(Length::Px(a)), &StyleValue::Length(Length::Px(b)), t) else {
                     panic!("not an int");
                 };
                 if a <= b { prop_assert!(v >= prev && v <= b); } else { prop_assert!(v <= prev && v >= b); }
@@ -190,30 +196,30 @@ mod tests {
         assert_eq!(lerp(i32::MIN, i32::MAX, 128), -1);
         assert_eq!(
             interpolate(
-                PropId::BgOpa,
-                &StyleValue::Opa(Opa(0)),
-                &StyleValue::Opa(Opa(255)),
+                PropId::BgOpacity,
+                &StyleValue::Opa(Opa::from_raw(0)),
+                &StyleValue::Opa(Opa::from_raw(255)),
                 100
             ),
-            StyleValue::Opa(Opa(99))
+            StyleValue::Opa(Opa::from_raw(99))
         );
         assert_eq!(
             interpolate(
                 PropId::TransformScaleX,
-                &StyleValue::Scale(Scale(256)),
-                &StyleValue::Scale(Scale(512)),
+                &StyleValue::Scale(Scale::from_raw_256(256)),
+                &StyleValue::Scale(Scale::from_raw_256(512)),
                 128
             ),
-            StyleValue::Scale(Scale(384))
+            StyleValue::Scale(Scale::from_raw_256(384))
         );
         assert_eq!(
             interpolate(
                 PropId::TransformRotation,
-                &StyleValue::Angle(Angle(0)),
-                &StyleValue::Angle(Angle(900)),
+                &StyleValue::Angle(Angle::deci_deg(0)),
+                &StyleValue::Angle(Angle::deci_deg(900)),
                 64
             ),
-            StyleValue::Angle(Angle(225))
+            StyleValue::Angle(Angle::deci_deg(225))
         );
     }
 
@@ -222,9 +228,9 @@ mod tests {
         static F1: twine_text::Font = crate::test_util::font(1);
         static F2: twine_text::Font = crate::test_util::font(1);
         let (a, b) = (StyleValue::Font(&F1), StyleValue::Font(&F2));
-        assert!(!is_interpolable(PropId::TextFont));
-        assert_eq!(interpolate(PropId::TextFont, &a, &b, 254), a);
-        assert_eq!(interpolate(PropId::TextFont, &a, &b, 255), b);
+        assert!(!is_interpolable(PropId::Font));
+        assert_eq!(interpolate(PropId::Font, &a, &b, 254), a);
+        assert_eq!(interpolate(PropId::Font, &a, &b, 255), b);
         let (a, b) = (StyleValue::Enum(1), StyleValue::Enum(9));
         assert!(!is_interpolable(PropId::Align));
         assert_eq!(interpolate(PropId::Align, &a, &b, 200), a);
@@ -241,7 +247,7 @@ mod tests {
         assert!(
             is_interpolable(PropId::BgColor)
                 && is_interpolable(PropId::Width)
-                && is_interpolable(PropId::Opa)
+                && is_interpolable(PropId::PartOpacity)
         );
         assert!(is_interpolable(PropId::TransformRotation) && is_interpolable(PropId::TransformScaleY));
     }
@@ -270,10 +276,10 @@ mod tests {
         static F: crate::ColorFilter = crate::ColorFilter::SHADE;
         static G: crate::ColorFilter = crate::ColorFilter::SHADE;
         let (f, g) = (StyleValue::ColorFilter(&F), StyleValue::ColorFilter(&G));
-        assert_eq!(interpolate(PropId::ColorFilterDsc, &StyleValue::None, &f, 0), f);
-        assert_eq!(interpolate(PropId::ColorFilterDsc, &f, &StyleValue::None, 255), f);
-        assert_eq!(interpolate(PropId::ColorFilterDsc, &f, &g, 127), f);
-        assert_eq!(interpolate(PropId::ColorFilterDsc, &f, &g, 128), g);
+        assert_eq!(interpolate(PropId::ColorFilter, &StyleValue::None, &f, 0), f);
+        assert_eq!(interpolate(PropId::ColorFilter, &f, &StyleValue::None, 255), f);
+        assert_eq!(interpolate(PropId::ColorFilter, &f, &g, 127), f);
+        assert_eq!(interpolate(PropId::ColorFilter, &f, &g, 128), g);
     }
 
     #[test]

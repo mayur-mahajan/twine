@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use twine_reactive::{
-    batch, create_root, debug_stats, defer_current_effect, flush_effects_with, has_pending_effects, untrack,
+    batch, create_root, defer_current_effect, flush_effects_with, has_pending_effects, runtime_stats, untrack,
 };
 
 fn counter() -> (Rc<Cell<u32>>, Rc<Cell<u32>>) {
@@ -117,7 +117,7 @@ fn defer_deferred_effect_waits_for_real_context() {
     });
     assert_eq!(plain_runs.get(), 1);
     assert!(has_pending_effects());
-    assert_eq!(debug_stats().deferred, 1);
+    assert_eq!(runtime_stats().deferred, 1);
     // A `()` flush (automatic, after a set) does not run it again.
     a.set(2);
     flush_effects_with(&mut ());
@@ -147,7 +147,7 @@ fn defer_has_pending_reports_deferred() {
     assert!(!has_pending_effects());
     cx.effect(defer_current_effect);
     assert!(has_pending_effects());
-    let st = debug_stats();
+    let st = runtime_stats();
     assert_eq!((st.pending, st.deferred), (0, 1));
     flush_effects_with(&mut 0u8); // runs (and defers) again
     assert!(has_pending_effects());

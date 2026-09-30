@@ -18,7 +18,7 @@ use twine_core::{Color, ColorFormat, Opa, Rect};
 use twine_hal::Key;
 use twine_render::{DrawBuf, Painter, RenderCaches, RenderConfig, SubpxOrder};
 use twine_sim::{SimConfig, SimFrame, show_framebuffer_with_input};
-use twine_text::{Font, GlyphCache, TextAlign, TextDecor, TextDrawFlags, TextDsc, draw_text, symbols};
+use twine_text::{Font, GlyphCache, Symbol, TextAlign, TextDecor, TextDrawFlags, TextDsc, draw_text};
 
 const W: i32 = 480;
 const H: i32 = 320;
@@ -246,7 +246,7 @@ fn page_decor(p: &mut Painter<'_>, c: &mut GlyphCache) {
     p.fill(Rect::from_xywh(0, TOP + 176, W, 118), ACCENT, Opa::COVER);
     for (i, o) in [64u8, 128, 191, 255].into_iter().enumerate() {
         let mut d = TextDsc::new(&MONTSERRAT_20);
-        d.opa = Opa(o);
+        d.opa = Opa::from_raw(o);
         d.color = Color::WHITE;
         let label = format!("Opacity {} %", (u32::from(o) * 100 + 127) / 255);
         draw_text(
@@ -296,10 +296,18 @@ fn page_symbols(p: &mut Painter<'_>, c: &mut GlyphCache) {
     let mut name_dsc = TextDsc::new(&MONTSERRAT_8);
     name_dsc.color = INK;
     name_dsc.flags = TextDrawFlags::EXPAND;
-    for (i, (name, sym)) in symbols::NAMED.iter().enumerate() {
+    for (i, sym) in Symbol::ALL.iter().enumerate() {
+        let name = sym.name();
         let (col, row) = (i as i32 % cols, i as i32 / cols);
         let (x, y) = (col * cw + 4, TOP + 1 + row * ch);
-        text(p, c, &MONTSERRAT_16, ACCENT, Rect::from_xywh(x, y, 22, 22), sym);
+        text(
+            p,
+            c,
+            &MONTSERRAT_16,
+            ACCENT,
+            Rect::from_xywh(x, y, 22, 22),
+            sym.as_str(),
+        );
         draw_text(p, Rect::from_xywh(x + 22, y + 6, cw - 24, 12), name, &name_dsc, c);
     }
 }
@@ -416,7 +424,7 @@ impl Gallery {
         );
         d.align = TextAlign::Right;
         d.font = &MONTSERRAT_12;
-        let nav = format!("{}  {}", symbols::LEFT, symbols::RIGHT);
+        let nav = format!("{}  {}", Symbol::Left, Symbol::Right);
         draw_text(
             &mut p,
             Rect::new(W - 90, 4, W - 8, TOP - 4),

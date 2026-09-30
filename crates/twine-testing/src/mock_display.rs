@@ -159,6 +159,18 @@ pub struct MockFramebufferDisplay {
     presents: Vec<u8>,
     present_delay: u32,
     polls_left: u32,
+    fail_presents: u32,
+}
+
+/// The error of an injected [`MockFramebufferDisplay`] present failure
+/// ([`fail_present_times`](MockFramebufferDisplay::fail_present_times)); its error code is
+/// [`MockPresentError::CODE`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MockPresentError;
+
+impl MockPresentError {
+    /// The code reported by `FramebufferDisplay::error_code`.
+    pub const CODE: u32 = 0xF2;
 }
 
 impl MockFramebufferDisplay {
@@ -173,7 +185,14 @@ impl MockFramebufferDisplay {
             presents: Vec::new(),
             present_delay,
             polls_left: 0,
+            fail_presents: 0,
         }
+    }
+
+    /// Fails the next `n` presents with [`MockPresentError`] (nothing is presented or
+    /// recorded).
+    pub fn fail_present_times(&mut self, n: u32) {
+        self.fail_presents = n;
     }
 
     /// A panel whose framebuffers have the wrong size (for error tests).
@@ -204,7 +223,7 @@ impl MockFramebufferDisplay {
 }
 
 impl FramebufferDisplay for MockFramebufferDisplay {
-    type Error = core::convert::Infallible;
+    type Error = MockPresentError;
 
     fn info(&self) -> DisplayInfo {
         self.info
@@ -215,6 +234,10 @@ impl FramebufferDisplay for MockFramebufferDisplay {
     }
 
     fn present(&mut self, index: u8) -> Result<(), Self::Error> {
+        if self.fail_presents > 0 {
+            self.fail_presents -= 1;
+            return Err(MockPresentError);
+        }
         self.presents.push(index);
         self.polls_left = self.present_delay;
         Ok(())
@@ -226,5 +249,9 @@ impl FramebufferDisplay for MockFramebufferDisplay {
         }
         self.polls_left -= 1;
         false
+    }
+
+    fn error_code(&self, _error: &Self::Error) -> u32 {
+        MockPresentError::CODE
     }
 }

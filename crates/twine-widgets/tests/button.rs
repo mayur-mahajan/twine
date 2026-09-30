@@ -162,7 +162,10 @@ fn button_press_triggers_transition() {
     h.advance(Duration::ms(100));
     let pressed = bg(&h);
     // LVGL `pressed`: black recolor at opacity 35.
-    assert_eq!(pressed, Color::mix(Color::BLACK, normal, twine_core::Opa(35)));
+    assert_eq!(
+        pressed,
+        Color::mix(Color::BLACK, normal, twine_core::Opa::from_raw(35))
+    );
     assert!(
         mid.b < normal.b && mid.b > pressed.b,
         "{normal:?} > {mid:?} > {pressed:?}"

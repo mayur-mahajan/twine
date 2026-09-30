@@ -143,8 +143,8 @@ impl Spinner {
         let t = u16::try_from(v.clamp(0, BEZIER_MAX)).unwrap_or(0);
         let step = START_EASING.value(t, 0, BEZIER_MAX);
         let start = (step * 3600) >> 10;
-        let end = self.sweep.0 + ((v * 3600) >> 10);
-        (Angle(start), Angle(end))
+        let end = self.sweep.as_deci_deg() + ((v * 3600) >> 10);
+        (Angle::deci_deg(start), Angle::deci_deg(end))
     }
 }
 

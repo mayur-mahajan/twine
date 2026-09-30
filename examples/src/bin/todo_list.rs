@@ -31,9 +31,9 @@ fn app(cx: Scope) -> impl View {
             label(text!("{} items", items.with(Vec::len))).test_id("count"),
         ))
         .gap(12)
-        .align_items(FlexAlign::Center),
+        .align_items(CrossAlign::Center),
         scroll_view(
-            Dir::VER,
+            Axis::Vertical,
             for_each(
                 move || items.get(),
                 |it| it.id,
@@ -41,7 +41,7 @@ fn app(cx: Scope) -> impl View {
                     let id = it.id;
                     row((
                         label(it.text).flex_grow(1),
-                        button(label(symbols::UP)).on_click(move || {
+                        button(label(Symbol::Up)).on_click(move || {
                             items.update(|v| {
                                 if let Some(i) = v.iter().position(|x| x.id == id) {
                                     if i > 0 {
@@ -50,11 +50,11 @@ fn app(cx: Scope) -> impl View {
                                 }
                             });
                         }),
-                        button(label(symbols::CLOSE))
+                        button(label(Symbol::Close))
                             .on_click(move || items.update(|v| v.retain(|x| x.id != id))),
                     ))
                     .gap(6)
-                    .align_items(FlexAlign::Center)
+                    .align_items(CrossAlign::Center)
                     .width(Length::pct(100))
                 },
             ),

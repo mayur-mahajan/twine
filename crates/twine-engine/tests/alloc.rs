@@ -5,7 +5,7 @@ mod common;
 
 use twine_core::{Color, Duration, Opa, Rect};
 use twine_engine::{Engine, EngineConfig, InvalidateReason, Obj};
-use twine_style::{GradDir, StyleProp};
+use twine_style::{GradDir, Length, Radius, StyleProp};
 use twine_testing::EngineHarness;
 use twine_testing::alloc::{CountingAllocator, count_allocs};
 use twine_testing::scenes::styled_box;
@@ -44,20 +44,20 @@ fn steady_state_frame_allocates_nothing() {
             let (x, y) = ((i % 10) * 30 + 5, (i / 10) * 45 + 5);
             let mut props = vec![
                 StyleProp::BgColor(Color::hex(0x20_40_80 + i as u32 * 0x0003_0107)),
-                StyleProp::BgOpa(Opa::COVER),
-                StyleProp::Radius(6),
+                StyleProp::BgOpacity(Opa::COVER),
+                StyleProp::Radius(Radius::Px(6)),
             ];
             if i % 3 == 0 {
-                props.extend([StyleProp::ShadowWidth(10), StyleProp::ShadowOpa(Opa::P50)]);
+                props.extend([StyleProp::ShadowWidth(10), StyleProp::ShadowOpacity(Opa::P50)]);
             }
             if i % 4 == 1 {
                 props.extend([
-                    StyleProp::BgGradColor(Color::WHITE),
-                    StyleProp::BgGradDir(GradDir::Ver),
+                    StyleProp::BgGradientColor(Color::WHITE),
+                    StyleProp::BgGradientDir(GradDir::Ver),
                 ]);
             }
             if i % 5 == 2 {
-                props.extend([StyleProp::BorderWidth(2), StyleProp::OutlineWidth(1)]);
+                props.extend([StyleProp::BorderWidth(Length::Px(2)), StyleProp::OutlineWidth(1)]);
             }
             styled_box(e, s, Rect::from_xywh(x, y, 24, 36), &props);
         }
@@ -126,6 +126,61 @@ fn anim_frame_allocates_nothing() {
         }
     });
     assert!(h.last_frame().dirty_px > 0);
+    assert_eq!(
+        (stats.allocs, stats.deallocs, stats.reallocs),
+        (0, 0, 0),
+        "{stats:?}"
+    );
+}
+
+#[test]
+fn input_reads_and_health_transitions_allocate_nothing() {
+    use twine_core::Point;
+    use twine_hal::DeviceHealth;
+    let mut h = EngineHarness::new(100, 100).no_theme().mount_engine(|e| {
+        let s = common::white_screen(e);
+        common::clickable(e, s, Rect::from_xywh(10, 10, 40, 40));
+    });
+    h.run_until_idle();
+    let (id, m) = h.pointer_input();
+    // Warm-up: a tap and one pass through every health state.
+    h.tap(Point::new(20, 20));
+    for health in [
+        DeviceHealth::Degraded { errors: 1 },
+        DeviceHealth::Failed,
+        DeviceHealth::Ok,
+    ] {
+        m.set_health(health);
+        h.engine_mut().notify_input(id);
+        h.update();
+    }
+    h.run_until_idle();
+    let now = h.now();
+    let ((), stats) = count_allocs(|| {
+        // Healthy reads, then a press held when the device degrades and fails, then recovery.
+        m.press(Point::new(20, 20));
+        for health in [
+            DeviceHealth::Ok,
+            DeviceHealth::Degraded { errors: 1 },
+            DeviceHealth::Degraded { errors: 2 },
+            DeviceHealth::Failed,
+            DeviceHealth::Failed,
+            DeviceHealth::Ok,
+        ] {
+            m.set_health(health);
+            h.engine_mut().notify_input(id);
+            h.engine_mut().read_inputs(now);
+        }
+        m.release();
+        h.engine_mut().notify_input(id);
+        h.engine_mut().read_inputs(now);
+    });
+    assert_eq!(
+        h.engine()
+            .fault_counts()
+            .get(twine_core::fault::FaultKind::InputDevice),
+        4
+    );
     assert_eq!(
         (stats.allocs, stats.deallocs, stats.reallocs),
         (0, 0, 0),

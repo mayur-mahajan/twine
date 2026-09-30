@@ -141,12 +141,13 @@ impl Mask<'_> {
                     return MaskResult::FullCover;
                 }
                 let opa = if y <= y_top {
-                    opa_top.0
+                    opa_top.raw()
                 } else if y >= y_bottom {
-                    opa_bottom.0
+                    opa_bottom.raw()
                 } else {
                     let t = i64::from(y - y_top) * 256 / i64::from(y_bottom - y_top);
-                    let v = i64::from(opa_top.0) + (i64::from(opa_bottom.0) - i64::from(opa_top.0)) * t / 256;
+                    let v = i64::from(opa_top.raw())
+                        + (i64::from(opa_bottom.raw()) - i64::from(opa_top.raw())) * t / 256;
                     v.clamp(0, 255) as u8
                 };
                 let a = (area.x0.max(x0) - x0).clamp(0, n) as usize;
@@ -244,20 +245,20 @@ fn apply_radius(
 }
 
 fn apply_angle(center: Point, start: Angle, end: Angle, y: i32, x0: i32, cov: &mut [u8]) -> MaskResult {
-    let span = i64::from(end.0) - i64::from(start.0);
+    let span = i64::from(end.as_deci_deg()) - i64::from(start.as_deci_deg());
     if span >= 3600 {
         return MaskResult::FullCover;
     }
     let s = start.normalized();
     let mut e = end.normalized();
-    if span <= 0 && e.0 == s.0 {
+    if span <= 0 && e.as_deci_deg() == s.as_deci_deg() {
         cov.fill(0);
         return MaskResult::Transparent;
     }
-    if e.0 <= s.0 {
-        e = Angle(e.0 + 3600);
+    if e.as_deci_deg() <= s.as_deci_deg() {
+        e = Angle::deci_deg(e.as_deci_deg() + 3600);
     }
-    let wide = e.0 - s.0 >= 1800;
+    let wide = e.as_deci_deg() - s.as_deci_deg() >= 1800;
     let (cs, ss) = (i64::from(cos(s)), i64::from(sin(s)));
     let (ce, se) = (i64::from(cos(e)), i64::from(sin(e)));
     // Pixel center relative to the vertex, in half pixels.

@@ -25,29 +25,53 @@ const ATAN_TABLE: [i64; 16] = [
     184_320, 108_810, 57_492, 29_184, 14_649, 7331, 3667, 1833, 917, 458, 229, 115, 57, 29, 14, 7,
 ];
 
-/// An angle in tenths of a degree (`Angle(900)` is 90°). Angles grow clockwise on screen
-/// (y points down), like LVGL.
+/// An angle, stored in tenths of a degree. Angles grow clockwise on screen (y points down),
+/// like LVGL.
+///
+/// The field is private: build angles with [`Angle::deg`] (whole degrees) or
+/// [`Angle::deci_deg`] (tenths), so `30°` can never be confused with `3.0°` or `300°`.
+/// The newtype is exactly an `i32` (no runtime cost).
 ///
 /// ```
 /// use twine_core::Angle;
 /// assert_eq!(Angle::deg(-90).normalized(), Angle::deg(270));
-/// assert_eq!(Angle::decideg(455).as_deg(), 45);
+/// assert_eq!(Angle::deci_deg(455).as_deg(), 45);
+/// assert_eq!(Angle::deg(30), Angle::deci_deg(300));
+/// assert_eq!(Angle::deg(30).as_deci_deg(), 300);
+/// ```
+///
+/// A bare number is not an angle:
+///
+/// ```compile_fail
+/// let _ = twine_core::Angle(300); // private field: write Angle::deg(30) or Angle::deci_deg(300)
 /// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Angle(pub i32);
+pub struct Angle(pub(crate) i32);
 
 impl Angle {
+    /// 0°.
+    pub const ZERO: Angle = Angle(0);
+
     /// `d` whole degrees (saturating).
+    #[inline]
     #[must_use]
     pub const fn deg(d: i32) -> Angle {
         Angle(d.saturating_mul(10))
     }
 
-    /// `d` tenths of a degree.
+    /// `d` tenths of a degree (the stored representation).
+    #[inline]
     #[must_use]
-    pub const fn decideg(d: i32) -> Angle {
+    pub const fn deci_deg(d: i32) -> Angle {
         Angle(d)
+    }
+
+    /// The angle in tenths of a degree (the stored representation).
+    #[inline]
+    #[must_use]
+    pub const fn as_deci_deg(self) -> i32 {
+        self.0
     }
 
     /// The equivalent angle in `0..3600`.

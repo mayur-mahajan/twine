@@ -178,16 +178,16 @@ fn put_argb(px: &mut [u8], fg: Color, a: u8, mode: BlendMode) {
     } else {
         mode.color(fg, dc)
     };
-    let (c, out_a) = if a >= Opa::MAX.0 {
+    let (c, out_a) = if a >= Opa::MAX.raw() {
         (fg, 255)
-    } else if da <= Opa::MIN.0 {
+    } else if da <= Opa::MIN.raw() {
         (fg, a)
     } else if da == 255 {
-        (Color::mix(fg, dc, Opa(a)), 255)
+        (Color::mix(fg, dc, Opa::from_raw(a)), 255)
     } else {
         let ra = 255 - udiv255(u32::from(255 - a) * u32::from(255 - da)) as u8;
         let ratio = (u32::from(a) * 255 / u32::from(ra)).min(255) as u8;
-        (Color::mix(fg, dc, Opa(ratio)), ra)
+        (Color::mix(fg, dc, Opa::from_raw(ratio)), ra)
     };
     px[0] = c.b;
     px[1] = c.g;
@@ -202,16 +202,16 @@ fn put<F: PixelFormat>(px: &mut [u8], fg: Color, a: u8, mode: BlendMode) {
         put_argb(px, fg, a, mode);
         return;
     }
-    if mode == BlendMode::Normal && a >= Opa::MAX.0 {
+    if mode == BlendMode::Normal && a >= Opa::MAX.raw() {
         F::write(px, F::from_color(fg));
         return;
     }
     let bg = F::to_color(F::read(px));
     let fg = mode.color(fg, bg);
-    let out = if a >= Opa::MAX.0 {
+    let out = if a >= Opa::MAX.raw() {
         fg
     } else {
-        Color::mix(fg, bg, Opa(a))
+        Color::mix(fg, bg, Opa::from_raw(a))
     };
     F::write(px, F::from_color(out));
 }
@@ -239,7 +239,7 @@ fn mix565(fr: u32, fg: u32, fb: u32, bg: u16, a: u32) -> u16 {
 fn solid<F: PixelFormat>(dst: &mut [u8], n: usize, c: Color, mask: Option<&[u8]>, opa: u8, mode: BlendMode) {
     let raw = F::from_color(c);
     let dst = &mut dst[..n * F::BYTES];
-    if mode == BlendMode::Normal && mask.is_none() && opa >= Opa::MAX.0 {
+    if mode == BlendMode::Normal && mask.is_none() && opa >= Opa::MAX.raw() {
         let mut px = [0u8; 4];
         F::write(&mut px, raw);
         fill_raw(dst, &px[..F::BYTES]);
@@ -255,10 +255,10 @@ fn solid<F: PixelFormat>(dst: &mut [u8], n: usize, c: Color, mask: Option<&[u8]>
         let fg565 = fgc.to_rgb565();
         let (fr, fgn, fb) = (u32::from(fgc.r), u32::from(fgc.g), u32::from(fgc.b));
         let write = |px: &mut [u8], a: u8| {
-            if a <= Opa::MIN.0 {
+            if a <= Opa::MIN.raw() {
                 return;
             }
-            let v = if a >= Opa::MAX.0 {
+            let v = if a >= Opa::MAX.raw() {
                 fg565
             } else {
                 let bg = u16::from_le_bytes([px[0], px[1]]);
@@ -278,7 +278,7 @@ fn solid<F: PixelFormat>(dst: &mut [u8], n: usize, c: Color, mask: Option<&[u8]>
         return;
     }
     let write = |px: &mut [u8], a: u8| {
-        if a > Opa::MIN.0 {
+        if a > Opa::MIN.raw() {
             put::<F>(px, fgc, a, mode);
         }
     };
@@ -298,7 +298,7 @@ fn argb<F: PixelFormat>(dst: &mut [u8], n: usize, src: &[u8], mask: Option<&[u8]
     let src = &src[..n * 4];
     let each = |px: &mut [u8], s: &[u8], m: u8| {
         let a = eff(eff(s[3], m), opa);
-        if a > Opa::MIN.0 {
+        if a > Opa::MIN.raw() {
             put::<F>(px, Color::new(s[2], s[1], s[0]), a, mode);
         }
     };
@@ -327,12 +327,12 @@ fn pixels<F: PixelFormat, S: PixelFormat>(
 ) {
     let dst = &mut dst[..n * F::BYTES];
     let src = &src[..n * S::BYTES];
-    if S::FORMAT == F::FORMAT && mask.is_none() && opa >= Opa::MAX.0 && mode == BlendMode::Normal {
+    if S::FORMAT == F::FORMAT && mask.is_none() && opa >= Opa::MAX.raw() && mode == BlendMode::Normal {
         dst.copy_from_slice(src);
         return;
     }
     let each = |px: &mut [u8], s: &[u8], a: u8| {
-        if a > Opa::MIN.0 {
+        if a > Opa::MIN.raw() {
             put::<F>(px, S::to_color(S::read(s)), a, mode);
         }
     };
@@ -390,7 +390,7 @@ pub fn blend_span<F: PixelFormat>(
     if opa.is_transparent() {
         return;
     }
-    let opa = if opa.is_cover() { 255 } else { opa.0 };
+    let opa = if opa.is_cover() { 255 } else { opa.raw() };
     let mut n = n.min(dst.len() / F::BYTES).min(src.len());
     if let Some(m) = mask {
         n = n.min(m.len());
@@ -460,7 +460,7 @@ fn blend_span_i1(
     if opa.is_transparent() {
         return;
     }
-    let opa = if opa.is_cover() { 255 } else { opa.0 };
+    let opa = if opa.is_cover() { 255 } else { opa.raw() };
     for i in 0..n {
         let m = match mask {
             Some(m) => match m.get(i) {
@@ -471,7 +471,7 @@ fn blend_span_i1(
         };
         let Some((fg, sa)) = source_px(src, i) else { break };
         let a = eff(eff(sa, m), opa);
-        if a <= Opa::MIN.0 {
+        if a <= Opa::MIN.raw() {
             continue;
         }
         let x = bit0 + i;
@@ -481,10 +481,10 @@ fn blend_span_i1(
             Color::BLACK
         };
         let fg = mode.color(fg, bg);
-        let out = if a >= Opa::MAX.0 {
+        let out = if a >= Opa::MAX.raw() {
             fg
         } else {
-            Color::mix(fg, bg, Opa(a))
+            Color::mix(fg, bg, Opa::from_raw(a))
         };
         I1::set(row, x, out.luminance() >= 128);
     }
@@ -518,7 +518,7 @@ pub(crate) fn blend_row(
         #[cfg(not(feature = "color-i1"))]
         {
             let _ = (y, n, src, mask, opa, mode);
-            crate::dispatch::format_disabled(format);
+            crate::dispatch::report_format_disabled(format);
         }
         return;
     }
@@ -544,9 +544,9 @@ pub fn mix_color(fg: Color, bg: Color, a: Opa, mode: BlendMode) -> Color {
         bg
     } else {
         Color::new(
-            mix_channel(fg.r, bg.r, a.0),
-            mix_channel(fg.g, bg.g, a.0),
-            mix_channel(fg.b, bg.b, a.0),
+            mix_channel(fg.r, bg.r, a.raw()),
+            mix_channel(fg.g, bg.g, a.raw()),
+            mix_channel(fg.b, bg.b, a.raw()),
         )
     }
 }
@@ -570,7 +570,7 @@ mod tests {
             let fg = Rgb565::to_color(rng.next_u32() as u16);
             let bg = rng.next_u32() as u16;
             let a = rng.next_u32() as u8;
-            let expect = Rgb565::mix(Rgb565::from_color(fg), bg, Opa(a));
+            let expect = Rgb565::mix(Rgb565::from_color(fg), bg, Opa::from_raw(a));
             let got = mix565(
                 u32::from(fg.r),
                 u32::from(fg.g),

@@ -2,18 +2,12 @@
 
 use alloc::boxed::Box;
 
-use twine_core::{Angle, Color, Insets, Opa, Point, Scale};
+use twine_core::Point;
 use twine_engine::{
     Engine, EventCode, EventCx, EventFilter, EventResult, GroupId, NodeId, ObjFlags, State, Widget,
     fmt_node_id,
 };
-use twine_image::ImageSource;
-use twine_render::{BlendMode, BorderSide, Gradient, ShadowDsc};
-use twine_style::{
-    Align, BaseDir, Dir, GridAlign, Length, ScrollSnap, ScrollbarMode, Selector, Style, StyleProp, StyleRef,
-    TransitionDsc,
-};
-use twine_text::{Font, TextAlign, TextDecor};
+use twine_style::{Anchor, Axis, ScrollSnap, ScrollbarMode, Selector, Side, Style, StyleProp, StyleRef};
 
 use crate::access::EngineAccess;
 use crate::bind::{bind_effect, bind_node};
@@ -29,6 +23,15 @@ fn set_main(e: &mut Engine, node: NodeId, props: &[StyleProp]) {
     }
 }
 
+/// The current value of `p` (a dynamic one is evaluated: its reads are tracked by the running
+/// binding).
+fn current<T: Copy>(p: &Prop<T>) -> T {
+    match p {
+        Prop::Static(v) => *v,
+        Prop::Dynamic(f) => f(),
+    }
+}
+
 /// Wraps a no-argument handler as an engine handler that lends the engine to it.
 fn simple_handler<R>(
     mut f: impl FnMut() -> R + 'static,
@@ -41,25 +44,123 @@ fn simple_handler<R>(
     }
 }
 
-macro_rules! style_mods {
-    ($($(#[$m:meta])* $name:ident: $ty:ty => $variant:ident;)*) => {
+/// One style-property modifier of [`ViewExt`] (see `prop_modifiers!`): `len` properties take any
+/// `Into<Length>` (pixels, `Length::pct`, `Length::dp`, …), `radius` any `Into<Radius>`
+/// (pixels, `Radius::Circle`, …), `dur` any `Into<DurationMs>` (a `Duration`), the others
+/// their payload type.
+macro_rules! prop_modifier {
+    (len $name:ident $key:ident [$($ty:tt)+] [$(#[$m:meta])*]) => {
+        prop_modifier! { into $name $key [$($ty)+] [$(#[$m])*] }
+    };
+    (radius $name:ident $key:ident [$($ty:tt)+] [$(#[$m:meta])*]) => {
+        prop_modifier! { into $name $key [$($ty)+] [$(#[$m])*] }
+    };
+    (dur $name:ident $key:ident [$($ty:tt)+] [$(#[$m:meta])*]) => {
+        prop_modifier! { into $name $key [$($ty)+] [$(#[$m])*] }
+    };
+    (into $name:ident $key:ident [$($ty:tt)+] [$(#[$m:meta])*]) => {
+        $(#[$m])*
+        #[must_use]
+        fn $key<L: ::core::convert::Into<::twine_style::__prop_ty!($($ty)+)> + 'static>(
+            self,
+            v: impl $crate::prop::IntoProp<L>,
+        ) -> Self {
+            self.style_prop(v, |l: L| ::twine_style::StyleProp::$name(::core::convert::Into::into(l)))
+        }
+    };
+    ($kind:ident $name:ident $key:ident [$($ty:tt)+] [$(#[$m:meta])*]) => {
+        $(#[$m])*
+        #[must_use]
+        fn $key(self, v: impl $crate::prop::IntoProp<::twine_style::__prop_ty!($($ty)+)>) -> Self {
+            self.style_prop(v, ::twine_style::StyleProp::$name)
+        }
+    };
+}
+
+/// Generates one modifier per style property from `twine_style::__prop_table!`, named like
+/// the `style!` key and the `StyleBuf` builder method.
+macro_rules! prop_modifiers {
+    (
+        []
         $(
-            $(#[$m])*
-            #[must_use]
-            fn $name(self, v: impl IntoProp<$ty>) -> Self {
-                self.style_prop(v, StyleProp::$variant)
+            $(#[doc = $doc:literal])*
+            $name:ident ( $key:ident ) : $kind:ident [$($ty:tt)+] [ $($flag:ident)* ] $default:ident
+                [ $($alias:literal)* ];
+        )*
+    ) => {
+        $(
+            prop_modifier! {
+                $kind $name $key [$($ty)+]
+                [
+                    $(#[doc = $doc])*
+                    ///
+                    #[doc = ::core::concat!(
+                        "Sets the local `Main` style property [`StyleProp::", ::core::stringify!($name),
+                        "`](::twine_style::StyleProp::", ::core::stringify!($name), ")."
+                    )]
+                    $(#[doc(alias = $alias)])*
+                ]
             }
         )*
     };
 }
 
-macro_rules! length_mods {
-    ($($(#[$m:meta])* $name:ident => $variant:ident;)*) => {
+/// A shorthand parameter: `impl IntoProp<G>` for `len<G>` parameters, else
+/// `impl IntoProp<payload type>`.
+macro_rules! shorthand_param {
+    (len <$g:ident> [$($ty:tt)+]) => { impl $crate::prop::IntoProp<$g> };
+    (span [$($ty:tt)+]) => { impl $crate::prop::IntoGridSpan };
+    ($kind:ident [$($ty:tt)+]) => { impl $crate::prop::IntoProp<::twine_style::__prop_ty!($($ty)+)> };
+}
+
+/// The property of a shorthand parameter: `span` parameters go through
+/// [`IntoGridSpan`](crate::prop::IntoGridSpan), the others are properties already.
+macro_rules! shorthand_arg {
+    (span $p:ident) => {
+        $crate::prop::IntoGridSpan::into_grid_span($p)
+    };
+    ($kind:ident $p:ident) => {
+        $p
+    };
+}
+
+/// Converts a `len` shorthand parameter to a `Length` (other parameters already have their type).
+macro_rules! shorthand_let {
+    (len $p:ident) => {
+        let $p: ::twine_style::Length = ::core::convert::Into::into($p);
+    };
+    ($kind:ident $p:ident) => {};
+}
+
+/// Generates the shorthand modifiers (`padding`, `size`, `border`, …) from
+/// `twine_style::__shorthand_table!`: each parameter is one binding that sets its properties.
+macro_rules! shorthand_modifiers {
+    (
+        []
         $(
-            $(#[$m])*
+            $(#[doc = $doc:literal])*
+            $name:ident (
+                $(
+                    $p:ident : $pk:ident $(<$g:ident>)? [$($pty:tt)+]
+                        => $( $var:ident $( ( $($sel:tt)+ ) )? $( = $c:ident )? ),+
+                );+
+            ) [ $($alias:literal)* ] { $(#[doc = $ex:literal])* };
+        )*
+    ) => {
+        $(
+            $(#[doc = $doc])*
+            $(#[doc(alias = $alias)])*
             #[must_use]
-            fn $name<L: Into<Length> + 'static>(self, v: impl IntoProp<L>) -> Self {
-                self.style_prop(v, |l: L| StyleProp::$variant(l.into()))
+            fn $name<$($($g: ::core::convert::Into<::twine_style::Length> + 'static,)?)+>(
+                self,
+                $( $p: shorthand_param!($pk $(<$g>)? [$($pty)+]) ),+
+            ) -> Self {
+                self $(
+                    .style_props(shorthand_arg!($pk $p), |$p| {
+                        shorthand_let!($pk $p);
+                        [$( ::twine_style::__shorthand_prop!([$var] [$($($sel)+)?] [$($c)?] val $p) ),+]
+                    })
+                )+
             }
         )*
     };
@@ -169,66 +270,41 @@ pub trait ViewExt: View + Sized {
         })
     }
 
-    // ---- Size and position --------------------------------------------------------------
+    // ---- Style properties -----------------------------------------------------------------
+    //
+    // One modifier per style property and one per shorthand, generated from the property
+    // table of `twine-style`: the names are the `style!` keys and the `StyleBuf` builder
+    // methods (see `twine_style::PROPERTIES.md`).
 
-    length_mods! {
-        /// Width (`Px`, `Pct` of the parent's content width, `Content`).
-        width => Width;
-        /// Height.
-        height => Height;
-        /// Minimum width.
-        min_width => MinWidth;
-        /// Maximum width.
-        max_width => MaxWidth;
-        /// Minimum height.
-        min_height => MinHeight;
-        /// Maximum height.
-        max_height => MaxHeight;
-        /// X position relative to the alignment point.
-        x => X;
-        /// Y position relative to the alignment point.
-        y => Y;
-    }
+    ::twine_style::__prop_table!(prop_modifiers);
 
-    /// Width and height.
+    ::twine_style::__shorthand_table!(shorthand_modifiers);
+
+    // ---- Relations --------------------------------------------------------------------------
+
+    /// Places the node relative to the node of `base` (LVGL `lv_obj_align_to`), following it
+    /// when it moves: next to it (`Anchor::BelowLeft`, …) or inside it (an [`Align`](twine_style::Align),
+    /// e.g. `Align::Center`). The reference must be filled (by `.node_ref(base)` on another
+    /// view) before the layout runs; until then the relation is not set. `anchor`, `dx` and
+    /// `dy` may be dynamic.
     #[must_use]
-    fn size<L1: Into<Length> + 'static, L2: Into<Length> + 'static>(
+    fn align_to<W: Widget>(
         self,
-        w: impl IntoProp<L1>,
-        h: impl IntoProp<L2>,
+        base: NodeRef<W>,
+        anchor: impl IntoProp<Anchor>,
+        dx: impl IntoProp<i32>,
+        dy: impl IntoProp<i32>,
     ) -> Self {
-        self.width(w).height(h)
-    }
-
-    /// X and Y position.
-    #[must_use]
-    fn pos<L1: Into<Length> + 'static, L2: Into<Length> + 'static>(
-        self,
-        x: impl IntoProp<L1>,
-        y: impl IntoProp<L2>,
-    ) -> Self {
-        self.x(x).y(y)
-    }
-
-    style_mods! {
-        /// Alignment in the parent (the position becomes an offset from it).
-        align: Align => Align;
-    }
-
-    /// Aligns the node to the node of `base` (LVGL `lv_obj_align_to`), following it when it
-    /// moves. The reference must be filled (by `.node_ref(base)` on another view) before the
-    /// layout runs; until then the relation is not set.
-    #[must_use]
-    fn align_to<W: Widget>(self, base: NodeRef<W>, align: Align, dx: i32, dy: i32) -> Self {
+        let (anchor, dx, dy) = (anchor.into_prop(), dx.into_prop(), dy.into_prop());
         self.op(move |cx, node| {
             let scope = cx.scope();
             cx.provide(|| {
                 bind_effect(
                     scope,
                     node,
-                    move || base.get(),
-                    move |e, n, b: Option<NodeId>| match b {
-                        Some(b) => e.align_to(n, b, align, dx, dy),
+                    move || (base.get(), current(&anchor), current(&dx), current(&dy)),
+                    move |e, n, (b, anchor, dx, dy): (Option<NodeId>, Anchor, i32, i32)| match b {
+                        Some(b) => e.align_to(n, b, anchor, dx, dy),
                         None => twine_core::debug!(
                             target: "twine::view",
                             "align_to of {}: reference not filled yet",
@@ -238,261 +314,6 @@ pub trait ViewExt: View + Sized {
                 );
             });
         })
-    }
-
-    /// Translation after layout (`TranslateX`, `TranslateY`).
-    #[must_use]
-    fn translate<L1: Into<Length> + 'static, L2: Into<Length> + 'static>(
-        self,
-        x: impl IntoProp<L1>,
-        y: impl IntoProp<L2>,
-    ) -> Self {
-        self.style_prop(x, |v: L1| StyleProp::TranslateX(v.into()))
-            .style_prop(y, |v: L2| StyleProp::TranslateY(v.into()))
-    }
-
-    /// Translation after layout as one point (handy to bind to an animated `Point`).
-    #[must_use]
-    fn offset(self, p: impl IntoProp<Point>) -> Self {
-        self.style_props(p, |p: Point| {
-            [
-                StyleProp::TranslateX(Length::Px(p.x)),
-                StyleProp::TranslateY(Length::Px(p.y)),
-            ]
-        })
-    }
-
-    // ---- Spacing ------------------------------------------------------------------------
-
-    /// Padding on all four sides.
-    #[must_use]
-    fn padding(self, v: impl IntoProp<i32>) -> Self {
-        self.style_props(v, |v| {
-            [
-                StyleProp::PadTop(v),
-                StyleProp::PadBottom(v),
-                StyleProp::PadLeft(v),
-                StyleProp::PadRight(v),
-            ]
-        })
-    }
-
-    /// Left and right padding.
-    #[must_use]
-    fn padding_hor(self, v: impl IntoProp<i32>) -> Self {
-        self.style_props(v, |v| [StyleProp::PadLeft(v), StyleProp::PadRight(v)])
-    }
-
-    /// Top and bottom padding.
-    #[must_use]
-    fn padding_ver(self, v: impl IntoProp<i32>) -> Self {
-        self.style_props(v, |v| [StyleProp::PadTop(v), StyleProp::PadBottom(v)])
-    }
-
-    /// Padding per side.
-    #[must_use]
-    fn padding_each(self, v: impl IntoProp<Insets>) -> Self {
-        self.style_props(v, |i: Insets| {
-            [
-                StyleProp::PadTop(i.top),
-                StyleProp::PadBottom(i.bottom),
-                StyleProp::PadLeft(i.left),
-                StyleProp::PadRight(i.right),
-            ]
-        })
-    }
-
-    /// Margin on all four sides.
-    #[must_use]
-    fn margin(self, v: impl IntoProp<i32>) -> Self {
-        self.style_props(v, |v| {
-            [
-                StyleProp::MarginTop(v),
-                StyleProp::MarginBottom(v),
-                StyleProp::MarginLeft(v),
-                StyleProp::MarginRight(v),
-            ]
-        })
-    }
-
-    /// Margin per side.
-    #[must_use]
-    fn margin_each(self, v: impl IntoProp<Insets>) -> Self {
-        self.style_props(v, |i: Insets| {
-            [
-                StyleProp::MarginTop(i.top),
-                StyleProp::MarginBottom(i.bottom),
-                StyleProp::MarginLeft(i.left),
-                StyleProp::MarginRight(i.right),
-            ]
-        })
-    }
-
-    /// Gap between rows and columns of a flex or grid container.
-    #[must_use]
-    fn gap(self, v: impl IntoProp<i32>) -> Self {
-        self.style_props(v, |v| [StyleProp::PadRow(v), StyleProp::PadColumn(v)])
-    }
-
-    style_mods! {
-        /// Gap between rows.
-        row_gap: i32 => PadRow;
-        /// Gap between columns.
-        column_gap: i32 => PadColumn;
-    }
-
-    // ---- Background ---------------------------------------------------------------------
-
-    /// Background color, fully opaque.
-    #[must_use]
-    fn bg(self, c: impl IntoProp<Color>) -> Self {
-        self.style_props(c, |c| [StyleProp::BgColor(c), StyleProp::BgOpa(Opa::COVER)])
-    }
-
-    style_mods! {
-        /// Background color (see [`bg_opa`](Self::bg_opa); the default opacity is transparent).
-        bg_color: Color => BgColor;
-        /// Background opacity.
-        bg_opa: Opa => BgOpa;
-        /// Background gradient.
-        bg_grad: &'static Gradient => BgGrad;
-        /// Background image.
-        bg_image: &'static ImageSource => BgImageSrc;
-    }
-
-    // ---- Border and outline -------------------------------------------------------------
-
-    /// Border width and color (opaque).
-    #[must_use]
-    fn border(self, width: impl IntoProp<i32>, color: impl IntoProp<Color>) -> Self {
-        self.style_prop(width, StyleProp::BorderWidth)
-            .style_props(color, |c| {
-                [StyleProp::BorderColor(c), StyleProp::BorderOpa(Opa::COVER)]
-            })
-    }
-
-    style_mods! {
-        /// Border width.
-        border_width: i32 => BorderWidth;
-        /// Border color.
-        border_color: Color => BorderColor;
-        /// Border opacity.
-        border_opa: Opa => BorderOpa;
-        /// Which sides have a border.
-        border_side: BorderSide => BorderSide;
-        /// Corner radius (`RADIUS_CIRCLE` = `0x7FFF` for "half of the shorter side").
-        radius: i32 => Radius;
-    }
-
-    /// Outline width, color and padding (distance from the node).
-    #[must_use]
-    fn outline(
-        self,
-        width: impl IntoProp<i32>,
-        color: impl IntoProp<Color>,
-        pad: impl IntoProp<i32>,
-    ) -> Self {
-        self.style_prop(width, StyleProp::OutlineWidth)
-            .style_props(color, |c| {
-                [StyleProp::OutlineColor(c), StyleProp::OutlineOpa(Opa::COVER)]
-            })
-            .style_prop(pad, StyleProp::OutlinePad)
-    }
-
-    // ---- Shadow -------------------------------------------------------------------------
-
-    /// All shadow properties at once.
-    #[must_use]
-    fn shadow(self, s: impl IntoProp<ShadowDsc>) -> Self {
-        self.style_props(s, |s: ShadowDsc| {
-            [
-                StyleProp::ShadowWidth(s.width),
-                StyleProp::ShadowOffsetX(s.ofs_x),
-                StyleProp::ShadowOffsetY(s.ofs_y),
-                StyleProp::ShadowSpread(s.spread),
-                StyleProp::ShadowColor(s.color),
-                StyleProp::ShadowOpa(s.opa),
-            ]
-        })
-    }
-
-    style_mods! {
-        /// Shadow blur width.
-        shadow_width: i32 => ShadowWidth;
-        /// Shadow spread.
-        shadow_spread: i32 => ShadowSpread;
-        /// Shadow color.
-        shadow_color: Color => ShadowColor;
-        /// Shadow opacity.
-        shadow_opa: Opa => ShadowOpa;
-    }
-
-    /// Shadow offset.
-    #[must_use]
-    fn shadow_offset(self, x: impl IntoProp<i32>, y: impl IntoProp<i32>) -> Self {
-        self.style_prop(x, StyleProp::ShadowOffsetX)
-            .style_prop(y, StyleProp::ShadowOffsetY)
-    }
-
-    // ---- Text ---------------------------------------------------------------------------
-
-    style_mods! {
-        /// Font (inherited by the children).
-        font: &'static Font => TextFont;
-        /// Text color (inherited).
-        text_color: Color => TextColor;
-        /// Text opacity (inherited).
-        text_opa: Opa => TextOpa;
-        /// Text alignment (inherited).
-        text_align: TextAlign => TextAlign;
-        /// Extra space between letters (inherited).
-        letter_space: i32 => TextLetterSpace;
-        /// Extra space between lines (inherited).
-        line_space: i32 => TextLineSpace;
-        /// Underline / strikethrough (inherited).
-        text_decor: TextDecor => TextDecor;
-        /// Base direction (inherited): `Rtl` right-aligns and reorders text (feature `bidi`)
-        /// and mirrors flex rows and grid columns.
-        base_dir: BaseDir => BaseDir;
-    }
-
-    // ---- Visual -------------------------------------------------------------------------
-
-    style_mods! {
-        /// Opacity of the whole subtree, rendered through a layer (`OpaLayered`).
-        opacity: Opa => OpaLayered;
-        /// Rotation of the rendered node.
-        transform_rotation: Angle => TransformRotation;
-        /// Blend mode.
-        blend_mode: BlendMode => BlendMode;
-        /// Clips the children to the rounded corners.
-        clip_corner: bool => ClipCorner;
-    }
-
-    /// Scale of the rendered node (both axes).
-    #[must_use]
-    fn transform_scale(self, s: impl IntoProp<Scale>) -> Self {
-        self.style_props(s, |s| {
-            [StyleProp::TransformScaleX(s), StyleProp::TransformScaleY(s)]
-        })
-    }
-
-    /// Pivot of the transformation, relative to the node.
-    #[must_use]
-    fn transform_pivot(self, p: impl IntoProp<Point>) -> Self {
-        self.style_props(p, |p: Point| {
-            [
-                StyleProp::TransformPivotX(Length::Px(p.x)),
-                StyleProp::TransformPivotY(Length::Px(p.y)),
-            ]
-        })
-    }
-
-    /// Recolors everything the node draws with `color` at `opa` (LVGL `recolor`).
-    #[must_use]
-    fn recolor(self, color: impl IntoProp<Color>, opa: impl IntoProp<Opa>) -> Self {
-        self.style_prop(color, StyleProp::Recolor)
-            .style_prop(opa, StyleProp::RecolorOpa)
     }
 
     // ---- Flags --------------------------------------------------------------------------
@@ -530,11 +351,12 @@ pub trait ViewExt: View + Sized {
         self.state(State::DISABLED, on)
     }
 
-    /// Which directions can be scrolled.
+    /// Which directions can be scrolled (all by default; stop scrolling with
+    /// [`scrollable(false)`](Self::scrollable)).
     #[must_use]
-    fn scroll_dir(self, d: impl IntoProp<Dir>) -> Self {
-        let p = d.into_prop();
-        self.op(move |cx, node| bind_node(cx, node, p, Engine::set_scroll_dir))
+    fn scroll_dir(self, axis: impl IntoProp<Axis>) -> Self {
+        let p = axis.into_prop();
+        self.op(move |cx, node| bind_node(cx, node, p, |e: &mut Engine, n, a: Axis| e.set_scroll_dir(n, a)))
     }
 
     /// When scrollbars are shown.
@@ -602,39 +424,6 @@ pub trait ViewExt: View + Sized {
         self.op(move |cx, node| cx.engine().add_theme_style(node, StyleRef::Static(s), sel))
     }
 
-    /// Animates style changes between states with `t`.
-    #[must_use]
-    fn transition(self, t: impl IntoProp<&'static TransitionDsc>) -> Self {
-        self.style_prop(t, StyleProp::Transition)
-    }
-
-    // ---- Layout as a child --------------------------------------------------------------
-
-    style_mods! {
-        /// Share of the free main-axis space in a flex parent (0 = none).
-        flex_grow: u8 => FlexGrow;
-    }
-
-    /// Grid cell: column, column span, row, row span.
-    #[must_use]
-    fn grid_cell(self, col: i32, col_span: i32, row: i32, row_span: i32) -> Self {
-        self.style_props(Prop::Static(()), move |()| {
-            [
-                StyleProp::GridCellColumnPos(col),
-                StyleProp::GridCellColumnSpan(col_span),
-                StyleProp::GridCellRowPos(row),
-                StyleProp::GridCellRowSpan(row_span),
-            ]
-        })
-    }
-
-    /// Alignment inside the grid cell (horizontal, vertical).
-    #[must_use]
-    fn grid_cell_align(self, x: impl IntoProp<GridAlign>, y: impl IntoProp<GridAlign>) -> Self {
-        self.style_prop(x, StyleProp::GridCellXAlign)
-            .style_prop(y, StyleProp::GridCellYAlign)
-    }
-
     // ---- Events -------------------------------------------------------------------------
 
     event_mods! {
@@ -656,9 +445,9 @@ pub trait ViewExt: View + Sized {
         on_value_changed => ValueChanged;
     }
 
-    /// A swipe gesture on the node.
+    /// A swipe gesture on the node, with the side it moved towards.
     #[must_use]
-    fn on_gesture(self, mut f: impl FnMut(Dir) + 'static) -> Self {
+    fn on_gesture(self, mut f: impl FnMut(Side) + 'static) -> Self {
         self.op(move |cx, node| {
             cx.engine()
                 .add_event_handler(node, EventFilter::Code(EventCode::Gesture), move |ecx, ev| {

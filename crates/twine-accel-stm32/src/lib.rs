@@ -45,6 +45,7 @@
 //! - Completion is polled (`CR.START`); no interrupt is used.
 //! - Blending rounds differently from the software renderer (±1 per channel).
 #![no_std]
+#![forbid(unsafe_code)]
 
 #[cfg(any(test, feature = "mock"))]
 extern crate alloc;

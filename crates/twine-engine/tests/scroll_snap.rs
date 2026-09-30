@@ -6,6 +6,7 @@ mod common;
 use common::{style, white_screen};
 use twine_core::{Color, Opa, Point, Rect};
 use twine_engine::{NodeId, ObjFlags, ScrollSnap};
+use twine_style::Radius;
 use twine_style::StyleProp;
 use twine_testing::EngineHarness;
 
@@ -36,8 +37,8 @@ fn scene() -> (EngineHarness, NodeId, Vec<NodeId>) {
                     Rect::from_xywh(i * 100, 10, 80, 80),
                     &[
                         StyleProp::BgColor(Color::hex(COLORS[i as usize])),
-                        StyleProp::BgOpa(Opa::COVER),
-                        StyleProp::Radius(8),
+                        StyleProp::BgOpacity(Opa::COVER),
+                        StyleProp::Radius(Radius::Px(8)),
                     ],
                 )
             })

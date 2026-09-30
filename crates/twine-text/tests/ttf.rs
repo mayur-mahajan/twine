@@ -127,7 +127,7 @@ fn ttf_cache_hit_on_second_draw() {
 fn ttf_missing_glyph_falls_back() {
     let f = TtfFont::new_with_fallback(MONTSERRAT_TTF, 16, Some(&MONTSERRAT_14)).unwrap();
     // The TTF has no Font Awesome symbols; the built-in font does.
-    let ok = twine_text::symbols::OK.chars().next().unwrap();
+    let ok = twine_text::Symbol::Ok.as_char();
     let (from, _) = f.glyph(ok, None).unwrap();
     assert!(core::ptr::eq(from, &MONTSERRAT_14));
     let (from, g) = f.glyph('A', None).unwrap();

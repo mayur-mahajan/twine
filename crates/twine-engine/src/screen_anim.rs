@@ -431,7 +431,7 @@ impl Engine {
         }
         let area = self.displays[d].area();
         self.place(screen, area);
-        self.remove_local_prop(screen, PropId::Opa, Selector::MAIN);
+        self.remove_local_prop(screen, PropId::PartOpacity, Selector::MAIN);
     }
 
     /// Applies an event of the screen load animation of display `d`.
@@ -459,7 +459,11 @@ impl Engine {
                     Axis::X => self.place(node, area.translate(v, 0)),
                     Axis::Y => self.place(node, area.translate(0, v)),
                     Axis::Opa => {
-                        self.set_local_prop(node, Selector::MAIN, StyleProp::Opa(Opa(v.clamp(0, 255) as u8)));
+                        self.set_local_prop(
+                            node,
+                            Selector::MAIN,
+                            StyleProp::PartOpacity(Opa::from_raw(v.clamp(0, 255) as u8)),
+                        );
                     }
                 }
             }

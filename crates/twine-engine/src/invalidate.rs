@@ -29,6 +29,9 @@ pub enum InvalidateReason {
     Create,
     /// An explicit `invalidate` call (also: flags, screen loads, overlays).
     Explicit,
+    /// A flush or present of the area failed and it is redrawn
+    /// ([`FlushPolicy::Reinvalidate`](crate::FlushPolicy::Reinvalidate)).
+    FlushRetry,
 }
 
 impl Engine {
@@ -152,7 +155,7 @@ impl Engine {
         }
     }
 
-    fn add_dirty(&mut self, d: usize, area: Rect, reason: InvalidateReason) {
+    pub(crate) fn add_dirty(&mut self, d: usize, area: Rect, reason: InvalidateReason) {
         let max = self.config.max_dirty_areas;
         self.displays[d].refresher.add_dirty(area, max);
         #[cfg(feature = "debug-checks")]
@@ -326,13 +329,13 @@ impl Engine {
     #[must_use]
     pub fn needs_layer(&self, id: NodeId) -> bool {
         let m = Part::Main;
-        !self.style_opa(id, m, PropId::OpaLayered).is_cover()
+        !self.style_opa(id, m, PropId::Opacity).is_cover()
             || self
                 .style_prop(id, m, PropId::BlendMode)
                 .get::<BlendMode>()
                 .unwrap_or(BlendMode::Normal)
                 != BlendMode::Normal
-            || !self.style_prop(id, m, PropId::BitmapMaskSrc).is_none()
+            || !self.style_prop(id, m, PropId::BitmapMask).is_none()
             || self.has_transform(id)
     }
 
@@ -341,19 +344,19 @@ impl Engine {
     pub(crate) fn bg_is_opaque(&self, id: NodeId) -> bool {
         let m = Part::Main;
         if let Some(g) = self
-            .style_prop(id, m, PropId::BgGrad)
+            .style_prop(id, m, PropId::BgGradient)
             .get::<&twine_render::Gradient>()
         {
             return g.stops().iter().all(|s| s.opa.is_cover());
         }
         match self
-            .style_prop(id, m, PropId::BgGradDir)
+            .style_prop(id, m, PropId::BgGradientDir)
             .get::<GradDir>()
             .unwrap_or_default()
         {
             GradDir::Ver | GradDir::Hor => {
-                self.style_opa(id, m, PropId::BgMainOpa).is_cover()
-                    && self.style_opa(id, m, PropId::BgGradOpa).is_cover()
+                self.style_opa(id, m, PropId::BgGradientStartOpacity).is_cover()
+                    && self.style_opa(id, m, PropId::BgGradientEndOpacity).is_cover()
             }
             _ => true,
         }
@@ -385,14 +388,14 @@ impl Engine {
             ofs_y: self.style_i32(id, m, PropId::ShadowOffsetY),
             spread: self.style_i32(id, m, PropId::ShadowSpread),
             color: twine_core::Color::BLACK,
-            opa: self.style_opa(id, m, PropId::ShadowOpa),
+            opa: self.style_opa(id, m, PropId::ShadowOpacity),
         };
         if sh.is_visible() {
             ext = ext.max(shadow_ext_size(&sh));
         }
         let ow = self.style_i32(id, m, PropId::OutlineWidth);
-        if ow > 0 && !self.style_opa(id, m, PropId::OutlineOpa).is_transparent() {
-            ext = ext.max(ow + self.style_i32(id, m, PropId::OutlinePad).max(0));
+        if ow > 0 && !self.style_opa(id, m, PropId::OutlineOpacity).is_transparent() {
+            ext = ext.max(ow + self.style_i32(id, m, PropId::OutlineOffset).max(0));
         }
         let c = n.coords;
         let tw = length_px(self.style_prop(id, m, PropId::TransformWidth), c.width());

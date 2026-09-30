@@ -300,17 +300,21 @@ fn reference<F: PixelFormat>(
             } else if da <= 2 {
                 (fg, a)
             } else if da == 255 {
-                (Color::mix(fg, dc, Opa(a)), 255)
+                (Color::mix(fg, dc, Opa::from_raw(a)), 255)
             } else {
                 let ra = 255 - ref_eff(255 - a, 255 - da);
                 let ratio = (u32::from(a) * 255 / u32::from(ra)).min(255) as u8;
-                (Color::mix(fg, dc, Opa(ratio)), ra)
+                (Color::mix(fg, dc, Opa::from_raw(ratio)), ra)
             };
             px.copy_from_slice(&[c.b, c.g, c.r, oa]);
         } else {
             let bg = F::to_color(F::read(px));
             let fg = mode.color(fg, bg);
-            let out = if a >= 253 { fg } else { Color::mix(fg, bg, Opa(a)) };
+            let out = if a >= 253 {
+                fg
+            } else {
+                Color::mix(fg, bg, Opa::from_raw(a))
+            };
             F::write(px, F::from_color(out));
         }
     }
@@ -334,7 +338,7 @@ fn run<F: PixelFormat>(dst0: &[u8], n: usize, src: &Src, mask: Option<&[u8]>, op
             format: ColorFormat::Rgb888,
         },
     };
-    blend_span::<F>(&mut a, n, s, mask, Opa(opa), mode);
+    blend_span::<F>(&mut a, n, s, mask, Opa::from_raw(opa), mode);
     reference::<F>(&mut b, n, src, mask, opa, mode);
     assert_eq!(a, b, "{:?} {src:?} mask {mask:?} opa {opa} {mode:?}", F::FORMAT);
 }

@@ -11,7 +11,7 @@ use twine_engine::{EventCode, Key, NodeId, State};
 use twine_image::ImageSource;
 use twine_style::{Align, FlexFlow, LayoutKind, Part, PropId};
 use twine_testing::EngineHarness;
-use twine_text::{LongMode, symbols};
+use twine_text::{LongMode, Symbol};
 use twine_widgets::label::Label;
 use twine_widgets_ext::list;
 
@@ -23,7 +23,12 @@ fn scene(mode: Mode, n: usize) -> (EngineHarness, NodeId, Vec<NodeId>) {
     e.set_height(l, 220);
     e.align(l, Align::Center, 0, 0);
     list::add_text(e, l, "File").unwrap();
-    let icons = [symbols::FILE, symbols::DIRECTORY, symbols::SAVE, symbols::CLOSE];
+    let icons = [
+        Symbol::File.as_str(),
+        Symbol::Directory.as_str(),
+        Symbol::Save.as_str(),
+        Symbol::Close.as_str(),
+    ];
     let mut btns = Vec::new();
     for i in 0..n {
         let b = list::add_button(
@@ -50,7 +55,7 @@ fn list_is_scrollable_column() {
     );
     assert_eq!(
         e.style_prop(l, Part::Main, PropId::FlexFlow).get::<FlexFlow>(),
-        Some(FlexFlow::Column)
+        Some(FlexFlow::COLUMN)
     );
     assert_eq!(e.coords(l).width(), 195, "LV_DPI_DEF * 3 / 2");
     // Stacked without gaps (the theme's `pad_gap 0`), each as wide as the content area.
@@ -86,11 +91,11 @@ fn list_button_icon_and_text_layout() {
     assert_eq!(class(&h, kids[1]), "label");
     // A row: the icon, a column gap, then the label taking the rest.
     let (ic, lc) = (e.coords(kids[0]), e.coords(kids[1]));
-    let gap = e.style_i32(b, Part::Main, PropId::PadColumn);
+    let gap = e.style_i32(b, Part::Main, PropId::ColumnGap);
     assert_eq!(lc.x0, ic.x1 + gap);
     // Flex grow to the right padding (the bottom-only border takes no width: LVGL's
     // `lv_obj_get_style_space_right`).
-    let pad_r = e.style_i32(b, Part::Main, PropId::PadRight);
+    let pad_r = e.style_i32(b, Part::Main, PropId::PaddingRight);
     assert_eq!(lc.x1, e.coords(b).x1 - pad_r, "flex grow");
     assert_eq!(list::button_text(e, b), Some("Item 0"));
     let l = e.widget::<Label>(kids[1]).unwrap();
@@ -188,14 +193,14 @@ fn list_200_items_momentum_then_idle() {
 fn list_theme_styles() {
     let (h, l, btns) = scene(Mode::Light, 1);
     let e = h.engine();
-    let pad_def = twine_theme::dpx(16, 130);
-    assert_eq!(e.style_i32(l, Part::Main, PropId::PadLeft), pad_def);
-    assert_eq!(e.style_i32(l, Part::Main, PropId::PadTop), 0);
-    assert_eq!(e.style_i32(l, Part::Main, PropId::PadRow), 0);
+    let pad_def = twine_style::dpx(16, 130);
+    assert_eq!(e.style_i32(l, Part::Main, PropId::PaddingLeft), pad_def);
+    assert_eq!(e.style_i32(l, Part::Main, PropId::PaddingTop), 0);
+    assert_eq!(e.style_i32(l, Part::Main, PropId::RowGap), 0);
     let b = btns[0];
     assert_eq!(
         e.style_i32(b, Part::Main, PropId::BorderWidth),
-        twine_theme::dpx(1, 130)
+        twine_style::dpx(1, 130)
     );
     assert_eq!(
         e.style_prop(b, Part::Main, PropId::BorderSide)

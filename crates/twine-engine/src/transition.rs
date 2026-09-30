@@ -117,19 +117,31 @@ impl Engine {
             state: Some(state),
             skip_transitions,
         };
-        let v1 = resolve_with(&self.tree, id, part, prop, &defaults, at(prev, true));
-        let mut v2 = resolve_with(&self.tree, id, part, prop, &defaults, at(new, true));
+        // Density-independent lengths are converted first, so a transition interpolates pixels.
+        let v1 = self.dp_to_px(
+            id,
+            resolve_with(&self.tree, id, part, prop, &defaults, at(prev, true)),
+        );
+        let mut v2 = self.dp_to_px(
+            id,
+            resolve_with(&self.tree, id, part, prop, &defaults, at(new, true)),
+        );
         if v1 == v2 {
             return;
         }
         // The value shown right now (a running transition included): no jump.
-        let mut v1 = resolve_with(&self.tree, id, part, prop, &defaults, at(prev, false));
+        let mut v1 = self.dp_to_px(
+            id,
+            resolve_with(&self.tree, id, part, prop, &defaults, at(prev, false)),
+        );
         self.trans_style_set(id, part, prop, v1);
         self.refresh_style(id, part, Some(prop));
         if prop == PropId::Radius {
             let c = self.coords(id);
-            let circle = StyleValue::Int(twine_style::RADIUS_CIRCLE);
-            let r = StyleValue::Int((c.width() / 2 + 1).min(c.height() / 2 + 1));
+            let circle = twine_style::PropValue::into_value(twine_style::Radius::Circle);
+            let r = StyleValue::Length(twine_style::Length::Px(
+                (c.width() / 2 + 1).min(c.height() / 2 + 1),
+            ));
             if v1 == circle {
                 v1 = r;
             }

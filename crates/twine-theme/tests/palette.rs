@@ -3,7 +3,8 @@
 #![allow(clippy::unreadable_literal)]
 
 use twine_core::Color;
-use twine_theme::{Palette, dpx};
+use twine_style::dpx;
+use twine_theme::Palette;
 
 /// `(palette, main, lighten 1..=5, darken 1..=4)`: every row of `lv_palette.c`
 /// (`lv_palette_main`, `lv_palette_lighten`, `lv_palette_darken`), 19 × 10 values.

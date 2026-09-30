@@ -20,7 +20,7 @@ use twine_examples::scenes::child_box;
 use twine_examples::tile::tile;
 use twine_hal::Key;
 use twine_sim::{SimConfig, run_engine};
-use twine_style::{Length, PropId, Selector, StyleProp, TransitionDsc};
+use twine_style::{Length, PropId, Radius, Selector, StyleProp, TransitionDsc};
 
 /// Display size.
 const W: i32 = 360;
@@ -77,7 +77,7 @@ struct Gallery {
 
 fn screen_bg(e: &mut Engine, s: NodeId, c: u32) {
     e.set_local_prop(s, Selector::MAIN, StyleProp::BgColor(Color::hex(c)));
-    e.set_local_prop(s, Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+    e.set_local_prop(s, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
 }
 
 fn build(e: &mut Engine) -> Gallery {
@@ -100,7 +100,7 @@ fn build(e: &mut Engine) -> Gallery {
             Rect::from_xywh(TRACK_X, y + BOX / 2 - 1, W - TRACK_X - 8, 2),
             &[
                 StyleProp::BgColor(Color::hex(0xB0_BE_C5)),
-                StyleProp::BgOpa(Opa::COVER),
+                StyleProp::BgOpacity(Opa::COVER),
             ],
         );
         let b = child_box(
@@ -109,8 +109,8 @@ fn build(e: &mut Engine) -> Gallery {
             Rect::from_xywh(TRACK_X, y, BOX, BOX),
             &[
                 StyleProp::BgColor(Color::hex(color)),
-                StyleProp::BgOpa(Opa::COVER),
-                StyleProp::Radius(4),
+                StyleProp::BgOpacity(Opa::COVER),
+                StyleProp::Radius(Radius::Px(4)),
             ],
         );
         anims.push(
@@ -132,8 +132,8 @@ fn build(e: &mut Engine) -> Gallery {
         Rect::from_xywh(TRACK_X, bottom, 44, 44),
         &[
             StyleProp::BgColor(Color::hex(0xD8_1B_60)),
-            StyleProp::BgOpa(Opa::COVER),
-            StyleProp::Radius(22),
+            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::Radius(Radius::Px(22)),
         ],
     );
     anims.push(
@@ -161,11 +161,11 @@ fn build(e: &mut Engine) -> Gallery {
         ),
         (
             Selector::state(State::PRESSED),
-            StyleProp::TransformScaleX(Scale(300)),
+            StyleProp::TransformScaleX(Scale::from_raw_256(300)),
         ),
         (
             Selector::state(State::PRESSED),
-            StyleProp::TransformScaleY(Scale(300)),
+            StyleProp::TransformScaleY(Scale::from_raw_256(300)),
         ),
     ] {
         e.set_local_prop(press, sel, p);
@@ -183,8 +183,8 @@ fn build(e: &mut Engine) -> Gallery {
             Rect::from_xywh(40 + i as i32 * 100, 100, 80, 140),
             &[
                 StyleProp::BgColor(Color::hex(c)),
-                StyleProp::BgOpa(Opa::COVER),
-                StyleProp::Radius(12),
+                StyleProp::BgOpacity(Opa::COVER),
+                StyleProp::Radius(Radius::Px(12)),
             ],
         );
     }

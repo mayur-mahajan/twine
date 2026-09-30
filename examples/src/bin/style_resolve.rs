@@ -24,9 +24,9 @@ static SCREEN_THEME: Style = style! { bg_color: Color::WHITE, text_color: Color:
 static BUTTON_THEME: Style = style! { bg_color: Color::BLUE, radius: 8 };
 static BUTTON_PRESSED: Style = style! { bg_color: DARK_BLUE };
 static BUTTON_CHECKED: Style = style! { bg_color: Color::GREEN, radius: 12 };
-static BUTTON_LOCAL: Style = style! { bg_opa: Opa::COVER };
-/// The current value of a running `bg_opa` transition.
-static BUTTON_TRANSITION: Style = style! { bg_opa: Opa(128) };
+static BUTTON_LOCAL: Style = style! { bg_opacity: Opa::COVER };
+/// The current value of a running `bg_opacity` transition.
+static BUTTON_TRANSITION: Style = style! { bg_opacity: Opa::from_raw(128) };
 
 struct Node {
     name: &'static str,
@@ -185,10 +185,10 @@ fn main() {
 
     let props = [
         PropId::BgColor,
-        PropId::BgOpa,
+        PropId::BgOpacity,
         PropId::Radius,
         PropId::TextColor,
-        PropId::TextFont,
+        PropId::Font,
     ];
     let mut summary = String::new();
     for state in [
@@ -222,8 +222,8 @@ fn main() {
         StyleValue::Int(12)
     );
     assert_eq!(
-        resolve(&tree, button, Part::Main, PropId::BgOpa, &defaults),
-        StyleValue::Opa(Opa(128))
+        resolve(&tree, button, Part::Main, PropId::BgOpacity, &defaults),
+        StyleValue::Opa(Opa::from_raw(128))
     );
     tree.0[button].state = State::DISABLED;
     assert_eq!(

@@ -32,7 +32,7 @@ use twine_engine::{Anim, AnimProp, Engine, EventCode, EventFilter, EventResult, 
 use twine_examples::scenes::{child_box, engine_boxes};
 use twine_hal::{BufferSpec, Key};
 use twine_sim::{SimConfig, run_engine};
-use twine_style::{Part, PropId, StyleProp};
+use twine_style::{Part, PropId, Radius, StyleProp};
 
 /// Command line options.
 #[derive(Debug, Clone, Copy)]
@@ -114,8 +114,8 @@ fn pulse(e: &mut Engine, screen: NodeId) -> NodeId {
         Rect::from_xywh(272, 204, 28, 24),
         &[
             StyleProp::BgColor(Color::hex(0x8E_24_AA)),
-            StyleProp::BgOpa(Opa::COVER),
-            StyleProp::Radius(6),
+            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::Radius(Radius::Px(6)),
         ],
     );
     e.anim_start(
@@ -138,7 +138,7 @@ fn second_screen(e: &mut Engine) -> NodeId {
         twine_style::Selector::MAIN,
         StyleProp::BgColor(Color::hex(0x26_32_38)),
     );
-    e.set_local_prop(s, twine_style::Selector::MAIN, StyleProp::BgOpa(Opa::COVER));
+    e.set_local_prop(s, twine_style::Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
     for (i, c) in [0x4F_C3_F7, 0xAE_D5_81, 0xFF_B7_4D].into_iter().enumerate() {
         child_box(
             e,
@@ -146,8 +146,8 @@ fn second_screen(e: &mut Engine) -> NodeId {
             Rect::from_xywh(40 + i as i32 * 90, 80, 60, 80),
             &[
                 StyleProp::BgColor(Color::hex(c)),
-                StyleProp::BgOpa(Opa::COVER),
-                StyleProp::Radius(10),
+                StyleProp::BgOpacity(Opa::COVER),
+                StyleProp::Radius(Radius::Px(10)),
             ],
         );
     }

@@ -173,8 +173,11 @@ fn bar_vertical_auto_orientation() {
 #[test]
 fn bar_anim_reaches_value_in_duration() {
     let (mut h, b) = scene(Mode::Light);
-    h.engine_mut()
-        .set_local_prop(b, Selector::MAIN, StyleProp::AnimDuration(200));
+    h.engine_mut().set_local_prop(
+        b,
+        Selector::MAIN,
+        StyleProp::AnimDuration(Duration::ms(200).into()),
+    );
     h.run_until_idle();
     with(&mut h, b, |w: &mut Bar, cx| w.set_value(cx, 80, true));
     assert_eq!(
@@ -212,8 +215,11 @@ fn bar_anim_reaches_value_in_duration() {
 #[test]
 fn bar_anim_invalidates_indicator_only() {
     let (mut h, b) = scene(Mode::Light);
-    h.engine_mut()
-        .set_local_prop(b, Selector::MAIN, StyleProp::AnimDuration(400));
+    h.engine_mut().set_local_prop(
+        b,
+        Selector::MAIN,
+        StyleProp::AnimDuration(Duration::ms(400).into()),
+    );
     with(&mut h, b, |w: &mut Bar, cx| w.set_value(cx, 10, false));
     h.run_until_idle();
     with(&mut h, b, |w: &mut Bar, cx| w.set_value(cx, 90, true));
@@ -281,8 +287,11 @@ fn bar_idle_after_interaction() {
     let (mut h, b) = scene(Mode::Light);
     let c = h.engine().coords(b);
     h.tap(c.center());
-    h.engine_mut()
-        .set_local_prop(b, Selector::MAIN, StyleProp::AnimDuration(200));
+    h.engine_mut().set_local_prop(
+        b,
+        Selector::MAIN,
+        StyleProp::AnimDuration(Duration::ms(200).into()),
+    );
     with(&mut h, b, |w: &mut Bar, cx| w.set_value(cx, 60, true));
     h.run_until_idle();
     h.assert_idle();

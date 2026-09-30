@@ -53,7 +53,7 @@ pub enum Symbols {
     /// No symbols.
     #[default]
     None,
-    /// The Font Awesome subset of `twine_text::symbols::ALL`.
+    /// The Font Awesome glyphs of every `twine_text::Symbol` (`Symbol::is_font_awesome`).
     Fa,
 }
 
@@ -375,7 +375,11 @@ pub fn generate(opts: &FontOptions, root: &Path) -> Result<Generated> {
             sym_fonts.push(f);
         }
         symbols_hash = Some(hashes);
-        for &cp in twine_text::symbols::ALL {
+        for cp in twine_text::Symbol::ALL
+            .iter()
+            .filter(|s| s.is_font_awesome())
+            .map(|s| s.as_char())
+        {
             let alias = SYMBOL_ALIASES.iter().find(|(c, _)| *c == cp);
             let src = alias.map_or(cp, |&(_, a)| a);
             let Some(sym) = sym_fonts.iter().find(|f| f.has_glyph(src)) else {

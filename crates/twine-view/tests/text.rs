@@ -4,7 +4,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use twine_engine::State;
-use twine_reactive::debug_stats;
+use twine_reactive::runtime_stats;
 use twine_testing::alloc::{CountingAllocator, count_allocs};
 use twine_testing::{TestUi, by_id, by_text};
 use twine_view::prelude::*;
@@ -113,14 +113,19 @@ fn model_two_way_no_loop() {
     });
     t.run_until_idle();
     let on = t.root_scope().expect_context::<Signal<bool>>();
-    let runs = debug_stats().effect_runs;
+    let runs = runtime_stats().effect_runs;
     t.find(by_id("b")).click();
     t.run_until_idle();
     assert!(on.get_untracked(), "the click wrote back");
     assert!(t.find(by_id("b")).state().contains(State::CHECKED));
-    let n = debug_stats().effect_runs - runs;
+    let n = runtime_stats().effect_runs - runs;
     assert_eq!(n, 1, "the display binding runs once and changes nothing");
-    assert_eq!(debug_stats().loop_cuts, 0);
+    assert_eq!(
+        runtime_stats()
+            .faults
+            .get(twine_reactive::FaultKind::EffectLoopCut),
+        0
+    );
     // Signal → widget.
     on.set(false);
     t.run_until_idle();

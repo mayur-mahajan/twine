@@ -52,7 +52,7 @@ fn drag_hold(h: &mut EngineHarness, from: Point, to: Point) {
 /// The row unit (line height + line space of `Main`).
 fn unit(h: &EngineHarness, r: NodeId) -> i32 {
     let m = MeasureCx::new(h.engine(), r);
-    i32::from(m.font(Part::Main).line_height) + m.style_i32(Part::Main, PropId::TextLineSpace)
+    i32::from(m.font(Part::Main).line_height) + m.style_i32(Part::Main, PropId::LineSpacing)
 }
 
 #[test]
@@ -104,8 +104,8 @@ fn roller_theme_styles() {
         twine_core::Color::WHITE
     );
     assert_eq!(
-        e.style_i32(r, Part::Main, PropId::TextLineSpace),
-        twine_theme::dpx(20, 130)
+        e.style_i32(r, Part::Main, PropId::LineSpacing),
+        twine_style::dpx(20, 130)
     );
 }
 
@@ -120,7 +120,7 @@ fn roller_height_from_visible_rows() {
         h.run_until_idle();
         let m = MeasureCx::new(h.engine(), r);
         let font_h = i32::from(m.font(Part::Main).line_height);
-        let ls = m.style_i32(Part::Main, PropId::TextLineSpace);
+        let ls = m.style_i32(Part::Main, PropId::LineSpacing);
         let b = m.style_i32(Part::Main, PropId::BorderWidth);
         assert_eq!(
             h.engine().coords(r).height(),
@@ -209,6 +209,26 @@ fn roller_infinite_wraps_and_normalizes() {
     }
     // 1 + 1000 rows up the column = option (6 - 1000) mod 7.
     assert_eq!(i32::from(sel(&h, r)), (6 - 1000_i32).rem_euclid(7));
+    h.assert_idle();
+}
+
+#[test]
+fn roller_set_mode_keeps_options_and_is_idempotent() {
+    let (mut h, r) = scene(Mode::Light, RollerMode::Normal);
+    assert_eq!(get::<Roller>(&h, r).page_count(), 1);
+    with(&mut h, r, |w: &mut Roller, cx| {
+        w.set_mode(cx, RollerMode::Infinite);
+    });
+    h.run_until_idle();
+    let w = get::<Roller>(&h, r);
+    assert_eq!(w.mode(), RollerMode::Infinite);
+    assert!(w.page_count() >= 3);
+    assert_eq!((w.option_count(), w.options()), (7, DAYS));
+    let offset = w.offset_y();
+    with(&mut h, r, |w: &mut Roller, cx| {
+        w.set_mode(cx, RollerMode::Infinite);
+    });
+    assert_eq!(get::<Roller>(&h, r).offset_y(), offset);
     h.assert_idle();
 }
 

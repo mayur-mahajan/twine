@@ -203,7 +203,10 @@ pub(crate) fn parse_number(b: &[u8]) -> Option<(Fx, usize)> {
     }
     let raw = to_raw(mant, exp10);
     let v = if neg { -raw } else { raw };
-    Some((Fx(v.clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32), i))
+    Some((
+        Fx::from_raw(v.clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32),
+        i,
+    ))
 }
 
 /// `mant · 10^exp10 · 65536`, rounded, saturated to ±2^40.
@@ -249,7 +252,7 @@ impl Length {
     pub(crate) fn resolve(self, base: Fx) -> Fx {
         match self {
             Length::Px(v) => v,
-            Length::Pct(p) => Fx((i64::from(p.0) * i64::from(base.0) / (100 << 16)) as i32),
+            Length::Pct(p) => Fx::from_raw((i64::from(p.raw()) * i64::from(base.raw()) / (100 << 16)) as i32),
         }
     }
 }
@@ -263,7 +266,7 @@ pub(crate) fn length(s: &str) -> Option<Length> {
         return None;
     }
     let scale = |num: i64, den: i64| {
-        Fx((i64::from(v.0) * num / den).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
+        Fx::from_raw((i64::from(v.raw()) * num / den).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
     };
     Some(match unit {
         b"" | b"px" => Length::Px(v),
@@ -280,13 +283,13 @@ pub(crate) fn length(s: &str) -> Option<Length> {
 
 /// Degrees (fixed point) to an [`Angle`] (0.1°), rounded.
 pub(crate) fn deg_to_angle(d: Fx) -> Angle {
-    let v = i64::from(d.0) * 10;
+    let v = i64::from(d.raw()) * 10;
     let r = if v >= 0 {
         (v + 32_768) >> 16
     } else {
         -((-v + 32_768) >> 16)
     };
-    Angle(r as i32)
+    Angle::deci_deg(r as i32)
 }
 
 #[cfg(test)]
@@ -294,7 +297,7 @@ mod tests {
     use super::*;
 
     fn n(s: &str) -> Option<(i32, usize)> {
-        parse_number(s.as_bytes()).map(|(v, i)| (v.0, i))
+        parse_number(s.as_bytes()).map(|(v, i)| (v.raw(), i))
     }
 
     #[test]
@@ -329,6 +332,6 @@ mod tests {
             Length::Pct(Fx::from_int(50)).resolve(Fx::from_int(24)),
             Fx::from_int(12)
         );
-        assert_eq!(deg_to_angle(Fx::from_ratio(-45, 2)), Angle(-225));
+        assert_eq!(deg_to_angle(Fx::from_ratio(-45, 2)), Angle::deci_deg(-225));
     }
 }

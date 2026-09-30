@@ -3,9 +3,9 @@
 
 use alloc::rc::Rc;
 
-use twine_core::{Color, Opa};
+use twine_core::{Color, Duration, Opa};
 use twine_engine::{ThemeCx, ThemeHook, WidgetClass};
-use twine_style::{BorderSide, Part, RADIUS_CIRCLE, Selector, State, StyleBuf, TextDecor};
+use twine_style::{BorderSide, Part, Radius, Selector, State, StyleBuf, TextDecor};
 use twine_text::Font;
 
 use crate::Theme;
@@ -52,19 +52,13 @@ pub struct MonoStyles {
     pub cb_marker_checked: Rc<StyleBuf>,
 }
 
-fn pad_all(s: StyleBuf, v: i32) -> StyleBuf {
-    s.pad_top(v).pad_bottom(v).pad_left(v).pad_right(v)
-}
-
-fn pad_gap(s: StyleBuf, v: i32) -> StyleBuf {
-    s.pad_row(v).pad_column(v)
-}
-
 /// `EXPAND_BORDER(style, state)`: a thicker border that keeps the content in place.
 fn expand_border(w: i32) -> StyleBuf {
     // lv_style_set_border_width(&style, BORDER_W_x)
     // lv_style_set_pad_all(&style, PAD_DEF + BORDER_W_NORMAL - BORDER_W_x)
-    pad_all(StyleBuf::new().border_width(w), PAD_DEF + BORDER_W_NORMAL - w)
+    StyleBuf::new()
+        .border_width(w)
+        .padding(PAD_DEF + BORDER_W_NORMAL - w)
 }
 
 impl MonoStyles {
@@ -75,38 +69,32 @@ impl MonoStyles {
         // #define COLOR_BG dark_bg ? lv_color_black() : lv_color_white()
         let bg = if dark_bg { Color::BLACK } else { Color::WHITE };
         let scrollbar = StyleBuf::new()
-            .bg_opa(Opa::COVER) // lv_style_set_bg_opa(&scrollbar, LV_OPA_COVER)
+            .bg_opacity(Opa::COVER) // lv_style_set_bg_opa(&scrollbar, LV_OPA_COVER)
             .bg_color(fg) // lv_style_set_bg_color(&scrollbar, COLOR_FG)
             .width(PAD_DEF); // lv_style_set_width(&scrollbar, PAD_DEF)
-        let scr = pad_gap(
-            StyleBuf::new()
-                .bg_opa(Opa::COVER) // lv_style_set_bg_opa(&scr, LV_OPA_COVER)
-                .bg_color(bg) // lv_style_set_bg_color(&scr, COLOR_BG)
-                .text_color(fg), // lv_style_set_text_color(&scr, COLOR_FG)
-            PAD_DEF, // lv_style_set_pad_row / pad_column(&scr, PAD_DEF)
-        )
-        .text_font(font); // lv_style_set_text_font(&scr, font)
-        let card = pad_gap(
-            pad_all(
-                StyleBuf::new()
-                    .bg_opa(Opa::COVER) // lv_style_set_bg_opa(&card, LV_OPA_COVER)
-                    .bg_color(bg) // lv_style_set_bg_color(&card, COLOR_BG)
-                    .border_color(fg) // lv_style_set_border_color(&card, COLOR_FG)
-                    .radius(2) // lv_style_set_radius(&card, 2)
-                    .border_width(BORDER_W_NORMAL), // lv_style_set_border_width(&card, BORDER_W_NORMAL)
-                PAD_DEF, // lv_style_set_pad_all(&card, PAD_DEF)
-            ),
-            PAD_DEF, // lv_style_set_pad_gap(&card, PAD_DEF)
-        )
-        .text_color(fg) // lv_style_set_text_color(&card, COLOR_FG)
-        .line_width(2) // lv_style_set_line_width(&card, 2)
-        .line_color(fg) // lv_style_set_line_color(&card, COLOR_FG)
-        .arc_width(2) // lv_style_set_arc_width(&card, 2)
-        .arc_color(fg) // lv_style_set_arc_color(&card, COLOR_FG)
-        .outline_color(fg) // lv_style_set_outline_color(&card, COLOR_FG)
-        .anim_duration(300u32); // lv_style_set_anim_duration(&card, 300)
+        let scr = StyleBuf::new()
+            .bg_opacity(Opa::COVER) // lv_style_set_bg_opa(&scr, LV_OPA_COVER)
+            .bg_color(bg) // lv_style_set_bg_color(&scr, COLOR_BG)
+            .text_color(fg) // lv_style_set_text_color(&scr, COLOR_FG)
+            .gap(PAD_DEF) // lv_style_set_pad_row / pad_column(&scr, PAD_DEF)
+            .font(font); // lv_style_set_text_font(&scr, font)
+        let card = StyleBuf::new()
+            .bg_opacity(Opa::COVER) // lv_style_set_bg_opa(&card, LV_OPA_COVER)
+            .bg_color(bg) // lv_style_set_bg_color(&card, COLOR_BG)
+            .border_color(fg) // lv_style_set_border_color(&card, COLOR_FG)
+            .radius(2) // lv_style_set_radius(&card, 2)
+            .border_width(BORDER_W_NORMAL) // lv_style_set_border_width(&card, BORDER_W_NORMAL)
+            .padding(PAD_DEF) // lv_style_set_pad_all(&card, PAD_DEF)
+            .gap(PAD_DEF) // lv_style_set_pad_gap(&card, PAD_DEF)
+            .text_color(fg) // lv_style_set_text_color(&card, COLOR_FG)
+            .line_width(2) // lv_style_set_line_width(&card, 2)
+            .line_color(fg) // lv_style_set_line_color(&card, COLOR_FG)
+            .arc_width(2) // lv_style_set_arc_width(&card, 2)
+            .arc_color(fg) // lv_style_set_arc_color(&card, COLOR_FG)
+            .outline_color(fg) // lv_style_set_outline_color(&card, COLOR_FG)
+            .anim_duration(Duration::ms(300)); // lv_style_set_anim_duration(&card, 300)
         let inv = StyleBuf::new()
-            .bg_opa(Opa::COVER) // lv_style_set_bg_opa(&inv, LV_OPA_COVER)
+            .bg_opacity(Opa::COVER) // lv_style_set_bg_opa(&inv, LV_OPA_COVER)
             .bg_color(fg) // lv_style_set_bg_color(&inv, COLOR_FG)
             .border_color(bg) // lv_style_set_border_color(&inv, COLOR_BG)
             .line_color(bg) // lv_style_set_line_color(&inv, COLOR_BG)
@@ -115,7 +103,7 @@ impl MonoStyles {
             .outline_color(bg); // lv_style_set_outline_color(&inv, COLOR_BG)
         let focus = StyleBuf::new()
             .outline_width(1) // lv_style_set_outline_width(&focus, 1)
-            .outline_pad(BORDER_W_FOCUS); // lv_style_set_outline_pad(&focus, BORDER_W_FOCUS)
+            .outline_offset(BORDER_W_FOCUS); // lv_style_set_outline_pad(&focus, BORDER_W_FOCUS)
         Self {
             scr: Rc::new(scr),
             card: Rc::new(card),
@@ -129,17 +117,17 @@ impl MonoStyles {
             // lv_style_set_border_width(&large_border, BORDER_W_EDIT)
             large_border: Rc::new(StyleBuf::new().border_width(BORDER_W_EDIT)),
             // lv_style_set_pad_gap(&pad_gap, PAD_DEF)
-            pad_gap: Rc::new(pad_gap(StyleBuf::new(), PAD_DEF)),
+            pad_gap: Rc::new(StyleBuf::new().gap(PAD_DEF)),
             // lv_style_set_pad_all / pad_gap(&pad_zero, 0)
-            pad_zero: Rc::new(pad_gap(pad_all(StyleBuf::new(), 0), 0)),
+            pad_zero: Rc::new(StyleBuf::new().padding(0).gap(0)),
             // lv_style_set_radius(&no_radius, 0)
             no_radius: Rc::new(StyleBuf::new().radius(0)),
             // lv_style_set_radius(&radius_circle, LV_RADIUS_CIRCLE)
-            radius_circle: Rc::new(StyleBuf::new().radius(RADIUS_CIRCLE)),
+            radius_circle: Rc::new(StyleBuf::new().radius(Radius::Circle)),
             // lv_style_set_text_line_space(&large_line_space, 6)
-            large_line_space: Rc::new(StyleBuf::new().text_line_space(6)),
+            large_line_space: Rc::new(StyleBuf::new().line_spacing(6)),
             // lv_style_set_text_decor(&underline, LV_TEXT_DECOR_UNDERLINE)
-            underline: Rc::new(StyleBuf::new().text_decor(TextDecor::UNDERLINE)),
+            underline: Rc::new(StyleBuf::new().text_decoration(TextDecor::UNDERLINE)),
             spinner_indic: Rc::new(
                 StyleBuf::new()
                     .arc_color(fg) // lv_style_set_arc_color(&spinner_indic, COLOR_FG)
@@ -152,10 +140,10 @@ impl MonoStyles {
                     .border_side(BorderSide::LEFT) // lv_style_set_border_side(&ta_cursor, LV_BORDER_SIDE_LEFT)
                     .border_color(fg) // lv_style_set_border_color(&ta_cursor, COLOR_FG)
                     .border_width(2) // lv_style_set_border_width(&ta_cursor, 2)
-                    .bg_opa(Opa::TRANSP) // lv_style_set_bg_opa(&ta_cursor, LV_OPA_TRANSP)
-                    .anim_duration(500u32), // lv_style_set_anim_duration(&ta_cursor, 500)
+                    .bg_opacity(Opa::TRANSP) // lv_style_set_bg_opa(&ta_cursor, LV_OPA_TRANSP)
+                    .anim_duration(Duration::ms(500)), // lv_style_set_anim_duration(&ta_cursor, 500)
             ),
-            cb_marker_checked: Rc::new(StyleBuf::new().bg_image_src(&crate::default::styles::CHECK_MARK)),
+            cb_marker_checked: Rc::new(StyleBuf::new().bg_image(&crate::default::styles::CHECK_MARK)),
         }
     }
 }

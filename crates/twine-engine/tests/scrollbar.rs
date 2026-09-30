@@ -6,7 +6,7 @@ mod common;
 use common::{list, style, white_screen};
 use twine_core::{Color, Duration, Opa, Point, Rect};
 use twine_engine::{Engine, NodeId, ScrollbarMode, State};
-use twine_style::{BaseDir, Length, Part, Selector, StyleProp};
+use twine_style::{BaseDir, Length, Part, Radius, Selector, StyleProp};
 use twine_testing::EngineHarness;
 
 /// Scrollbar styles like a theme would set: 6 px thick, 2 px from the edges, dark gray, and
@@ -16,12 +16,12 @@ fn scrollbar_style(e: &mut Engine, id: NodeId) {
     for p in [
         StyleProp::Width(Length::Px(6)),
         StyleProp::BgColor(Color::hex(0x0055_5555)),
-        StyleProp::BgOpa(Opa::COVER),
-        StyleProp::Radius(3),
-        StyleProp::PadRight(2),
-        StyleProp::PadBottom(2),
-        StyleProp::PadTop(2),
-        StyleProp::PadLeft(2),
+        StyleProp::BgOpacity(Opa::COVER),
+        StyleProp::Radius(Radius::Px(3)),
+        StyleProp::PaddingRight(Length::Px(2)),
+        StyleProp::PaddingBottom(Length::Px(2)),
+        StyleProp::PaddingTop(Length::Px(2)),
+        StyleProp::PaddingLeft(Length::Px(2)),
     ] {
         e.set_local_prop(id, sb, p);
     }
@@ -134,7 +134,7 @@ fn scrollbar_on_even_without_content() {
     );
     h.engine_mut().set_scrollbar_mode(cont, ScrollbarMode::On);
     let (hor, ver) = h.engine().scrollbar_areas(cont);
-    // The whole track (LVGL), both axes of the default `Dir::ALL`.
+    // The whole track (LVGL), both axes of the default `Sides::ALL`.
     assert!(ver.is_some() && hor.is_some());
 }
 
@@ -205,7 +205,7 @@ fn scrollbar_redrawn_when_content_grows() {
             Rect::from_xywh(0, i * 40, 100, 40),
             &[
                 StyleProp::BgColor(Color::hex(0x0030_60C0)),
-                StyleProp::BgOpa(Opa::COVER),
+                StyleProp::BgOpacity(Opa::COVER),
             ],
         );
     }

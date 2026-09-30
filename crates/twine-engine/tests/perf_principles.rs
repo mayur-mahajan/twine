@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 use common::{boxed, white_screen};
 use twine_core::{Color, Duration, Instant, Opa, Rect};
 use twine_engine::{Engine, EngineConfig, InvalidateReason, NodeId, Wake};
-use twine_style::{GradDir, Selector, StyleProp};
+use twine_style::{GradDir, Radius, Selector, StyleProp};
 use twine_testing::EngineHarness;
 use twine_testing::alloc::{CountingAllocator, count_allocs};
 use twine_testing::scenes::{engine_boxes, styled_box};
@@ -98,16 +98,16 @@ fn p4_zero_alloc_steady_state() {
             let (x, y) = ((i % 20) * 16, (i / 20) * 24);
             let mut props = vec![
                 StyleProp::BgColor(Color::hex(0x10_20_30 + i as u32 * 0x0001_0203)),
-                StyleProp::BgOpa(Opa::COVER),
-                StyleProp::Radius(3),
+                StyleProp::BgOpacity(Opa::COVER),
+                StyleProp::Radius(Radius::Px(3)),
             ];
             if i % 7 == 0 {
-                props.extend([StyleProp::ShadowWidth(6), StyleProp::ShadowOpa(Opa::P40)]);
+                props.extend([StyleProp::ShadowWidth(6), StyleProp::ShadowOpacity(Opa::P40)]);
             }
             if i % 5 == 0 {
                 props.extend([
-                    StyleProp::BgGradColor(Color::WHITE),
-                    StyleProp::BgGradDir(GradDir::Hor),
+                    StyleProp::BgGradientColor(Color::WHITE),
+                    StyleProp::BgGradientDir(GradDir::Hor),
                 ]);
             }
             styled_box(e, s, Rect::from_xywh(x, y, 14, 20), &props);

@@ -23,6 +23,7 @@
 //! let g = generate(&opts, Path::new(".")).unwrap();
 //! std::fs::write(&opts.out, g.source).unwrap();
 //! ```
+#![forbid(unsafe_code)]
 
 pub mod font;
 pub mod image;

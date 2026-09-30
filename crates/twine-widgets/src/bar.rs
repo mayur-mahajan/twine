@@ -608,11 +608,11 @@ impl Bar {
         let indic_short = indic.width().min(indic.height());
         let indic_radius = d.radius.min(indic_short >> 1).max(0);
         let grad_dir = m
-            .style(Part::Indicator, PropId::BgGradDir)
+            .style(Part::Indicator, PropId::BgGradientDir)
             .get::<GradDir>()
             .unwrap_or_default();
         let has_image = m
-            .style(Part::Indicator, PropId::BgImageSrc)
+            .style(Part::Indicator, PropId::BgImage)
             .get::<&'static ImageSource>()
             .is_some();
         let mask_needed =

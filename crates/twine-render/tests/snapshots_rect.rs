@@ -2,7 +2,7 @@
 #![allow(clippy::unreadable_literal)] // colors read best as 0xRRGGBB
 #![allow(clippy::manual_assert_eq)] // `assert!(a == b)` avoids dumping whole images on failure
 
-use twine_core::{Angle, Color, ColorFormat, Opa, Point, Rect};
+use twine_core::{Angle, Color, ColorFormat, Fraction, Opa, Point, Rect};
 use twine_render::{
     BorderSide, GradExtend, GradKind, GradStop, Gradient, Painter, RADIUS_CIRCLE, RectDsc, ShadowDsc,
 };
@@ -57,7 +57,7 @@ fn rect_opa_128_radius_10() {
             Rect::from_xywh(10, 5, 60, 50),
             &RectDsc {
                 radius: 10,
-                bg_opa: Opa(128),
+                bg_opa: Opa::from_raw(128),
                 ..bg(RED)
             },
         );
@@ -101,13 +101,13 @@ fn chunk_scene(p: &mut Painter<'_>) {
         Rect::from_xywh(20, 10, 120, 30),
         &RectDsc {
             radius: 12,
-            bg_opa: Opa(150),
+            bg_opa: Opa::from_raw(150),
             border_width: 3,
             border_color: RED,
             border_opa: Opa::COVER,
             shadow: ShadowDsc {
                 width: 10,
-                opa: Opa(120),
+                opa: Opa::from_raw(120),
                 ..ShadowDsc::default()
             },
             ..bg(Color::YELLOW)
@@ -187,7 +187,7 @@ fn outline_with_pad() {
             &RectDsc {
                 radius: 0,
                 outline_pad: 0,
-                outline_opa: Opa(128),
+                outline_opa: Opa::from_raw(128),
                 ..d
             },
         );
@@ -204,7 +204,7 @@ fn border_opa_over_bg() {
                 radius: 12,
                 border_width: 6,
                 border_color: Color::BLACK,
-                border_opa: Opa(100),
+                border_opa: Opa::from_raw(100),
                 ..bg(Color::YELLOW)
             },
         );
@@ -213,7 +213,7 @@ fn border_opa_over_bg() {
 }
 
 fn stops2(a: Color, b: Color) -> [GradStop; 2] {
-    [GradStop::new(a, 0), GradStop::new(b, 255)]
+    [GradStop::new(a, Fraction::ZERO), GradStop::new(b, Fraction::ONE)]
 }
 
 fn grad_tile(p: &mut Painter<'_>, area: Rect, g: &Gradient, radius: i32) {
@@ -238,9 +238,9 @@ fn grad_hor_ver() {
             0,
         );
         let three = [
-            GradStop::new(RED, 0),
-            GradStop::with_opa(Color::GREEN, Opa(64), 128),
-            GradStop::new(BLUE, 255),
+            GradStop::new(RED, Fraction::ZERO),
+            GradStop::with_opa(Color::GREEN, Opa::from_raw(64), Fraction::from_raw(128)),
+            GradStop::new(BLUE, Fraction::ONE),
         ];
         grad_tile(
             p,
@@ -396,7 +396,7 @@ fn sh(width: i32, ofs_x: i32, ofs_y: i32, spread: i32, opa: u8) -> ShadowDsc {
         ofs_y,
         spread,
         color: Color::BLACK,
-        opa: Opa(opa),
+        opa: Opa::from_raw(opa),
     }
 }
 
@@ -470,7 +470,12 @@ fn shadow_under_transparent_bg() {
         100,
         90,
         ColorFormat::Rgb565,
-        shadow_scene(Rect::from_xywh(20, 20, 60, 50), 8, sh(16, 0, 0, 0, 200), Opa(100)),
+        shadow_scene(
+            Rect::from_xywh(20, 20, 60, 50),
+            8,
+            sh(16, 0, 0, 0, 200),
+            Opa::from_raw(100),
+        ),
     );
     assert_render_snapshot!(h, "shadow_under_transparent_bg");
 }

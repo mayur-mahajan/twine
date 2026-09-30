@@ -5,22 +5,24 @@
 //!   `align_to`, `translate`, `offset`): `style_modifiers_resolve`, `align_to_follows_ref`,
 //!   `modifier_idempotency_all`.
 //! - Spacing (`padding*`, `margin*`, `gap`, `row_gap`, `column_gap`): `style_modifiers_resolve`.
-//! - Background (`bg`, `bg_color`, `bg_opa`, `bg_grad`, `bg_image`): `style_modifiers_resolve`.
+//! - Background (`bg`, `bg_color`, `bg_opacity`, `bg_gradient`, `bg_image`): `style_modifiers_resolve`.
 //! - Border/outline (`border*`, `outline`, `radius`): `style_modifiers_resolve`.
 //! - Shadow (`shadow`, `shadow_*`): `style_modifiers_resolve`.
-//! - Text (`font`, `text_color`, `text_opa`, `text_align`, `letter_space`, `line_space`,
-//!   `text_decor`): `style_modifiers_resolve`.
+//! - Text (`font`, `text_color`, `text_opacity`, `text_align`, `letter_spacing`,
+//!   `line_spacing`, `text_decoration`): `style_modifiers_resolve`.
 //! - Visual (`opacity`, `transform_*`, `blend_mode`, `clip_corner`, `recolor`):
 //!   `style_modifiers_resolve`.
 //! - Flags (`hidden`, `disabled`, `clickable`, `checkable`, `scrollable`, `scroll_*`,
 //!   `scrollbar`, `focusable`, `floating`, `ignore_layout`, `event_bubble`,
 //!   `overflow_visible`): `flag_modifiers_apply`.
 //! - Style (`style`, `style_for`, `style_ref`, `class_style`): `style_list_modifiers`.
-//! - Layout as child (`flex_grow`, `grid_cell`, `grid_cell_align`): `grid_places_cells`,
+//! - Layout as child (`flex_grow`, `grid_col`, `grid_row`, `grid_align`): `grid_places_cells`,
 //!   `spacer_grows`, `style_modifiers_resolve`.
 //! - Events (`on_click` … `on_event`): `event_modifiers_fire`.
 //! - Identity (`test_id`, `node_ref`, `group`): `identity_modifiers`.
 //! - Transition (`transition`): `style_modifiers_resolve`.
+//! - Every property of the style table and every shorthand (generated, R1.S04):
+//!   `every_table_property_has_modifier_builder_and_key` in `style_vocabulary.rs`.
 //! - Dynamic values of every kind: `dynamic_modifier_updates`, `modifier_idempotency_all`.
 
 use std::cell::RefCell;
@@ -36,11 +38,15 @@ use twine_theme::DefaultTheme;
 use twine_view::prelude::*;
 use twine_widgets::label::Label;
 
+/// Promotable constants (a `const fn` call in a `&[..]` literal is not `'static`).
+const ANGLE_10: Angle = Angle::deg(10);
+const SCALE_300: Scale = Scale::from_raw_256(300);
+
 static GRAD: Gradient = Gradient::new(
     twine_render::GradKind::Ver,
     &[
-        twine_render::GradStop::new(Color::RED, 0),
-        twine_render::GradStop::new(Color::BLUE, 255),
+        twine_render::GradStop::new(Color::RED, Fraction::ZERO),
+        twine_render::GradStop::new(Color::BLUE, Fraction::ONE),
     ],
 );
 const MONT20: &twine_text::Font = &twine_assets::fonts::MONTSERRAT_20;
@@ -148,78 +154,78 @@ fn style_modifiers_resolve() {
             "padding",
             |v| v.padding(4),
             &[
-                (PropId::PadTop, StyleValue::Int(4)),
-                (PropId::PadBottom, StyleValue::Int(4)),
-                (PropId::PadLeft, StyleValue::Int(4)),
-                (PropId::PadRight, StyleValue::Int(4)),
+                (PropId::PaddingTop, StyleValue::Length(Length::Px(4))),
+                (PropId::PaddingBottom, StyleValue::Length(Length::Px(4))),
+                (PropId::PaddingLeft, StyleValue::Length(Length::Px(4))),
+                (PropId::PaddingRight, StyleValue::Length(Length::Px(4))),
             ],
         ),
         (
-            "padding_hor",
-            |v| v.padding_hor(5),
+            "padding_x",
+            |v| v.padding_x(5),
             &[
-                (PropId::PadLeft, StyleValue::Int(5)),
-                (PropId::PadRight, StyleValue::Int(5)),
+                (PropId::PaddingLeft, StyleValue::Length(Length::Px(5))),
+                (PropId::PaddingRight, StyleValue::Length(Length::Px(5))),
             ],
         ),
         (
-            "padding_ver",
-            |v| v.padding_ver(6),
+            "padding_y",
+            |v| v.padding_y(6),
             &[
-                (PropId::PadTop, StyleValue::Int(6)),
-                (PropId::PadBottom, StyleValue::Int(6)),
+                (PropId::PaddingTop, StyleValue::Length(Length::Px(6))),
+                (PropId::PaddingBottom, StyleValue::Length(Length::Px(6))),
             ],
         ),
         (
             "padding_each",
             |v| v.padding_each(Insets::new(1, 2, 3, 4)),
             &[
-                (PropId::PadLeft, StyleValue::Int(1)),
-                (PropId::PadTop, StyleValue::Int(2)),
-                (PropId::PadRight, StyleValue::Int(3)),
-                (PropId::PadBottom, StyleValue::Int(4)),
+                (PropId::PaddingLeft, StyleValue::Length(Length::Px(1))),
+                (PropId::PaddingTop, StyleValue::Length(Length::Px(2))),
+                (PropId::PaddingRight, StyleValue::Length(Length::Px(3))),
+                (PropId::PaddingBottom, StyleValue::Length(Length::Px(4))),
             ],
         ),
         (
             "margin",
             |v| v.margin(2),
             &[
-                (PropId::MarginTop, StyleValue::Int(2)),
-                (PropId::MarginRight, StyleValue::Int(2)),
+                (PropId::MarginTop, StyleValue::Length(Length::Px(2))),
+                (PropId::MarginRight, StyleValue::Length(Length::Px(2))),
             ],
         ),
         (
             "margin_each",
             |v| v.margin_each(Insets::new(1, 2, 3, 4)),
             &[
-                (PropId::MarginLeft, StyleValue::Int(1)),
-                (PropId::MarginBottom, StyleValue::Int(4)),
+                (PropId::MarginLeft, StyleValue::Length(Length::Px(1))),
+                (PropId::MarginBottom, StyleValue::Length(Length::Px(4))),
             ],
         ),
         (
             "gap",
             |v| v.gap(9),
             &[
-                (PropId::PadRow, StyleValue::Int(9)),
-                (PropId::PadColumn, StyleValue::Int(9)),
+                (PropId::RowGap, StyleValue::Length(Length::Px(9))),
+                (PropId::ColumnGap, StyleValue::Length(Length::Px(9))),
             ],
         ),
         (
             "row_gap",
             |v| v.row_gap(3),
-            &[(PropId::PadRow, StyleValue::Int(3))],
+            &[(PropId::RowGap, StyleValue::Length(Length::Px(3)))],
         ),
         (
             "column_gap",
             |v| v.column_gap(4),
-            &[(PropId::PadColumn, StyleValue::Int(4))],
+            &[(PropId::ColumnGap, StyleValue::Length(Length::Px(4)))],
         ),
         (
             "bg",
             |v| v.bg(Color::RED),
             &[
                 (PropId::BgColor, StyleValue::Color(Color::RED)),
-                (PropId::BgOpa, StyleValue::Opa(Opa::COVER)),
+                (PropId::BgOpacity, StyleValue::Opa(Opa::COVER)),
             ],
         ),
         (
@@ -228,24 +234,24 @@ fn style_modifiers_resolve() {
             &[(PropId::BgColor, StyleValue::Color(Color::BLUE))],
         ),
         (
-            "bg_opa",
-            |v| v.bg_opa(Opa::P50),
-            &[(PropId::BgOpa, StyleValue::Opa(Opa::P50))],
+            "bg_opacity",
+            |v| v.bg_opacity(Opa::P50),
+            &[(PropId::BgOpacity, StyleValue::Opa(Opa::P50))],
         ),
-        ("bg_grad", |v| v.bg_grad(&GRAD), &[]),
+        ("bg_gradient", |v| v.bg_gradient(&GRAD), &[]),
         ("bg_image", |v| v.bg_image(&BG_IMG), &[]),
         (
             "border",
             |v| v.border(2, Color::RED),
             &[
-                (PropId::BorderWidth, StyleValue::Int(2)),
+                (PropId::BorderWidth, StyleValue::Length(Length::Px(2))),
                 (PropId::BorderColor, StyleValue::Color(Color::RED)),
             ],
         ),
         (
             "border_width",
             |v| v.border_width(3),
-            &[(PropId::BorderWidth, StyleValue::Int(3))],
+            &[(PropId::BorderWidth, StyleValue::Length(Length::Px(3)))],
         ),
         (
             "border_color",
@@ -253,9 +259,9 @@ fn style_modifiers_resolve() {
             &[(PropId::BorderColor, StyleValue::Color(Color::GREEN))],
         ),
         (
-            "border_opa",
-            |v| v.border_opa(Opa::P30),
-            &[(PropId::BorderOpa, StyleValue::Opa(Opa::P30))],
+            "border_opacity",
+            |v| v.border_opacity(Opa::P30),
+            &[(PropId::BorderOpacity, StyleValue::Opa(Opa::P30))],
         ),
         ("border_side", |v| v.border_side(BorderSide::BOTTOM), &[]),
         (
@@ -263,10 +269,14 @@ fn style_modifiers_resolve() {
             |v| v.outline(2, Color::BLUE, 3),
             &[
                 (PropId::OutlineWidth, StyleValue::Int(2)),
-                (PropId::OutlinePad, StyleValue::Int(3)),
+                (PropId::OutlineOffset, StyleValue::Int(3)),
             ],
         ),
-        ("radius", |v| v.radius(6), &[(PropId::Radius, StyleValue::Int(6))]),
+        (
+            "radius",
+            |v| v.radius(6),
+            &[(PropId::Radius, StyleValue::Length(Length::Px(6)))],
+        ),
         (
             "shadow",
             |v| {
@@ -284,7 +294,7 @@ fn style_modifiers_resolve() {
                 (PropId::ShadowOffsetX, StyleValue::Int(1)),
                 (PropId::ShadowOffsetY, StyleValue::Int(2)),
                 (PropId::ShadowSpread, StyleValue::Int(3)),
-                (PropId::ShadowOpa, StyleValue::Opa(Opa::P50)),
+                (PropId::ShadowOpacity, StyleValue::Opa(Opa::P50)),
             ],
         ),
         (
@@ -311,14 +321,14 @@ fn style_modifiers_resolve() {
             &[(PropId::ShadowColor, StyleValue::Color(Color::RED))],
         ),
         (
-            "shadow_opa",
-            |v| v.shadow_opa(Opa::P30),
-            &[(PropId::ShadowOpa, StyleValue::Opa(Opa::P30))],
+            "shadow_opacity",
+            |v| v.shadow_opacity(Opa::P30),
+            &[(PropId::ShadowOpacity, StyleValue::Opa(Opa::P30))],
         ),
         (
             "font",
             |v| v.font(MONT20),
-            &[(PropId::TextFont, StyleValue::Font(MONT20))],
+            &[(PropId::Font, StyleValue::Font(MONT20))],
         ),
         (
             "text_color",
@@ -326,9 +336,9 @@ fn style_modifiers_resolve() {
             &[(PropId::TextColor, StyleValue::Color(Color::RED))],
         ),
         (
-            "text_opa",
-            |v| v.text_opa(Opa::P50),
-            &[(PropId::TextOpa, StyleValue::Opa(Opa::P50))],
+            "text_opacity",
+            |v| v.text_opacity(Opa::P50),
+            &[(PropId::TextOpacity, StyleValue::Opa(Opa::P50))],
         ),
         (
             "text_align",
@@ -336,30 +346,34 @@ fn style_modifiers_resolve() {
             &[(PropId::TextAlign, StyleValue::Enum(TextAlign::Center as u8))],
         ),
         (
-            "letter_space",
-            |v| v.letter_space(2),
-            &[(PropId::TextLetterSpace, StyleValue::Int(2))],
+            "letter_spacing",
+            |v| v.letter_spacing(2),
+            &[(PropId::LetterSpacing, StyleValue::Int(2))],
         ),
         (
-            "line_space",
-            |v| v.line_space(3),
-            &[(PropId::TextLineSpace, StyleValue::Int(3))],
+            "line_spacing",
+            |v| v.line_spacing(3),
+            &[(PropId::LineSpacing, StyleValue::Int(3))],
         ),
-        ("text_decor", |v| v.text_decor(TextDecor::UNDERLINE), &[]),
+        (
+            "text_decoration",
+            |v| v.text_decoration(TextDecor::UNDERLINE),
+            &[],
+        ),
         (
             "opacity",
             |v| v.opacity(Opa::P50),
-            &[(PropId::OpaLayered, StyleValue::Opa(Opa::P50))],
+            &[(PropId::Opacity, StyleValue::Opa(Opa::P50))],
         ),
         (
             "transform_rotation",
             |v| v.transform_rotation(Angle::deg(10)),
-            &[(PropId::TransformRotation, StyleValue::Angle(Angle(100)))],
+            &[(PropId::TransformRotation, StyleValue::Angle(ANGLE_10))],
         ),
         (
             "transform_scale",
-            |v| v.transform_scale(Scale(300)),
-            &[(PropId::TransformScaleX, StyleValue::Scale(Scale(300)))],
+            |v| v.transform_scale(SCALE_300),
+            &[(PropId::TransformScaleX, StyleValue::Scale(SCALE_300))],
         ),
         (
             "transform_pivot",
@@ -374,10 +388,10 @@ fn style_modifiers_resolve() {
         ),
         (
             "recolor",
-            |v| v.recolor(Color::RED, Opa::P50),
+            |v| v.recolor(Color::RED).recolor_opacity(Opa::P50),
             &[
                 (PropId::Recolor, StyleValue::Color(Color::RED)),
-                (PropId::RecolorOpa, StyleValue::Opa(Opa::P50)),
+                (PropId::RecolorOpacity, StyleValue::Opa(Opa::P50)),
             ],
         ),
         (
@@ -386,8 +400,8 @@ fn style_modifiers_resolve() {
             &[(PropId::FlexGrow, StyleValue::Int(2))],
         ),
         (
-            "grid_cell_align",
-            |v| v.grid_cell_align(GridAlign::Center, GridAlign::End),
+            "grid_align",
+            |v| v.grid_align(GridAlign::Center, GridAlign::End),
             &[
                 (PropId::GridCellXAlign, StyleValue::Enum(GridAlign::Center as u8)),
                 (PropId::GridCellYAlign, StyleValue::Enum(GridAlign::End as u8)),
@@ -530,9 +544,9 @@ fn modifier_idempotency_all() {
                 })
                 .into_any()
         }),
-        ("bg_opa", |s| {
+        ("bg_opacity", |s| {
             label("x")
-                .bg_opa(move || {
+                .bg_opacity(move || {
                     s.get();
                     Opa::P50
                 })
@@ -597,19 +611,17 @@ fn modifier_idempotency_all() {
             label("x")
                 .transform_scale(move || {
                     s.get();
-                    Scale(300)
+                    Scale::from_raw_256(300)
                 })
                 .into_any()
         }),
         ("recolor", |s| {
             label("x")
-                .recolor(
-                    move || {
-                        s.get();
-                        Color::RED
-                    },
-                    Opa::P50,
-                )
+                .recolor(move || {
+                    s.get();
+                    Color::RED
+                })
+                .recolor_opacity(Opa::P50)
                 .into_any()
         }),
         ("hidden", |s| {
@@ -640,7 +652,7 @@ fn modifier_idempotency_all() {
             column(label("x"))
                 .scroll_dir(move || {
                     s.get();
-                    Dir::VER
+                    Axis::Vertical
                 })
                 .into_any()
         }),
@@ -708,11 +720,11 @@ fn modifier_idempotency_all() {
         });
         t.run_until_idle();
         let tick = t.root_scope().expect_context::<Signal<u32>>();
-        let runs = twine_reactive::debug_stats().effect_runs;
+        let runs = twine_reactive::runtime_stats().effect_runs;
         tick.set(1);
         t.update();
         assert!(
-            twine_reactive::debug_stats().effect_runs > runs,
+            twine_reactive::runtime_stats().effect_runs > runs,
             "{name}: no binding ran"
         );
         assert!(
@@ -817,7 +829,7 @@ fn flag_modifiers_apply() {
     assert!(t.find(by_id("n")).state().contains(State::DISABLED));
     let t = mount(|_| {
         column(label("x"))
-            .scroll_dir(Dir::HOR)
+            .scroll_dir(Axis::Horizontal)
             .scrollbar(ScrollbarMode::On)
             .scroll_snap_x(ScrollSnap::Center)
             .scroll_snap_y(ScrollSnap::Start)
@@ -826,7 +838,7 @@ fn flag_modifiers_apply() {
     });
     let e = t.engine();
     let n = node(&t);
-    assert_eq!(e.scroll_dir(n), Dir::HOR);
+    assert_eq!(e.scroll_dir(n), Sides::HORIZONTAL);
     assert_eq!(e.scrollbar_mode(n), ScrollbarMode::On);
     assert_eq!(e.scroll_snap_x(n), ScrollSnap::Center);
     assert_eq!(e.scroll_snap_y(n), ScrollSnap::Start);
@@ -849,7 +861,7 @@ fn style_list_modifiers() {
             .test_id("n")
             .into_any()
     });
-    assert_eq!(prop(&t, PropId::Radius), StyleValue::Int(5));
+    assert_eq!(prop(&t, PropId::Radius), StyleValue::Length(Length::Px(5)));
     assert_eq!(prop(&t, PropId::BgColor), StyleValue::Color(Color::GREEN));
     let e = t.engine();
     let kinds: Vec<_> = e
@@ -903,7 +915,7 @@ fn event_modifiers_fire() {
         (EventCode::Focused, EventParam::None),
         (EventCode::Defocused, EventParam::None),
         (EventCode::ValueChanged, EventParam::None),
-        (EventCode::Gesture, EventParam::Dir(Dir::LEFT)),
+        (EventCode::Gesture, EventParam::Dir(Side::Left)),
         (EventCode::Key, EventParam::Key(Key::Enter)),
         (EventCode::Scroll, EventParam::None),
         (EventCode::Custom(3), EventParam::None),
@@ -941,9 +953,7 @@ fn align_to_follows_ref() {
         let base = cx.node_ref::<Label>();
         container((
             label("base").pos(40, 30).node_ref(base).test_id("base"),
-            label("next")
-                .align_to(base, Align::OutBottomLeft, 0, 5)
-                .test_id("n"),
+            label("next").align_to(base, Anchor::BelowLeft, 0, 5).test_id("n"),
         ))
         .size(Length::pct(100), Length::pct(100))
         .into_any()
@@ -974,18 +984,15 @@ fn column_children_stacked() {
     assert_eq!(b.x0, a.x1 + 5);
 }
 
-static COLS: [GridTrack; 2] = [GridTrack::Px(50), GridTrack::Px(60)];
-static ROWS: [GridTrack; 2] = [GridTrack::Px(20), GridTrack::Px(30)];
-
 #[test]
 fn grid_places_cells() {
     let t = mount(|_| {
         grid(
-            &COLS,
-            &ROWS,
+            grid_tracks![px(50), px(60)],
+            grid_tracks![px(20), px(30)],
             (
-                label("a").grid_cell(0, 1, 0, 1).test_id("a"),
-                label("b").grid_cell(1, 1, 1, 1).test_id("b"),
+                label("a").grid_col(0).grid_row(0).test_id("a"),
+                label("b").grid_col(1).grid_row(1).test_id("b"),
             ),
         )
         .gap(0)
@@ -1032,7 +1039,7 @@ fn spacer_grows() {
 fn scroll_view_scrolls_on_drag() {
     let mut t = mount(|_| {
         scroll_view(
-            Dir::VER,
+            Axis::Vertical,
             (0..20)
                 .map(|i| label(format!("row {i}")).height(20))
                 .collect::<Vec<_>>(),
@@ -1072,9 +1079,6 @@ fn view_column_row_light() {
     t.assert_snapshot("view_column_row_light");
 }
 
-static GRID_COLS: [GridTrack; 3] = [GridTrack::Fr(1), GridTrack::Fr(1), GridTrack::Fr(1)];
-static GRID_ROWS: [GridTrack; 2] = [GridTrack::Fr(1), GridTrack::Fr(1)];
-
 #[test]
 fn view_grid_dark() {
     let mut t = TestUi::new(240, 160)
@@ -1083,14 +1087,19 @@ fn view_grid_dark() {
             let cells: Vec<_> = (0..6)
                 .map(|i| {
                     button(label(["A", "B", "C", "D", "E", "F"][i]))
-                        .grid_cell((i % 3) as i32, 1, (i / 3) as i32, 1)
-                        .grid_cell_align(GridAlign::Stretch, GridAlign::Stretch)
+                        .grid_col(i % 3)
+                        .grid_row(i / 3)
+                        .grid_align(GridAlign::Stretch, GridAlign::Stretch)
                 })
                 .collect();
-            grid(&GRID_COLS, &GRID_ROWS, cells)
-                .gap(6)
-                .padding(6)
-                .size(Length::pct(100), Length::pct(100))
+            grid(
+                grid_tracks![fr(1), fr(1), fr(1)],
+                grid_tracks![fr(1), fr(1)],
+                cells,
+            )
+            .gap(6)
+            .padding(6)
+            .size(Length::pct(100), Length::pct(100))
         });
     t.run_until_idle();
     t.assert_snapshot("view_grid_dark");

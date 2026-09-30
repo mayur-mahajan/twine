@@ -25,7 +25,7 @@ use crate::view::{View, ViewSeq};
 /// let name = cx.signal(String::from("Ada"));
 /// let _v = spangroup((
 ///     span("Hello, "),
-///     span(name).text_color(Color::hex(0x21_96_F3)).text_decor(TextDecor::UNDERLINE),
+///     span(name).text_color(Color::hex(0x21_96_F3)).text_decoration(TextDecor::UNDERLINE),
 ///     span("!"),
 /// ))
 /// .mode(SpanMode::Break)
@@ -121,7 +121,7 @@ impl SpanView {
     /// The span's font.
     #[must_use]
     pub fn font(self, f: impl IntoProp<&'static Font>) -> Self {
-        self.style_prop(f, StyleProp::TextFont)
+        self.style_prop(f, StyleProp::Font)
     }
 
     /// The span's text color.
@@ -132,20 +132,20 @@ impl SpanView {
 
     /// The span's text opacity.
     #[must_use]
-    pub fn text_opa(self, o: impl IntoProp<Opa>) -> Self {
-        self.style_prop(o, StyleProp::TextOpa)
+    pub fn text_opacity(self, o: impl IntoProp<Opa>) -> Self {
+        self.style_prop(o, StyleProp::TextOpacity)
     }
 
     /// Underline and/or strikethrough.
     #[must_use]
-    pub fn text_decor(self, d: impl IntoProp<TextDecor>) -> Self {
-        self.style_prop(d, StyleProp::TextDecor)
+    pub fn text_decoration(self, d: impl IntoProp<TextDecor>) -> Self {
+        self.style_prop(d, StyleProp::TextDecoration)
     }
 
     /// Extra space between the span's letters.
     #[must_use]
-    pub fn letter_space(self, px: impl IntoProp<i32>) -> Self {
-        self.style_prop(px, StyleProp::TextLetterSpace)
+    pub fn letter_spacing(self, px: impl IntoProp<i32>) -> Self {
+        self.style_prop(px, StyleProp::LetterSpacing)
     }
 }
 
@@ -153,6 +153,9 @@ impl View for SpanView {
     /// Adds the span to the parent group and returns the group's node.
     fn build(self, cx: &mut BuildCx<'_>) -> NodeId {
         let group = cx.parent();
+        if group == twine_engine::DEAD_NODE {
+            return group; // the parent failed (reported)
+        }
         let id = cx
             .engine()
             .with_widget_mut(group, |g: &mut SpanGroup, wcx| g.add_span(wcx));

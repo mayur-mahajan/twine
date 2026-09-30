@@ -64,12 +64,15 @@ pub struct Engine {
     pub(crate) input_point: Option<twine_core::Point>,
     /// The node each pointer is scrolling (dragged or thrown) and the locked direction.
     pub(crate) indev_scrolls:
-        heapless::Vec<(crate::InputId, NodeId, twine_style::Dir), { crate::MAX_INPUTS }>,
+        heapless::Vec<(crate::InputId, NodeId, twine_style::Sides), { crate::MAX_INPUTS }>,
     /// Focus groups (slot index = `GroupId`).
     pub(crate) groups: Vec<Option<crate::group::Group>>,
     pub(crate) default_group: Option<crate::GroupId>,
     /// Gridnav containers.
     pub(crate) gridnavs: Vec<crate::gridnav::GridnavDsc>,
+    /// Grid templates owned by the engine (`set_grid_column_tracks`), few: one per grid
+    /// container built at run time.
+    pub(crate) grid_templates: Vec<crate::layout::GridTemplate>,
     /// Next user handler id.
     pub(crate) next_handler_id: u32,
     /// Next `EventCode::Custom` value.
@@ -84,6 +87,8 @@ pub struct Engine {
     pub(crate) events: crate::handlers::EventQueues,
     /// Pending [`Engine::on_outside_press`] callbacks.
     pub(crate) outside_presses: Vec<(NodeId, crate::outside::OutsideCb)>,
+    /// Raised faults (see [`Engine::raise_fault`]).
+    pub(crate) faults: crate::fault::FaultState,
     #[cfg(feature = "debug-checks")]
     pub(crate) invalidations: Vec<(Rect, InvalidateReason)>,
     /// The invalidations rendered by the last frame that started.
@@ -124,12 +129,13 @@ impl Engine {
         };
         twine_core::info!(
             target: "twine::engine",
-            "engine: refr_period={} max_dirty_areas={} layer_buf={} B glyph_cache={} B cooperative_flush={}",
+            "engine: refr_period={} max_dirty_areas={} layer_buf={} B glyph_cache={} B cooperative_flush={} flush_timeout={:?}",
             config.refr_period,
             config.max_dirty_areas,
             config.layer_buf_bytes,
             config.glyph_cache_bytes,
-            config.cooperative_flush
+            config.cooperative_flush,
+            config.flush_timeout
         );
         Ok(Self {
             tree: Tree::new(),
@@ -151,6 +157,7 @@ impl Engine {
             groups: Vec::new(),
             default_group: None,
             gridnavs: Vec::new(),
+            grid_templates: Vec::new(),
             next_handler_id: 0,
             next_event_code: 0,
             layout: crate::layout::LayoutState::default(),
@@ -158,6 +165,7 @@ impl Engine {
             trans: crate::transition::TransState::default(),
             events: crate::handlers::EventQueues::default(),
             outside_presses: Vec::new(),
+            faults: crate::fault::FaultState::default(),
             // Both logs are swapped at every frame start: allocated once, up front.
             #[cfg(feature = "debug-checks")]
             invalidations: Vec::with_capacity(64),
@@ -403,11 +411,11 @@ impl Engine {
 #[cfg(feature = "svg")]
 pub(crate) fn svg_header(doc: &twine_vector::SvgDocument) -> twine_image::ImageHeader {
     let px = |v: twine_core::Fx| {
-        u16::try_from(v.0.saturating_add(0xFFFF) >> 16)
+        u16::try_from(v.raw().saturating_add(0xFFFF) >> 16)
             .unwrap_or(u16::MAX)
             .max(1)
     };
-    let (w, h) = if doc.size.w.0 > 0 && doc.size.h.0 > 0 {
+    let (w, h) = if doc.size.w.raw() > 0 && doc.size.h.raw() > 0 {
         (doc.size.w, doc.size.h)
     } else {
         (doc.view_box.width(), doc.view_box.height())

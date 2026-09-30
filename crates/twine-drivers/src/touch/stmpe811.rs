@@ -51,7 +51,7 @@ use embedded_hal::digital::InputPin;
 use embedded_hal::i2c::I2c;
 use twine_core::Point;
 use twine_core::log::{trace, warn};
-use twine_hal::{Calibration, InputData, InputDevice, InputKind, PointerData, PollHint};
+use twine_hal::{Calibration, DeviceHealth, InputData, InputDevice, InputKind, PointerData, PollHint};
 
 use super::{Filter, IrqState, irq_touch_common, median3};
 
@@ -143,6 +143,14 @@ impl<I2C, IRQ> Stmpe811<I2C, IRQ> {
             width: 240,
             height: 320,
         }
+    }
+
+    /// Reports the device [`Failed`](DeviceHealth::Failed) after `n` consecutive bus errors
+    /// (default [`DeviceHealth::DEFAULT_FAIL_AFTER`]; see [`health`](InputDevice::health)).
+    #[must_use]
+    pub fn with_fail_after(mut self, n: u16) -> Self {
+        self.irq.fail_after = n;
+        self
     }
 
     /// Uses another I2C address (e.g. [`ADDR_ALT`]).
@@ -265,14 +273,18 @@ impl<I2C: I2c, IRQ: InputPin> InputDevice for Stmpe811<I2C, IRQ> {
             Ok(None) => self.irq.released(),
             Err(_) => {
                 warn!(target: "twine::driver", "stmpe811: I2C error");
-                self.irq.released()
+                return InputData::Pointer(self.irq.error("stmpe811"));
             }
         };
-        InputData::Pointer(self.irq.update("stmpe811", data))
+        InputData::Pointer(self.irq.ok("stmpe811", data))
     }
 
     fn poll_hint(&self) -> PollHint {
         self.irq.poll_hint()
+    }
+
+    fn health(&self) -> DeviceHealth {
+        self.irq.health
     }
 }
 
@@ -427,5 +439,17 @@ mod tests {
         assert_eq!(rec.i2c_transactions(), 0);
         assert_eq!(t.kind(), InputKind::Pointer);
         let _ = t.release();
+    }
+
+    #[test]
+    fn stmpe811_bus_failure_degrades_then_fails() {
+        let rec = Recorder::new();
+        let regs = Regs::install(&rec);
+        rec.set_level("int", false);
+        regs.set(reg::TSC_CTRL.into(), &[0x81]);
+        regs.set(reg::FIFO_SIZE.into(), &[1]);
+        regs.set(0xD7, &sample(100, 200));
+        let mut t = dut(&rec).with_fail_after(DeviceHealth::DEFAULT_FAIL_AFTER);
+        crate::touch::test_util::assert_bus_failure_sequence(&rec, &mut t);
     }
 }

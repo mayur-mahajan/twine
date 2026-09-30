@@ -3,16 +3,17 @@
 
 pub use crate::text;
 pub use crate::{
-    AnimController, AnyView, BuildCx, Container, Dynamic, Flex, ForEach, Grid, IntoAnyView, IntoModel,
-    IntoProp, IntoText, ModalHandle, Model, Navigator, NodeRef, Prop, ScopeExt, ScreenAnim, ScreenLoad,
-    TextFn, ThemeHandle, Ui, UiBuilder, View, ViewExt, ViewSeq, VirtualList, Wake, When, WhenElse,
-    WidgetView, button, column, container, dynamic, flex, for_each, grid, image, label, navigator, row,
-    scroll_view, spacer, stack, use_navigator, use_theme, virtual_list, when, widget_view,
+    AnimController, AnyView, BuildCx, BuildError, Container, Dynamic, Flex, ForEach, Grid, IntoAnyView,
+    IntoGridSpan, IntoIcon, IntoModel, IntoOptions, IntoProp, IntoText, ModalHandle, Model, ModelValue,
+    Navigator, NodeRef, Prop, PropValue, ScopeExt, ScreenAnim, ScreenLoad, TextFn, ThemeHandle, Ui,
+    UiBuilder, UiError, View, ViewExt, ViewSeq, VirtualList, Wake, When, WhenElse, WidgetView, button,
+    column, container, dynamic, flex, for_each, grid, image, label, navigator, row, scroll_view, spacer,
+    stack, use_navigator, use_theme, virtual_list, when, widget_view,
 };
 pub use crate::{
-    MenuPageRef, MenuPageView, SpanView, TabView, TileView, animimg, arc, bar, buttonmatrix, checkbox,
-    dropdown, dropdown_static, image_button, keyboard, led, line, line_static, list, list_button, list_text,
-    menu, menu_cont, menu_page, menu_section, menu_separator, msgbox, roller, roller_static, slider, span,
+    Btn, MenuPageRef, MenuPageView, SpanView, TabView, TilePos, TileView, animimg, arc, bar, btn,
+    buttonmatrix, checkbox, dropdown, image_button, keyboard, led, line, line_static, list, list_button,
+    list_text, menu, menu_cont, menu_page, menu_section, menu_separator, msgbox, roller, slider, span,
     spangroup, spinbox, spinner, switch, tab, tabview, textarea, tile, tileview, window, window_button,
 };
 
@@ -21,10 +22,14 @@ pub use crate::{AsyncUi, AsyncUiBuilder};
 #[cfg(feature = "vector")]
 pub use crate::{VectorCanvas, vector_canvas};
 pub use twine_anim::{Anim, Easing, Interpolate, Repeat};
-pub use twine_core::{Angle, Color, Duration, Insets, Instant, Opa, Point, Rect, Scale, Size};
+pub use twine_core::fault::{FaultCounts, FaultKind, Faults};
+pub use twine_core::{
+    Angle, AngularSpeed, Color, Duration, Fraction, Insets, Instant, Opa, Point, Rect, Scale, Size,
+};
 pub use twine_engine::{
-    BufferMode, DrawCx, Engine, Event, EventCode, EventCx, EventResult, GroupId, MeasureCx, NodeId, ObjFlags,
-    Widget, WidgetClass, WidgetCx,
+    BufferMode, DEAD_NODE, DisplayHealth, DisplayState, DrawCx, Engine, Event, EventCode, EventCx,
+    EventResult, FaultHook, FaultRecord, FlushPolicy, GroupId, MeasureCx, NodeId, ObjFlags, Widget,
+    WidgetClass, WidgetCx,
 };
 pub use twine_hal::Key;
 pub use twine_image::ImageSource;
@@ -33,10 +38,11 @@ pub use twine_reactive::{
 };
 pub use twine_render::{BlendMode, BorderSide, Gradient, ShadowDsc};
 pub use twine_style::{
-    Align, BaseDir, Dir, FlexAlign, FlexFlow, GridAlign, GridTrack, LayoutKind, Length, Part, PropId,
-    ScrollSnap, ScrollbarMode, Selector, State, Style, StyleBuf, StyleProp, StyleRef, TransitionDsc, style,
+    Align, Anchor, Axis, BaseDir, CrossAlign, FlexDirection, FlexFlow, GridAlign, GridSpan, GridTrack,
+    LayoutKind, Length, MainAlign, Part, PropId, Radius, ScrollSnap, ScrollbarMode, Selector, Side, Sides,
+    State, Style, StyleBuf, StyleProp, StyleRef, TransitionDsc, grid_tracks, style,
 };
-pub use twine_text::{Font, LongMode, TextAlign, TextDecor, symbols};
+pub use twine_text::{Font, LongMode, Symbol, TextAlign, TextDecor};
 pub use twine_theme::{DefaultTheme, MonoTheme, Palette, SimpleTheme, Theme, ThemeMode};
 #[cfg(feature = "vector")]
 pub use twine_vector::{FxPoint, Path, VectorDsc, VectorScene};

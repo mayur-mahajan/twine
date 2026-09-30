@@ -6,6 +6,8 @@ mod common;
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use twine_style::Length;
+use twine_style::Radius;
 
 use common::{boxed, style, white_screen};
 use twine_core::{Color, ColorFormat, Duration, Instant, Rect, Rotation};
@@ -67,7 +69,14 @@ fn scene(e: &mut Engine) {
     boxed(e, s, Rect::from_xywh(2, 3, 40, 12), Color::RED);
     boxed(e, s, Rect::from_xywh(60, 40, 30, 20), Color::BLUE);
     let r = boxed(e, s, Rect::from_xywh(20, 22, 30, 30), Color::hex(0x002E_7D32));
-    style(e, r, &[StyleProp::Radius(10), StyleProp::BorderWidth(3)]);
+    style(
+        e,
+        r,
+        &[
+            StyleProp::Radius(Radius::Px(10)),
+            StyleProp::BorderWidth(Length::Px(3)),
+        ],
+    );
 }
 
 fn leak(len: usize) -> &'static mut [u8] {

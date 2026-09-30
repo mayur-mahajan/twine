@@ -25,10 +25,10 @@ pub enum SubpxOrder {
 
 #[inline]
 fn scale(v: u8, opa: Opa) -> u8 {
-    if opa.0 == 255 {
+    if opa.raw() == 255 {
         v
     } else {
-        twine_core::math::udiv255(u32::from(v) * u32::from(opa.0)) as u8
+        twine_core::math::udiv255(u32::from(v) * u32::from(opa.raw())) as u8
     }
 }
 
@@ -47,7 +47,7 @@ fn lcd_row<F: PixelFormat>(
         if order == SubpxOrder::Bgr {
             core::mem::swap(&mut cr, &mut cb);
         }
-        let m = mask.map_or(opa, |m| Opa(scale(m[i], opa)));
+        let m = mask.map_or(opa, |m| Opa::from_raw(scale(m[i], opa)));
         let (ar, ag, ab) = (scale(cr, m), scale(cg, m), scale(cb, m));
         if ar == 0 && ag == 0 && ab == 0 {
             continue;
@@ -91,7 +91,7 @@ impl Painter<'_> {
         let Some(vis) = area.intersection(&self.clip()) else {
             return;
         };
-        if opa.0 == 255
+        if opa.raw() == 255
             && vis == area
             && !self.has_masks()
             && area.area() >= crate::ACCEL_MIN_PX
@@ -238,7 +238,7 @@ mod tests {
                 &[255, 255],
                 2,
                 Color::WHITE,
-                Opa(128),
+                Opa::from_raw(128),
             )
         });
         assert_eq!(px, [128, 128]);
@@ -300,7 +300,7 @@ mod tests {
             &[255, 0, 0],
             3,
             Color::WHITE,
-            Opa(128),
+            Opa::from_raw(128),
             SubpxOrder::Bgr,
         );
         drop(p);

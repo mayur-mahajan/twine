@@ -205,7 +205,7 @@ impl Engine {
     /// e.anim_start(n, AnimProp::Opa, Anim::new(0, 200).duration(Duration::ms(100)));
     /// e.run_anims(Instant::ZERO);
     /// e.run_anims(Instant::from_millis(50));
-    /// assert_eq!(e.style_opa(n, Part::Main, PropId::Opa).0, 100);
+    /// assert_eq!(e.style_opa(n, Part::Main, PropId::PartOpacity).raw(), 100);
     /// ```
     pub fn anim_start(&mut self, node: NodeId, prop: AnimProp, anim: Anim) -> AnimId {
         if !self.tree.contains(node) {
@@ -504,6 +504,11 @@ impl Engine {
     }
 
     /// Records `now` as the latest known time (start of an update).
+    /// The engine's current time: the running step's time, else the last known one.
+    pub(crate) fn anim_now(&self) -> Instant {
+        self.anim.now()
+    }
+
     pub(crate) fn set_anim_now(&mut self, now: Instant) {
         self.anim.last_now = now;
     }
@@ -593,12 +598,16 @@ impl Engine {
             AnimProp::Y => StyleProp::Y(px(v)),
             AnimProp::Width => StyleProp::Width(px(v)),
             AnimProp::Height => StyleProp::Height(px(v)),
-            AnimProp::Opa => StyleProp::Opa(Opa(clamp_u(v, 255) as u8)),
+            AnimProp::Opa => StyleProp::PartOpacity(Opa::from_raw(clamp_u(v, 255) as u8)),
             AnimProp::TranslateX => StyleProp::TranslateX(px(v)),
             AnimProp::TranslateY => StyleProp::TranslateY(px(v)),
-            AnimProp::ScaleX => StyleProp::TransformScaleX(Scale(clamp_u(v, i32::from(u16::MAX)) as u16)),
-            AnimProp::ScaleY => StyleProp::TransformScaleY(Scale(clamp_u(v, i32::from(u16::MAX)) as u16)),
-            AnimProp::Rotation => StyleProp::TransformRotation(Angle(v)),
+            AnimProp::ScaleX => {
+                StyleProp::TransformScaleX(Scale::from_raw_256(clamp_u(v, i32::from(u16::MAX)) as u16))
+            }
+            AnimProp::ScaleY => {
+                StyleProp::TransformScaleY(Scale::from_raw_256(clamp_u(v, i32::from(u16::MAX)) as u16))
+            }
+            AnimProp::Rotation => StyleProp::TransformRotation(Angle::deci_deg(v)),
             AnimProp::StyleProp(raw) => {
                 let Some(p) = PropId::from_u8(raw).and_then(|pid| int_prop(pid, v)) else {
                     if !self.anim.warned.style_prop {
@@ -660,9 +669,11 @@ fn int_prop(prop: PropId, v: i32) -> Option<StyleProp> {
     let value = match prop.meta().default {
         StyleValue::Int(_) => StyleValue::Int(v),
         StyleValue::Length(_) => StyleValue::Length(Length::Px(v)),
-        StyleValue::Opa(_) => StyleValue::Opa(Opa(clamp_u(v, 255) as u8)),
-        StyleValue::Angle(_) => StyleValue::Angle(Angle(v)),
-        StyleValue::Scale(_) => StyleValue::Scale(Scale(clamp_u(v, i32::from(u16::MAX)) as u16)),
+        StyleValue::Opa(_) => StyleValue::Opa(Opa::from_raw(clamp_u(v, 255) as u8)),
+        StyleValue::Angle(_) => StyleValue::Angle(Angle::deci_deg(v)),
+        StyleValue::Scale(_) => {
+            StyleValue::Scale(Scale::from_raw_256(clamp_u(v, i32::from(u16::MAX)) as u16))
+        }
         _ => return None,
     };
     StyleProp::from_value(prop, value)

@@ -157,7 +157,8 @@ enum StateCmp {
 #[must_use]
 pub(crate) fn length_px(v: StyleValue, basis: i32) -> i32 {
     match v.as_length() {
-        Some(Length::Px(p)) => p,
+        // `Dp` was converted by `style_prop`; a raw one counts at the reference DPI.
+        Some(Length::Px(p) | Length::Dp(p)) => p,
         Some(Length::Pct(p)) => (i64::from(basis) * i64::from(p) / 100) as i32,
         Some(Length::Content) | None => v.as_i32().unwrap_or(0),
     }
@@ -293,22 +294,47 @@ impl Engine {
     }
 
     /// The value of `prop` for `part` of `id` with full LVGL resolution (state weights,
-    /// priority, inheritance, defaults). Unknown ids give the default.
+    /// priority, inheritance, defaults). Unknown ids give the default. A density-independent
+    /// length ([`Length::Dp`]) comes back in pixels for the DPI of `id`'s display
+    /// ([`node_dpi`](Self::node_dpi)).
     #[must_use]
     pub fn style_prop(&self, id: NodeId, part: Part, prop: PropId) -> StyleValue {
-        resolve(&self.tree, id, part, prop, &self.style_defaults())
+        self.dp_to_px(id, resolve(&self.tree, id, part, prop, &self.style_defaults()))
     }
 
-    /// An integer property (lengths resolve `Px`; other kinds give 0).
+    /// `v` with a [`Length::Dp`] converted to pixels for `id`'s display. Every other value
+    /// passes through with one comparison; the conversion itself (one multiply/divide) is out
+    /// of line.
+    #[inline]
+    pub(crate) fn dp_to_px(&self, id: NodeId, v: StyleValue) -> StyleValue {
+        if v.is_dp() { self.dp_to_px_cold(id, v) } else { v }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn dp_to_px_cold(&self, id: NodeId, v: StyleValue) -> StyleValue {
+        v.with_dpi(self.node_dpi(id))
+    }
+
+    /// The DPI that density-independent lengths of `id` resolve with: the DPI of the display
+    /// showing `id` (`DisplayInfo::dpi`), else of the default display, else
+    /// [`twine_style::DEFAULT_DPI`]. With one display this is a direct read.
+    #[must_use]
+    pub fn node_dpi(&self, id: NodeId) -> u16 {
+        if let [d] = self.displays.as_slice() {
+            return d.info.dpi;
+        }
+        self.display_of(id)
+            .or(self.default_display)
+            .and_then(|d| self.displays.get(d.index()))
+            .map_or(twine_style::DEFAULT_DPI, |d| d.info.dpi)
+    }
+
+    /// An integer property in pixels (`Int`, pixel lengths and `Dp` lengths; other kinds give
+    /// 0).
     #[must_use]
     pub fn style_i32(&self, id: NodeId, part: Part, prop: PropId) -> i32 {
-        let v = self.style_prop(id, part, prop);
-        v.as_i32()
-            .or_else(|| match v.as_length() {
-                Some(Length::Px(p)) => Some(p),
-                _ => None,
-            })
-            .unwrap_or(0)
+        self.style_prop(id, part, prop).as_px().unwrap_or(0)
     }
 
     /// A color property (black if the property is not a color).
@@ -326,7 +352,7 @@ impl Engine {
     /// The font of `part` (`TextFont`, inherited, default from the configuration).
     #[must_use]
     pub fn style_font(&self, id: NodeId, part: Part) -> &'static Font {
-        self.style_prop(id, part, PropId::TextFont)
+        self.style_prop(id, part, PropId::Font)
             .get::<&'static Font>()
             .unwrap_or(self.style_defaults().font)
     }
@@ -366,21 +392,21 @@ impl Engine {
         let m = Part::Main;
         MainStyle {
             bg_color: self.style_color(id, m, PropId::BgColor),
-            bg_opa: self.style_opa(id, m, PropId::BgOpa),
+            bg_opa: self.style_opa(id, m, PropId::BgOpacity),
             radius: self.style_i32(id, m, PropId::Radius),
             border_width: self.style_i32(id, m, PropId::BorderWidth),
             border_color: self.style_color(id, m, PropId::BorderColor),
-            opa: self.style_opa(id, m, PropId::Opa),
+            opa: self.style_opa(id, m, PropId::PartOpacity),
             pad: Insets::new(
-                self.style_i32(id, m, PropId::PadLeft),
-                self.style_i32(id, m, PropId::PadTop),
-                self.style_i32(id, m, PropId::PadRight),
-                self.style_i32(id, m, PropId::PadBottom),
+                self.style_i32(id, m, PropId::PaddingLeft),
+                self.style_i32(id, m, PropId::PaddingTop),
+                self.style_i32(id, m, PropId::PaddingRight),
+                self.style_i32(id, m, PropId::PaddingBottom),
             ),
             text_color: self.style_color(id, m, PropId::TextColor),
             font: self.style_font(id, m),
             recolor: self.style_color(id, m, PropId::Recolor),
-            recolor_opa: self.style_opa(id, m, PropId::RecolorOpa),
+            recolor_opa: self.style_opa(id, m, PropId::RecolorOpacity),
         }
     }
 
@@ -578,7 +604,8 @@ mod tests {
         l.insert(StyleEntry::new(Selector::MAIN, &A, EntryKind::Normal));
         l.insert(StyleEntry::new(Selector::MAIN, &B, EntryKind::Normal));
         l.insert(StyleEntry::new(Selector::MAIN, &B, EntryKind::Theme));
-        l.local_mut(Selector::MAIN).set(StyleProp::Radius(3));
+        l.local_mut(Selector::MAIN)
+            .set(StyleProp::Radius(twine_style::Radius::Px(3)));
         l.insert(StyleEntry::new(Selector::MAIN, &A, EntryKind::Transition));
         let kinds: Vec<EntryKind> = l.entries().iter().map(|e| e.kind).collect();
         assert_eq!(
@@ -597,7 +624,7 @@ mod tests {
         assert!(l.entries()[4].style.ptr_eq(&StyleRef::Static(&B)));
         assert_eq!(
             l.local(Selector::MAIN).unwrap().get(PropId::Radius),
-            Some(StyleValue::Int(3))
+            Some(StyleValue::Length(twine_style::Length::Px(3)))
         );
         assert!(l.local(Selector::state(State::PRESSED)).is_none());
     }
@@ -623,7 +650,7 @@ mod tests {
     #[test]
     fn state_compare_classifies() {
         static PRESSED_COLOR: Style = Style::new(&[StyleProp::BgColor(Color::RED)]);
-        static PRESSED_PAD: Style = Style::new(&[StyleProp::PadTop(3)]);
+        static PRESSED_PAD: Style = Style::new(&[StyleProp::PaddingTop(Length::Px(3))]);
         static PRESSED_SHADOW: Style = Style::new(&[StyleProp::ShadowWidth(3)]);
         let e = |s: &'static Style| StyleEntry::new(Selector::state(State::PRESSED), s, EntryKind::Normal);
         let d = State::DEFAULT;

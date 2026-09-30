@@ -9,7 +9,7 @@ use std::time::Instant;
 use serde_json::Value;
 
 use crate::cmd::{firmware, fonts, images, layers, miri, nostd, sim, snapshots, style_props, todo};
-use crate::util::{R, cargo, output, run as run_cmd, warn};
+use crate::util::{R, cargo, cargo_ci, output, run as run_cmd, warn};
 
 /// `(crate, feature)` pairs left out of the all-features clippy pass because they cannot be
 /// linted meaningfully on the host (`defmt` would win over `log`, hiding the `log` backend, and
@@ -129,12 +129,12 @@ fn test() -> Result<Outcome, Box<dyn std::error::Error>> {
 
 /// Tests of feature-gated backends that the default `cargo test --workspace` does not compile.
 fn test_features() -> Result<Outcome, Box<dyn std::error::Error>> {
-    run_cmd(cargo().args(["test", "-p", "twine-core", "--features", "log"]))?;
+    run_cmd(cargo_ci().args(["test", "-p", "twine-core", "--features", "log"]))?;
     // Layout warnings (invalid grid cells) captured through `log`.
-    run_cmd(cargo().args(["test", "-p", "twine-layout", "--features", "log"]))?;
+    run_cmd(cargo_ci().args(["test", "-p", "twine-layout", "--features", "log"]))?;
     // SVG images: vectors with `svg`, the placeholder without it.
-    run_cmd(cargo().args(["test", "-p", "twine-widgets", "--test", "svg_image"]))?;
-    run_cmd(cargo().args([
+    run_cmd(cargo_ci().args(["test", "-p", "twine-widgets", "--test", "svg_image"]))?;
+    run_cmd(cargo_ci().args([
         "test",
         "-p",
         "twine-widgets",
@@ -145,7 +145,7 @@ fn test_features() -> Result<Outcome, Box<dyn std::error::Error>> {
     ]))?;
     // DMA2D bit layout cross-checked against the chip PAC (DMA2D v1 and v2).
     for chip in ["stm32f429zi", "stm32h743zi"] {
-        run_cmd(cargo().args(["test", "-p", "twine-accel-stm32", "--lib", "--features", chip]))?;
+        run_cmd(cargo_ci().args(["test", "-p", "twine-accel-stm32", "--lib", "--features", chip]))?;
     }
     Ok(Outcome::Ok)
 }
@@ -155,7 +155,8 @@ fn todo_check() -> Result<Outcome, Box<dyn std::error::Error>> {
 }
 
 fn layers_check() -> Result<Outcome, Box<dyn std::error::Error>> {
-    ok(layers::run())
+    layers::run()?;
+    ok(miri::check_policy())
 }
 
 fn fonts_check() -> Result<Outcome, Box<dyn std::error::Error>> {
@@ -187,7 +188,7 @@ fn miri_check() -> Result<Outcome, Box<dyn std::error::Error>> {
 
 fn doc() -> Result<Outcome, Box<dyn std::error::Error>> {
     // Every driver of twine-drivers is behind its own feature: document all of them.
-    ok(run_cmd(cargo().env("RUSTDOCFLAGS", "-D warnings").args([
+    ok(run_cmd(cargo_ci().env("RUSTDOCFLAGS", "-D warnings").args([
         "doc",
         "--workspace",
         "--no-deps",
@@ -198,7 +199,7 @@ fn doc() -> Result<Outcome, Box<dyn std::error::Error>> {
 
 /// Compiles every benchmark without running it.
 fn bench_build() -> Result<Outcome, Box<dyn std::error::Error>> {
-    ok(run_cmd(cargo().args(["bench", "--workspace", "--no-run"])))
+    ok(run_cmd(cargo_ci().args(["bench", "--workspace", "--no-run"])))
 }
 
 /// Builds (and lints) the examples that need SDL2; skipped with a warning without SDL2.
@@ -209,7 +210,7 @@ fn eg_sim() -> Result<Outcome, Box<dyn std::error::Error>> {
         ));
     };
     for (example, feature) in sim::FEATURE_EXAMPLES {
-        let mut build = cargo();
+        let mut build = cargo_ci();
         build.args([
             "build",
             "-p",
@@ -221,7 +222,7 @@ fn eg_sim() -> Result<Outcome, Box<dyn std::error::Error>> {
         ]);
         sim::add_sdl2_env(&mut build, &lib);
         run_cmd(&mut build)?;
-        let mut lint = cargo();
+        let mut lint = cargo_ci();
         lint.args([
             "clippy",
             "-p",

@@ -27,7 +27,7 @@ fn controls(h: &mut EngineHarness) {
     let row = container::create(e, screen).unwrap();
     e.set_size(row, Length::Pct(100), Length::Pct(100));
     e.set_layout(row, LayoutKind::Flex);
-    e.set_flex_flow(row, FlexFlow::RowWrap);
+    e.set_flex_flow(row, FlexFlow::ROW.wrap(true));
     let b = bar::create(e, row).unwrap();
     e.set_size(b, 90, 10);
     let s = slider::create(e, row).unwrap();
@@ -111,7 +111,7 @@ fn text_inputs(h: &mut EngineHarness) {
         w.set_span_style(
             cx,
             b,
-            twine_style::StyleProp::TextDecor(twine_style::TextDecor::UNDERLINE),
+            twine_style::StyleProp::TextDecoration(twine_style::TextDecor::UNDERLINE),
         );
     });
 }

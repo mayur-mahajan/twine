@@ -17,6 +17,19 @@
 //! released. While pressed it keeps reading until it sees the release. Without an interrupt pin
 //! the engine polls periodically.
 //!
+//! # Failures
+//!
+//! Every driver counts **consecutive** failed bus transactions and reports them through
+//! [`InputDevice::health`](twine_hal::InputDevice::health): `Degraded { errors }` after the
+//! first, `Failed` after `with_fail_after(n)` of them (default
+//! [`DeviceHealth::DEFAULT_FAIL_AFTER`](twine_hal::DeviceHealth::DEFAULT_FAIL_AFTER) = 3),
+//! `Ok` after the next successful read. While degraded a driver repeats its last good sample
+//! (a single glitch in the middle of a press neither releases — which would click — nor moves
+//! the pointer); once failed it reports released, and the engine processes a failed device as
+//! released anyway (ending a held press with `PressLost`, never a click), raising
+//! `FaultKind::InputDevice`. The [`Cst816s`] sleeps and does not answer between touches:
+//! only errors while pressed count for it.
+//!
 //! # Coordinates
 //!
 //! Capacitive controllers report panel coordinates; [`TouchTransform`] maps them to the logical
@@ -56,8 +69,8 @@ use twine_hal::Rotation;
 ))]
 use {
     embedded_hal::digital::InputPin,
-    twine_core::log::debug,
-    twine_hal::{PointerData, PollHint},
+    twine_core::log::{debug, error},
+    twine_hal::{DeviceHealth, PointerData, PollHint},
 };
 
 #[cfg(feature = "axs5106l")]
@@ -220,12 +233,15 @@ pub(crate) fn median3(vals: &[u16]) -> u16 {
     feature = "cst816s",
     feature = "axs5106l"
 ))]
-/// Interrupt line + last state shared by the I2C touch drivers.
+/// Interrupt line, last state and health shared by the I2C touch drivers.
 #[derive(Debug)]
 pub(crate) struct IrqState<IRQ> {
     pub irq: Option<IRQ>,
     pub active_high: bool,
     pub last: PointerData,
+    pub health: DeviceHealth,
+    /// Consecutive errors after which the device is `Failed`.
+    pub fail_after: u16,
 }
 
 #[cfg(any(
@@ -244,7 +260,33 @@ impl<IRQ> IrqState<IRQ> {
                 point: Point::new(0, 0),
                 pressed: false,
             },
+            health: DeviceHealth::Ok,
+            fail_after: DeviceHealth::DEFAULT_FAIL_AFTER,
         }
+    }
+
+    /// A successful read of `data`: the device is healthy again.
+    pub fn ok(&mut self, name: &str, data: PointerData) -> PointerData {
+        if !self.health.is_ok() {
+            debug!(target: "twine::driver", "{} reads again ({:?} before)", name, self.health);
+        }
+        self.health = DeviceHealth::Ok;
+        self.update(name, data)
+    }
+
+    /// A failed read: counts the error and returns the sample to report, the last good one
+    /// while degraded, released once failed.
+    pub fn error(&mut self, name: &str) -> PointerData {
+        let before = self.health;
+        self.health = before.after_error(self.fail_after);
+        if !self.health.is_failed() {
+            return self.last;
+        }
+        if !before.is_failed() {
+            error!(target: "twine::driver", "{}: failed ({} consecutive bus errors)", name, self.fail_after.max(1));
+        }
+        let released = self.released();
+        self.update(name, released)
     }
 
     pub fn poll_hint(&self) -> PollHint {
@@ -353,6 +395,34 @@ pub(crate) mod test_util {
     use core::cell::RefCell;
 
     use crate::mock::Recorder;
+    use twine_hal::{DeviceHealth, InputData, InputDevice, PointerData};
+
+    /// Takes a touch driver that reads pressed from `rec` through a dead bus and back:
+    /// the last good sample is held while degraded, released once failed (and while it stays
+    /// failed), and the next successful read makes it healthy again.
+    pub fn assert_bus_failure_sequence(rec: &Recorder, dev: &mut impl InputDevice) {
+        let pressed = dev.read();
+        let InputData::Pointer(PointerData { point, pressed: true }) = pressed else {
+            panic!("the driver must read pressed first, got {pressed:?}");
+        };
+        assert_eq!(dev.health(), DeviceHealth::Ok);
+        rec.set_bus_down(true);
+        for errors in 1..DeviceHealth::DEFAULT_FAIL_AFTER {
+            assert_eq!(dev.read(), pressed, "degraded: the last good sample is held");
+            assert_eq!(dev.health(), DeviceHealth::Degraded { errors });
+        }
+        let released = InputData::Pointer(PointerData {
+            point,
+            pressed: false,
+        });
+        assert_eq!(dev.read(), released);
+        assert_eq!(dev.health(), DeviceHealth::Failed);
+        assert_eq!(dev.read(), released);
+        assert_eq!(dev.health(), DeviceHealth::Failed);
+        rec.set_bus_down(false);
+        let _ = dev.read();
+        assert_eq!(dev.health(), DeviceHealth::Ok);
+    }
 
     /// A register file answering I2C reads: the register address is the bytes written in the
     /// same transaction (1 or 2 bytes, big-endian); reads return consecutive bytes from there.

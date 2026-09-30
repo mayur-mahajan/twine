@@ -52,7 +52,14 @@ fn card(e: &mut Engine, parent: NodeId, w: i32, h: Length, flow: FlexFlow) -> No
     e.set_local_prop(c, Selector::MAIN, StyleProp::Height(h));
     e.set_layout(c, LayoutKind::Flex);
     e.set_flex_flow(c, flow);
-    set(e, c, &[StyleProp::PadRow(6), StyleProp::PadColumn(12)]);
+    set(
+        e,
+        c,
+        &[
+            StyleProp::RowGap(Length::Px(6)),
+            StyleProp::ColumnGap(Length::Px(12)),
+        ],
+    );
     c
 }
 
@@ -112,20 +119,20 @@ pub fn build(e: &mut Engine) -> CoreWidgets {
     let d = e.default_display().expect("a display");
     let screen = e.active_screen(d).expect("an active screen");
     e.set_layout(screen, LayoutKind::Flex);
-    e.set_flex_flow(screen, FlexFlow::RowWrap);
+    e.set_flex_flow(screen, FlexFlow::ROW.wrap(true));
     set(
         e,
         screen,
         &[
-            StyleProp::PadLeft(PAD),
-            StyleProp::PadTop(PAD),
-            StyleProp::PadRight(PAD),
-            StyleProp::PadBottom(PAD),
+            StyleProp::PaddingLeft(Length::Px(PAD)),
+            StyleProp::PaddingTop(Length::Px(PAD)),
+            StyleProp::PaddingRight(Length::Px(PAD)),
+            StyleProp::PaddingBottom(Length::Px(PAD)),
         ],
     );
 
     // Labels in every long mode.
-    let labels = card(e, screen, LABELS_W, Length::Px(TOP_H), FlexFlow::Column);
+    let labels = card(e, screen, LABELS_W, Length::Px(TOP_H), FlexFlow::COLUMN);
     label_in(
         e,
         labels,
@@ -164,8 +171,8 @@ pub fn build(e: &mut Engine) -> CoreWidgets {
 
     // Buttons: normal, checkable, disabled.
     let rest = i32::from(W) - 2 * PAD - LABELS_W - 10;
-    let buttons = card(e, screen, rest, Length::Px(TOP_H), FlexFlow::Column);
-    set(e, buttons, &[StyleProp::PadRow(12)]);
+    let buttons = card(e, screen, rest, Length::Px(TOP_H), FlexFlow::COLUMN);
+    set(e, buttons, &[StyleProp::RowGap(Length::Px(12))]);
     button_in(e, buttons, "Normal");
     let checkable = button_in(e, buttons, "Checkable");
     e.with_widget_mut(checkable, |w: &mut Button, cx| w.set_checkable(cx, true));
@@ -173,12 +180,12 @@ pub fn build(e: &mut Engine) -> CoreWidgets {
     e.add_state(disabled, State::DISABLED);
 
     // Images: static RGB565A8, QOI, recolored, a symbol, rotating with anti-aliasing.
-    let images = card(e, screen, i32::from(W) - 2 * PAD, Length::Content, FlexFlow::Row);
+    let images = card(e, screen, i32::from(W) - 2 * PAD, Length::Content, FlexFlow::ROW);
     e.set_flex_align(
         images,
-        twine_style::FlexAlign::SpaceEvenly,
-        twine_style::FlexAlign::Center,
-        twine_style::FlexAlign::Center,
+        twine_style::MainAlign::SpaceEvenly,
+        twine_style::CrossAlign::Center,
+        twine_style::MainAlign::Center,
     );
     image_in(e, images, ImageSource::Static(&LOGO_RGB565A8));
     image_in(e, images, ImageSource::Encoded(LOGO_QOI));
@@ -188,22 +195,22 @@ pub fn build(e: &mut Engine) -> CoreWidgets {
         recolored,
         &[
             StyleProp::ImageRecolor(Palette::DeepOrange.main()),
-            StyleProp::ImageRecolorOpa(Opa::P60),
+            StyleProp::ImageRecolorOpacity(Opa::P60),
         ],
     );
-    let symbol = image_in(e, images, ImageSource::Symbol(twine_text::symbols::OK));
+    let symbol = image_in(e, images, ImageSource::symbol(twine_text::Symbol::Ok));
     set(
         e,
         symbol,
         &[
-            StyleProp::TextFont(&MONTSERRAT_48),
+            StyleProp::Font(&MONTSERRAT_48),
             StyleProp::TextColor(Palette::Green.main()),
         ],
     );
     let rotating = image_in(e, images, ImageSource::Static(&LOGO_RGB565A8));
     e.with_widget_mut(rotating, |w: &mut Image, cx| {
         w.set_antialias(cx, true);
-        w.set_rotation(cx, Angle(0));
+        w.set_rotation(cx, Angle::deci_deg(0));
     });
     e.anim_start(
         rotating,

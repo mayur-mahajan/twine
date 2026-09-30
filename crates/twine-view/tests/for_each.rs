@@ -6,7 +6,7 @@ use std::rc::Rc;
 use proptest::prelude::*;
 use twine_core::Point;
 use twine_engine::NodeId;
-use twine_reactive::debug_stats;
+use twine_reactive::runtime_stats;
 use twine_testing::alloc::{CountingAllocator, count_allocs};
 use twine_testing::{TestUi, by_class, by_id, capture_logs};
 use twine_view::prelude::*;
@@ -166,7 +166,7 @@ proptest! {
         1..6,
     )) {
         let mut t = list(Vec::new());
-        let base = debug_stats().scopes;
+        let base = runtime_stats().scopes;
         for l in lists {
             let s = items(&t);
             s.set(l.clone());
@@ -174,7 +174,7 @@ proptest! {
             let got: Vec<String> = texts(&t);
             let want: Vec<String> = l.iter().map(ToString::to_string).collect();
             prop_assert_eq!(got, want);
-            prop_assert_eq!(debug_stats().scopes, base + l.len(), "one scope per row, none leaked");
+            prop_assert_eq!(runtime_stats().scopes, base + l.len(), "one scope per row, none leaked");
         }
     }
 }

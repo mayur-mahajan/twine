@@ -158,6 +158,8 @@ struct State {
     i2c_responder: Option<I2cResponder>,
     pending_once: bool,
     fail_next: bool,
+    /// Every SPI/I2C transaction fails (pins keep working).
+    bus_down: bool,
 }
 
 impl State {
@@ -167,6 +169,15 @@ impl State {
         } else {
             Ok(())
         }
+    }
+
+    /// [`take_failure`](Self::take_failure) for bus transactions, which also fail while the
+    /// bus is down.
+    fn take_bus_failure(&mut self) -> Result<(), MockError> {
+        if self.bus_down {
+            return Err(MockError);
+        }
+        self.take_failure()
     }
 
     fn spi_write(&mut self, bytes: &[u8]) {
@@ -191,7 +202,7 @@ impl State {
     }
 
     fn spi_transaction(&mut self, ops: &mut [Operation<'_, u8>]) -> Result<(), MockError> {
-        self.take_failure()?;
+        self.take_bus_failure()?;
         self.spi_transactions += 1;
         for op in ops {
             match op {
@@ -217,7 +228,7 @@ impl State {
     }
 
     fn i2c_transaction(&mut self, addr: u8, ops: &mut [i2c::Operation<'_>]) -> Result<(), MockError> {
-        self.take_failure()?;
+        self.take_bus_failure()?;
         self.i2c_transactions += 1;
         let mut written = Vec::new();
         for op in ops {
@@ -400,6 +411,12 @@ impl Recorder {
         self.0.borrow_mut().fail_next = true;
     }
 
+    /// While `down`, every SPI/I2C transaction fails with [`MockError`] (a dead or
+    /// disconnected bus); pins keep working.
+    pub fn set_bus_down(&self, down: bool) {
+        self.0.borrow_mut().bus_down = down;
+    }
+
     fn with<R>(&self, f: impl FnOnce(&mut State) -> R) -> R {
         f(&mut self.0.borrow_mut())
     }
@@ -491,7 +508,7 @@ impl State {
         data: &[u8],
         lines: crate::interface::QspiLines,
     ) -> Result<(), MockError> {
-        self.take_failure()?;
+        self.take_bus_failure()?;
         self.spi_transactions += 1;
         match lines {
             crate::interface::QspiLines::Single => self.ops.push(BusOp::QspiCmd {
@@ -750,6 +767,20 @@ mod tests {
         rec.fail_next();
         assert_eq!(spi.write(&[1]), Err(MockError));
         assert!(spi.write(&[1]).is_ok());
+    }
+
+    #[test]
+    fn bus_down_fails_transactions_until_up() {
+        let rec = Recorder::new();
+        let (mut spi, mut i2c, mut pin) = (rec.spi(), rec.i2c(), rec.pin("p"));
+        rec.set_bus_down(true);
+        for _ in 0..3 {
+            assert_eq!(spi.write(&[1]), Err(MockError));
+            assert_eq!(i2c.write(0x10, &[1]), Err(MockError));
+        }
+        assert!(digital::OutputPin::set_high(&mut pin).is_ok());
+        rec.set_bus_down(false);
+        assert!(spi.write(&[1]).is_ok() && i2c.write(0x10, &[1]).is_ok());
     }
 
     #[test]

@@ -4,6 +4,9 @@
 //! A buffer handed to the driver with `begin_flush` is out of the engine's hands (its slot is
 //! `None`) until `poll_flush` returns it; slots are reclaimed in submission order. The engine
 //! therefore can never render into a buffer the driver owns.
+//!
+//! Waiting for a buffer is bounded by `EngineConfig::flush_timeout` (see `acquire_slot` and the
+//! `timeout` module).
 
 use alloc::boxed::Box;
 use alloc::vec;
@@ -14,6 +17,7 @@ use twine_core::{ColorFormat, Rect, Rotation};
 use twine_hal::{DisplayInfo, DrawBufferMem};
 
 use super::areas;
+use super::timeout::Flight;
 use crate::display::Backend;
 use crate::{Engine, EngineError};
 
@@ -28,6 +32,8 @@ pub(crate) struct PartialState {
     pub(crate) count: usize,
     /// Slots whose memory the driver holds, oldest first.
     pub(crate) in_flight: heapless::Deque<u8, 2>,
+    /// Per slot: the flush it is in (while in flight).
+    pub(crate) flights: [Option<Flight>; 2],
     /// Rows per chunk.
     pub(crate) rows: i32,
     /// Software rotation (`info.rotation != Deg0 && !info.hw_rotation`).
@@ -115,6 +121,7 @@ impl PartialState {
             scratch,
             count,
             in_flight: heapless::Deque::new(),
+            flights: [None; 2],
             rows,
             rotation,
             l8: if mono { vec![0; chunk_px] } else { Vec::new() },
@@ -170,6 +177,7 @@ impl PartialState {
             scratch: [None, None],
             count: 0,
             in_flight: heapless::Deque::new(),
+            flights: [None; 2],
             rows,
             rotation,
             l8: if mono { vec![0; chunk_px] } else { Vec::new() },
@@ -202,6 +210,9 @@ impl PartialState {
         let rotating = self.rotating();
         match self.in_flight.pop_front() {
             Some(s) => {
+                if self.flights[usize::from(s)].take().is_some_and(|f| f.timed_out) {
+                    twine_core::info!(target: "twine::refresh", "flush of slot {} completed after timeout", s);
+                }
                 let slot = if rotating {
                     &mut self.scratch[usize::from(s)]
                 } else {
@@ -217,18 +228,42 @@ impl PartialState {
     }
 }
 
+/// What waiting for a draw buffer ended with.
+enum Acquire {
+    /// This slot is free.
+    Slot(usize),
+    /// None is free yet; the step yields (cooperative, or a bounded wait without a
+    /// high-resolution timer).
+    Wait,
+    /// The driver did not hand a buffer back within `flush_timeout`.
+    TimedOut,
+}
+
+/// What rendering one chunk of a partial display did.
+pub(crate) enum ChunkStep {
+    /// Flushed (or dropped); the next chunk starts at this row.
+    Next(i32),
+    /// No draw buffer was free yet: call again later.
+    Wait,
+    /// The driver is hung (`flush_timeout`): the frame stops.
+    TimedOut,
+}
+
 impl Engine {
-    /// Renders and flushes the chunk of `area` starting at row `y`. Returns the row where the
-    /// next chunk starts, or `None` when no buffer was free and the flush is cooperative.
-    pub(crate) fn partial_chunk(&mut self, d: usize, area: Rect, y: i32) -> Option<i32> {
+    /// Renders and flushes the chunk of `area` starting at row `y`.
+    pub(crate) fn partial_chunk(&mut self, d: usize, area: Rect, y: i32) -> ChunkStep {
         let (rows, rotation) = match &self.displays[d].refresher.strategy {
             super::Strategy::Partial(p) => (p.rows, p.rotation),
-            _ => return Some(area.y1),
+            _ => return ChunkStep::Next(area.y1),
         };
         let chunk = areas::chunk_at(area, y, rows, 1);
         // 1. A free slot (reclaim or wait).
         let t_wait = self.hires_us();
-        let slot = self.acquire_slot(d)?;
+        let slot = match self.acquire_slot(d) {
+            Acquire::Slot(s) => s,
+            Acquire::Wait => return ChunkStep::Wait,
+            Acquire::TimedOut => return ChunkStep::TimedOut,
+        };
         let t_render = self.hires_us();
         #[cfg(feature = "debug-checks")]
         if let Some(h) = self.render_hook {
@@ -245,7 +280,7 @@ impl Engine {
         };
         let Some(mut mem) = target else {
             twine_core::error!(target: "twine::refresh", "slot {} has no buffer", slot);
-            return Some(chunk.y1);
+            return ChunkStep::Next(chunk.y1);
         };
         let mut src = src;
         let (flush_area, render_us) = self.render_chunk_into(
@@ -259,17 +294,38 @@ impl Engine {
         }
         // 3. Flush.
         let t_flush = self.hires_us();
+        let since = self.wait_stamp();
         let disp = &mut self.displays[d];
         let vsync = disp.refresher.job.as_ref().is_some_and(|j| j.vsync_pending);
+        let mut result = Ok(());
         if let Backend::Flush(b) = &mut disp.backend {
             if vsync {
                 b.wait_vsync();
             }
             // On error the driver hands the buffer back through the next `poll_flush`.
-            let _ = b.begin_flush(flush_area, mem);
+            result = b.begin_flush(flush_area, mem);
         }
+        // The buffer is the driver's until `poll_flush` returns it, success or not.
+        let disp = &mut self.displays[d];
         if let super::Strategy::Partial(p) = &mut disp.refresher.strategy {
-            let _ = p.in_flight.push_back(slot as u8);
+            if p.in_flight.push_back(slot as u8).is_err() {
+                // Cannot happen: a slot is in flight at most once and there are at most
+                // two. Losing track would freeze the display, so make it loud.
+                twine_core::error!(target: "twine::refresh", "in-flight queue full (slot {})", slot);
+            }
+            p.flights[slot] = Some(Flight {
+                area: chunk,
+                since,
+                timed_out: false,
+            });
+        }
+        match result {
+            Ok(()) => self.flush_ok(d),
+            Err(e) => {
+                if self.flush_failed(d, e.driver_code().unwrap_or_default()) {
+                    self.add_dirty(d, chunk, crate::InvalidateReason::FlushRetry);
+                }
+            }
         }
         twine_core::trace!(
             target: "twine::refresh",
@@ -299,7 +355,7 @@ impl Engine {
             .stats
             .flush_us
             .saturating_add(post.saturating_add(us(t_flush, t_end)));
-        Some(chunk.y1)
+        ChunkStep::Next(chunk.y1)
     }
 
     /// Renders the logical `chunk` of display `d` into `target` in the layout the display is
@@ -366,29 +422,40 @@ impl Engine {
         }
     }
 
-    /// A slot whose memory the engine holds: polls the driver, spinning until a buffer comes
-    /// back — or returns `None` in cooperative mode.
-    fn acquire_slot(&mut self, d: usize) -> Option<usize> {
-        let coop = self.config.cooperative_flush;
+    /// A slot whose memory the engine holds: polls the driver until a buffer comes back.
+    ///
+    /// The wait is bounded by `flush_timeout` ([`Acquire::TimedOut`]). It spins inside the
+    /// step only when time can be measured there (a `hires_timer`) or the wait is unbounded
+    /// (`flush_timeout: None`); otherwise — and always with `cooperative_flush` — it yields
+    /// ([`Acquire::Wait`]) and the timeout is measured across steps with their `now`.
+    fn acquire_slot(&mut self, d: usize) -> Acquire {
+        let yields = self.config.cooperative_flush
+            || (self.config.flush_timeout.is_some() && self.config.hires_timer.is_none());
         loop {
             if let Some(s) = self.partial(d).free_slot() {
-                return Some(s);
+                return Acquire::Slot(s);
             }
             let disp = &mut self.displays[d];
             let (super::Strategy::Partial(p), Backend::Flush(b)) =
                 (&mut disp.refresher.strategy, &mut disp.backend)
             else {
-                return None;
+                return Acquire::Wait;
             };
             if p.in_flight.is_empty() {
                 twine_core::error!(target: "twine::refresh", "no draw buffer free and none in flight");
-                return None;
+                return Acquire::Wait;
             }
-            match b.poll_flush() {
-                Some(buf) => p.reclaim(buf),
-                None if coop => return None,
-                None => core::hint::spin_loop(),
+            if let Some(buf) = b.poll_flush() {
+                p.reclaim(buf);
+                continue;
             }
+            if self.check_flush_timeout(d) {
+                return Acquire::TimedOut;
+            }
+            if yields {
+                return Acquire::Wait;
+            }
+            core::hint::spin_loop();
         }
     }
 }

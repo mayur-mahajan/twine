@@ -13,6 +13,7 @@
 //! [`tile`] is a labelled box sized by its text, used by the layout examples.
 //!
 //! [`core_widgets`] builds the `core_widgets` showcase (also run headless by its test).
+#![forbid(unsafe_code)]
 
 pub mod assets;
 pub mod core_widgets;

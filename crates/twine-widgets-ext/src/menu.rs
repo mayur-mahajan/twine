@@ -23,8 +23,8 @@ use twine_engine::{
     ObjFlags, State, Widget, WidgetClass, WidgetCx, fmt_node_id,
 };
 use twine_image::ImageSource;
-use twine_style::{FlexAlign, FlexFlow, Length};
-use twine_text::symbols;
+use twine_style::{CrossAlign, FlexFlow, Length, MainAlign};
+use twine_text::Symbol;
 use twine_widgets::button::Button;
 use twine_widgets::image::Image;
 use twine_widgets::label::{Label, LabelText};
@@ -116,13 +116,22 @@ impl MenuPage {
     }
 
     /// Sets the title (copied; LVGL `lv_menu_set_page_title`). It shows the next time the
-    /// page is loaded. Idempotent.
+    /// page is loaded ([`Menu::refresh_titles`] shows it at once). Idempotent.
     pub fn set_title(&mut self, cx: &mut WidgetCx<'_>, title: Option<&str>) {
         if self.title() == title {
             return;
         }
         log_set(MENU_PAGE_CLASS.name, cx.node(), "title");
-        self.title = title.map(|t| LabelText::Owned(String::from(t)));
+        // An owned title's buffer is reused (no allocation once it is large enough).
+        self.title = match (title, self.title.take()) {
+            (None, _) => None,
+            (Some(t), Some(LabelText::Owned(mut s))) => {
+                s.clear();
+                s.push_str(t);
+                Some(LabelText::Owned(s))
+            }
+            (Some(t), _) => Some(LabelText::Owned(String::from(t))),
+        };
     }
 
     /// Sets a `'static` title (LVGL `lv_menu_set_page_title_static`). Idempotent.
@@ -147,8 +156,8 @@ impl Widget for MenuPage {
         let id = cx.node();
         let e = cx.engine_mut();
         e.set_size(id, Length::pct(100), Length::Content);
-        util::set_flex(e, id, FlexFlow::Column);
-        e.set_flex_align(id, FlexAlign::Start, FlexAlign::Center, FlexAlign::Center);
+        util::set_flex(e, id, FlexFlow::COLUMN);
+        e.set_flex_align(id, MainAlign::Start, CrossAlign::Center, MainAlign::Center);
         e.set_flag(id, ObjFlags::EVENT_BUBBLE, true);
     }
 }
@@ -390,16 +399,19 @@ impl Menu {
         );
     }
 
+    /// Shows the titles of the loaded pages in the headers again, e.g. after the title of a
+    /// loaded page changed (a page title shows when the page is loaded).
+    pub fn refresh_titles(&self, cx: &mut WidgetCx<'_>) {
+        self.refr_titles(cx.engine_mut());
+    }
+
     /// LVGL `lv_menu_value_changed_event_cb`: the headers show the pages' titles.
     fn refr_titles(&self, e: &mut Engine) {
-        let title_of = |e: &Engine, p: NodeId| e.widget::<MenuPage>(p).and_then(|w| w.title.clone());
         if let Some(p) = self.main_page {
-            let t = title_of(e, p);
-            set_title_label(e, self.main_header_title, t);
+            show_page_title(e, p, self.main_header_title);
         }
         if let (Some(p), Some(s)) = (self.sidebar_page, self.sidebar) {
-            let t = title_of(e, p);
-            set_title_label(e, s.title, t);
+            show_page_title(e, p, s.title);
         }
     }
 
@@ -481,7 +493,7 @@ impl Menu {
                 let _ = e.move_node(header, cont, None);
             }
         }
-        let grow = u8::from(self.mode_header != MenuHeaderMode::TopUnfixed);
+        let grow = u16::from(self.mode_header != MenuHeaderMode::TopUnfixed);
         e.set_flex_grow(page, grow);
         let visible = e
             .tree()
@@ -544,11 +556,22 @@ impl Menu {
     }
 }
 
+/// Shows the title of `page` in `label` (the title is lent, not copied: no allocation).
+fn show_page_title(e: &mut Engine, page: NodeId, label: NodeId) {
+    let title = e
+        .with_widget_mut(page, |w: &mut MenuPage, _| w.title.take())
+        .flatten();
+    set_title_label(e, label, title.as_ref());
+    if title.is_some() {
+        e.with_widget_mut(page, |w: &mut MenuPage, _| w.title = title);
+    }
+}
+
 /// Sets `label`'s text to `title` and shows it (hides it without a title).
-fn set_title_label(e: &mut Engine, label: NodeId, title: Option<LabelText>) {
+fn set_title_label(e: &mut Engine, label: NodeId, title: Option<&LabelText>) {
     match title {
         Some(t) => {
-            e.with_widget_mut(label, |l: &mut Label, cx| match &t {
+            e.with_widget_mut(label, |l: &mut Label, cx| match t {
                 LabelText::Static(s) => l.set_text_static(cx, s),
                 LabelText::Owned(s) => l.set_text(cx, s),
             });
@@ -567,14 +590,14 @@ fn create_header(
 ) -> Result<(NodeId, NodeId, NodeId), EngineError> {
     let header = e.create(parent, Box::new(ClassObj(class)))?;
     e.set_size(header, Length::pct(100), Length::Content);
-    util::set_flex(e, header, FlexFlow::Row);
-    e.set_flex_align(header, FlexAlign::Start, FlexAlign::Center, FlexAlign::Center);
+    util::set_flex(e, header, FlexFlow::ROW);
+    e.set_flex_align(header, MainAlign::Start, CrossAlign::Center, MainAlign::Center);
     let back = e.create(header, Box::new(Button::new()))?;
     e.set_flag(back, ObjFlags::EVENT_BUBBLE, true);
-    util::set_flex(e, back, FlexFlow::Row);
+    util::set_flex(e, back, FlexFlow::ROW);
     let icon = e.create(back, Box::new(Image::new()))?;
     e.with_widget_mut(icon, |i: &mut Image, cx| {
-        i.set_src(cx, ImageSource::Symbol(symbols::LEFT));
+        i.set_src(cx, ImageSource::symbol(Symbol::Left));
     });
     e.add_event_handler(back, EventFilter::Code(EventCode::Clicked), move |ecx, ev| {
         if ev.target == ev.current_target {
@@ -595,7 +618,7 @@ fn create_sidebar(e: &mut Engine, menu: NodeId, main: NodeId) -> Result<Sidebar,
     let cont = e.create(menu, Box::new(ClassObj(&MENU_SIDEBAR_CONTAINER_CLASS)))?;
     e.move_node(cont, menu, Some(main))?;
     e.set_size(cont, Length::pct(30), Length::pct(100));
-    util::set_flex(e, cont, FlexFlow::Column);
+    util::set_flex(e, cont, FlexFlow::COLUMN);
     let (header, back_btn, title) = create_header(e, menu, cont, &MENU_SIDEBAR_HEADER_CONTAINER_CLASS)?;
     Ok(Sidebar {
         cont,
@@ -616,7 +639,7 @@ impl Widget for Menu {
         let menu = cx.node();
         let e = cx.engine_mut();
         e.set_size(menu, MENU_DEFAULT_SIZE.0, MENU_DEFAULT_SIZE.1);
-        util::set_flex(e, menu, FlexFlow::Row);
+        util::set_flex(e, menu, FlexFlow::ROW);
         let Ok(storage) = e.create(menu, Box::new(twine_engine::Obj)) else {
             return;
         };
@@ -626,7 +649,7 @@ impl Widget for Menu {
         };
         e.set_height(main, Length::pct(100));
         e.set_flex_grow(main, 1);
-        util::set_flex(e, main, FlexFlow::Column);
+        util::set_flex(e, main, FlexFlow::COLUMN);
         let Ok((header, back, title)) = create_header(e, menu, main, &MENU_MAIN_HEADER_CONTAINER_CLASS)
         else {
             return;
@@ -704,14 +727,14 @@ pub fn cont_create(e: &mut Engine, parent: NodeId) -> Result<NodeId, EngineError
 /// (LVGL `lv_menu_cont_constructor`).
 pub fn init_cont(e: &mut Engine, c: NodeId) {
     e.set_size(c, Length::pct(100), Length::Content);
-    util::set_flex(e, c, FlexFlow::Row);
-    e.set_flex_align(c, FlexAlign::Start, FlexAlign::Center, FlexAlign::Center);
+    util::set_flex(e, c, FlexFlow::ROW);
+    e.set_flex_align(c, MainAlign::Start, CrossAlign::Center, MainAlign::Center);
 }
 
 /// Sets up a section: 100 % wide, content high, a flex column.
 pub fn init_section(e: &mut Engine, s: NodeId) {
     e.set_size(s, Length::pct(100), Length::Content);
-    util::set_flex(e, s, FlexFlow::Column);
+    util::set_flex(e, s, FlexFlow::COLUMN);
 }
 
 /// Sets up a separator: content sized.

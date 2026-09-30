@@ -17,6 +17,7 @@ use crate::handles::{NodeHandle, type_mismatch};
 use crate::memo::Memo;
 use crate::runtime::{Computation, Kind, ScopeKey, ValueRc};
 use crate::signal::Signal;
+use crate::stored::StoredValue;
 
 /// An owner of signals, memos, effects, child scopes, cleanups and context values.
 ///
@@ -97,6 +98,27 @@ impl Scope {
     pub fn signal<T: 'static>(self, value: T) -> Signal<T> {
         let rc: ValueRc = Rc::new(RefCell::new(value));
         Signal::from_handle(self.create_node(Some(rc), None))
+    }
+
+    /// Stores a plain, non-reactive `value` owned by this scope (see [`StoredValue`]): a
+    /// `Copy` handle, dropped with the scope; reads never subscribe and writes notify nobody.
+    ///
+    /// ```
+    /// let cx = twine_reactive::create_root();
+    /// let clicks = cx.stored_value(0u32);
+    /// let on_click = move || clicks.with_mut(|n| *n += 1);
+    /// on_click();
+    /// on_click();
+    /// assert_eq!(clicks.get(), 2);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// If the scope was disposed.
+    #[track_caller]
+    pub fn stored_value<T: 'static>(self, value: T) -> StoredValue<T> {
+        let rc: ValueRc = Rc::new(RefCell::new(value));
+        StoredValue::from_handle(self.create_node(Some(rc), None))
     }
 
     /// Creates a lazily computed, cached derived value (see [`Memo`]).

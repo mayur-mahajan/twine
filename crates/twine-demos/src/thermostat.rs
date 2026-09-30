@@ -49,7 +49,7 @@ pub fn app(cx: Scope) -> impl View {
             button(label("+")).on_click(move || target.update(|t| *t += 5)),
         ))
         .gap(8)
-        .align_items(FlexAlign::Center),
+        .align_items(CrossAlign::Center),
         label(text!("{}", if heating.get() { "Heating" } else { "Idle" }))
             .text_color(move || {
                 if heating.get() {
@@ -62,6 +62,6 @@ pub fn app(cx: Scope) -> impl View {
     ))
     .gap(12)
     .padding(16)
-    .align_items(FlexAlign::Center)
+    .align_items(CrossAlign::Center)
     .size(Length::Pct(100), Length::Pct(100))
 }

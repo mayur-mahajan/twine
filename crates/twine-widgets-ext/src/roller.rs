@@ -245,6 +245,15 @@ impl Roller {
         self.update_options(cx, mode);
     }
 
+    /// Sets the mode, keeping the options; selects the first option. Idempotent.
+    pub fn set_mode(&mut self, cx: &mut WidgetCx<'_>, mode: RollerMode) {
+        if self.mode == mode {
+            return;
+        }
+        log_set(ROLLER_CLASS.name, cx.node(), "mode");
+        self.update_options(cx, mode);
+    }
+
     /// LVGL `update_options`.
     fn update_options(&mut self, cx: &mut WidgetCx<'_>, mode: RollerMode) {
         self.real_cnt = self.options.count();
@@ -254,7 +263,7 @@ impl Roller {
         if mode == RollerMode::Infinite && self.real_cnt > 0 {
             let m = cx.measure();
             let font_h = i32::from(m.font(Part::Main).line_height);
-            let ls = m.style_i32(Part::Main, PropId::TextLetterSpace);
+            let ls = m.style_i32(Part::Main, PropId::LetterSpacing);
             let normal_h = (i32::from(self.real_cnt) * (font_h + ls)).max(1);
             let mut pages = (EXTRA_INF_SIZE / normal_h).clamp(3, 15);
             if pages & 1 == 0 {
@@ -336,7 +345,7 @@ impl Roller {
     #[must_use]
     pub fn height_for_rows(m: &MeasureCx<'_>, rows: u8) -> i32 {
         let font_h = i32::from(m.font(Part::Main).line_height);
-        let ls = m.style_i32(Part::Main, PropId::TextLineSpace);
+        let ls = m.style_i32(Part::Main, PropId::LineSpacing);
         let border = m.style_i32(Part::Main, PropId::BorderWidth);
         (font_h + ls) * i32::from(rows) + 2 * border
     }
@@ -357,7 +366,7 @@ impl Roller {
     /// The height of one row: line height + line space of `Main`.
     fn unit(m: &MeasureCx<'_>) -> (i32, i32) {
         let font_h = i32::from(m.font(Part::Main).line_height);
-        let ls = m.style_i32(Part::Main, PropId::TextLineSpace);
+        let ls = m.style_i32(Part::Main, PropId::LineSpacing);
         (font_h, font_h + ls)
     }
 
@@ -374,7 +383,7 @@ impl Roller {
         let c = m.coords();
         let font_main_h = i32::from(m.font(Part::Main).line_height);
         let font_sel_h = i32::from(m.font(Part::Selected).line_height);
-        let ls = m.style_i32(Part::Main, PropId::TextLineSpace);
+        let ls = m.style_i32(Part::Main, PropId::LineSpacing);
         let d = (font_sel_h + font_main_h) / 2 + ls;
         let y1 = c.y0 + c.height() / 2 - d / 2;
         // LVGL's inclusive `y2 = y1 + d`.

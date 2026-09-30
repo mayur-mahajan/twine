@@ -252,7 +252,7 @@ impl Font {
 }
 
 /// Whether a character missing from every font is drawn as a replacement box (LVGL rule): not
-/// for control characters (below U+0020), U+F8FF (`symbols::DUMMY`) and U+200C (zero-width
+/// for control characters (below U+0020), U+F8FF ([`Symbol::Dummy`](crate::Symbol::Dummy)) and U+200C (zero-width
 /// non-joiner), which stay invisible and take no space.
 #[must_use]
 pub const fn has_placeholder(cp: char) -> bool {

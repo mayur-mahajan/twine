@@ -3,7 +3,7 @@
 
 use twine_core::{Color, Opa, Rect, Size};
 use twine_engine::{DrawCx, Engine, MeasureCx, NodeId, Widget, WidgetClass};
-use twine_style::{Part, Selector, StyleProp};
+use twine_style::{Length, Part, Radius, Selector, StyleProp};
 use twine_text::TextDsc;
 
 /// Class of [`Tile`].
@@ -58,12 +58,12 @@ pub fn tile(e: &mut Engine, parent: NodeId, label: impl Into<String>, color: Col
         .expect("parent exists");
     for p in [
         StyleProp::BgColor(color),
-        StyleProp::BgOpa(Opa::COVER),
-        StyleProp::Radius(4),
-        StyleProp::PadLeft(4),
-        StyleProp::PadRight(4),
-        StyleProp::PadTop(4),
-        StyleProp::PadBottom(4),
+        StyleProp::BgOpacity(Opa::COVER),
+        StyleProp::Radius(Radius::Px(4)),
+        StyleProp::PaddingLeft(Length::Px(4)),
+        StyleProp::PaddingRight(Length::Px(4)),
+        StyleProp::PaddingTop(Length::Px(4)),
+        StyleProp::PaddingBottom(Length::Px(4)),
     ] {
         e.set_local_prop(t, Selector::MAIN, p);
     }

@@ -5,7 +5,7 @@ use core::fmt::Write;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use twine_core::{Color, Opa, Size};
-use twine_style::{Align, Selector, StyleProp};
+use twine_style::{Align, Length, Selector, StyleProp};
 use twine_text::TextDsc;
 
 use crate::{DisplayId, DrawCx, Engine, EngineError, MeasureCx, NodeId, Widget, WidgetClass};
@@ -82,10 +82,10 @@ impl Engine {
                 self.set_flag(id, crate::ObjFlags::CLICKABLE, false);
                 // Content-sized (the text) plus a margin, in the bottom-right corner.
                 for p in [
-                    StyleProp::PadLeft(MARGIN),
-                    StyleProp::PadTop(MARGIN),
-                    StyleProp::PadRight(MARGIN),
-                    StyleProp::PadBottom(MARGIN),
+                    StyleProp::PaddingLeft(Length::Px(MARGIN)),
+                    StyleProp::PaddingTop(Length::Px(MARGIN)),
+                    StyleProp::PaddingRight(Length::Px(MARGIN)),
+                    StyleProp::PaddingBottom(Length::Px(MARGIN)),
                 ] {
                     self.set_local_prop(id, Selector::MAIN, p);
                 }

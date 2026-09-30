@@ -33,9 +33,11 @@
 //! | [`Scope`] | owns nodes, child scopes, cleanups, context values; [`create_root`] makes one |
 //! | [`Signal`], [`ReadSignal`], [`WriteSignal`] | reactive values |
 //! | [`Memo`] | lazy, cached, equality-checked derived values |
+//! | [`StoredValue`] | a plain, non-reactive value owned by a scope (`Copy` handle) |
 //! | [`EffectId`] | side effects re-run when their dependencies change |
 //! | [`batch`], [`untrack`] | group writes; read without subscribing |
-//! | [`Channel`], [`UiWaker`] | ISR/task-safe message delivery into the UI |
+//! | [`Channel`], [`UiWaker`], [`WakerLease`] | ISR/task-safe message delivery into the UI; one waker per root scope ([`Scope::set_ui_waker`]) |
+//! | [`take_faults`], [`set_fault_hook`], [`runtime_stats`] | faults the runtime recovered from, counters |
 //!
 //! All handles are `Copy` and `!Send`/`!Sync`. Using a handle whose scope was disposed panics
 //! (with the creation location in debug builds); `try_get`/`is_alive` exist for handles
@@ -93,6 +95,16 @@
 //! A flush processes effects in rounds (effects queued by one round form the next); after
 //! [`set_flush_iterations_limit`] rounds (default 100) the rest are dropped with an `error!`.
 //!
+//! ## Faults
+//!
+//! Situations the runtime recovers from but that the application must be able to see are
+//! recorded as faults (the [`FaultKind`] vocabulary of `twine-core`): an effect loop cut by the
+//! iteration limit ([`FaultKind::EffectLoopCut`] — dropped effects may leave bound values
+//! outdated), the deep-chain guard ([`FaultKind::DepthGuard`]) and messages dropped by a full
+//! [`Channel`] ([`FaultKind::ChannelOverflow`]). Each is logged, counted in [`runtime_stats`],
+//! reported to the [`set_fault_hook`] function and kept for [`take_faults`]; `Ui` forwards them
+//! to the engine's fault stream at every update.
+//!
 //! ## Rule R1 (re-entrancy)
 //!
 //! The runtime never holds a borrow of its internal state while user code runs (closures,
@@ -143,25 +155,27 @@ mod memo;
 mod runtime;
 mod scope;
 mod signal;
+mod stored;
 
 pub use ambient::{provide_ambient, with_ambient};
 pub use batch::{
     batch, defer_current_effect, dispose_current_effect, flush_effects_with, has_pending_effects,
     set_flush_iterations_limit, untrack,
 };
-pub use channel::{Channel, UiWaker, any_channel_pending, drain_channels, register_waker};
+pub use channel::{Channel, UiWaker, WakerLease, any_channel_pending, drain_channels};
 pub use effect::EffectId;
-pub use global::{bind_to_current_context, create_root, debug_stats, reset};
+pub use global::{bind_to_current_context, create_root, reset, runtime_stats, set_fault_hook, take_faults};
 pub use memo::Memo;
+pub use runtime::FaultHook;
 pub use scope::Scope;
 pub use signal::{ReadSignal, Signal, WriteSignal};
+pub use stored::StoredValue;
+pub use twine_core::fault::{FaultCounts, FaultKind, Faults};
 
-/// Object counts and counters of the current runtime, from [`debug_stats`] (tests and
-/// diagnostics; not a stable API).
-#[doc(hidden)]
+/// Object counts and counters of the current runtime, from [`runtime_stats`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
-    /// Live signals, memos and effects.
+    /// Live signals, memos, effects and stored values.
     pub nodes: usize,
     /// Live scopes.
     pub scopes: usize,
@@ -177,8 +191,10 @@ pub struct Stats {
     pub effect_runs: u64,
     /// Memo recomputations.
     pub memo_runs: u64,
-    /// Times the deep-chain guard (depth > 256) triggered.
-    pub depth_guard_hits: u64,
-    /// Flushes cut by the iteration limit.
-    pub loop_cuts: u64,
+    /// Faults recorded since start-up, per kind (see [`take_faults`]).
+    pub faults: FaultCounts,
+    /// Retired arena slots of nodes and scopes: slots that used up their 65 535 generations
+    /// and are never reused ([`twine_core::Arena::retired`]). Non-zero only after millions of
+    /// create/dispose cycles; each one is a few dozen bytes the runtime can no longer reuse.
+    pub retired_slots: usize,
 }

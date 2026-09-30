@@ -8,7 +8,7 @@ use std::rc::Rc;
 use twine_core::{Color, Opa};
 use twine_engine::{Engine, NodeId, ObjFlags, ThemeHook, Widget, WidgetClass};
 use twine_image::ImageSource;
-use twine_style::{Part, PropId, RADIUS_CIRCLE, State};
+use twine_style::{Part, PropId, Radius, State};
 use twine_testing::EngineHarness;
 use twine_theme::{DefaultTheme, MonoTheme, Palette, SimpleTheme, default::colors};
 
@@ -55,14 +55,20 @@ fn default_bar_and_slider() {
             e.style_color(n, Part::Main, PropId::BgColor),
             Palette::Blue.main()
         );
-        assert_eq!(e.style_opa(n, Part::Main, PropId::BgOpa), Opa::P20);
-        assert_eq!(e.style_i32(n, Part::Main, PropId::Radius), RADIUS_CIRCLE);
-        assert_eq!(e.style_opa(n, Part::Indicator, PropId::BgOpa), Opa::COVER);
-        assert_eq!(e.style_i32(n, Part::Indicator, PropId::Radius), RADIUS_CIRCLE);
+        assert_eq!(e.style_opa(n, Part::Main, PropId::BgOpacity), Opa::P20);
+        assert_eq!(
+            e.style_prop(n, Part::Main, PropId::Radius).get::<Radius>(),
+            Some(Radius::Circle)
+        );
+        assert_eq!(e.style_opa(n, Part::Indicator, PropId::BgOpacity), Opa::COVER);
+        assert_eq!(
+            e.style_prop(n, Part::Indicator, PropId::Radius).get::<Radius>(),
+            Some(Radius::Circle)
+        );
     }
     let (mut h, n) = node(light(), Box::new(Slider));
     // knob: primary, pad dpx(6) = 5 at 130 dpi, circle; grows by dpx(3) when pressed.
-    assert_eq!(h.engine().style_i32(n, Part::Knob, PropId::PadLeft), 5);
+    assert_eq!(h.engine().style_i32(n, Part::Knob, PropId::PaddingLeft), 5);
     assert_eq!(
         h.engine().style_color(n, Part::Knob, PropId::BgColor),
         Palette::Blue.main()
@@ -85,13 +91,13 @@ fn default_switch() {
     assert_eq!(e.style_color(n, Part::Main, PropId::BgColor), colors::LIGHT_GREY);
     assert_eq!(e.style_i32(n, Part::Main, PropId::AnimDuration), 120);
     // switch_knob: pad_all -dpx(4) = -3, white.
-    assert_eq!(e.style_i32(n, Part::Knob, PropId::PadTop), -3);
+    assert_eq!(e.style_i32(n, Part::Knob, PropId::PaddingTop), -3);
     assert_eq!(e.style_color(n, Part::Knob, PropId::BgColor), Color::WHITE);
-    assert_eq!(e.style_opa(n, Part::Indicator, PropId::BgOpa), Opa::TRANSP);
+    assert_eq!(e.style_opa(n, Part::Indicator, PropId::BgOpacity), Opa::TRANSP);
     h.engine_mut().add_state(n, State::CHECKED);
     h.run_until_idle();
     let e = h.engine();
-    assert_eq!(e.style_opa(n, Part::Indicator, PropId::BgOpa), Opa::COVER);
+    assert_eq!(e.style_opa(n, Part::Indicator, PropId::BgOpacity), Opa::COVER);
     assert_eq!(
         e.style_color(n, Part::Indicator, PropId::BgColor),
         Palette::Blue.main()
@@ -102,8 +108,8 @@ fn default_switch() {
 fn default_checkbox() {
     let (mut h, n) = node(light(), Box::new(Checkbox));
     let e = h.engine();
-    assert_eq!(e.style_i32(n, Part::Main, PropId::PadColumn), 8); // pad_gap dpx(10)
-    assert_eq!(e.style_i32(n, Part::Indicator, PropId::PadLeft), 2); // dpx(3)
+    assert_eq!(e.style_i32(n, Part::Main, PropId::ColumnGap), 8); // pad_gap dpx(10)
+    assert_eq!(e.style_i32(n, Part::Indicator, PropId::PaddingLeft), 2); // dpx(3)
     assert_eq!(e.style_i32(n, Part::Indicator, PropId::BorderWidth), 2); // BORDER_WIDTH
     assert_eq!(
         e.style_color(n, Part::Indicator, PropId::BorderColor),
@@ -111,16 +117,16 @@ fn default_checkbox() {
     );
     assert_eq!(e.style_i32(n, Part::Indicator, PropId::Radius), 3); // RADIUS_DEFAULT / 2
     assert!(
-        e.style_prop(n, Part::Indicator, PropId::BgImageSrc)
+        e.style_prop(n, Part::Indicator, PropId::BgImage)
             .get::<&'static ImageSource>()
             .is_none()
     );
     h.engine_mut().add_state(n, State::CHECKED);
     let e = h.engine();
     let mark = e
-        .style_prop(n, Part::Indicator, PropId::BgImageSrc)
+        .style_prop(n, Part::Indicator, PropId::BgImage)
         .get::<&'static ImageSource>();
-    assert_eq!(mark, Some(&ImageSource::Symbol(twine_text::symbols::OK)));
+    assert_eq!(mark, Some(&ImageSource::symbol(twine_text::Symbol::Ok)));
     assert_eq!(
         e.style_color(n, Part::Indicator, PropId::BgColor),
         Palette::Blue.main()
@@ -145,7 +151,7 @@ fn default_arc_and_spinner() {
             e.style_prop(n, Part::Indicator, PropId::ArcRounded).as_bool(),
             Some(true)
         );
-        let knob_opa = e.style_opa(n, Part::Knob, PropId::BgOpa);
+        let knob_opa = e.style_opa(n, Part::Knob, PropId::BgOpacity);
         assert_eq!(knob_opa == Opa::COVER, knob, "only the arc has a knob");
     }
 }
@@ -156,7 +162,7 @@ fn default_led_and_line() {
     let e = h.engine();
     assert_eq!(e.style_color(n, Part::Main, PropId::BgColor), Color::WHITE);
     assert_eq!(
-        e.style_color(n, Part::Main, PropId::BgGradColor),
+        e.style_color(n, Part::Main, PropId::BgGradientColor),
         Palette::Grey.main()
     );
     assert_eq!(e.style_i32(n, Part::Main, PropId::ShadowWidth), 12); // dpx(15)
@@ -187,8 +193,8 @@ fn simple_theme_controls() {
     let (h, n) = node(t(), Box::new(Arc));
     let e = h.engine();
     assert_eq!(e.style_i32(n, Part::Main, PropId::ArcWidth), 6); // arc_line
-    assert_eq!(e.style_opa(n, Part::Main, PropId::BgOpa), Opa::TRANSP); // transp
-    assert_eq!(e.style_i32(n, Part::Knob, PropId::PadLeft), 5); // arc_knob
+    assert_eq!(e.style_opa(n, Part::Main, PropId::BgOpacity), Opa::TRANSP); // transp
+    assert_eq!(e.style_i32(n, Part::Knob, PropId::PaddingLeft), 5); // arc_knob
     let (mut h, n) = node(t(), Box::new(Checkbox));
     h.engine_mut().add_state(n, State::CHECKED);
     assert_eq!(
@@ -204,7 +210,7 @@ fn mono_theme_controls() {
     let e = h.engine();
     // card + radius_circle + pad_zero; indicator inverted; knob card.
     assert_eq!(e.style_i32(n, Part::Main, PropId::BorderWidth), 1);
-    assert_eq!(e.style_i32(n, Part::Main, PropId::PadLeft), 0);
+    assert_eq!(e.style_i32(n, Part::Main, PropId::PaddingLeft), 0);
     assert_eq!(e.style_color(n, Part::Indicator, PropId::BgColor), Color::BLACK);
     assert_eq!(e.style_color(n, Part::Knob, PropId::BgColor), Color::WHITE);
     let (h, n) = node(t(true), Box::new(Spinner));
@@ -216,7 +222,7 @@ fn mono_theme_controls() {
     let e = h.engine();
     assert_eq!(e.style_color(n, Part::Indicator, PropId::BgColor), Color::BLACK);
     assert!(
-        e.style_prop(n, Part::Indicator, PropId::BgImageSrc)
+        e.style_prop(n, Part::Indicator, PropId::BgImage)
             .get::<&'static ImageSource>()
             .is_some()
     );

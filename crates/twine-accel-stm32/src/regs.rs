@@ -165,6 +165,8 @@ impl<R: Dma2dRegs + ?Sized> Dma2dRegs for &mut R {
 pub mod bits {
     /// `CR.START` (bit 0): starts the transfer; hardware clears it when the transfer ends.
     pub const CR_START: u32 = 1 << 0;
+    /// `CR.ABORT` (bit 2): aborts the running transfer; hardware clears it with `START`.
+    pub const CR_ABORT: u32 = 1 << 2;
     /// `CR.MODE` position (bits 17:16 on v1, 18:16 on v2).
     pub const CR_MODE_SHIFT: u32 = 16;
     /// `CR.MODE = 00`: memory-to-memory (FG fetch only, no PFC).
@@ -277,6 +279,9 @@ mod pac_crosscheck {
         cr.set_start(vals::CrStart::START);
         cr.set_mode(vals::Mode::REGISTER_TO_MEMORY);
         assert_eq!(cr.0, (MODE_R2M << CR_MODE_SHIFT) | CR_START);
+        let mut cr = regs::Cr(0);
+        cr.set_abort(vals::Abort::ABORT_REQUEST);
+        assert_eq!(cr.0, CR_ABORT);
         for (m, v) in [
             (vals::Mode::MEMORY_TO_MEMORY, MODE_M2M),
             (vals::Mode::MEMORY_TO_MEMORY_PFC, MODE_M2M_PFC),

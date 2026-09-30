@@ -1,8 +1,8 @@
 //! Menus: [`menu`], [`menu_page`], [`menu_cont`], [`menu_section`], [`menu_separator`] and
 //! [`MenuPageRef`].
 
-use twine_engine::{EventCode, EventFilter, EventResult, NodeId, fmt_node_id};
-use twine_reactive::{Scope, Signal};
+use twine_engine::{Engine, EventCode, EventFilter, EventResult, NodeId, fmt_node_id};
+use twine_reactive::{Scope, StoredValue};
 use twine_widgets_ext::ClassObj;
 use twine_widgets_ext::menu::{
     self, MENU_CONT_CLASS, MENU_SECTION_CLASS, MENU_SEPARATOR_CLASS, Menu, MenuHeaderMode, MenuPage,
@@ -10,13 +10,16 @@ use twine_widgets_ext::menu::{
 
 use crate::build::{BuildCx, WidgetView, widget_view};
 use crate::prop::IntoProp;
+use crate::text::{IntoText, bind_str};
 use crate::view::{View, ViewSeq};
 
 /// A reference to a menu page, filled when the page is built (`.page_ref(r)`), so rows can
-/// load pages defined later. `Copy`. Created with [`ScopeExt::menu_page_ref`](crate::ScopeExt::menu_page_ref).
-#[derive(Clone, Copy, Debug)]
+/// load pages defined later. `Copy` (a [`StoredValue`]: not reactive, owned by the scope that
+/// created it; `None` once that scope is disposed). Created with
+/// [`ScopeExt::menu_page_ref`](crate::ScopeExt::menu_page_ref).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MenuPageRef {
-    cell: Signal<Option<NodeId>>,
+    cell: StoredValue<Option<NodeId>>,
 }
 
 impl MenuPageRef {
@@ -24,18 +27,14 @@ impl MenuPageRef {
     #[must_use]
     pub fn new(cx: Scope) -> Self {
         Self {
-            cell: cx.signal(None),
+            cell: cx.stored_value(None),
         }
     }
 
     /// The page, once built.
     #[must_use]
     pub fn get(&self) -> Option<NodeId> {
-        if self.cell.is_alive() {
-            self.cell.get_untracked()
-        } else {
-            None
-        }
+        self.cell.try_get().flatten()
     }
 }
 
@@ -48,10 +47,10 @@ impl MenuPageRef {
 ///
 /// fn settings(cx: Scope) -> impl View {
 ///     let display = cx.menu_page_ref();
-///     menu(menu_page(None, (
+///     menu(menu_page((
 ///         menu_cont(label("Display")).loads(display),
 ///     )))
-///     .pages(menu_page(Some("Display"), label("Brightness")).page_ref(display))
+///     .pages(menu_page(label("Brightness")).title("Display").page_ref(display))
 /// }
 /// # let _ = settings;
 /// ```
@@ -113,24 +112,53 @@ impl WidgetView<Menu> {
 /// `content` (usually [`menu_cont`] rows and [`menu_section`]s).
 pub type MenuPageView = WidgetView<MenuPage>;
 
-/// A menu page (see [`menu()`]).
-pub fn menu_page(title: Option<&'static str>, content: impl ViewSeq) -> MenuPageView {
-    widget_view(MenuPage::default)
-        .op(move |cx, node| {
-            cx.engine()
-                .with_widget_mut(node, |p: &mut MenuPage, wcx| p.set_title_static(wcx, title));
-        })
-        .children(content)
+/// A menu page (see [`menu()`]) holding `content`, without a title until
+/// [`title`](WidgetView::title) gives one.
+pub fn menu_page(content: impl ViewSeq) -> MenuPageView {
+    widget_view(MenuPage::default).children(content)
+}
+
+/// Re-shows the titles of the menu `page` belongs to when it is loaded.
+fn refresh_menu_titles(e: &mut Engine, page: NodeId) {
+    let Some(m) = e.tree().ancestors(page).find(|&a| e.widget::<Menu>(a).is_some()) else {
+        return;
+    };
+    let loaded = e
+        .widget::<Menu>(m)
+        .is_some_and(|w| w.cur_main_page() == Some(page) || w.cur_sidebar_page() == Some(page));
+    if loaded {
+        e.with_widget_mut(m, |w: &mut Menu, wcx| w.refresh_titles(wcx));
+    }
 }
 
 impl WidgetView<MenuPage> {
+    /// The title shown in the menu's header while the page is loaded (any [`IntoText`]; a
+    /// dynamic title also updates the header of a loaded page).
+    #[must_use]
+    pub fn title(self, title: impl IntoText) -> Self {
+        let title = title.into_text();
+        self.op(move |cx, node| {
+            bind_str(
+                cx,
+                node,
+                title,
+                |e, n, s| {
+                    e.with_widget_mut(n, |p: &mut MenuPage, wcx| p.set_title_static(wcx, Some(s)));
+                    refresh_menu_titles(e, n);
+                },
+                |e, n, s| {
+                    e.with_widget_mut(n, |p: &mut MenuPage, wcx| p.set_title(wcx, Some(s)));
+                    refresh_menu_titles(e, n);
+                },
+            );
+        })
+    }
+
     /// Fills `r` with this page when it is built.
     #[must_use]
     pub fn page_ref(self, r: MenuPageRef) -> Self {
         self.op(move |_, node| {
-            if r.cell.is_alive() {
-                r.cell.set(Some(node));
-            }
+            let _ = r.cell.try_with_mut(|c| *c = Some(node));
         })
     }
 }

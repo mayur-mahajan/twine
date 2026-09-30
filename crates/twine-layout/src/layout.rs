@@ -66,7 +66,7 @@ pub(crate) struct Item<I> {
     /// Excluded from the parent's content size on an axis (percentage of a content-sized
     /// parent).
     pub ignore: [bool; 2],
-    pub grow: u8,
+    pub grow: u16,
     pub final_main: i32,
     pub clamped: bool,
     /// The size on an axis was set by the parent's layout (grow, stretch).

@@ -1,4 +1,5 @@
-//! Input devices: [`InputDevice`], [`InputData`], [`Key`], [`PollHint`] and the per-kind data.
+//! Input devices: [`InputDevice`], [`InputData`], [`Key`], [`PollHint`], [`DeviceHealth`] and
+//! the per-kind data.
 //!
 //! Reading is always **non-blocking**: a driver caches its last sample (updated from an IRQ or
 //! when read) and [`InputDevice::read`] returns it. Drivers whose reading depends on time
@@ -210,6 +211,81 @@ pub enum PollHint {
     Periodic,
 }
 
+/// The health of an input device, as reported by [`InputDevice::health`].
+///
+/// Drivers that can detect failures (bus errors of an I2C/SPI touch controller, pin errors
+/// of a keypad matrix) count **consecutive** failed reads: [`Degraded`](Self::Degraded) after
+/// the first, [`Failed`](Self::Failed) after a threshold ([`after_error`](Self::after_error)),
+/// [`Ok`](Self::Ok) again after a successful read. A driver that cannot fail keeps the
+/// default ([`Ok`](Self::Ok)).
+///
+/// The engine compares the value with the last one it saw after every read (a register-sized
+/// compare), raises `FaultKind::InputDevice` when a device *enters* `Degraded` or `Failed`,
+/// and treats the samples of a `Failed` device as released (so a stuck "pressed" reading —
+/// e.g. after ESD latched a controller — cannot hold a widget pressed).
+///
+/// ```
+/// use twine_hal::DeviceHealth;
+///
+/// let mut h = DeviceHealth::Ok;
+/// h = h.after_error(3);
+/// assert_eq!(h, DeviceHealth::Degraded { errors: 1 });
+/// h = h.after_error(3).after_error(3);
+/// assert_eq!(h, DeviceHealth::Failed);
+/// assert!(h.is_failed());
+/// assert_eq!(DeviceHealth::default(), DeviceHealth::Ok);
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum DeviceHealth {
+    /// The last read succeeded (or the driver cannot detect failures).
+    #[default]
+    Ok,
+    /// The last `errors` reads failed; the driver reports its last good sample meanwhile.
+    Degraded {
+        /// Consecutive failed reads (≥ 1).
+        errors: u16,
+    },
+    /// Too many consecutive reads failed: the device's samples are not trusted. The engine
+    /// processes them as released until the device reports `Ok` or `Degraded` again.
+    Failed,
+}
+
+impl DeviceHealth {
+    /// Consecutive failed reads after which the drivers of `twine-drivers` report
+    /// [`Failed`](Self::Failed) by default (each driver has a `with_fail_after` builder).
+    pub const DEFAULT_FAIL_AFTER: u16 = 3;
+
+    /// The health after one more failed read: `Degraded { errors + 1 }`, or `Failed` once
+    /// `errors` reaches `fail_after` (a `fail_after` of 0 or 1 fails at the first error).
+    /// `Failed` stays `Failed`.
+    #[must_use]
+    pub const fn after_error(self, fail_after: u16) -> DeviceHealth {
+        let errors = match self {
+            DeviceHealth::Ok => 1,
+            DeviceHealth::Degraded { errors } => errors.saturating_add(1),
+            DeviceHealth::Failed => return DeviceHealth::Failed,
+        };
+        if errors >= fail_after {
+            DeviceHealth::Failed
+        } else {
+            DeviceHealth::Degraded { errors }
+        }
+    }
+
+    /// Whether the device is [`Failed`](Self::Failed).
+    #[must_use]
+    pub const fn is_failed(self) -> bool {
+        matches!(self, DeviceHealth::Failed)
+    }
+
+    /// Whether the device is [`Ok`](Self::Ok).
+    #[must_use]
+    pub const fn is_ok(self) -> bool {
+        matches!(self, DeviceHealth::Ok)
+    }
+}
+
 /// An input device (LVGL `lv_indev` driver side).
 ///
 /// ```
@@ -245,6 +321,16 @@ pub trait InputDevice {
     /// Called by the engine after processing, lets IRQ-based drivers re-arm their interrupt.
     /// Default: no-op.
     fn rearm(&mut self) {}
+
+    /// The device's health after the last [`read`](Self::read). Default:
+    /// [`DeviceHealth::Ok`] (a driver that cannot detect failures).
+    ///
+    /// The engine calls it after every `read` (statically dispatched from the same virtual
+    /// call as `read`, so it costs nothing beyond the value itself): keep it a field load.
+    /// See [`DeviceHealth`] for what the engine does with it.
+    fn health(&self) -> DeviceHealth {
+        DeviceHealth::Ok
+    }
 }
 
 /// Async wait for an input interrupt (used by `twine-embassy`), feature `async`.
@@ -294,5 +380,20 @@ mod tests {
         assert_eq!(PollHint::default(), PollHint::Periodic);
         d.rearm();
         assert_eq!(d.read().kind(), d.kind());
+        assert_eq!(d.health(), DeviceHealth::Ok);
+    }
+
+    #[test]
+    fn health_counts_consecutive_errors() {
+        let h = DeviceHealth::Ok.after_error(3);
+        assert_eq!(h, DeviceHealth::Degraded { errors: 1 });
+        assert_eq!(h.after_error(3), DeviceHealth::Degraded { errors: 2 });
+        assert_eq!(h.after_error(3).after_error(3), DeviceHealth::Failed);
+        assert_eq!(DeviceHealth::Failed.after_error(3), DeviceHealth::Failed);
+        assert_eq!(DeviceHealth::Ok.after_error(0), DeviceHealth::Failed);
+        assert_eq!(DeviceHealth::Ok.after_error(1), DeviceHealth::Failed);
+        let max = DeviceHealth::Degraded { errors: u16::MAX };
+        assert_eq!(max.after_error(u16::MAX), DeviceHealth::Failed);
+        assert!(DeviceHealth::Ok.is_ok() && !DeviceHealth::Ok.is_failed());
     }
 }

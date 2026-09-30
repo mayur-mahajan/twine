@@ -4,7 +4,7 @@ mod common;
 
 use common::{EvLog, clickable, record, white_screen};
 use twine_core::{Duration, Point, Rect};
-use twine_engine::{Dir, EventCode, EventParam, NodeId, ObjFlags};
+use twine_engine::{EventCode, EventParam, NodeId, ObjFlags, Side};
 use twine_testing::EngineHarness;
 
 /// A 200×200 harness with a box at (20, 20, 160, 160) (with `GESTURE_BUBBLE`, the `Obj`
@@ -32,7 +32,7 @@ fn gestures(log: &EvLog) -> usize {
 }
 
 /// The directions of the gesture events recorded by a param-aware handler.
-fn gesture_dirs(h: &mut EngineHarness, n: NodeId) -> std::rc::Rc<std::cell::RefCell<Vec<Dir>>> {
+fn gesture_dirs(h: &mut EngineHarness, n: NodeId) -> std::rc::Rc<std::cell::RefCell<Vec<Side>>> {
     let dirs = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let d = dirs.clone();
     h.engine_mut().add_event_handler(
@@ -54,9 +54,9 @@ fn swipe_left_sends_gesture_left() {
     let s = h.screen();
     let dirs = gesture_dirs(&mut h, s);
     h.drag(Point::new(150, 100), Point::new(50, 100), Duration::ms(150));
-    assert_eq!(*dirs.borrow(), [Dir::LEFT]);
+    assert_eq!(*dirs.borrow(), [Side::Left]);
     let (id, _) = h.pointer_input();
-    assert_eq!(h.engine().gesture_dir(id), Some(Dir::LEFT));
+    assert_eq!(h.engine().gesture_dir(id), Some(Side::Left));
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn vertical_dominant_swipe_is_top_or_bottom() {
     h.drag(Point::new(100, 40), Point::new(120, 160), Duration::ms(150));
     h.clock().advance(Duration::ms(500));
     h.drag(Point::new(100, 160), Point::new(90, 40), Duration::ms(150));
-    assert_eq!(*dirs.borrow(), [Dir::BOTTOM, Dir::TOP]);
+    assert_eq!(*dirs.borrow(), [Side::Bottom, Side::Top]);
 }
 
 #[test]

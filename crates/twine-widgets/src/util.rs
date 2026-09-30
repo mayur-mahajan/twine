@@ -52,7 +52,7 @@ pub(crate) fn part_ext_draw(cx: &MeasureCx<'_>, part: Part) -> i32 {
         ofs_y: cx.style_i32(part, PropId::ShadowOffsetY),
         spread: cx.style_i32(part, PropId::ShadowSpread),
         color: twine_core::Color::BLACK,
-        opa: cx.engine().style_opa(cx.node(), part, PropId::ShadowOpa),
+        opa: cx.engine().style_opa(cx.node(), part, PropId::ShadowOpacity),
     };
     if sh.is_visible() {
         ext = ext.max(shadow_ext_size(&sh));
@@ -61,10 +61,10 @@ pub(crate) fn part_ext_draw(cx: &MeasureCx<'_>, part: Part) -> i32 {
     if ow > 0
         && !cx
             .engine()
-            .style_opa(cx.node(), part, PropId::OutlineOpa)
+            .style_opa(cx.node(), part, PropId::OutlineOpacity)
             .is_transparent()
     {
-        ext = ext.max(ow + cx.style_i32(part, PropId::OutlinePad).max(0));
+        ext = ext.max(ow + cx.style_i32(part, PropId::OutlineOffset).max(0));
     }
     let (tw, th) = transform_wh(cx, part);
     ext.max(tw).max(th)

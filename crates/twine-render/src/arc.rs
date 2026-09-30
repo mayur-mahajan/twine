@@ -91,7 +91,7 @@ impl Painter<'_> {
             return;
         }
         twine_core::trace!(target: "twine::render", "arc {} r {} {}..{}", center, radius, start, end);
-        let full = (i64::from(end.0) - i64::from(start.0)).abs() >= 3600;
+        let full = (i64::from(end.as_deci_deg()) - i64::from(start.as_deci_deg())).abs() >= 3600;
         let w = dsc.width.min(radius);
         let outer = Rect::new(
             center.x - radius,
@@ -102,23 +102,27 @@ impl Painter<'_> {
         let ri = radius - w;
         let inner = outer.expand(-w);
         // Angle range [s, e) with e > s.
-        let s = start.normalized().0;
-        let mut e = end.normalized().0;
+        let s = start.normalized().as_deci_deg();
+        let mut e = end.normalized().as_deci_deg();
         if e <= s {
             e += 3600;
         }
         let mid256 = i64::from(2 * radius - w) * 128;
         let rad = i64::from(w) * 128;
-        let caps = (dsc.rounded && !full)
-            .then(|| [Cap::new(Angle(s), mid256, rad), Cap::new(Angle(e), mid256, rad)]);
+        let caps = (dsc.rounded && !full).then(|| {
+            [
+                Cap::new(Angle::deci_deg(s), mid256, rad),
+                Cap::new(Angle::deci_deg(e), mid256, rad),
+            ]
+        });
         // Bounding box of the sector (end points, axis extremes inside the range, caps).
         let bbox = if full {
             outer
         } else {
             let mut b = Rect::new(center.x, center.y, center.x + 1, center.y + 1);
             let mut add = |a: i32, r: i64| {
-                let x = i64::from(center.x) + r * i64::from(cos(Angle(a))) / 32767;
-                let y = i64::from(center.y) + r * i64::from(sin(Angle(a))) / 32767;
+                let x = i64::from(center.x) + r * i64::from(cos(Angle::deci_deg(a))) / 32767;
+                let y = i64::from(center.y) + r * i64::from(sin(Angle::deci_deg(a))) / 32767;
                 b = b.union(&Rect::new(x as i32 - 1, y as i32 - 1, x as i32 + 2, y as i32 + 2));
             };
             for a in [s, e] {
@@ -147,8 +151,8 @@ impl Painter<'_> {
         let img_pos = Point::new(center.x - radius, center.y - radius);
         let angle_mask = (!full).then_some(Mask::Angle {
             center,
-            start: Angle(s),
-            end: Angle(e),
+            start: Angle::deci_deg(s),
+            end: Angle::deci_deg(e),
         });
         let circle = {
             let c = &mut self.caches_mut().circle;

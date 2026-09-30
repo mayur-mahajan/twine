@@ -21,7 +21,7 @@
 //!
 //! Data types: [`DisplayInfo`], [`BufferSpec`], [`DrawBufferMem`], [`Calibration`], [`Rotation`] (from
 //! `twine-core`), [`InputKind`], [`InputData`], [`PointerData`], [`KeypadData`],
-//! [`EncoderData`], [`ButtonData`], [`Key`], [`PollHint`].
+//! [`EncoderData`], [`ButtonData`], [`Key`], [`PollHint`], [`DeviceHealth`].
 //!
 //! ## Features
 //!
@@ -56,5 +56,6 @@ pub use display::{BufferSpec, DisplayDriver, DisplayInfo, FramebufferDisplay, Ro
 #[cfg(feature = "async")]
 pub use input::AsyncInputWait;
 pub use input::{
-    ButtonData, EncoderData, InputData, InputDevice, InputKind, Key, KeypadData, PointerData, PollHint,
+    ButtonData, DeviceHealth, EncoderData, InputData, InputDevice, InputKind, Key, KeypadData, PointerData,
+    PollHint,
 };

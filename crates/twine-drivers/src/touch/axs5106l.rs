@@ -41,7 +41,7 @@ use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal::i2c::I2c;
 use twine_core::log::{trace, warn};
-use twine_hal::{InputData, InputDevice, InputKind, PointerData, PollHint};
+use twine_hal::{DeviceHealth, InputData, InputDevice, InputKind, PointerData, PollHint};
 
 use super::{IrqState, TouchTransform};
 use crate::NoPin;
@@ -91,6 +91,14 @@ impl<I2C, IRQ> Axs5106l<I2C, IRQ, NoPin> {
 }
 
 impl<I2C, IRQ, RST> Axs5106l<I2C, IRQ, RST> {
+    /// Reports the device [`Failed`](DeviceHealth::Failed) after `n` consecutive bus errors
+    /// (default [`DeviceHealth::DEFAULT_FAIL_AFTER`]; see [`health`](InputDevice::health)).
+    #[must_use]
+    pub fn with_fail_after(mut self, n: u16) -> Self {
+        self.irq.fail_after = n;
+        self
+    }
+
     /// Replaces the coordinate transform.
     pub fn set_transform(&mut self, t: TouchTransform) {
         self.transform = t;
@@ -163,14 +171,18 @@ impl<I2C: I2c, IRQ: InputPin, RST> InputDevice for Axs5106l<I2C, IRQ, RST> {
             Ok(None) => self.irq.released(),
             Err(_) => {
                 warn!(target: "twine::driver", "axs5106l: I2C error");
-                self.irq.released()
+                return InputData::Pointer(self.irq.error("axs5106l"));
             }
         };
-        InputData::Pointer(self.irq.update("axs5106l", data))
+        InputData::Pointer(self.irq.ok("axs5106l", data))
     }
 
     fn poll_hint(&self) -> PollHint {
         self.irq.poll_hint()
+    }
+
+    fn health(&self) -> DeviceHealth {
+        self.irq.health
     }
 }
 
@@ -271,9 +283,10 @@ mod tests {
         assert!(matches!(t.read(), InputData::Pointer(p) if !p.pressed));
         *r.borrow_mut() = report(0x31, &[(10, 20)]);
         assert!(matches!(t.read(), InputData::Pointer(p) if p.pressed && p.point == Point::new(10, 20)));
-        // I2C errors report a release.
+        // A single I2C error holds the press (degraded), it does not release (which would click).
         rec.fail_next();
-        assert!(matches!(t.read(), InputData::Pointer(p) if !p.pressed));
+        assert!(matches!(t.read(), InputData::Pointer(p) if p.pressed));
+        assert_eq!(t.health(), DeviceHealth::Degraded { errors: 1 });
     }
 
     #[test]
@@ -363,5 +376,15 @@ mod tests {
         let mut t = dut(&rec);
         block_on(t.wait_for_interrupt());
         assert_eq!(rec.ops(), [BusOp::Wait("int", false)]);
+    }
+
+    #[test]
+    fn axs5106l_bus_failure_degrades_then_fails() {
+        let rec = Recorder::new();
+        let r = Rc::new(RefCell::new(report(1, &[(0x0AB, 0x13F)])));
+        install(&rec, &r);
+        rec.set_level("int", false);
+        let mut t = dut(&rec).with_fail_after(DeviceHealth::DEFAULT_FAIL_AFTER);
+        crate::touch::test_util::assert_bus_failure_sequence(&rec, &mut t);
     }
 }

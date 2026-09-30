@@ -181,7 +181,7 @@ pub(crate) fn parse_color(s: &str) -> Option<Color> {
         for (i, v) in ch.iter_mut().enumerate() {
             let n = c.number()?;
             let pct = c.eat(b'%');
-            let raw = i64::from(n.0);
+            let raw = i64::from(n.raw());
             let val = if pct {
                 raw * 255 / (100 << 16)
             } else {

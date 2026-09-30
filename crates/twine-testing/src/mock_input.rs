@@ -3,7 +3,9 @@
 //! Each mock is a cheap clonable handle over shared state (`Rc<RefCell<…>>`): the test keeps
 //! one handle to drive the device while the engine owns another as its [`InputDevice`].
 //! Every mock counts its [`read`](InputDevice::read) and [`rearm`](InputDevice::rearm) calls
-//! and has a configurable [`PollHint`] (default [`PollHint::Periodic`]).
+//! and has a configurable [`PollHint`] (default [`PollHint::Periodic`]) and
+//! [`DeviceHealth`] (default [`DeviceHealth::Ok`], see `set_health`) to simulate a failing
+//! device.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -11,12 +13,14 @@ use std::rc::Rc;
 
 use twine_core::Point;
 use twine_hal::{
-    ButtonData, EncoderData, InputData, InputDevice, InputKind, Key, KeypadData, PointerData, PollHint,
+    ButtonData, DeviceHealth, EncoderData, InputData, InputDevice, InputKind, Key, KeypadData, PointerData,
+    PollHint,
 };
 
 #[derive(Debug, Default)]
 struct Common {
     hint: PollHint,
+    health: DeviceHealth,
     reads: u64,
     rearms: u64,
 }
@@ -26,6 +30,12 @@ macro_rules! common_methods {
         /// Sets the poll hint reported to the engine.
         pub fn set_poll_hint(&self, hint: PollHint) {
             self.0.borrow_mut().common.hint = hint;
+        }
+
+        /// Sets the health reported to the engine after each read (e.g.
+        /// [`DeviceHealth::Failed`] to simulate a dead bus; the samples are still returned).
+        pub fn set_health(&self, health: DeviceHealth) {
+            self.0.borrow_mut().common.health = health;
         }
 
         /// Number of `read` calls so far.
@@ -50,6 +60,10 @@ macro_rules! common_trait_methods {
 
         fn rearm(&mut self) {
             self.0.borrow_mut().common.rearms += 1;
+        }
+
+        fn health(&self) -> DeviceHealth {
+            self.0.borrow().common.health
         }
     };
 }

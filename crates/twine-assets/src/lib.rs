@@ -5,7 +5,7 @@
 //! that are not enabled cost nothing.
 //!
 //! - **Montserrat Medium** 8–48 px (even sizes), 4 bpp: ASCII, `°`, `•` and every
-//!   [`twine_text::symbols`] icon (Font Awesome Free). Up to 16 px the bitmaps are stored
+//!   [`twine_text::Symbol`] icon (Font Awesome Free). Up to 16 px the bitmaps are stored
 //!   plain (fastest to draw), larger sizes are RLE-compressed (smaller; decoded glyphs are
 //!   kept in the glyph cache). Kerning from the font's `GPOS` table is included.
 //! - **Montserrat Medium 14 px subpixel** (`montserrat-14-subpx`): horizontal RGB subpixel

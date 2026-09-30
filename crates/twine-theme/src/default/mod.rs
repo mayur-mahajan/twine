@@ -3,7 +3,7 @@
 //!
 //! The styles are LVGL's `style_init()` (see [`styles`]); [`DefaultTheme`]'s
 //! [`ThemeHook::apply`] is LVGL's `theme_apply()` for the widget classes that exist. Like
-//! LVGL, sizes depend on the display: every pixel value is scaled with [`dpx`](crate::dpx) by
+//! LVGL, sizes depend on the display: every pixel value is scaled with [`dpx`](twine_style::dpx) by
 //! the display's DPI, and radii and paddings follow the display size class
 //! ([`DisplaySize`]: the larger side ≤ 320 px is small, < 720 px medium, else large).
 
@@ -172,7 +172,7 @@ impl DefaultTheme {
     }
 
     /// Scales for `dpi` instead of each display's own DPI (LVGL uses the display's,
-    /// [`DPI_DEF`](crate::DPI_DEF) = 130 by default).
+    /// [`DEFAULT_DPI`](twine_style::DEFAULT_DPI) = 130 by default).
     #[must_use]
     pub fn with_dpi(mut self, dpi: u16) -> Self {
         self.dpi = Some(dpi.max(1));
