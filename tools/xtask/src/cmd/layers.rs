@@ -2,7 +2,9 @@
 //!
 //! Every normal and build dependency between two twine crates must point to a strictly lower
 //! layer (or be an explicitly allowed same-layer pair). Dev-dependencies are exempt
-//! (tests may use higher-level crates such as `twine-testing`).
+//! (tests may use higher-level crates such as `twine-testing`). The same metadata also drives
+//! the panel → colour feature check ([`panel_colors`](super::panel_colors)) and the feature
+//! forwarding check ([`feature_forwarding`](super::feature_forwarding)).
 
 use serde_json::Value;
 
@@ -15,6 +17,8 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("twine-reactive", 1),
     ("twine-anim", 1),
     ("twine-render", 2),
+    // Drivers implement the HAL only; the facade re-exports them (`twine::drivers`).
+    ("twine-drivers", 2),
     ("twine-text", 3),
     ("twine-image", 3),
     ("twine-vector", 3),
@@ -31,9 +35,9 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("twine-extra", 11),
     ("twine-lottie", 11),
     ("twine-assets", 4),
+    // The embassy run loop sits on the view layer; the facade re-exports it (`twine::embassy`).
+    ("twine-embassy", 11),
     ("twine", 12),
-    ("twine-drivers", 12),
-    ("twine-embassy", 12),
     ("twine-accel-stm32", 12),
     ("twine-embedded-graphics", 12),
     ("twine-demos", 13),
@@ -106,9 +110,14 @@ pub fn check_metadata(json: &str) -> Result<Vec<String>, Box<dyn std::error::Err
 /// Runs the check on the current workspace.
 pub fn run() -> R {
     let json = output(cargo().args(["metadata", "--format-version", "1", "--no-deps"]))?;
-    let errors = check_metadata(&json)?;
+    let mut errors = check_metadata(&json)?;
+    errors.extend(super::panel_colors::check_metadata(&json)?);
+    errors.extend(super::feature_forwarding::check_metadata(&json)?);
     if errors.is_empty() {
-        println!("layers: ok ({} layered crates)", LAYERS.len());
+        println!(
+            "layers: ok ({} layered crates, panel colour features coupled, features forwarded)",
+            LAYERS.len()
+        );
         Ok(())
     } else {
         for e in &errors {

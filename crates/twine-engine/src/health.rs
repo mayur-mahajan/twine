@@ -233,30 +233,93 @@ impl Engine {
     /// assert_eq!(e.display_health(d).unwrap().state, DisplayState::Healthy);
     /// ```
     pub fn report_flush(&mut self, display: DisplayId, area: Rect, result: Result<(), DriverErrorCode>) {
-        let d = display.index();
-        let Some(disp) = self.displays.get(d) else {
-            twine_core::warn!(target: "twine::refresh", "report_flush: display {} not found", display);
+        let Some(d) = self.external_display(display, "report_flush") else {
             return;
         };
-        if !matches!(disp.backend, Backend::External(())) {
-            twine_core::warn!(target: "twine::refresh", "report_flush: display {} has its own driver", display);
-            return;
-        }
         match result {
             Ok(()) => self.flush_ok(d),
             Err(code) => {
-                let rotation = match &disp.refresher.strategy {
-                    Strategy::Partial(p) => p.rotation,
-                    _ => Rotation::Deg0,
-                };
-                let bounds = disp.area();
-                let logical = unrotate(area, rotation, bounds.width(), bounds.height());
                 if self.flush_failed(d, code) {
-                    if let Some(a) = logical.intersection(&bounds) {
-                        self.add_dirty(d, a, InvalidateReason::FlushRetry);
-                    }
+                    self.redraw_flushed_area(d, area);
                 }
             }
+        }
+    }
+
+    /// Reports that a flush of a display added with
+    /// [`add_chunked_display`](Self::add_chunked_display) did not complete within
+    /// [`EngineConfig::flush_timeout`](crate::EngineConfig::flush_timeout) and was abandoned
+    /// after `waited` (the caller dropped the flush): the async runtime's counterpart of the
+    /// engine's own bounded wait, with the same effects. Raises
+    /// [`FaultKind::FlushTimeout`] once (`code`: ms waited), marks the display
+    /// [`DisplayState::Failed`] (halted under [`FlushPolicy::Halt`]), marks `areas` dirty
+    /// again unless [`FlushPolicy::Ignore`] — the hung chunk and any chunk rendered but not
+    /// flushed, each as returned by [`render_chunk`](Self::render_chunk) — and, when the
+    /// display's frame is open, abandons it: its unrendered rest stays dirty, `render_chunk`
+    /// returns `None`, and the next frame starts no earlier than `refr_period` later. The next
+    /// successful [`report_flush`](Self::report_flush) makes the display healthy again.
+    /// Displays with their own driver, and unknown displays, are ignored with a `warn!`.
+    /// Never panics; allocates nothing.
+    ///
+    /// ```
+    /// use twine_core::fault::FaultKind;
+    /// use twine_core::{ColorFormat, Duration, Instant, Rect};
+    /// use twine_engine::{DisplayState, Engine, EngineConfig};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64).unwrap();
+    /// e.step(Instant::from_millis(0));
+    /// e.refresh_begin(Instant::from_millis(0)).unwrap();
+    /// let mut buf = [0u8; 64];
+    /// let area = e.render_chunk(&mut buf).unwrap();
+    /// // The driver's flush of `area` hung for 500 ms; the runtime dropped it:
+    /// e.report_flush_timeout(d, &[area], Duration::ms(500));
+    /// assert!(e.render_chunk(&mut buf).is_none()); // the frame is abandoned
+    /// e.refresh_end();
+    /// assert_eq!(e.last_fault(FaultKind::FlushTimeout).map(|r| r.code), Some(500));
+    /// assert_eq!(e.display_health(d).unwrap().state, DisplayState::Failed);
+    /// assert!(e.refresh_due().is_some()); // the area is redrawn by a later frame
+    /// ```
+    pub fn report_flush_timeout(&mut self, display: DisplayId, areas: &[Rect], waited: Duration) {
+        let Some(d) = self.external_display(display, "report_flush_timeout") else {
+            return;
+        };
+        if self.flush_timed_out(d, waited) {
+            for &area in areas {
+                self.redraw_flushed_area(d, area);
+            }
+        }
+        self.abandon_chunked_frame(d, waited);
+    }
+
+    /// The index of `display` if it is a chunked display (its flushes are reported by the
+    /// caller); `None` with a `warn!` otherwise.
+    fn external_display(&self, display: DisplayId, op: &str) -> Option<usize> {
+        let d = display.index();
+        let Some(disp) = self.displays.get(d) else {
+            twine_core::warn!(target: "twine::refresh", "{}: display {} not found", op, display);
+            return None;
+        };
+        if !matches!(disp.backend, Backend::External(())) {
+            twine_core::warn!(target: "twine::refresh", "{}: display {} has its own driver", op, display);
+            return None;
+        }
+        Some(d)
+    }
+
+    /// Marks a flushed chunk of display `d` (`area` as returned by `render_chunk`: physical
+    /// coordinates under software rotation) dirty again.
+    fn redraw_flushed_area(&mut self, d: usize, area: Rect) {
+        let disp = &self.displays[d];
+        let rotation = match &disp.refresher.strategy {
+            Strategy::Partial(p) => p.rotation,
+            _ => Rotation::Deg0,
+        };
+        let bounds = disp.area();
+        let logical = unrotate(area, rotation, bounds.width(), bounds.height());
+        if let Some(a) = logical.intersection(&bounds) {
+            self.add_dirty(d, a, InvalidateReason::FlushRetry);
         }
     }
 

@@ -2,13 +2,18 @@
 //! `StyleScope` modifiers), and grid templates through the style system (rework F4).
 
 use twine_core::{Color, Point};
-use twine_reactive::runtime_stats;
+use twine_reactive::Runtime;
 use twine_style::{
     GridTrack, GridTracks, Part, PropId, Selector, SharedTracks, State, Style, StyleBuf, StyleRef,
     StyleValue, style,
 };
 use twine_testing::{TestUi, by_id};
 use twine_view::prelude::*;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 const OK: Color = Color::new(0x2E, 0x7D, 0x32);
 const DANGER: Color = Color::new(0xC6, 0x28, 0x28);
@@ -198,7 +203,7 @@ fn part_and_state_nest_in_either_order() {
 #[test]
 fn constants_create_no_binding() {
     let nodes = |styled: bool| {
-        let before = runtime_stats().nodes;
+        let before = rt().stats().nodes;
         let t = mount(move |_| {
             let b = button(label("x")).test_id("b");
             if styled {
@@ -211,7 +216,7 @@ fn constants_create_no_binding() {
                 b.into_any()
             }
         });
-        let n = runtime_stats().nodes - before;
+        let n = rt().stats().nodes - before;
         if styled {
             let e = t.engine();
             let b = node(&t, "b");
@@ -246,10 +251,10 @@ fn idempotent_rerun_does_not_invalidate() {
             .test_id("b")
     });
     let n = t.root_scope().expect_context::<Signal<i32>>();
-    let runs = runtime_stats().effect_runs;
+    let runs = rt().stats().effect_runs;
     n.set(2); // every binding re-runs with the same value
     t.update();
-    assert!(runtime_stats().effect_runs > runs, "the bindings ran");
+    assert!(rt().stats().effect_runs > runs, "the bindings ran");
     assert!(t.invalidations().is_empty(), "{:?}", &*t.invalidations());
     t.assert_idle();
 }
@@ -330,10 +335,10 @@ fn grid_tracks_are_reactive_in_a_state_scope() {
     t.run_until_idle();
     assert_eq!(tracks(&t, "g"), Some(4));
     // An equal list again: nothing to do.
-    let runs = runtime_stats().effect_runs;
+    let runs = rt().stats().effect_runs;
     n.set_if_changed(4);
     t.update();
-    assert_eq!(runtime_stats().effect_runs, runs);
+    assert_eq!(rt().stats().effect_runs, runs);
     // Leaving the state: the static `Main` tracks apply again.
     let g = node(&t, "g");
     t.engine_mut().set_state(g, State::CHECKED, false);

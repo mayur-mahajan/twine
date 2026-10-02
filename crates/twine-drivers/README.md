@@ -4,12 +4,17 @@ Display, touch and input drivers for the Twine GUI library. Generic over `embedd
 `no_std`, allocation-free; every display driver exists in a blocking (`DisplayDriver`) and an
 async (`AsyncDisplayDriver`, feature `async`) flavour.
 
-Every driver and bus interface is a cargo feature and none is enabled by default: enable what
-your board has, e.g.
+Every driver and bus interface is a cargo feature and none is enabled by default. Applications
+enable them on the `twine` facade, as `drivers-<name>` (`twine::drivers`): a panel's facade
+feature also compiles the renderer for the panel's pixel format, and `async`, `log` and `defmt`
+reach the drivers with the rest of Twine, e.g.
 
 ```toml
-twine-drivers = { version = "0.1", features = ["ili9341", "xpt2046", "async"] }
+twine = { version = "0.1", features = ["drivers-ili9341", "drivers-xpt2046", "async"] }
 ```
+
+Used on its own (without the facade), enable the same features here (`ili9341`, …) and the
+panel's `color-*` feature on the engine yourself.
 
 The drivers know nothing about boards or pins; constructors take your HAL's bus, pin and delay
 objects, and each module's documentation shows the wiring. `all` enables everything.

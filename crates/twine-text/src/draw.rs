@@ -334,7 +334,7 @@ fn draw_clipped(p: &mut Painter<'_>, area: Rect, text: &str, dsc: &TextDsc, cach
         let x0 = area.x0 + dsc.ofs.x + layout.line_x(&line_obj, area.width(), align);
         let mut pen = Pen::default();
         let end = range.end;
-        let line_text = &text[range.clone()];
+        let line_text = crate::layout::sub(text, range.clone());
         // Bidi: lines with RTL content are drawn in visual order (neighbours for kerning are
         // the visual ones); "..." goes to the visual end of the line.
         #[cfg(feature = "bidi")]

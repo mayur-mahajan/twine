@@ -113,7 +113,8 @@ fn main() {
     let pointer = EgPointer::default();
     let clock = SimClock::wall();
     let mut ui = Ui::builder(EgDisplay::new(display.clone()))
-        .buffers(BufferMode::partial_single(leak_buffer(WIDTH as usize * 40 * 2)))
+        .runtime(Runtime::current_thread())
+        .buffers(BufferMode::alloc(BufferSpec::PartialSingle { rows: 40 }))
         .input(pointer.clone())
         .clock(clock.clone())
         .theme(DefaultTheme::light())
@@ -138,7 +139,7 @@ fn main() {
         let due = match wake {
             Wake::Now => true,
             Wake::At(t) => clock.now() >= t,
-            Wake::Idle => false,
+            Wake::Idle | Wake::IdleFor(_) => false,
         };
         if input || due {
             wake = ui.update();
@@ -147,15 +148,8 @@ fn main() {
         let sleep = match wake {
             Wake::Now => StdDuration::ZERO,
             Wake::At(t) => StdDuration::from_micros((t - clock.now()).as_micros()).min(MAX_SLEEP),
-            Wake::Idle => MAX_SLEEP,
+            Wake::Idle | Wake::IdleFor(_) => MAX_SLEEP,
         };
         std::thread::sleep(sleep);
     }
-}
-
-/// A 4-byte aligned draw buffer of `len` bytes, allocated once.
-fn leak_buffer(len: usize) -> &'static mut [u8] {
-    let v: &'static mut [u8] = Box::leak(vec![0u8; len + 3].into_boxed_slice());
-    let off = v.as_ptr().align_offset(4).min(3);
-    &mut v[off..off + len]
 }

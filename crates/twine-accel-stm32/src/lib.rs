@@ -1,7 +1,7 @@
 //! STM32 DMA2D (Chrom-ART) draw acceleration for the Twine renderer.
 //!
-//! [`Dma2d`] implements `twine_render::DrawAccel`: attach it to a `Painter` (or to the engine's
-//! configuration) and large fills, image blits and glyph blending run on the DMA2D of
+//! [`Dma2d`] implements `twine_render::DrawAccel`: attach it to a `Painter`, or hand it to the UI
+//! (`Ui::builder_fb(display).accel(dma2d)`, `Engine::set_accel`), and large fills, image blits and glyph blending run on the DMA2D of
 //! STM32F4/F7/H7 parts while the software renderer handles everything else. The software path
 //! stays complete; whatever DMA2D cannot do returns `AccelResult::Unsupported` and is drawn in
 //! software.
@@ -10,7 +10,8 @@
 //!
 //! - [`Dma2d`] holds all register programming and is generic over [`Dma2dRegs`], a 32-bit
 //!   register read/write interface.
-//! - `PacRegs` (chip features `stm32f429zi`, `stm32f746ng`, `stm32h743zi`) implements
+//! - `PacRegs` (chip features `stm32f429zi`, `stm32f746ng`, `stm32h743zi`) owns the chip's
+//!   DMA2D (the HAL's handle, one owner at a time) and implements
 //!   [`Dma2dRegs`] with the `stm32-metapac` register definitions of the chip, and (Cortex-M7,
 //!   feature `dcache`) D-cache maintenance through the core's `SCB`.
 //! - `mock::MockRegs` (feature `mock`) is a recording register file for host tests.
@@ -31,11 +32,18 @@
 //! assert_eq!(dma.regs().starts(), 1);
 //! ```
 //!
-//! On a board (the PAC does not enforce single ownership of the peripheral):
+//! On a board, `PacRegs` takes ownership of the HAL's DMA2D handle (at most one `PacRegs`
+//! exists), and the `Ui` takes ownership of the accelerator — nothing to keep or box after
+//! `build`:
 //!
 //! ```ignore
-//! let mut dma = Dma2d::new(PacRegs::new());               // F4
-//! let mut dma = Dma2d::new(PacRegs::new().with_scb(scb)); // F7/H7 with the D-cache on
+//! let p = embassy_stm32::init(config);
+//! let regs = PacRegs::new(p.DMA2D).expect("one DMA2D owner");    // F4
+//! // let regs = PacRegs::new(p.DMA2D).expect("..").with_scb(scb); // F7/H7 with the D-cache on
+//! let ui = Ui::builder_fb(display)
+//!     .accel(Dma2d::new(regs).with_timeout(1_000_000))
+//!     /* .runtime(..).platform(..) … */
+//!     .build(app);
 //! ```
 //!
 //! # Hardware notes

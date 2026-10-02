@@ -221,7 +221,16 @@ impl Engine {
                 cur = self.tree.parent(p);
             }
         }
-        wrappers.sort_unstable_by_key(|w| core::cmp::Reverse(w.1));
+        // Deepest first. Insertion sort: the list is short (the wrappers above the moved
+        // nodes, de-duplicated above in O(n²) anyway), where it is as fast as `sort_unstable`
+        // — which would link ~4 KiB of generic sorting code into firmware for this one call.
+        for i in 1..wrappers.len() {
+            let mut j = i;
+            while j > 0 && wrappers[j - 1].1 < wrappers[j].1 {
+                wrappers.swap(j - 1, j);
+                j -= 1;
+            }
+        }
         for &(w, _) in &wrappers {
             self.refresh_passthrough_box(w);
         }
@@ -628,7 +637,7 @@ impl Engine {
     /// }
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let d = e.add_chunked_display(DisplayInfo::new(200, 100, ColorFormat::L8).with_dpi(320), 200).unwrap();
-    /// e.set_theme(d, Rc::new(Spacing(Rc::new(ElementTable::new().with(design::SPACE_L, Length::Px(48))))));
+    /// e.set_theme(d, Spacing(Rc::new(ElementTable::new().with(design::SPACE_L, Length::Px(48)))));
     /// let screen = e.active_screen(d).unwrap();
     /// let a = e.create(screen, Box::new(Obj)).unwrap();
     /// let b = e.create(screen, Box::new(Obj)).unwrap();

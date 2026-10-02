@@ -238,11 +238,7 @@ impl Engine {
     }
 
     /// The kinds raised since the last call, clearing them (for applications that poll, e.g.
-    /// once per update).
-    ///
-    /// Also raises [`FaultKind::FormatDisabled`] (no display, `code` = the format's LVGL
-    /// discriminant) for each format the software renderer was asked to draw into although it
-    /// is not compiled in (see `twine_render::take_format_disabled`), first.
+    /// once per update). O(1); never panics.
     ///
     /// ```
     /// use twine_engine::{Engine, EngineConfig, FaultRecord};
@@ -255,13 +251,6 @@ impl Engine {
     /// assert_eq!(e.fault_counts().get(FaultKind::Capacity), 1); // counters are kept
     /// ```
     pub fn take_faults(&mut self) -> Faults {
-        // Defensive fallback: displays in a disabled format are refused when added, but code
-        // drawing into its own buffers (canvases, custom renderers) can still hit a disabled
-        // format. The renderer records each such format once per process; the first engine
-        // asking raises it here (not per frame: one relaxed load when nothing was recorded).
-        while let Some(format) = twine_render::take_format_disabled() {
-            self.raise_fault(FaultRecord::new(FaultKind::FormatDisabled).code(u32::from(format as u8)));
-        }
         core::mem::take(&mut self.faults.pending)
     }
 

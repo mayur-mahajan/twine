@@ -86,6 +86,8 @@ pub struct Engine {
     pub(crate) outside_presses: Vec<(NodeId, crate::outside::OutsideCb)>,
     /// Raised faults (see [`Engine::raise_fault`]).
     pub(crate) faults: crate::fault::FaultState,
+    /// The last user input (see [`Engine::inactive_for`]); `None` until the first step.
+    pub(crate) last_activity: Option<twine_core::Instant>,
     #[cfg(feature = "debug-checks")]
     pub(crate) invalidations: Vec<(Rect, InvalidateReason)>,
     /// The invalidations rendered by the last frame that started.
@@ -108,11 +110,57 @@ impl core::fmt::Debug for Engine {
 }
 
 impl Engine {
-    /// An engine with `config` (validated). Allocates the render caches once.
+    /// An engine with `config` (validated). Allocates the render caches once, the layer
+    /// buffer of [`EngineConfig::layer_buf_bytes`] included (see
+    /// [`with_layer_buf`](Self::with_layer_buf) to keep it out of the heap).
+    ///
+    /// # Errors
+    /// [`EngineError::InvalidConfig`] when `config` is out of range
+    /// ([`EngineConfig::validate`]). Never panics.
     pub fn new(config: EngineConfig) -> Result<Engine, EngineError> {
         config.validate()?;
+        let caches = RenderCaches::new(&config.render_config());
+        Ok(Self::with_caches(config, caches))
+    }
+
+    /// An engine like [`new`](Self::new) whose layer buffer — the renderer's largest scratch
+    /// buffer (opacity groups, transforms, blend modes; ARGB8888) — is `layer_buf`, caller
+    /// memory such as a `static`, instead of [`EngineConfig::layer_buf_bytes`] bytes of heap.
+    /// [`config().layer_buf_bytes`](Self::config) then reports `layer_buf.len()`, and
+    /// [`memory_report`](Self::memory_report) lists it as static. The bytes need no alignment
+    /// or initial content. `Ui::builder(..).layer_buf(..)` passes it on.
+    ///
+    /// # Errors
+    /// [`EngineError::InvalidConfig`] when `config` is out of range or `layer_buf` is shorter
+    /// than 4 KiB (the minimum of `layer_buf_bytes`). Allocates nothing on error; never panics.
+    ///
+    /// ```
+    /// use twine_engine::{Engine, EngineConfig, EngineError};
+    ///
+    /// // Firmware: `static LAYER: TakeOnce<[u8; 16 * 1024]> = TakeOnce::new([0; 16 * 1024]);`
+    /// // and `LAYER.take().unwrap()` (`twine::reactive::TakeOnce`, in `.bss`).
+    /// let layer: &'static mut [u8] = Box::leak(Box::new([0u8; 16 * 1024]));
+    /// let e = Engine::with_layer_buf(EngineConfig::default(), layer).unwrap();
+    /// assert_eq!(e.config().layer_buf_bytes, 16 * 1024);
+    /// assert!(e.memory_report().layer_buf_static);
+    ///
+    /// let small: &'static mut [u8] = Box::leak(Box::new([0u8; 100]));
+    /// assert!(matches!(Engine::with_layer_buf(EngineConfig::default(), small), Err(EngineError::InvalidConfig(_))));
+    /// ```
+    pub fn with_layer_buf(config: EngineConfig, layer_buf: &'static mut [u8]) -> Result<Engine, EngineError> {
+        let config = EngineConfig {
+            layer_buf_bytes: layer_buf.len(),
+            ..config
+        };
+        config.validate()?;
+        let caches = RenderCaches::with_layer_buf(&config.render_config(), layer_buf);
+        Ok(Self::with_caches(config, caches))
+    }
+
+    /// The engine around the (already created) render caches of a validated `config`.
+    fn with_caches(config: EngineConfig, caches: RenderCaches) -> Engine {
         let res = RenderRes {
-            caches: RenderCaches::new(&config.render_config()),
+            caches,
             aux: AuxRes {
                 glyphs: GlyphCache::new(config.glyph_cache_bytes),
                 images: ImageCache::new(config.image_cache_bytes, 8),
@@ -126,15 +174,16 @@ impl Engine {
         };
         twine_core::info!(
             target: "twine::engine",
-            "engine: refr_period={} max_dirty_areas={} layer_buf={} B glyph_cache={} B cooperative_flush={} flush_timeout={:?}",
+            "engine: refr_period={} max_dirty_areas={} layer_buf={} B{} glyph_cache={} B cooperative_flush={} flush_timeout={:?}",
             config.refr_period,
             config.max_dirty_areas,
             config.layer_buf_bytes,
+            if res.caches.layer_buf_is_static() { " (static)" } else { "" },
             config.glyph_cache_bytes,
             config.cooperative_flush,
             config.flush_timeout
         );
-        Ok(Self {
+        Self {
             tree: Tree::new(),
             displays: Vec::new(),
             default_display: None,
@@ -162,6 +211,7 @@ impl Engine {
             events: crate::handlers::EventQueues::default(),
             outside_presses: Vec::new(),
             faults: crate::fault::FaultState::default(),
+            last_activity: None,
             // Both logs are swapped at every frame start: allocated once, up front.
             #[cfg(feature = "debug-checks")]
             invalidations: Vec::with_capacity(64),
@@ -169,7 +219,7 @@ impl Engine {
             frame_invalidations: Vec::with_capacity(64),
             #[cfg(feature = "debug-checks")]
             render_hook: None,
-        })
+        }
     }
 
     /// The widget tree.

@@ -7,7 +7,6 @@
 
 use twine::assets::fonts::MONTSERRAT_12;
 use twine::engine::EngineConfig;
-use twine::hal::BufferSpec;
 use twine::view::prelude::*;
 use twine_sim::SimConfig;
 
@@ -23,7 +22,8 @@ fn main() {
         SimConfig::new(320, 240)
             .title("Spinner")
             .scale(3)
-            .buffers(BufferSpec::PartialDouble { rows: 40 })
+            .buffers(BufferMode::alloc(BufferSpec::PartialDouble { rows: 40 }))
+            .theme(DefaultTheme::light())
             // The performance overlay's font.
             .engine_config(EngineConfig {
                 default_font: Some(&MONTSERRAT_12),

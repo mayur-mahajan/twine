@@ -161,6 +161,7 @@ fn msgbox_view(title: TextProp, text: TextProp) -> WidgetView<Msgbox> {
     let mut v = widget_view(Msgbox::new);
     let settings = v.shared::<MsgboxSettings>();
     v.after_children(move |cx, node| {
+        let rt = cx.runtime();
         let modal = cx.scope().use_context::<ModalHandle>();
         // No close button for `false` (or none given); a hidden one for a dynamic value.
         let close_button = match settings.close_button.borrow_mut().take() {
@@ -205,7 +206,7 @@ fn msgbox_view(title: TextProp, text: TextProp) -> WidgetView<Msgbox> {
                 if ev.target == ev.current_target {
                     twine_core::debug!(target: "twine::view", "msgbox button {}", idx);
                     if let Some(f) = s.on_button.borrow_mut().as_mut() {
-                        EngineAccess::provide(ecx.engine_mut(), || f(idx));
+                        EngineAccess::provide(rt, ecx.engine_mut(), || f(idx));
                     }
                 }
                 EventResult::Continue
@@ -226,10 +227,10 @@ fn msgbox_view(title: TextProp, text: TextProp) -> WidgetView<Msgbox> {
                 e.add_event_handler(c, EventFilter::Code(EventCode::Clicked), move |ecx, ev| {
                     if ev.target == ev.current_target {
                         if let Some(f) = s.on_close.borrow_mut().as_mut() {
-                            EngineAccess::provide(ecx.engine_mut(), &mut *f);
+                            EngineAccess::provide(rt, ecx.engine_mut(), &mut *f);
                         }
                         match &modal {
-                            Some(m) => EngineAccess::provide(ecx.engine_mut(), || m.close()),
+                            Some(m) => EngineAccess::provide(rt, ecx.engine_mut(), || m.close()),
                             // The box itself is busy only inside its own event, not here.
                             None => msgbox::close_async(ecx.engine_mut(), node),
                         }

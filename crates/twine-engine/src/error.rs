@@ -38,11 +38,14 @@ pub enum EngineError {
         /// Bytes provided.
         got: usize,
     },
-    /// A draw buffer does not start at a 4-byte aligned address.
-    #[error("draw buffer is not 4-byte aligned")]
+    /// A caller-provided draw buffer does not start at a 4-byte aligned address. Buffers
+    /// declared with `twine::draw_buffers!` (or allocated with `BufferMode::alloc`) are
+    /// aligned by construction.
+    #[error("draw buffer is not 4-byte aligned (declare it with `draw_buffers!` or use `BufferMode::alloc`)")]
     BufferMisaligned,
-    /// Partial buffers were given for a framebuffer display, `Full`/`Direct` for a flush
-    /// display, or a framebuffer display could not provide the buffers the mode needs.
+    /// Partial or heap (`Alloc`) buffers were given for a framebuffer display, `Full`/`Direct`
+    /// for a flush display, or a framebuffer display could not provide the buffers the mode
+    /// needs.
     #[error("buffer mode does not match the display kind")]
     BufferModeMismatch,
     /// A configuration value or argument is invalid.
@@ -70,6 +73,41 @@ pub enum EngineError {
         /// The error's `Debug` output, truncated to 64 bytes.
         message: heapless::String<64>,
     },
+}
+
+/// `defmt` output of an [`EngineError`] (written by hand: the driver message is a
+/// `heapless::String`, printed as `str`).
+#[cfg(feature = "defmt")]
+impl defmt::Format for EngineError {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        match self {
+            EngineError::NodeNotFound(id) => defmt::write!(f, "node {} not found", id),
+            EngineError::DisplayNotFound(id) => defmt::write!(f, "display {} not found", id),
+            EngineError::TooManyDisplays => defmt::write!(f, "too many displays"),
+            EngineError::TooManyInputs => defmt::write!(f, "too many input devices"),
+            EngineError::TooManyGroups => defmt::write!(f, "too many focus groups"),
+            EngineError::TooManyNodes => defmt::write!(f, "too many nodes"),
+            EngineError::BufferTooSmall { needed, got } => {
+                defmt::write!(
+                    f,
+                    "buffer too small: {=usize} bytes, {=usize} needed",
+                    got,
+                    needed
+                );
+            }
+            EngineError::BufferMisaligned => defmt::write!(f, "draw buffer is not 4-byte aligned"),
+            EngineError::BufferModeMismatch => {
+                defmt::write!(f, "buffer mode does not match the display kind");
+            }
+            EngineError::InvalidConfig(what) => defmt::write!(f, "invalid configuration: {=str}", what),
+            EngineError::FormatDisabled(format) => {
+                defmt::write!(f, "drawing into {} is not compiled in", format);
+            }
+            EngineError::Driver { code, message } => {
+                defmt::write!(f, "driver error {}: {=str}", code, message.as_str());
+            }
+        }
+    }
 }
 
 /// A display driver's numeric error code (from `DisplayDriver::error_code` and the matching

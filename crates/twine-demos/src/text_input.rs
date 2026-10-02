@@ -162,8 +162,9 @@ pub fn app(cx: Scope) -> impl View {
                             if let Some(t) = ta.get_untracked() {
                                 e.scroll_to_view(t, false);
                             }
+                            let rt = cx.runtime();
                             cx.on_delete(kb, move || {
-                                EngineAccess::with(|e| {
+                                EngineAccess::with(rt, |e| {
                                     e.set_local_prop(
                                         p,
                                         Selector::MAIN,

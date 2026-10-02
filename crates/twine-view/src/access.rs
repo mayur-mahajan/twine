@@ -2,12 +2,11 @@
 
 #[cfg(debug_assertions)]
 use core::cell::Cell;
-use core::marker::PhantomData;
 #[cfg(debug_assertions)]
 use core::panic::Location;
 
 use twine_engine::Engine;
-use twine_reactive::{ambient_is, provide_ambient, with_ambient};
+use twine_reactive::Runtime;
 
 /// The scoped "current engine": lets code without an engine parameter — [`NodeRef`](crate::NodeRef)
 /// `with_mut`, bindings, hooks — reach the engine while the [`Ui`](crate::Ui) runs it.
@@ -18,8 +17,13 @@ use twine_reactive::{ambient_is, provide_ambient, with_ambient};
 /// borrow is active, nested calls get `None` (so there is never more than one `&mut Engine`).
 /// Outside those scopes `with` returns `None`.
 ///
-/// The slot is the reactive runtime's ambient slot ([`twine_reactive::provide_ambient`]), so
-/// it shares the runtime's confinement to the UI thread / task.
+/// The slot is the reactive runtime's ambient slot ([`Runtime::provide_ambient`]), so it
+/// shares the runtime's confinement to the UI thread / task: every call takes the
+/// [`Runtime`] token — or anything that converts into one, such as the [`Scope`] a handler
+/// or effect already captured — as proof that it runs there (free: the token is
+/// zero-sized).
+///
+/// [`Scope`]: twine_reactive::Scope
 ///
 /// # Diagnostics
 ///
@@ -41,44 +45,92 @@ use twine_reactive::{ambient_is, provide_ambient, with_ambient};
 ///
 /// ```
 /// use twine_engine::{Engine, EngineConfig};
+/// use twine_reactive::Runtime;
 /// use twine_view::EngineAccess;
 ///
+/// let rt = Runtime::take().unwrap();
 /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
-/// assert!(EngineAccess::with(|_| ()).is_none());
-/// let nodes = EngineAccess::provide(&mut engine, || EngineAccess::with(|e| e.tree().len()));
+/// assert!(EngineAccess::with(rt, |_| ()).is_none());
+/// let nodes = EngineAccess::provide(rt, &mut engine, || EngineAccess::with(rt, |e| e.tree().len()));
 /// assert_eq!(nodes, Some(0));
 /// ```
 #[derive(Debug)]
 pub struct EngineAccess(());
 
 impl EngineAccess {
-    /// Makes `engine` available to [`with`](Self::with) while `f` runs.
-    pub fn provide<R>(engine: &mut Engine, f: impl FnOnce() -> R) -> R {
-        provide_ambient(engine, f)
+    /// Makes `engine` available to [`with`](Self::with) while `f` runs (also when `f`
+    /// panics, the previous state is restored). `rt` is the runtime of the calling context
+    /// (a [`Runtime`] or a [`Scope`](twine_reactive::Scope)). Allocates nothing.
+    ///
+    /// # Panics
+    ///
+    /// Never by itself; a panic of `f` propagates after the previous state is restored.
+    ///
+    /// ```
+    /// use twine_engine::{Engine, EngineConfig};
+    /// use twine_reactive::Runtime;
+    /// use twine_view::EngineAccess;
+    ///
+    /// let rt = Runtime::take().unwrap();
+    /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
+    /// // What a host loop that drives its own engine does around application code:
+    /// let available = EngineAccess::provide(rt, &mut engine, || EngineAccess::available(rt));
+    /// assert!(available);
+    /// assert!(!EngineAccess::available(rt)); // lent only while `f` runs
+    /// ```
+    pub fn provide<R>(rt: impl Into<Runtime>, engine: &mut Engine, f: impl FnOnce() -> R) -> R {
+        rt.into().provide_ambient(engine, f)
     }
 
     /// Calls `f` with the current engine, or returns `None` (without calling `f`) when there is
-    /// none: outside `Ui`, or while an enclosing `with` holds it.
-    pub fn with<R>(f: impl FnOnce(&mut Engine) -> R) -> Option<R> {
-        with_ambient(|v| as_engine(v).map(f))
+    /// none: outside `Ui`, or while an enclosing `with` holds it. `rt` is the runtime of the
+    /// calling context (a [`Runtime`] or a [`Scope`](twine_reactive::Scope)). Allocates
+    /// nothing; never panics (unless `f` does).
+    ///
+    /// ```
+    /// use twine_engine::{Engine, EngineConfig};
+    /// use twine_reactive::Runtime;
+    /// use twine_view::EngineAccess;
+    ///
+    /// let rt = Runtime::take().unwrap();
+    /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
+    /// EngineAccess::provide(rt, &mut engine, || {
+    ///     let outer = EngineAccess::with(rt, |_e| {
+    ///         // The borrow is exclusive: a nested `with` gets nothing.
+    ///         EngineAccess::with(rt, |_| ()).is_none()
+    ///     });
+    ///     assert_eq!(outer, Some(true));
+    /// });
+    /// ```
+    pub fn with<R>(rt: impl Into<Runtime>, f: impl FnOnce(&mut Engine) -> R) -> Option<R> {
+        rt.into().with_ambient(|v| as_engine(v).map(f))
     }
 
-    /// Whether an engine is available right now.
+    /// Whether an engine is available right now (one read of the ambient slot). `rt` is the
+    /// runtime of the calling context. Never panics.
+    ///
+    /// ```
+    /// use twine_reactive::Runtime;
+    /// use twine_view::EngineAccess;
+    ///
+    /// let rt = Runtime::take().unwrap();
+    /// assert!(!EngineAccess::available(rt)); // outside every `Ui` update
+    /// ```
     #[must_use]
-    pub fn available() -> bool {
-        ambient_is::<Engine>()
+    pub fn available(rt: impl Into<Runtime>) -> bool {
+        rt.into().ambient_is::<Engine>()
     }
 }
 
 /// Whether the engine is available to the running effect; defers the effect (not evaluated:
 /// it runs, and re-subscribes, at the next flush) when it is not. The guard of every effect
 /// that needs the engine (bindings, model sync, modals): one shared out-of-line copy, a single
-/// read of the ambient slot ([`ambient_is`]).
+/// read of the ambient slot ([`Runtime::ambient_is`]).
 #[inline(never)]
-pub(crate) fn engine_ready() -> bool {
-    let ready = EngineAccess::available();
+pub(crate) fn engine_ready(rt: Runtime) -> bool {
+    let ready = EngineAccess::available(rt);
     if !ready {
-        twine_reactive::defer_current_effect();
+        rt.defer_current_effect();
     }
     ready
 }
@@ -91,7 +143,7 @@ fn as_engine(v: Option<&mut dyn core::any::Any>) -> Option<&mut Engine> {
     v.and_then(|a| a.downcast_mut::<Engine>())
 }
 
-/// The context `Ui` passes to [`twine_reactive::flush_effects_with`]: a marker telling the
+/// The context `Ui` passes to [`Runtime::flush_effects_with`]: a marker telling the
 /// runtime that this is a real flush (effects deferred earlier for lack of an engine are
 /// re-queued). The engine itself is reached through [`EngineAccess`], which `Ui` provides for
 /// the whole flush.
@@ -100,7 +152,7 @@ fn as_engine(v: Option<&mut dyn core::any::Any>) -> Option<&mut Engine> {
 /// [`scoped`](Self::scoped), which lends the engine for exactly the duration of the closure.
 #[derive(Debug)]
 pub struct EffectCx {
-    _not_send: PhantomData<*const ()>,
+    rt: Runtime,
 }
 
 impl EffectCx {
@@ -108,23 +160,21 @@ impl EffectCx {
     ///
     /// ```
     /// use twine_engine::{Engine, EngineConfig};
+    /// use twine_reactive::Runtime;
     /// use twine_view::EffectCx;
     ///
+    /// let rt = Runtime::take().unwrap();
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
-    /// let n = EffectCx::scoped(&mut engine, |ecx| ecx.with_engine(|e| e.tree().len()));
+    /// let n = EffectCx::scoped(rt, &mut engine, |ecx| ecx.with_engine(|e| e.tree().len()));
     /// assert_eq!(n, Some(0));
     /// ```
-    pub fn scoped<R>(engine: &mut Engine, f: impl FnOnce(&mut EffectCx) -> R) -> R {
-        EngineAccess::provide(engine, || {
-            f(&mut EffectCx {
-                _not_send: PhantomData,
-            })
-        })
+    pub fn scoped<R>(rt: Runtime, engine: &mut Engine, f: impl FnOnce(&mut EffectCx) -> R) -> R {
+        EngineAccess::provide(rt, engine, || f(&mut EffectCx { rt }))
     }
 
     /// Calls `f` with the engine (see [`EngineAccess::with`]).
     pub fn with_engine<R>(&mut self, f: impl FnOnce(&mut Engine) -> R) -> Option<R> {
-        EngineAccess::with(f)
+        EngineAccess::with(self.rt, f)
     }
 }
 

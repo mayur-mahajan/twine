@@ -11,7 +11,9 @@ static A: CountingAllocator = CountingAllocator;
 #[test]
 fn vector_demo_smoke() {
     let ((), logs) = capture_logs(|| {
-        let mut t = TestUi::new(480, 320).mount(twine_demos::vector::app);
+        let mut t = TestUi::new(480, 320)
+            .app_config(twine_demos::config())
+            .mount(twine_demos::vector::app);
         t.advance(Duration::ms(100));
         for title in ["Gradients", "Strokes", "SVG & motion", "Shapes"] {
             t.find(by_text(title)).click();
@@ -27,7 +29,9 @@ fn vector_demo_smoke() {
 
 #[test]
 fn vector_demo_snapshots() {
-    let mut t = TestUi::new(480, 320).mount(twine_demos::vector::app);
+    let mut t = TestUi::new(480, 320)
+        .app_config(twine_demos::config())
+        .mount(twine_demos::vector::app);
     t.advance(Duration::ms(100));
     for (title, name) in [
         ("Shapes", "vector_shapes"),
@@ -42,7 +46,9 @@ fn vector_demo_snapshots() {
 
 #[test]
 fn motion_tab_is_allocation_free_and_local() {
-    let mut t = TestUi::new(480, 320).mount(twine_demos::vector::app);
+    let mut t = TestUi::new(480, 320)
+        .app_config(twine_demos::config())
+        .mount(twine_demos::vector::app);
     t.advance(Duration::ms(100));
     t.find(by_text("SVG & motion")).click();
     for _ in 0..40 {

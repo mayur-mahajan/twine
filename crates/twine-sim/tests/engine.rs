@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use twine_core::{Color, Opa, Rotation};
-use twine_engine::{Engine, NodeId, Obj};
-use twine_hal::{BufferSpec, Key};
+use twine_engine::{BufferMode, BufferSpec, Engine, NodeId, Obj};
+use twine_hal::Key;
 use twine_sim::{Headless, SimApp, SimConfig, run_engine_headless};
 use twine_style::{Part, PropId, Selector, StyleProp};
 
@@ -55,17 +55,14 @@ fn png_pixel(path: &std::path::Path, x: u32, y: u32) -> [u8; 3] {
 
 #[test]
 fn engine_app_renders_headless() {
-    for spec in [
-        BufferSpec::PartialSingle { rows: 4 },
-        BufferSpec::PartialDouble { rows: 8 },
-        BufferSpec::Full,
-        BufferSpec::Direct,
-    ] {
-        let (cfg, dir) = headless(
-            SimConfig::new(32, 16).buffers(spec),
-            &format!("{spec:?}").replace(' ', ""),
-            None,
-        );
+    let modes = [
+        ("single", BufferMode::alloc(BufferSpec::PartialSingle { rows: 4 })),
+        ("double", BufferMode::alloc(BufferSpec::PartialDouble { rows: 8 })),
+        ("full", BufferMode::Full),
+        ("direct", BufferMode::Direct),
+    ];
+    for (spec, mode) in modes {
+        let (cfg, dir) = headless(SimConfig::new(32, 16).buffers(mode), spec, None);
         let report = run_engine_headless(cfg, |e| {
             scene(e);
         })
@@ -167,7 +164,7 @@ fn f12_cycles_the_theme_modes() {
     };
     // The default theme: light → dark → night → high contrast → light (screen backgrounds).
     let (cfg, dir) = headless(
-        SimConfig::new(32, 16).theme(Rc::new(DefaultTheme::light())),
+        SimConfig::new(32, 16).theme(DefaultTheme::light()),
         "modes",
         Some(script),
     );
@@ -180,7 +177,7 @@ fn f12_cycles_the_theme_modes() {
     let _ = std::fs::remove_dir_all(dir);
     // The simple theme: light ↔ high contrast (white screen) only.
     let (cfg, dir) = headless(
-        SimConfig::new(32, 16).theme(Rc::new(SimpleTheme::new())),
+        SimConfig::new(32, 16).theme(SimpleTheme::new()),
         "modes-simple",
         Some(script),
     );

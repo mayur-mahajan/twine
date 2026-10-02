@@ -53,5 +53,11 @@ fn app(cx: Scope) -> impl View {
 }
 
 fn main() {
-    twine_sim::run(SimConfig::new(320, 240).title("layout views").scale(2), app);
+    twine_sim::run(
+        SimConfig::new(320, 240)
+            .title("layout views")
+            .scale(2)
+            .theme(DefaultTheme::light()),
+        app,
+    );
 }

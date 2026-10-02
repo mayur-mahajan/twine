@@ -1,6 +1,6 @@
 //! The reactive graph: node and scope storage and the push-pull coloring algorithm.
 //!
-//! Every method takes `&Runtime` and borrows [`Inner`] only for short, user-code-free sections.
+//! Every method takes `&RuntimeState` and borrows [`Inner`] only for short, user-code-free sections.
 //! **Rule R1**: no borrow of `inner` is held while a user closure (memo, effect, cleanup,
 //! channel handler, `Clone`/`Drop`/`PartialEq` of user values) runs. Closures and values are
 //! stored behind `Rc` so they can be cloned out of the arena, the borrow dropped, and then
@@ -63,6 +63,9 @@ pub(crate) struct Computation {
     pub(crate) kind: Kind,
     /// What the computation read during its last run, in read order.
     pub(crate) sources: SmallVec<NodeKey, 4>,
+    /// The root of the owning scope: an effect runs with the flush context and the ambient
+    /// value only while its root is the active one (see [`Inner::active_root`]).
+    pub(crate) root: ScopeKey,
 }
 
 /// Node flag: the effect is in `pending`.
@@ -102,13 +105,16 @@ impl ReactiveNode {
 #[derive(Default)]
 pub(crate) struct ScopeData {
     pub(crate) parent: Option<ScopeKey>,
+    /// The root of this scope's tree (`None`: the scope is a root itself). Copied from the
+    /// parent at creation, so finding a scope's root is one lookup.
+    pub(crate) root: Option<ScopeKey>,
     pub(crate) children: Vec<ScopeKey>,
     pub(crate) nodes: Vec<NodeKey>,
     pub(crate) cleanups: Vec<Box<dyn FnOnce()>>,
     pub(crate) contexts: Vec<(TypeId, Rc<dyn Any>)>,
 }
 
-/// Counters exposed through [`crate::runtime_stats`].
+/// Counters exposed through [`crate::Runtime::stats`].
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Counters {
     pub(crate) writes: u64,
@@ -121,7 +127,7 @@ pub(crate) struct Counters {
 pub(crate) struct FaultState {
     /// Faults since start-up.
     pub(crate) total: FaultCounts,
-    /// Faults since the last [`crate::take_faults`].
+    /// Faults since the last [`crate::Runtime::take_faults`].
     pub(crate) new: FaultCounts,
     pub(crate) hook: Option<FaultHook>,
 }
@@ -163,9 +169,14 @@ pub(crate) struct Inner {
     update_depth: u32,
     pub(crate) counters: Counters,
     pub(crate) created_logged: bool,
-    /// The value lent by the innermost active [`provide_ambient`](crate::provide_ambient)
+    /// The value lent by the innermost active [`provide_ambient`](crate::Runtime::provide_ambient)
     /// (`None` outside one or while it is borrowed).
     pub(crate) ambient: Option<core::ptr::NonNull<dyn Any>>,
+    /// The root scope whose update is running ([`Scope::activate`](crate::Scope::activate)):
+    /// while set, effects of other roots run without the ambient value and with the `()`
+    /// context, and only this root's deferred effects are re-queued by a flush with a context.
+    /// `None` outside every UI update (no filtering).
+    pub(crate) active_root: Option<ScopeKey>,
     /// The waker of each root scope that has one ([`Scope::set_ui_waker`](crate::Scope::set_ui_waker));
     /// one entry per `Ui`, so a linear search.
     pub(crate) root_wakers: Vec<(ScopeKey, &'static crate::UiWaker)>,
@@ -194,7 +205,62 @@ impl Inner {
             },
             created_logged: false,
             ambient: None,
+            active_root: None,
             root_wakers: Vec::new(),
+        }
+    }
+
+    /// What the runtime's heap is used for ([`Runtime::memory`](crate::Runtime::memory)).
+    /// O(nodes + scopes); allocates nothing.
+    pub(crate) fn memory(&self) -> crate::RuntimeMemory {
+        /// Bytes of the `Rc` allocation holding `v`: the two counters and the value, padded
+        /// to the allocation's alignment.
+        fn rc_bytes<T: ?Sized>(v: &T) -> usize {
+            core::alloc::Layout::new::<[usize; 2]>()
+                .extend(core::alloc::Layout::for_value(v))
+                .map_or(0, |(l, _)| l.pad_to_align().size())
+        }
+        let values = self
+            .nodes
+            .iter()
+            .map(|(_, n)| {
+                let value = n.value.as_ref().map_or(0, |v| rc_bytes(&**v));
+                let comp = n.comp.as_ref().map_or(0, |c| {
+                    let f = match &c.kind {
+                        Kind::Memo(f) => rc_bytes(&**f),
+                        Kind::Effect(f) => rc_bytes(&**f),
+                    };
+                    core::mem::size_of::<Computation>() + c.sources.heap_bytes() + f
+                });
+                value + comp + n.subscribers.heap_bytes()
+            })
+            .sum();
+        let scope_data = self
+            .scopes
+            .iter()
+            .map(|(_, d)| {
+                d.children.capacity() * core::mem::size_of::<ScopeKey>()
+                    + d.nodes.capacity() * core::mem::size_of::<NodeKey>()
+                    + d.cleanups.capacity() * core::mem::size_of::<Box<dyn FnOnce()>>()
+                    + d.cleanups
+                        .iter()
+                        .map(|c| core::mem::size_of_val(&**c))
+                        .sum::<usize>()
+                    + d.contexts.capacity() * core::mem::size_of::<(TypeId, Rc<dyn Any>)>()
+                    + d.contexts.iter().map(|(_, v)| rc_bytes(&**v)).sum::<usize>()
+            })
+            .sum();
+        let queues = (self.pending.capacity() + self.deferred.capacity()) * core::mem::size_of::<NodeKey>()
+            + self.channels.capacity() * core::mem::size_of::<ChannelReg>()
+            + self.stack.capacity() * core::mem::size_of::<(NodeKey, NodeState)>()
+            + self.root_wakers.capacity() * core::mem::size_of::<(ScopeKey, &'static crate::UiWaker)>();
+        crate::RuntimeMemory {
+            nodes: self.nodes.len(),
+            scopes: self.scopes.len(),
+            arenas: self.nodes.bytes_reserved() + self.scopes.bytes_reserved(),
+            values,
+            scope_data,
+            queues,
         }
     }
 
@@ -263,6 +329,32 @@ impl Inner {
         Some(node)
     }
 
+    /// The root of scope `s`, or `None` if `s` is dead. One lookup.
+    #[inline]
+    pub(crate) fn root_of(&self, s: ScopeKey) -> Option<ScopeKey> {
+        self.scopes.get(s).map(|d| d.root.unwrap_or(s))
+    }
+
+    /// The waker set on root scope `root` ([`Scope::set_ui_waker`](crate::Scope::set_ui_waker)).
+    pub(crate) fn root_waker(&self, root: ScopeKey) -> Option<&'static crate::UiWaker> {
+        self.root_wakers.iter().find(|(k, _)| *k == root).map(|&(_, w)| w)
+    }
+
+    /// Whether effect `k` waits (pending or deferred) and belongs to `root`.
+    fn effect_of(&self, k: NodeKey, root: ScopeKey) -> bool {
+        self.nodes
+            .get(k)
+            .and_then(|n| n.comp.as_deref())
+            .is_some_and(|c| c.root == root)
+    }
+
+    /// Whether effects of root `root` wait to run (pending, or deferred until the root's next
+    /// flush with a context). Scans the queues only when they are not empty.
+    pub(crate) fn has_pending_effects_of(&self, root: ScopeKey) -> bool {
+        self.pending.iter().any(|&k| self.effect_of(k, root))
+            || self.deferred.iter().any(|&k| self.effect_of(k, root))
+    }
+
     /// Drops `pending`/`deferred` entries of removed nodes.
     pub(crate) fn prune_queues(&mut self) {
         let Inner {
@@ -276,8 +368,8 @@ impl Inner {
     }
 }
 
-/// The reactive runtime of one thread.
-pub(crate) struct Runtime {
+/// The state of the reactive runtime (one per thread with `std`, one per process without; reached through [`with_runtime`](crate::global::with_runtime)).
+pub(crate) struct RuntimeState {
     pub(crate) inner: RefCell<Inner>,
     /// Cold fault state (never borrowed together with `inner` on a hot path).
     pub(crate) faults: RefCell<FaultState>,
@@ -286,7 +378,7 @@ pub(crate) struct Runtime {
 /// Restores `observer`/`running_effect` and clears `RUNNING` after a computation, also on
 /// unwinding.
 struct RunGuard<'a> {
-    rt: &'a Runtime,
+    rt: &'a RuntimeState,
     key: NodeKey,
     prev_observer: Option<NodeKey>,
     prev_effect: Option<NodeKey>,
@@ -304,7 +396,7 @@ impl Drop for RunGuard<'_> {
 }
 
 /// Decrements `update_depth` on scope exit.
-struct DepthGuard<'a>(&'a Runtime);
+struct DepthGuard<'a>(&'a RuntimeState);
 
 impl Drop for DepthGuard<'_> {
     fn drop(&mut self) {
@@ -313,8 +405,33 @@ impl Drop for DepthGuard<'_> {
     }
 }
 
+/// Calls an effect's body with `ctx` (a re-entered effect is skipped with an error).
+#[inline]
+fn call_effect(f: &EffectFn, k: NodeKey, ctx: &mut dyn Any) {
+    match f.try_borrow_mut() {
+        Ok(mut body) => body(ctx),
+        Err(_) => {
+            error!(target: "twine::reactive", "effect {:?} re-entered; skipped", k);
+        }
+    }
+}
+
+/// Restores the ambient value and the active root hidden from another root's effect.
+struct UnhideGuard<'a> {
+    rt: &'a RuntimeState,
+    hidden: (Option<core::ptr::NonNull<dyn Any>>, Option<ScopeKey>),
+}
+
+impl Drop for UnhideGuard<'_> {
+    fn drop(&mut self) {
+        let mut inner = self.rt.inner.borrow_mut();
+        inner.ambient = self.hidden.0;
+        inner.active_root = self.hidden.1;
+    }
+}
+
 /// Clears `running_flush` on scope exit.
-struct FlushGuard<'a>(&'a Runtime);
+struct FlushGuard<'a>(&'a RuntimeState);
 
 impl Drop for FlushGuard<'_> {
     fn drop(&mut self) {
@@ -329,7 +446,7 @@ fn capacity_panic(what: &str) -> ! {
     panic!("twine-reactive: too many reactive {what} (limit 65535)")
 }
 
-impl Runtime {
+impl RuntimeState {
     /// Records `n` occurrences of `kind` and calls the fault hook (without any borrow held:
     /// the hook is foreign code, rule R1). Cold and out of line: faults are rare, and keeping
     /// this out of `flush`/`update_if_necessary` keeps their hot paths compact.
@@ -349,7 +466,7 @@ impl Runtime {
 
     /// An empty runtime (usable in `static` and `const` thread-local initializers).
     pub(crate) const fn new() -> Self {
-        Runtime {
+        RuntimeState {
             inner: RefCell::new(Inner::new()),
             faults: RefCell::new(FaultState::new()),
         }
@@ -375,10 +492,12 @@ impl Runtime {
                 return None;
             }
         }
+        let root = parent.and_then(|p| inner.root_of(p));
         let key = inner
             .scopes
             .insert(ScopeData {
                 parent,
+                root,
                 ..ScopeData::default()
             })
             .unwrap_or_else(|_| capacity_panic("scopes"));
@@ -479,12 +598,17 @@ impl Runtime {
         &self,
         s: ScopeKey,
         value: Option<ValueRc>,
-        comp: Option<Box<Computation>>,
+        kind: Option<Kind>,
     ) -> Option<NodeKey> {
         let mut inner = self.inner.borrow_mut();
-        if !inner.scopes.contains(s) {
-            return None;
-        }
+        let root = inner.root_of(s)?;
+        let comp = kind.map(|kind| {
+            Box::new(Computation {
+                kind,
+                sources: SmallVec::new(),
+                root,
+            })
+        });
         let state = if comp.is_some() {
             NodeState::Dirty
         } else {
@@ -658,10 +782,12 @@ impl Runtime {
     fn recompute(&self, k: NodeKey, ctx: &mut dyn Any) {
         enum Job {
             Memo(MemoFn, ValueRc),
-            Effect(EffectFn),
+            /// The body, and whether the effect belongs to another root than the active one.
+            Effect(EffectFn, bool),
         }
         let (job, guard) = {
             let mut inner = self.inner.borrow_mut();
+            let active = inner.active_root;
             let Some(node) = inner.nodes.get_mut(k) else {
                 return;
             };
@@ -671,7 +797,7 @@ impl Runtime {
             };
             let job = match (&comp.kind, value) {
                 (Kind::Memo(f), Some(v)) => Job::Memo(f.clone(), v),
-                (Kind::Effect(f), _) => Job::Effect(f.clone()),
+                (Kind::Effect(f), _) => Job::Effect(f.clone(), active.is_some_and(|a| a != comp.root)),
                 (Kind::Memo(_), None) => return,
             };
             let mut old = core::mem::take(&mut comp.sources);
@@ -691,7 +817,7 @@ impl Runtime {
             let prev_effect = inner.running_effect;
             match job {
                 Job::Memo(..) => inner.counters.memo_runs += 1,
-                Job::Effect(_) => {
+                Job::Effect(..) => {
                     inner.counters.effect_runs += 1;
                     inner.running_effect = Some(k);
                 }
@@ -724,17 +850,36 @@ impl Runtime {
                     }
                 }
             }
-            Job::Effect(f) => {
+            Job::Effect(f, foreign) => {
                 trace!(target: "twine::reactive", "run effect {:?}", k);
-                match f.try_borrow_mut() {
-                    Ok(mut body) => body(ctx),
-                    Err(_) => {
-                        error!(target: "twine::reactive", "effect {:?} re-entered; skipped", k);
-                    }
+                if foreign {
+                    self.run_foreign_effect(&f, k);
+                } else {
+                    call_effect(&f, k, ctx);
                 }
                 drop(guard);
             }
         }
+    }
+
+    /// Runs effect `k` of another root than the active one (see [`Inner::active_root`]): with
+    /// the ambient value hidden, no active root and the `()` context, so it cannot reach the
+    /// context lent to the active root's update (another UI's engine). A view-layer binding
+    /// then defers itself to its own root's next update ([`defer_current_effect`](Self::defer_current_effect)
+    /// wakes that root); a plain effect runs as usual. Cold: only with several roots.
+    #[cold]
+    #[inline(never)]
+    fn run_foreign_effect(&self, f: &EffectFn, k: NodeKey) {
+        let hidden = {
+            let mut inner = self.inner.borrow_mut();
+            (inner.ambient.take(), inner.active_root.take())
+        };
+        // Put back when the effect returns (also on unwinding). The providing frame of the
+        // ambient value is further down this call stack and still active, and nothing reached
+        // the value meanwhile (the slot was empty), so restoring it is like the end of a
+        // `with_ambient` borrow that did not use the value.
+        let _restore = UnhideGuard { rt: self, hidden };
+        call_effect(f, k, &mut ());
     }
 
     /// Runs a freshly created effect once (outside a flush) with a `()` context, as if in a
@@ -778,21 +923,7 @@ impl Runtime {
             }
             inner.running_flush = true;
             if !ctx.is::<()>() && !inner.deferred.is_empty() {
-                let Inner {
-                    nodes,
-                    deferred,
-                    pending,
-                    ..
-                } = &mut *inner;
-                for k in deferred.drain(..) {
-                    if let Some(n) = nodes.get_mut(k) {
-                        n.flags &= !DEFERRED;
-                        if n.flags & QUEUED == 0 {
-                            n.flags |= QUEUED;
-                            pending.push_back(k);
-                        }
-                    }
-                }
+                Self::requeue_deferred(&mut inner);
             }
         }
         let _flush = FlushGuard(self);
@@ -847,6 +978,33 @@ impl Runtime {
         }
     }
 
+    /// Moves the deferred effects of the active root (all of them when no root is active) to
+    /// `pending`, in the order they were deferred; other roots' effects stay deferred for
+    /// their own root's flush.
+    fn requeue_deferred(inner: &mut Inner) {
+        let active = inner.active_root;
+        let Inner {
+            nodes,
+            deferred,
+            pending,
+            ..
+        } = inner;
+        deferred.retain(|&k| {
+            let Some(n) = nodes.get_mut(k) else {
+                return false;
+            };
+            if active.is_some_and(|a| n.comp.as_deref().is_some_and(|c| c.root != a)) {
+                return true;
+            }
+            n.flags &= !DEFERRED;
+            if n.flags & QUEUED == 0 {
+                n.flags |= QUEUED;
+                pending.push_back(k);
+            }
+            false
+        });
+    }
+
     /// Disposes the running effect. Returns `false` outside an effect.
     pub(crate) fn dispose_current_effect(&self) -> bool {
         let Some(k) = self.inner.borrow().running_effect else {
@@ -856,20 +1014,32 @@ impl Runtime {
         true
     }
 
-    /// Moves the running effect to `deferred`. Returns `false` outside an
-    /// effect.
+    /// Moves the running effect to `deferred`. Returns `false` outside an effect.
+    ///
+    /// An effect deferred outside its own root's update (no root active, or another one)
+    /// wakes its root's waker, so the UI that can run it updates.
     pub(crate) fn defer_current_effect(&self) -> bool {
-        let mut inner = self.inner.borrow_mut();
-        let Some(k) = inner.running_effect else {
-            return false;
+        let wake = {
+            let mut inner = self.inner.borrow_mut();
+            let Some(k) = inner.running_effect else {
+                return false;
+            };
+            let active = inner.active_root;
+            let Some(node) = inner.nodes.get_mut(k) else {
+                return false;
+            };
+            node.state = NodeState::Dirty;
+            let root = node.comp.as_deref().map(|c| c.root);
+            if node.flags & DEFERRED == 0 {
+                node.flags |= DEFERRED;
+                inner.deferred.push(k);
+            }
+            root.filter(|&r| Some(r) != active)
+                .and_then(|r| inner.root_waker(r))
         };
-        let Some(node) = inner.nodes.get_mut(k) else {
-            return false;
-        };
-        node.state = NodeState::Dirty;
-        if node.flags & DEFERRED == 0 {
-            node.flags |= DEFERRED;
-            inner.deferred.push(k);
+        // Outside the borrow: `wake` may call the platform's notify function (rule R1).
+        if let Some(w) = wake {
+            w.wake();
         }
         true
     }
@@ -900,6 +1070,7 @@ impl Runtime {
             inner.flush_iterations_limit = DEFAULT_FLUSH_LIMIT;
             inner.counters = Counters::default();
             inner.ambient = None;
+            inner.active_root = None;
             inner.root_wakers.clear();
             (nodes, scopes, channels)
         };

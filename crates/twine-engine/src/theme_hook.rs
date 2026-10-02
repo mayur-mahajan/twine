@@ -73,7 +73,7 @@ use crate::{DisplayId, Engine, NodeId, Tree, WidgetClass, fmt_node_id};
 /// let mut e = Engine::new(EngineConfig::default()).unwrap();
 /// let buf: &'static mut [u8] = Box::leak(vec![0u8; 32 * 2 * 16].into_boxed_slice());
 /// let d = e.add_display(Panel(None), twine_engine::BufferMode::partial_single(buf)).unwrap();
-/// e.set_theme(d, Rc::new(Red(Rc::new(StyleBuf::new().bg_color(Color::RED)))));
+/// e.set_theme(d, Red(Rc::new(StyleBuf::new().bg_color(Color::RED))));
 /// let screen = e.active_screen(d).unwrap();
 /// let n = e.create(screen, Box::new(Obj)).unwrap();
 /// assert_eq!(e.style_color(n, Part::Main, PropId::BgColor), Color::RED);
@@ -108,7 +108,7 @@ pub trait ThemeHook {
     /// }
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let d = e.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::L8), 64).unwrap();
-    /// e.set_theme(d, Rc::new(Night));
+    /// e.set_theme(d, Night);
     /// assert_eq!(e.theme_mode(d), ThemeMode::Dark);
     /// ```
     fn mode(&self) -> ThemeMode {
@@ -332,6 +332,55 @@ impl ThemedWalk {
     }
 }
 
+/// Anything that can be installed as a theme: a theme value (`DefaultTheme::light()`, any
+/// [`ThemeHook`]) or one already shared in an [`Rc`] (one theme on several displays, or kept
+/// by the application to install again later). Every API that takes a theme takes
+/// `impl IntoTheme` — [`Engine::set_theme`], the `Ui` and display builders, `AppConfig`, the
+/// simulator's and the test harness's configurations — so the same expression works
+/// everywhere, shared or not.
+///
+/// A value is moved into a new `Rc` once (one allocation, when the theme is installed — never
+/// per frame); a shared theme is installed as is (no copy, no allocation). Never panics.
+///
+/// ```
+/// use std::rc::Rc;
+/// use twine_engine::{IntoTheme, ThemeCx, ThemeHook, WidgetClass};
+///
+/// struct Plain;
+/// impl ThemeHook for Plain {
+///     fn apply(&self, _: &mut ThemeCx<'_>, _: &'static WidgetClass) {}
+///     fn font_normal(&self) -> &'static twine_text::Font { &twine_text::EMPTY_FONT }
+///     fn name(&self) -> &'static str { "plain" }
+/// }
+///
+/// let shared: Rc<dyn ThemeHook> = Rc::new(Plain);
+/// assert_eq!(Plain.into_theme().name(), "plain"); // a value
+/// assert_eq!(Rc::new(Plain).into_theme().name(), "plain"); // a typed `Rc`
+/// assert!(Rc::ptr_eq(&shared.clone().into_theme(), &shared)); // shared: the same theme
+/// ```
+pub trait IntoTheme {
+    /// The theme, shared.
+    fn into_theme(self) -> Rc<dyn ThemeHook>;
+}
+
+impl<T: ThemeHook + 'static> IntoTheme for T {
+    fn into_theme(self) -> Rc<dyn ThemeHook> {
+        Rc::new(self)
+    }
+}
+
+impl<T: ThemeHook + 'static> IntoTheme for Rc<T> {
+    fn into_theme(self) -> Rc<dyn ThemeHook> {
+        self
+    }
+}
+
+impl IntoTheme for Rc<dyn ThemeHook> {
+    fn into_theme(self) -> Rc<dyn ThemeHook> {
+        self
+    }
+}
+
 impl Engine {
     /// Installs `theme` on `display` (LVGL `lv_display_set_theme`): every node of the
     /// display's screens loses its theme styles and gets the new theme applied (parents before
@@ -346,8 +395,10 @@ impl Engine {
     /// theme's [`design`](ThemeHook::design) allocates for its table; meant for start-up and
     /// user-initiated theme switches, not per frame. To switch only between light and dark,
     /// [`set_theme_mode`](Self::set_theme_mode) is cheaper (no theme styles re-applied).
-    pub fn set_theme(&mut self, display: DisplayId, theme: Rc<dyn ThemeHook>) {
-        self.replace_theme(display, Some(theme));
+    ///
+    /// `theme` is a theme value or a shared one ([`IntoTheme`]).
+    pub fn set_theme(&mut self, display: DisplayId, theme: impl IntoTheme) {
+        self.replace_theme(display, Some(theme.into_theme()));
     }
 
     /// Removes the theme of `display`: the theme styles of its nodes are removed, the default
@@ -371,7 +422,7 @@ impl Engine {
     /// }
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let d = e.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::L8), 64).unwrap();
-    /// e.set_theme(d, Rc::new(Plain));
+    /// e.set_theme(d, Plain);
     /// assert!(e.theme(d).is_some());
     /// e.remove_theme(d);
     /// assert!(e.theme(d).is_none());
@@ -428,10 +479,10 @@ impl Engine {
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 32 * 2 * 16].into_boxed_slice());
     /// # let d = e.add_display(Panel(None), twine_engine::BufferMode::partial_single(buf)).unwrap();
-    /// e.set_theme(d, Rc::new(Tiny {
+    /// e.set_theme(d, Tiny {
     ///     light: Rc::new(ElementTable::new().with(design::SURFACE, Color::WHITE)),
     ///     dark: Rc::new(ElementTable::new().with(design::SURFACE, Color::BLACK)),
-    /// }));
+    /// });
     /// let n = e.create(e.active_screen(d).unwrap(), Box::new(Obj)).unwrap();
     /// e.set_local_prop(n, Selector::MAIN, StyleProp::BgColor(design::SURFACE.into()));
     /// assert_eq!(e.style_color(n, Part::Main, PropId::BgColor), Color::WHITE);
@@ -503,7 +554,7 @@ impl Engine {
     /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 32 * 2 * 16].into_boxed_slice());
     /// # let d = e.add_display(Panel(None), twine_engine::BufferMode::partial_single(buf)).unwrap();
     /// assert!(e.theme_modes(d).is_empty()); // no theme
-    /// e.set_theme(d, Rc::new(DayNight(Rc::new(ElementTable::new()))));
+    /// e.set_theme(d, DayNight(Rc::new(ElementTable::new())));
     /// let next = e.theme_mode(d).next_in(e.theme_modes(d));
     /// e.set_theme_mode(d, next);
     /// assert_eq!(e.theme_mode(d), ThemeMode::Night);
@@ -559,7 +610,7 @@ impl Engine {
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let d = e.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::L8), 64).unwrap();
     /// let seen = e.design_epoch(d);
-    /// e.set_theme(d, Rc::new(Plain));
+    /// e.set_theme(d, Plain);
     /// assert_ne!(e.design_epoch(d), seen); // a cached design value is stale
     /// ```
     #[must_use]
@@ -588,7 +639,7 @@ impl Engine {
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let d = e.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::L8), 64).unwrap();
     /// assert!(e.design_table(d).is_none()); // no theme
-    /// e.set_theme(d, Rc::new(Brand(Rc::new(ElementTable::new().with(design::PRIMARY, Color::RED)))));
+    /// e.set_theme(d, Brand(Rc::new(ElementTable::new().with(design::PRIMARY, Color::RED))));
     /// assert_eq!(e.design_table(d).and_then(|t| t.get(design::PRIMARY)), Some(Color::RED));
     /// ```
     #[must_use]
@@ -624,7 +675,7 @@ impl Engine {
     /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 32 * 2 * 16].into_boxed_slice());
     /// # let d = e.add_display(Panel(None), twine_engine::BufferMode::partial_single(buf)).unwrap();
     /// assert_eq!(e.design_value(d, design::PRIMARY), None); // no theme yet
-    /// e.set_theme(d, Rc::new(Brand(Rc::new(ElementTable::new().with(design::PRIMARY, Color::RED)))));
+    /// e.set_theme(d, Brand(Rc::new(ElementTable::new().with(design::PRIMARY, Color::RED))));
     /// assert_eq!(e.design_value(d, design::PRIMARY), Some(Color::RED));
     /// ```
     #[must_use]
@@ -707,7 +758,7 @@ impl Engine {
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 32 * 2 * 16].into_boxed_slice());
     /// # let d = e.add_display(Panel(None), twine_engine::BufferMode::partial_single(buf)).unwrap();
-    /// e.set_theme(d, Rc::new(Tiny(Rc::new(ElementTable::new().with(design::PRIMARY, Color::BLUE)))));
+    /// e.set_theme(d, Tiny(Rc::new(ElementTable::new().with(design::PRIMARY, Color::BLUE))));
     /// let n = e.create(e.active_screen(d).unwrap(), Box::new(Obj)).unwrap();
     /// assert_eq!(e.resolve_design_value(n, ColorValue::from(design::PRIMARY)), Some(Color::BLUE));
     /// assert_eq!(e.resolve_design_value(n, ColorValue::from(Color::RED)), Some(Color::RED));

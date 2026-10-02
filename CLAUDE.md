@@ -4,24 +4,36 @@ Twine is a Rust GUI library for embedded devices (LVGL feature parity, declarati
 API, `no_std` + `alloc`). Low compute/power is the top priority.
 
 ## Where things are
-- `docs/design/` — **normative** design. Start with `00-overview.md` (principles P1–P11) and
-  `01-architecture.md` (crates, layering, naming registry, allowed dependencies).
-- `docs/plan/README.md` — execution rules + phase index. `docs/plan/phase-XX-*.md` — steps.
-- `docs/plan/PROGRESS.md` — what is done. Pick the first unchecked step.
-- `docs/plan/DEVIATIONS.md` — every departure from the docs, with rationale.
+- `docs/plan/api-evolution.md` — the current plan: decisions (§1), platform-neutrality rules (§2),
+  phases R0–R6 with steps `Rn.Smm`, definition of done (§4), progress (§5), and every deviation
+  from the plan with its rationale (§6). Pick the first unchecked step of the current phase.
+- `docs/safety/coding-guidelines-deviations.md` — where the code deviates from the Safety-Critical
+  Rust Consortium coding guidelines, with impact and the plan step that addresses each gap.
+- `README.md`, `CONTRIBUTING.md` — overview, Definition of Done, hard rules, code guidelines.
+- `twine::guide::custom_widgets` (rustdoc) — the custom-widget guide.
 
 ## Workflow for every step
-1. Read the step, the design sections it references, and any code it builds on.
-2. Implement exactly the scope of the step. No stubs, `todo!()`, `unimplemented!()`, or
-   un-tracked TODOs (only `// NOTE(Pxx.Syy): …` pointing to a future step).
+1. Read the step in `docs/plan/api-evolution.md`, the §6 deviations of earlier steps, and the code
+   it builds on.
+2. Implement the scope of the step with the architecturally sound design (no quick patches or
+   shims). No stubs, `todo!()`, `unimplemented!()`, or untracked TODOs — only
+   `// NOTE(Rn.Smm): …` pointing to a later step. Every added or changed API gets complete rustdoc
+   with a doctest.
 3. Write the tests the step lists (and any others needed). Keep behaviour observable through logs.
-4. Run `cargo xtask ci` (after P00.S02 exists; before that `cargo fmt --check && cargo clippy
-   --workspace -- -D warnings && cargo test --workspace`). Run the step's demo.
-5. Update `docs/plan/PROGRESS.md`, then stop and report to the user. **Never run `git commit`,
-   `git push`, tag or publish; the user handles all git operations.**
+4. Per step, run quick checks only: `cargo fmt --all`, clippy / tests / `cargo doc` (with
+   `-D warnings`) for the crates touched, `cargo xtask ci --only todo-check --only layers`. The full
+   `cargo xtask ci` (no_std, firmware, sim-smoke, Miri), benchmarks and firmware-size comparisons
+   run once at the end of each phase.
+5. Tick the step in §5 and record deviations in §6 of `docs/plan/api-evolution.md`, then report.
+   **Never run `git commit`, `git push`, tag or publish; the user handles all git operations.**
 
 ## Commands
 - `cargo xtask ci` — everything CI runs (fmt, clippy, tests, no_std builds, docs, todo-check, layers).
+  Clippy runs three ways: default features (`clippy`), every feature except `defmt`
+  (`clippy-all-features`), and each library crate with `defmt` as its logging backend plus every
+  `no_std` feature (`clippy-defmt`, one `cargo clippy -p` per crate).
+- `cargo xtask progress` — plan progress per phase and the next step (from §5 of
+  `docs/plan/api-evolution.md`); fails if §5 and the step headings disagree (also a CI stage).
 - `cargo xtask sim <example>` — run a simulator example (Cargo examples of `twine`:
   `crates/twine/examples/<example>.rs` or `<example>/main.rs`; = `cargo run -p twine --example <example>`).
 - `cargo xtask sim-smoke` — run every simulator example headless.

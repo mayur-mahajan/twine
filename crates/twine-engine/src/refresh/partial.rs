@@ -8,7 +8,6 @@
 //! Waiting for a buffer is bounded by `EngineConfig::flush_timeout` (see `acquire_slot` and the
 //! `timeout` module).
 
-use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -18,7 +17,7 @@ use twine_hal::{DisplayInfo, DrawBufferMem};
 
 use super::areas;
 use super::timeout::Flight;
-use crate::display::Backend;
+use crate::display::{Backend, leak_buffer};
 use crate::{Engine, EngineError};
 
 /// State of a partial-buffer display.
@@ -44,20 +43,25 @@ pub(crate) struct PartialState {
     /// Logical render buffer of a rotating external display (the caller's buffer receives the
     /// rotated chunk).
     pub(crate) ext_src: Option<DrawBufferMem>,
+    /// Bytes of the caller's buffers of an external display (`0` for own buffers).
+    pub(crate) ext_chunk: usize,
+}
+
+/// Why a display's buffers cannot take a new geometry (rotation at run time).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Refit {
+    /// Software rotation needs scratch memory the display does not have
+    /// (`Engine::reserve_rotation` was not called).
+    NotReserved,
+    /// The draw buffers hold fewer than `align` rows of the new width.
+    TooSmall,
 }
 
 static WARN_ROWS: AtomicBool = AtomicBool::new(false);
 
-/// Leaks a zeroed, 4-byte aligned buffer of `len` bytes (allocated once per display, like a
-/// `'static` MCU buffer).
-fn leak_buffer(len: usize) -> DrawBufferMem {
-    let v: &'static mut [u8] = Box::leak(vec![0u8; len + 3].into_boxed_slice());
-    let off = v.as_ptr().align_offset(4).min(3);
-    DrawBufferMem::new(&mut v[off..off + len])
-}
-
 impl PartialState {
-    /// Validates the buffers (whole rows, 4-byte aligned, at least `align` rows) and allocates
+    /// Validates the buffers (whole rows, at least `align` rows; the alignment was checked by
+    /// `BufferMode::into_partial`) and allocates
     /// the rotation / mono scratch memory.
     pub(crate) fn new(
         info: &DisplayInfo,
@@ -76,9 +80,11 @@ impl PartialState {
                     got: m.len(),
                 });
             }
-            if !m.is_aligned(4) {
-                return Err(EngineError::BufferMisaligned);
-            }
+            // `BufferMode::into_partial` refused misaligned memory.
+            debug_assert!(
+                m.is_aligned(4),
+                "draw buffer alignment is checked by `BufferMode::into_partial`"
+            );
             if m.len() % row != 0 && !WARN_ROWS.load(Ordering::Relaxed) {
                 WARN_ROWS.store(true, Ordering::Relaxed);
                 twine_core::warn!(
@@ -131,6 +137,7 @@ impl PartialState {
                 Vec::new()
             },
             ext_src: None,
+            ext_chunk: 0,
         })
     }
 
@@ -187,7 +194,129 @@ impl PartialState {
                 Vec::new()
             },
             ext_src,
+            ext_chunk: chunk_bytes,
         })
+    }
+
+    /// Bytes of the smallest draw buffer (own buffers) or of the caller's chunk (external).
+    fn buffer_bytes(&self) -> usize {
+        if self.count == 0 {
+            return self.ext_chunk;
+        }
+        self.bufs[..self.count]
+            .iter()
+            .map(|b| b.as_ref().map_or(0, DrawBufferMem::len))
+            .min()
+            .unwrap_or(0)
+    }
+
+    /// Bytes of the smallest software-rotation scratch buffer (`0` when one is missing).
+    fn scratch_bytes(&self) -> usize {
+        self.scratch[..self.count]
+            .iter()
+            .map(|b| b.as_ref().map_or(0, DrawBufferMem::len))
+            .min()
+            .unwrap_or(0)
+    }
+
+    /// The most rows of `info`'s width that fit the memory this state has, rotating by
+    /// `rotation` in software (`0` if not even one row fits).
+    fn rows_that_fit(&self, info: &DisplayInfo, rotation: Rotation) -> usize {
+        let row = info.bytes_per_row();
+        let w = usize::from(info.width);
+        let mono = info.format == ColorFormat::I1;
+        let rotating = rotation != Rotation::Deg0;
+        let external = self.count == 0;
+        let (scratch, ext_src) = (
+            self.scratch_bytes(),
+            self.ext_src.as_ref().map_or(0, DrawBufferMem::len),
+        );
+        let fits = |rows: usize| {
+            let rot_len = if rotating {
+                info.format.stride(rows as u32) as usize * w
+            } else {
+                0
+            };
+            let flush_ok = if external {
+                rows * row <= self.ext_chunk
+                    && rot_len <= self.ext_chunk
+                    && (!rotating || mono || ext_src >= rows * row)
+            } else {
+                !rotating || scratch >= rot_len
+            };
+            flush_ok
+                && (!mono || self.l8.len() >= rows * w)
+                && (!(mono && rotating) || self.l8_rot.len() >= rows * w)
+        };
+        let mut rows = (self.buffer_bytes() / row.max(1)).min(usize::from(info.height));
+        while rows > 0 && !fits(rows) {
+            rows -= 1;
+        }
+        rows
+    }
+
+    /// Re-targets the buffers to `info` (a new rotation), rotating by `rotation` in software:
+    /// recomputes the rows per chunk from the memory the display already has. Allocates
+    /// nothing; leaves the state unchanged on error. Called only with no flush in flight.
+    pub(crate) fn refit(&mut self, info: &DisplayInfo, rotation: Rotation) -> Result<(), Refit> {
+        debug_assert!(self.in_flight.is_empty(), "refit with a flush in flight");
+        let rows = self.rows_that_fit(info, rotation);
+        let align = usize::from(info.align.max(1));
+        if rows < align {
+            // Would enough rows fit without the rotation memory? Then reserving it helps.
+            let plain = (self.buffer_bytes() / info.bytes_per_row().max(1)).min(usize::from(info.height));
+            return Err(if rotation != Rotation::Deg0 && plain >= align {
+                Refit::NotReserved
+            } else {
+                Refit::TooSmall
+            });
+        }
+        self.rows = areas::chunk_rows(rows as i32, info.align);
+        self.rotation = rotation;
+        Ok(())
+    }
+
+    /// Allocates (once, leaked like the draw buffers) whatever memory software rotation of a
+    /// display of `info`'s geometry needs and this state lacks: rotation scratch buffers, the
+    /// mono shadow chunks, an external display's render buffer. Nothing when it is there.
+    pub(crate) fn reserve(&mut self, info: &DisplayInfo) {
+        let row = info.bytes_per_row();
+        if row == 0 || info.height == 0 {
+            return;
+        }
+        let w = usize::from(info.width);
+        let mono = info.format == ColorFormat::I1;
+        let external = self.count == 0;
+        // Rows of this width the draw memory holds (as `new` / `new_external` size them).
+        let mut rows = (self.buffer_bytes() / row).min(usize::from(info.height));
+        if external {
+            while rows > 0 && info.format.stride(rows as u32) as usize * w > self.ext_chunk {
+                rows -= 1;
+            }
+        }
+        let rows = areas::chunk_rows(rows as i32, info.align).max(0) as usize;
+        let rot_len = info.format.stride(rows as u32) as usize * w;
+        if external {
+            if !mono && self.ext_src.as_ref().is_none_or(|b| b.len() < rows * row) {
+                self.ext_src = Some(leak_buffer(rows * row));
+            }
+        } else {
+            let len = rot_len.max(self.buffer_bytes());
+            for s in self.scratch.iter_mut().take(self.count) {
+                if s.as_ref().is_none_or(|b| b.len() < len) {
+                    *s = Some(leak_buffer(len));
+                }
+            }
+        }
+        if mono {
+            let px = rows * w;
+            if self.l8.len() < px {
+                self.l8.resize(px, 0);
+            }
+            if self.l8_rot.len() < px {
+                self.l8_rot.resize(px, 0);
+            }
+        }
     }
 
     fn rotating(&self) -> bool {

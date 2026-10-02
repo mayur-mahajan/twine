@@ -5,8 +5,8 @@ mod common;
 
 use common::{Mode, get, harness, with};
 use twine_core::{Angle, Duration};
+use twine_engine::BufferSpec;
 use twine_engine::{NodeId, ObjFlags};
-use twine_hal::BufferSpec;
 use twine_style::Align;
 use twine_testing::EngineHarness;
 use twine_widgets::spinner::{self, SPINNER_DEFAULT_PERIOD, SPINNER_DEFAULT_SWEEP, Spinner};

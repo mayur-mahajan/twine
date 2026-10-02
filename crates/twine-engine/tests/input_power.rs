@@ -58,7 +58,7 @@ fn press_wakes_only_during_press() {
                 h.clock().set(t.max(h.now()));
             }
             Wake::Now => {}
-            Wake::Idle => panic!("idle while pressed"),
+            Wake::Idle | Wake::IdleFor(_) => panic!("idle while pressed"),
         }
     }
     h.release();
@@ -66,7 +66,7 @@ fn press_wakes_only_during_press() {
     let mut last_wake = released;
     for _ in 0..100 {
         match h.update() {
-            Wake::Idle => break,
+            Wake::Idle | Wake::IdleFor(_) => break,
             Wake::At(t) => {
                 last_wake = t;
                 h.clock().set(t.max(h.now()));

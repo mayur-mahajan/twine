@@ -47,12 +47,16 @@ mod thermostat {
         pub celsius: f32,
     }
 
-    pub static SENSOR: Channel<SensorMsg, 8> = Channel::new();
+    /// The application's cross-context objects, owned by its caller (the ports pattern).
+    #[derive(Clone, Copy)]
+    pub struct Ports {
+        pub sensor: &'static Channel<SensorMsg, 8>,
+    }
 
-    pub fn thermostat(cx: Scope) -> impl View {
+    pub fn thermostat(cx: Scope, ports: Ports) -> impl View {
         let current = cx.signal(200i32); // tenths of a degree
         let target = cx.signal(215i32);
-        cx.on_message(&SENSOR, move |m: SensorMsg| {
+        cx.on_message(ports.sensor, move |m: SensorMsg| {
             current.set((m.celsius * 10.0) as i32)
         });
         let shown = cx.tween(move || current.get(), AnimSpec::new(Duration::ms(400)).ease_out());
@@ -94,8 +98,12 @@ fn s1_counter_and_thermostat() {
     t.run_until_idle();
     assert_eq!(t.find(by_id("count")).text(), "Clicked 1 times");
 
-    let mut t = TestUi::new(320, 240).mount(thermostat::thermostat);
-    thermostat::SENSOR
+    let ports = thermostat::Ports {
+        sensor: TestUi::channel(),
+    };
+    let mut t = TestUi::new(320, 240).mount(move |cx| thermostat::thermostat(cx, ports));
+    ports
+        .sensor
         .try_send(thermostat::SensorMsg { celsius: 22.5 })
         .ok();
     t.find(by_text("+")).click();
@@ -109,7 +117,7 @@ fn s1_counter_and_thermostat() {
 
 #[test]
 fn s2_reactive_primitives() {
-    let cx = twine::reactive::create_root();
+    let cx = rt().create_root();
     let s: Signal<i32> = cx.signal(1);
     let m: Memo<i32> = cx.memo(move || s.get() * 2);
     let _e: EffectId = cx.effect(move || {
@@ -134,8 +142,8 @@ fn s2_reactive_primitives() {
     assert_eq!(r.get() + r2.get(), 8);
     assert_eq!(s.map(|v| v * 10).get(), 40);
     assert_eq!(m.get(), 8);
-    assert_eq!(batch(|| 3), 3);
-    assert_eq!(untrack(|| s.get()), 4);
+    assert_eq!(cx.runtime().batch(|| 3), 3);
+    assert_eq!(cx.runtime().untrack(|| s.get()), 4);
     assert_eq!(s.try_get(), Some(4));
     assert!(s.is_alive());
     child.dispose();
@@ -189,7 +197,7 @@ fn s3_views_and_props() {
     fn takes_prop<T: 'static, M>(p: impl IntoProp<T, M>) -> Prop<T> {
         p.into_prop()
     }
-    let cx = twine::reactive::create_root();
+    let cx = rt().create_root();
     let s = cx.signal(Color::RED);
     let _: Prop<Color> = takes_prop(Color::BLUE);
     let _: Prop<Color> = takes_prop(s);
@@ -463,6 +471,8 @@ fn s4_styles() {
 fn s5_themes<D: twine::hal::DisplayDriver + 'static>(display: D, clock: impl twine::hal::Clock + 'static) {
     let app = |_cx: Scope| label("themed");
     let ui = Ui::builder(display)
+        .runtime(Runtime::current_thread())
+        .buffers(BufferMode::alloc(BufferSpec::default()))
         .clock(clock)
         .theme(
             DefaultTheme::builder()
@@ -661,7 +671,8 @@ fn super_loop<D: twine::hal::DisplayDriver + 'static>(
     app: impl FnOnce(Scope) -> Flex,
     rounds: usize,
 ) {
-    let mut ui = Ui::builder(display) // impl DisplayDriver
+    let mut ui = Ui::builder(display)
+        .runtime(Runtime::current_thread()) // impl DisplayDriver
         .buffers(BufferMode::partial_double(buf_a, buf_b))
         .input(touch) // impl InputDevice (any number)
         .clock(clock) // impl Clock
@@ -669,7 +680,7 @@ fn super_loop<D: twine::hal::DisplayDriver + 'static>(
         .build(app);
     for _ in 0..rounds {
         match ui.update() {
-            Wake::Idle => wait_for_interrupt(), // touch IRQ, channel send, etc.
+            Wake::Idle | Wake::IdleFor(_) => wait_for_interrupt(), // touch IRQ, channel send, etc.
             Wake::At(t) => sleep_until_or_interrupt(t),
             Wake::Now => {} // more work pending (e.g. DMA done)
         }
@@ -698,6 +709,11 @@ fn s10_1_super_loop() {
 // ---- §10.3 Headless tests ---------------------------------------------------------------------
 
 use twine_testing::{TestUi, by_id, by_text};
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 #[test]
 fn counter_increments() {

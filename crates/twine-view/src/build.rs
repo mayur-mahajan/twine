@@ -4,17 +4,18 @@ use alloc::boxed::Box;
 use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::any::Any;
+use core::cell::Cell;
 
 use twine_core::fault::FaultKind;
 use twine_engine::{
     DEAD_NODE, DisplayId, Engine, EngineError, EventCode, EventFilter, EventResult, FaultRecord, NodeId,
-    Widget, WidgetCx, fmt_node_id,
+    Widget, WidgetClass, WidgetCx, fmt_node_id,
 };
-use twine_reactive::Scope;
+use twine_reactive::{Runtime, Scope};
 
 use crate::access::EngineAccess;
 use crate::bind::bind_prop;
-use crate::error::BuildFailure;
+use crate::error::{BuildFailure, BuildFault, BuildReport};
 use crate::prop::IntoProp;
 use crate::view::{View, ViewSeq};
 
@@ -63,6 +64,29 @@ impl<'a> BuildCx<'a> {
         self.scope
     }
 
+    /// The reactive runtime the build runs in (the scope's: [`Scope::runtime`]), for
+    /// [`EngineAccess`] and the runtime-wide operations of custom views. Free (zero-sized);
+    /// never panics.
+    ///
+    /// ```
+    /// use twine_engine::{Engine, EngineConfig, Obj};
+    /// use twine_view::{BuildCx, EngineAccess};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let root = e.create_root(Box::new(Obj)).unwrap();
+    /// let rt = twine_reactive::Runtime::take().unwrap();
+    /// let scope = rt.create_root();
+    /// let cx = BuildCx::new(&mut e, root, scope);
+    /// // e.g. a custom view checking whether an enclosing `Ui` lends its engine:
+    /// assert!(!EngineAccess::available(cx.runtime()));
+    /// # scope.dispose();
+    /// ```
+    #[must_use]
+    #[inline]
+    pub fn runtime(&self) -> Runtime {
+        self.scope.runtime()
+    }
+
     /// The display the nodes are built for (`None` for detached trees on an engine without
     /// displays).
     #[must_use]
@@ -85,9 +109,12 @@ impl<'a> BuildCx<'a> {
     /// later build steps and bindings cannot style or change the wrong node. The failure is
     /// logged (`warn!`, with the widget type) and raised as a
     /// [`FaultKind::BuildFailed`](twine_core::fault::FaultKind::BuildFailed) fault with the
-    /// parent as its node and the [`BuildFailure`] as its code; the runtime constructors then
-    /// fail with a [`BuildError`](crate::BuildError). Creating under a dead parent returns
-    /// [`DEAD_NODE`] at once, without a fault of its own (the parent's failure was reported).
+    /// parent as its node and the [`BuildFailure`] as its code (telemetry), and recorded in the
+    /// [`BuildReport`] of the mount in progress if the scope belongs to an application being
+    /// mounted (also from nested builds, e.g. the first rows of a `for_each`); the runtime
+    /// constructors then fail with a [`BuildError`](crate::BuildError). Creating under a dead
+    /// parent returns [`DEAD_NODE`] at once, without a fault of its own (the parent's failure
+    /// was reported).
     ///
     /// Custom views that do more than run [`WidgetView`] steps should stop early when the
     /// returned id [`is_dead`](Self::is_dead) (as [`WidgetView`] does), rather than
@@ -99,7 +126,7 @@ impl<'a> BuildCx<'a> {
     ///
     /// let mut e = Engine::new(EngineConfig { max_nodes: 1, ..EngineConfig::default() }).unwrap();
     /// let root = e.create_root(Box::new(Obj)).unwrap();
-    /// let scope = twine_reactive::create_root();
+    /// let scope = twine_reactive::Runtime::take().unwrap().create_root();
     /// let mut cx = BuildCx::new(&mut e, root, scope);
     /// let n = cx.create(Obj); // the tree is full
     /// assert_eq!(n, DEAD_NODE);
@@ -107,35 +134,35 @@ impl<'a> BuildCx<'a> {
     /// # scope.dispose();
     /// ```
     pub fn create<W: Widget>(&mut self, w: W) -> NodeId {
+        // The class names the widget in diagnostics: a static the widget links anyway
+        // (`core::any::type_name` would add one string per widget type to the firmware).
+        let class = w.class();
         if self.parent == DEAD_NODE {
-            twine_core::trace!(
-                target: "twine::view",
-                "build {}: parent failed; skipped",
-                core::any::type_name::<W>()
-            );
+            twine_core::trace!(target: "twine::view", "build {}: parent failed; skipped", class.name);
             return DEAD_NODE;
         }
         match self.engine.create(self.parent, Box::new(w)) {
             Ok(id) => {
-                twine_core::trace!(target: "twine::view", "build {} -> {}", core::any::type_name::<W>(), fmt_node_id(id));
+                twine_core::trace!(target: "twine::view", "build {} -> {}", class.name, fmt_node_id(id));
                 id
             }
             Err(e) => {
-                self.fail(core::any::type_name::<W>(), &e);
+                self.fail(class, &e);
                 DEAD_NODE
             }
         }
     }
 
-    /// Reports a widget that could not be created (cold path, kept out of `create`).
+    /// Reports a widget of `class` that could not be created (cold path, kept out of
+    /// `create`).
     #[cold]
     #[inline(never)]
-    fn fail(&mut self, widget: &'static str, e: &EngineError) {
+    fn fail(&mut self, class: &'static WidgetClass, e: &EngineError) {
         let cause = BuildFailure::of(e);
         twine_core::warn!(
             target: "twine::view",
             "build: cannot create {} under {}: {}",
-            widget,
+            class.name,
             fmt_node_id(self.parent),
             cause
         );
@@ -144,6 +171,9 @@ impl<'a> BuildCx<'a> {
                 .node(self.parent)
                 .code(cause.code()),
         );
+        if let Some(report) = self.scope.use_context::<MountReport>() {
+            report.record(BuildFault::new(cause, Some(self.parent)));
+        }
     }
 
     /// Whether `id` is [`DEAD_NODE`] (a widget whose creation failed; see
@@ -184,27 +214,57 @@ impl<'a> BuildCx<'a> {
     /// available through [`EngineAccess`] while `f` runs (e.g. for cleanups that remove
     /// timers).
     pub fn on_delete(&mut self, node: NodeId, f: impl FnOnce() + 'static) {
-        on_delete(self.engine, node, f);
+        on_delete(self.scope.runtime(), self.engine, node, f);
     }
 
     /// Runs `f` with the engine lent to [`EngineAccess`] (for code that reaches the engine
     /// indirectly while a build borrows it, e.g. creating effects that apply at once).
     pub fn provide<R>(&mut self, f: impl FnOnce() -> R) -> R {
-        EngineAccess::provide(self.engine, f)
+        EngineAccess::provide(self.scope, self.engine, f)
     }
 }
 
 /// Registers `f` to run once when `node` is deleted (see [`BuildCx::on_delete`]).
-pub(crate) fn on_delete(engine: &mut Engine, node: NodeId, f: impl FnOnce() + 'static) {
+pub(crate) fn on_delete(rt: Runtime, engine: &mut Engine, node: NodeId, f: impl FnOnce() + 'static) {
     let mut f = Some(f);
     engine.add_event_handler(node, EventFilter::Code(EventCode::Delete), move |cx, ev| {
         if ev.target == ev.current_target {
             if let Some(f) = f.take() {
-                EngineAccess::provide(cx.engine_mut(), f);
+                EngineAccess::provide(rt, cx.engine_mut(), f);
             }
         }
         EventResult::Continue
     });
+}
+
+/// The [`BuildReport`] of a mount in progress, provided on the application's root scope so
+/// that every [`BuildCx`] under it — also those of nested builds run by effects during the
+/// mount — records its failures there ([`BuildCx::create`]). Only the mount reads it, and it
+/// stops recording when the mount [finishes](Self::finish): later failures (a `when` branch
+/// built into a full tree) are faults only.
+#[derive(Clone)]
+pub(crate) struct MountReport(Rc<Cell<Option<BuildReport>>>);
+
+impl MountReport {
+    /// Starts recording the build of the application rooted at `root`.
+    pub(crate) fn begin(root: Scope) -> MountReport {
+        let report = MountReport(Rc::new(Cell::new(Some(BuildReport::new()))));
+        root.provide(report.clone());
+        report
+    }
+
+    /// Records one failure (nothing once the mount finished).
+    pub(crate) fn record(&self, fault: BuildFault) {
+        if let Some(mut r) = self.0.get() {
+            r.record(fault);
+            self.0.set(Some(r));
+        }
+    }
+
+    /// Stops recording and returns the report.
+    pub(crate) fn finish(&self) -> BuildReport {
+        self.0.take().unwrap_or_default()
+    }
 }
 
 /// A build step run on a freshly created node (see [`WidgetView::op`]).

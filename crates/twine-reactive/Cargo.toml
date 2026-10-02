@@ -12,9 +12,14 @@ workspace = true
 
 [features]
 default = []
-## Thread-local runtime (host, simulator, tests). Without it the runtime lives in a `static`
-## that must be bound to the UI context with `bind_to_current_context` (see crate docs).
+## Thread-local runtime (host, simulator, tests): one runtime per thread. Without it the
+## runtime lives in a `static`, owned by the context that took its `Runtime` token.
 std = ["twine-core/std"]
+## Debug diagnostics: every runtime access asks the interrupt probe (`set_interrupt_probe`) and
+## panics when the runtime is used from interrupt context.
+debug-checks = []
+## `Outbox::recv`: await commands from the UI in any executor (a plain `Future`, no dependency).
+async = []
 ## Log through `defmt`.
 defmt = ["dep:defmt", "twine-core/defmt"]
 ## Log through the `log` crate.
@@ -29,7 +34,7 @@ defmt = { version = "1", optional = true }
 
 [dev-dependencies]
 # Enables the thread-local runtime for every test, doc-test and bench of this crate.
-twine-reactive = { path = ".", features = ["std"] }
+twine-reactive = { path = ".", features = ["std", "async"] }
 critical-section = { version = "1", features = ["std"] }
 proptest = "1"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }

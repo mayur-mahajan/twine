@@ -177,6 +177,26 @@ impl Rotation {
         matches!(self, Rotation::Deg90 | Rotation::Deg270)
     }
 
+    /// The rotation that is left to do when `base` is already done: `self − base` (mod 360°).
+    /// The engine uses it when a panel rotates in hardware to `base` and the rest is done in
+    /// software.
+    ///
+    /// ```
+    /// use twine_core::Rotation;
+    /// assert_eq!(Rotation::Deg180.relative_to(Rotation::Deg90), Rotation::Deg90);
+    /// assert_eq!(Rotation::Deg0.relative_to(Rotation::Deg270), Rotation::Deg90);
+    /// assert_eq!(Rotation::Deg90.relative_to(Rotation::Deg90), Rotation::Deg0);
+    /// ```
+    #[must_use]
+    pub const fn relative_to(self, base: Rotation) -> Rotation {
+        match (self.degrees() + 360 - base.degrees()) % 360 {
+            0 => Rotation::Deg0,
+            90 => Rotation::Deg90,
+            180 => Rotation::Deg180,
+            _ => Rotation::Deg270,
+        }
+    }
+
     /// The rotation in whole degrees (0, 90, 180 or 270).
     #[must_use]
     pub const fn degrees(self) -> u16 {

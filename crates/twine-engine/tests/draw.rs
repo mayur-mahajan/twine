@@ -5,8 +5,8 @@ mod common;
 
 use common::{boxed, screen, style, white_screen};
 use twine_core::{Angle, Color, ColorFormat, Fraction, Opa, Rect};
+use twine_engine::BufferSpec;
 use twine_engine::{Engine, InvalidateReason, MeasureCx, NodeId, ObjFlags, default_covers};
-use twine_hal::BufferSpec;
 use twine_image::{Image, ImageHeader, ImageSource};
 use twine_render::{BlendMode, GradKind, GradStop, Gradient};
 use twine_style::{GradDir, Length, Radius, StyleProp};

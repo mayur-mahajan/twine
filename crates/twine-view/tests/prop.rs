@@ -1,11 +1,16 @@
 //! Property values and bindings.
 
 use twine_engine::{EventCode, EventParam};
-use twine_reactive::runtime_stats;
+use twine_reactive::Runtime;
 use twine_style::{Part, PropId};
 use twine_testing::{TestUi, by_id};
 use twine_view::prelude::*;
 use twine_widgets::label::Label;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 /// Accepts any property value of type `T` (the forms are told apart by the inferred marker `M`).
 fn take<T: 'static, M>(p: impl IntoProp<T, M>) -> Prop<T> {
@@ -18,7 +23,7 @@ fn is_static<T>(p: &Prop<T>) -> bool {
 
 #[test]
 fn prop_coherence() {
-    let cx = twine_reactive::create_root();
+    let cx = rt().create_root();
     let s = cx.signal(1i32);
     let m = cx.memo(move || s.get() * 2);
     assert!(is_static(&take::<i32, _>(5)));
@@ -47,12 +52,12 @@ fn prop_coherence() {
 fn static_prop_applies_once_no_effect_created() {
     let before = std::cell::Cell::new(0);
     let t = TestUi::new(100, 60).mount(|cx| {
-        before.set(runtime_stats().nodes);
+        before.set(rt().stats().nodes);
         let _ = cx;
         label("x").text_color(Color::RED).padding(3).test_id("l")
     });
     // A dynamic text would have created an effect; constants create none.
-    assert_eq!(runtime_stats().nodes, before.get());
+    assert_eq!(rt().stats().nodes, before.get());
     let id = t.find(by_id("l")).id();
     assert_eq!(
         t.engine().style_color(id, Part::Main, PropId::TextColor),
@@ -95,9 +100,9 @@ fn binding_runs_only_for_its_signal() {
     t.run_until_idle();
     let (a, _b) = t.root_scope().expect_context::<(Signal<i32>, Signal<i32>)>();
     a.set(10); // outside the Ui: the binding defers itself to the next update
-    let runs = runtime_stats().effect_runs;
+    let runs = rt().stats().effect_runs;
     t.run_until_idle();
-    assert_eq!(runtime_stats().effect_runs - runs, 1, "only a's binding runs");
+    assert_eq!(rt().stats().effect_runs - runs, 1, "only a's binding runs");
 }
 
 #[test]
@@ -110,11 +115,11 @@ fn binding_disposes_when_node_deleted() {
     t.run_until_idle();
     let n = t.root_scope().expect_context::<Signal<i32>>();
     let id = t.find(by_id("l")).id();
-    let nodes = runtime_stats().nodes;
+    let nodes = rt().stats().nodes;
     t.engine_mut().delete(id).unwrap();
     n.set(5);
     t.run_until_idle();
-    assert_eq!(runtime_stats().nodes, nodes - 1, "the binding disposed itself");
+    assert_eq!(rt().stats().nodes, nodes - 1, "the binding disposed itself");
     n.set(6);
     t.run_until_idle();
 }
@@ -131,7 +136,7 @@ fn binding_outside_update_is_deferred() {
     n.set(7); // no engine here: the binding waits
     let id = t.find(by_id("l")).id();
     assert_eq!(t.engine().widget::<Label>(id).unwrap().text(), "0");
-    assert!(twine_reactive::has_pending_effects());
+    assert!(rt().has_pending_effects());
     t.update();
     assert_eq!(t.engine().widget::<Label>(id).unwrap().text(), "7");
     t.run_until_idle();
@@ -170,7 +175,7 @@ fn take_model<T: 'static>(m: impl IntoModel<T>) -> Model<T> {
 
 #[test]
 fn user_type_as_prop_without_declaration() {
-    let cx = twine_reactive::create_root();
+    let cx = rt().create_root();
     let g = cx.signal(Gauge(1));
     assert!(matches!(take::<Gauge, _>(Gauge(3)), Prop::Static(Gauge(3))));
     assert!(is_static(&take::<Vec<Gauge>, _>(vec![Gauge(1), Gauge(2)])));
@@ -205,7 +210,7 @@ fn user_type_as_prop_without_declaration() {
 
 #[test]
 fn user_type_as_model_without_declaration() {
-    let cx = twine_reactive::create_root();
+    let cx = rt().create_root();
     let s = cx.signal(Level(1));
     assert!(matches!(take_model(Level(2)), Model::Owned(Level(2))));
     assert!(matches!(take_model::<Level>(s), Model::Bound(_)));
@@ -220,7 +225,7 @@ fn user_type_as_model_without_declaration() {
 #[test]
 fn constant_props_create_no_binding() {
     // Every constant of the audited setters stays `Prop::Static`: building runs no effect.
-    let runs = runtime_stats().effect_runs;
+    let runs = rt().stats().effect_runs;
     let mut t = TestUi::new(320, 240).mount(|_| {
         column((
             label("a").selectable(true).max_lines(2),
@@ -234,5 +239,5 @@ fn constant_props_create_no_binding() {
         ))
     });
     t.run_until_idle();
-    assert_eq!(runtime_stats().effect_runs, runs, "no binding for constants");
+    assert_eq!(rt().stats().effect_runs, runs, "no binding for constants");
 }

@@ -22,9 +22,9 @@ svg = ["twine-engine/svg", "dep:twine-vector"]
 ## Arabic/Persian contextual forms in labels (`twine-text/arabic-shaping`).
 arabic-shaping = ["twine-text/arabic-shaping"]
 ## std-only conveniences.
-std = ["twine-core/std", "twine-engine/std", "twine-style/std", "twine-text/std", "twine-image/std", "twine-render/std"]
+std = ["twine-core/std", "twine-engine/std", "twine-style/std", "twine-text/std", "twine-image/std", "twine-render/std", "twine-vector?/std"]
 ## Log through the `log` crate.
-log = ["twine-core/log", "twine-engine/log", "twine-style/log", "twine-text/log", "twine-image/log", "twine-render/log"]
+log = ["twine-core/log", "twine-engine/log", "twine-style/log", "twine-text/log", "twine-image/log", "twine-render/log", "twine-vector?/log"]
 ## Log through `defmt` and derive `defmt::Format` on public types.
 defmt = [
     "dep:defmt",
@@ -34,6 +34,7 @@ defmt = [
     "twine-text/defmt",
     "twine-image/defmt",
     "twine-render/defmt",
+    "twine-vector?/defmt",
 ]
 
 [dependencies]

@@ -23,7 +23,7 @@ fn regression_mount_dispose_does_not_leak_the_waker() {
     let screen = h.screen();
     let cycle = |h: &mut EngineHarness| {
         let e = h.engine_mut();
-        let core = UiCore::mount(e, display, |cx| {
+        let core = UiCore::mount(Runtime::current_thread(), e, display, |cx| {
             cx.on_message(&CH, |_| {});
             label("x")
         })

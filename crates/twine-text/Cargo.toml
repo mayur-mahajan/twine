@@ -50,7 +50,7 @@ twine-render = { path = "../twine-render", features = [
     "color-l8",
     "color-i1",
 ] }
-twine-assets = { path = "../twine-assets", features = ["all-fonts"] }
+twine-assets = { path = "../twine-assets", features = ["fonts-all"] }
 twine-testing = { path = "../twine-testing", default-features = false, features = ["render"] }
 proptest = "1"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }

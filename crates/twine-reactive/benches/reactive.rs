@@ -7,11 +7,16 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use twine_reactive::{Memo, create_root};
+use twine_reactive::{Memo, Runtime};
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 /// `signal.get()` untracked (target < 20 ns).
 fn get_untracked(c: &mut Criterion) {
-    let cx = create_root();
+    let cx = rt().create_root();
     let s = cx.signal(1u32);
     c.bench_function("get_untracked", |b| b.iter(|| black_box(s).get_untracked()));
     cx.dispose();
@@ -19,7 +24,7 @@ fn get_untracked(c: &mut Criterion) {
 
 /// `set` with one subscribed effect, including the flush (target < 150 ns).
 fn set_with_one_effect(c: &mut Criterion) {
-    let cx = create_root();
+    let cx = rt().create_root();
     let s = cx.signal(0u32);
     cx.effect(move || {
         black_box(s.get());
@@ -36,7 +41,7 @@ fn set_with_one_effect(c: &mut Criterion) {
 
 /// A chain of 10 memos observed by an effect; one source change (target < 1 µs).
 fn memo_chain_10(c: &mut Criterion) {
-    let cx = create_root();
+    let cx = rt().create_root();
     let a = cx.signal(0u64);
     let mut last: Option<Memo<u64>> = None;
     for _ in 0..10 {
@@ -59,7 +64,7 @@ fn memo_chain_10(c: &mut Criterion) {
 
 /// Create and dispose a scope with 10 signals and 10 effects (target < 5 µs).
 fn scope_10_signals_10_effects(c: &mut Criterion) {
-    let root = create_root();
+    let root = rt().create_root();
     c.bench_function("scope_10_signals_10_effects", |b| {
         b.iter(|| {
             let cx = root.child();
@@ -77,7 +82,7 @@ fn scope_10_signals_10_effects(c: &mut Criterion) {
 
 /// `stored_value.get()` (same path as an untracked signal read: target < 20 ns).
 fn stored_value_get(c: &mut Criterion) {
-    let cx = create_root();
+    let cx = rt().create_root();
     let v = cx.stored_value(1u32);
     c.bench_function("stored_value_get", |b| b.iter(|| black_box(v).get()));
     cx.dispose();

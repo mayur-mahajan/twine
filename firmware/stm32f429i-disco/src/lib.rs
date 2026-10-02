@@ -8,7 +8,7 @@
 #![no_std]
 
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::ltdc::{
@@ -19,7 +19,7 @@ use embassy_stm32::time::Hertz;
 use embassy_stm32::{Peri, Peripherals, pac, peripherals};
 use embedded_hal::delay::DelayNs;
 use twine::core::ColorFormat;
-use twine::engine::MemInfo;
+use twine::engine::{HeapPeak, MemInfo};
 use twine::hal::{DisplayInfo, DrawBufferMem, FramebufferDisplay};
 
 /// Panel width (portrait).
@@ -82,6 +82,8 @@ pub struct Board {
     /// User LEDs LD3 (green, PG13) and LD4 (red, PG14).
     pub led_green: Peri<'static, peripherals::PG13>,
     pub led_red: Peri<'static, peripherals::PG14>,
+    /// The DMA2D (clock enabled): hand it to `twine_accel_stm32::PacRegs::new`, which owns it.
+    pub dma2d: Peri<'static, peripherals::DMA2D>,
 }
 
 impl Board {
@@ -217,7 +219,7 @@ impl Board {
             addrs[1]
         );
 
-        // DMA2D clock (the accelerator itself is `twine_accel_stm32::Dma2d<PacRegs>`).
+        // DMA2D clock (the peripheral itself goes to `twine_accel_stm32::PacRegs`, see `Board::dma2d`).
         pac::RCC.ahb1enr().modify(|w| w.set_dma2den(true));
 
         Board {
@@ -235,6 +237,7 @@ impl Board {
             touch_exti: p.EXTI15,
             led_green: p.PG13,
             led_red: p.PG14,
+            dma2d: p.DMA2D,
         }
     }
 }
@@ -383,12 +386,10 @@ pub fn init_heap() {
 
 /// Heap statistics for the `twine::perf` log line; warns when the heap is more than 90 % full.
 pub fn mem_info() -> MemInfo {
-    static PEAK: AtomicU32 = AtomicU32::new(0);
-    let used = HEAP.used() as u32;
-    let free = HEAP.free() as u32;
-    let peak = PEAK.fetch_max(used, Ordering::Relaxed).max(used);
-    if u64::from(used) * 10 > u64::from(used + free) * 9 {
-        defmt::warn!("heap above 90%: {} of {} bytes", used, used + free);
+    static PEAK: HeapPeak = HeapPeak::new();
+    let m = PEAK.sample(HEAP.used(), HEAP.free());
+    if m.used_percent() > 90 {
+        defmt::warn!("heap above 90%: {} of {} bytes", m.used, m.used + m.free);
     }
-    MemInfo { used, peak, free }
+    m
 }

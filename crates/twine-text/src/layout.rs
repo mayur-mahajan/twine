@@ -103,6 +103,17 @@ pub(crate) fn floor_boundary(s: &str, i: usize) -> usize {
     i
 }
 
+/// `s[range]`, or `""` when `range` is out of bounds or splits a char. The ranges the layout
+/// hands out (lines, ellipsis prefixes, ranges rounded with [`floor_boundary`]) always lie on
+/// char boundaries, so the fallback is never taken; slicing with `get` instead of indexing keeps
+/// the panicking `str` slice path — and the `core::fmt`/Unicode tables its message links, ~4 KiB
+/// on Cortex-M — out of firmware. Same cost as indexing (one bounds and boundary check).
+#[inline]
+#[must_use]
+pub(crate) fn sub(s: &str, range: Range<usize>) -> &str {
+    s.get(range).unwrap_or("")
+}
+
 /// Pen accumulator implementing the width rule.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Pen {
@@ -171,7 +182,7 @@ impl<'a> TextLayout<'a> {
         let s = floor_boundary(self.text, range.start);
         let e = floor_boundary(self.text, range.end).max(s);
         let mut pen = Pen::default();
-        for (i, c) in self.text[s..e].char_indices() {
+        for (i, c) in sub(self.text, s..e).char_indices() {
             pen.add(self.adv(c, s + i), self.letter_space);
         }
         pen.width(self.letter_space)
@@ -214,7 +225,7 @@ impl<'a> TextLayout<'a> {
         let mut pen = Pen::default();
         let mut w_ns = 0; // width through the last non-space char
         let mut last_break: Option<(usize, i32)> = None;
-        let mut iter = text[s..].char_indices().peekable();
+        let mut iter = sub(text, s..text.len()).char_indices().peekable();
         while let Some((i, c)) = iter.next() {
             let b = s + i;
             let len = c.len_utf8();

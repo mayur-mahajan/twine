@@ -97,6 +97,7 @@ pub static ST7735R_REDTAB: PanelSpec = PanelSpec {
     colmod: 0x05,
     align: 1,
     sw_rotation: false,
+    brightness: false,
     invert: false,
     init: &ST7735R_INIT,
 };

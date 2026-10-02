@@ -27,14 +27,23 @@
 //! `(x, y)` on native pixel `(y, w − 1 − x)`), so switching a display between hardware and
 //! software rotation never changes what is shown. Offsets of panels that show only part of
 //! the controller memory are derived from the `MADCTL` mirror bits of each rotation.
+//!
+//! # Power and rotation at run time
+//!
+//! Both drivers implement the display controls of [`DisplayDriver`] (and `AsyncDisplayDriver`):
+//! `set_rotation` writes `MADCTL` (`Unsupported` on [`sw_rotation`](PanelSpec::sw_rotation)
+//! panels: the engine rotates those in software), `sleep` sends `SLPIN`/`SLPOUT` and returns the
+//! settle time (5 ms / 120 ms; the engine waits it out, the driver never blocks), and
+//! `set_brightness` sends `WRDISBV` on self-dimming controllers
+//! ([`brightness`](PanelSpec::brightness); `Unsupported` on LCDs, dimmed by their backlight).
 
 use core::ops::{BitOr, BitOrAssign};
 
 use embedded_hal::digital::OutputPin;
 use heapless::Deque;
 use twine_core::log::{error, trace, warn};
-use twine_core::{ColorFormat, Rect};
-use twine_hal::{DisplayDriver, DisplayInfo, DrawBufferMem, Rotation};
+use twine_core::{ColorFormat, Duration, Fraction, Rect};
+use twine_hal::{ControlError, DisplayDriver, DisplayInfo, DrawBufferMem, Rotation};
 
 use crate::interface::DcsInterface;
 
@@ -225,6 +234,10 @@ pub struct PanelSpec {
     /// at the `Deg0` entry, [`DisplayInfo::hw_rotation`] is `false` and the engine rotates in
     /// software, so flush areas are in native panel coordinates.
     pub sw_rotation: bool,
+    /// The controller dims itself with `WRDISBV` (`0x51`; AMOLED/OLED controllers):
+    /// [`DisplayDriver::set_brightness`] sends it. `false` for LCD controllers, which are
+    /// dimmed by their backlight (the driver then answers `Unsupported`).
+    pub brightness: bool,
     /// Vendor init table, run after reset and before `COLMOD`/`MADCTL`/`SLPOUT`/`DISPON`.
     pub init: &'static [InitOp],
 }
@@ -590,14 +603,6 @@ impl<I: DcsInterface, RST: OutputPin> MipiDcs<I, RST> {
         })
     }
 
-    /// Changes the rotation (`MADCTL`). The engine expects [`DisplayDriver::info`] not to
-    /// change while it runs, so call this before building the UI.
-    pub fn set_rotation(&mut self, r: Rotation) -> Result<(), DcsError<I::Error>> {
-        self.command(cmd::MADCTL, &[self.spec.madctl_for(r).bits()])?;
-        self.rotation = r;
-        Ok(())
-    }
-
     /// Sets the address window for a logical `area` (`CASET`, `RASET` incl. offsets) and
     /// starts a memory write (`RAMWR`). Pixels follow with the interface's `write_pixels`.
     pub fn set_window(&mut self, area: Rect) -> Result<(), DcsError<I::Error>> {
@@ -605,17 +610,6 @@ impl<I: DcsInterface, RST: OutputPin> MipiDcs<I, RST> {
         self.command(cmd::CASET, &c)?;
         self.command(cmd::RASET, &r)?;
         self.command(cmd::RAMWR, &[])
-    }
-
-    /// Enters (`true`, `SLPIN` + 5 ms) or leaves (`false`, `SLPOUT` + 120 ms) sleep mode.
-    pub fn sleep(
-        &mut self,
-        on: bool,
-        delay: &mut impl embedded_hal::delay::DelayNs,
-    ) -> Result<(), DcsError<I::Error>> {
-        self.command(if on { cmd::SLPIN } else { cmd::SLPOUT }, &[])?;
-        delay.delay_us(if on { 5_000 } else { 120_000 });
-        Ok(())
     }
 
     /// Turns the display output on (`DISPON`) or off (`DISPOFF`, frame memory kept).
@@ -632,23 +626,22 @@ impl<I: DcsInterface, RST: OutputPin> MipiDcs<I, RST> {
         }
     }
 
-    /// Sets the display brightness (`WRDISBV`, `0x51`; `0` = off, `255` = maximum) of
-    /// controllers that dim themselves (AMOLED, OLED). LCD panels dim with their backlight pin.
-    pub fn set_brightness(&mut self, level: u8) -> Result<(), DcsError<I::Error>> {
-        self.command(cmd::WRDISBV, &[level])
-    }
-
-    /// Sends pixels of `area` immediately (the body of `begin_flush`).
-    fn flush_now(&mut self, area: Rect, buf: &[u8]) -> Result<(), DcsError<I::Error>> {
-        let (c, r, bytes) = check_flush(self.spec, self.rotation, area, buf.len())?;
+    /// Sets the window of `area` and starts the memory write for a buffer of `len` bytes;
+    /// returns the pixel bytes to send.
+    fn begin_window(&mut self, area: Rect, len: usize) -> Result<usize, DcsError<I::Error>> {
+        let (c, r, bytes) = check_flush(self.spec, self.rotation, area, len)?;
         trace!(target: "twine::driver", "{}: flush {:?}", self.spec.name, area);
         self.command(cmd::CASET, &c)?;
         self.command(cmd::RASET, &r)?;
         self.command(cmd::RAMWR, &[])?;
-        self.iface.write_pixels(&buf[..bytes]).map_err(|e| {
-            warn!(target: "twine::driver", "{}: pixel write failed", self.spec.name);
-            DcsError::Interface(e)
-        })
+        Ok(bytes)
+    }
+
+    /// Keeps a buffer whose transfer is over until `poll_flush` returns it.
+    fn keep(&mut self, buf: DrawBufferMem) {
+        if self.pending.push_back(buf).is_err() {
+            error!(target: "twine::driver", "{}: more than 2 buffers in flight; buffer dropped", self.spec.name);
+        }
     }
 
     /// Returns the interface and the reset pin.
@@ -665,16 +658,94 @@ impl<I: DcsInterface, RST: OutputPin> DisplayDriver for MipiDcs<I, RST> {
         display_info(self.spec, self.rotation, self.dpi)
     }
 
+    /// Sets the window, then hands the pixels to the interface
+    /// ([`DcsInterface::start_pixels`]): a blocking interface sends them before returning, a
+    /// DMA interface (`DmaSpiInterface`) only starts the transfer, so the engine renders the
+    /// next chunk meanwhile.
     fn begin_flush(&mut self, area: Rect, buf: DrawBufferMem) -> Result<(), Self::Error> {
-        let r = self.flush_now(area, buf.as_slice());
-        if self.pending.push_back(buf).is_err() {
-            error!(target: "twine::driver", "{}: more than 2 buffers in flight; buffer dropped", self.spec.name);
+        let bytes = match self.begin_window(area, buf.len()) {
+            Ok(b) => b,
+            Err(e) => {
+                self.keep(buf);
+                return Err(e);
+            }
+        };
+        match self.iface.start_pixels(buf, bytes) {
+            Ok(Some(buf)) => {
+                self.keep(buf);
+                Ok(())
+            }
+            Ok(None) => Ok(()),
+            Err((e, buf)) => {
+                warn!(target: "twine::driver", "{}: pixel write failed", self.spec.name);
+                self.keep(buf);
+                Err(DcsError::Interface(e))
+            }
         }
-        r
     }
 
+    /// Buffers sent synchronously first, then those the interface finished
+    /// ([`DcsInterface::poll_pixels`]).
     fn poll_flush(&mut self) -> Option<DrawBufferMem> {
-        self.pending.pop_front()
+        self.pending.pop_front().or_else(|| self.iface.poll_pixels())
+    }
+
+    /// `WRDISBV` with `level` (`0` darkest, `255` brightest) on self-dimming controllers
+    /// ([`PanelSpec::brightness`]); `Unsupported` otherwise.
+    ///
+    /// ```
+    /// use twine_core::Fraction;
+    /// use twine_drivers::ili9341::ILI9341;
+    /// use twine_drivers::interface::SpiInterface;
+    /// use twine_drivers::mipi_dcs::{MipiDcs, cmd};
+    /// use twine_drivers::testkit::{BusOp, Recorder};
+    /// use twine_hal::{ControlError, DisplayDriver, Rotation};
+    ///
+    /// let rec = Recorder::new();
+    /// let iface = SpiInterface::new(rec.spi(), rec.quiet_pin("dc"));
+    /// let mut lcd = MipiDcs::new(iface, Some(rec.pin("rst")), &ILI9341, Rotation::Deg0, &mut rec.delay()).unwrap();
+    /// // An LCD controller: dimmed by its backlight, not by the driver.
+    /// assert_eq!(lcd.set_brightness(Fraction::HALF), Err(ControlError::Unsupported));
+    /// let _ = rec.take_ops();
+    /// let settle = lcd.sleep(true).unwrap();
+    /// assert_eq!((settle.as_micros(), rec.ops()), (5_000, vec![BusOp::Cmd(cmd::SLPIN)]));
+    /// let info = lcd.set_rotation(Rotation::Deg90).unwrap();
+    /// assert_eq!((info.width, info.height, info.rotation), (320, 240, Rotation::Deg90));
+    /// ```
+    fn set_brightness(&mut self, level: Fraction) -> Result<(), ControlError<Self::Error>> {
+        if !self.spec.brightness {
+            return Err(ControlError::Unsupported);
+        }
+        self.command(cmd::WRDISBV, &[level.raw()])
+            .map_err(ControlError::Driver)
+    }
+
+    /// `SLPIN` (settle 5 ms) or `SLPOUT` (settle 120 ms); the frame memory is kept.
+    fn sleep(&mut self, sleep: bool) -> Result<Duration, ControlError<Self::Error>> {
+        let (c, settle) = sleep_step(sleep);
+        self.command(c, &[]).map_err(ControlError::Driver)?;
+        Ok(settle)
+    }
+
+    /// `MADCTL` for `rotation` (offsets follow from the spec); `Unsupported` on
+    /// [`sw_rotation`](PanelSpec::sw_rotation) panels.
+    fn set_rotation(&mut self, rotation: Rotation) -> Result<DisplayInfo, ControlError<Self::Error>> {
+        if self.spec.sw_rotation {
+            return Err(ControlError::Unsupported);
+        }
+        self.command(cmd::MADCTL, &[self.spec.madctl_for(rotation).bits()])
+            .map_err(ControlError::Driver)?;
+        self.rotation = rotation;
+        Ok(display_info(self.spec, rotation, self.dpi))
+    }
+}
+
+/// The command and settle time of entering (`true`) or leaving (`false`) sleep mode.
+const fn sleep_step(sleep: bool) -> (u8, Duration) {
+    if sleep {
+        (cmd::SLPIN, Duration::ms(5))
+    } else {
+        (cmd::SLPOUT, Duration::ms(120))
     }
 }
 
@@ -684,11 +755,13 @@ pub use self::asynch::AsyncMipiDcs;
 #[cfg(feature = "async")]
 mod asynch {
     use embedded_hal::digital::OutputPin;
-    use twine_core::Rect;
     use twine_core::log::{trace, warn};
-    use twine_hal::{AsyncDisplayDriver, DisplayInfo, Rotation};
+    use twine_core::{Duration, Fraction, Rect};
+    use twine_hal::{AsyncDisplayDriver, ControlError, DisplayInfo, Rotation};
 
-    use super::{DEFAULT_DPI, DcsError, PanelSpec, Step, check_flush, cmd, display_info, init_steps};
+    use super::{
+        DEFAULT_DPI, DcsError, PanelSpec, Step, check_flush, cmd, display_info, init_steps, sleep_step,
+    };
     use crate::interface::AsyncDcsInterface;
 
     /// Async MIPI DCS panel driver (feature `async`): same behaviour and bytes as
@@ -784,32 +857,12 @@ mod asynch {
             }
         }
 
-        /// Changes the rotation (`MADCTL`); call before building the UI.
-        pub async fn set_rotation(&mut self, r: Rotation) -> Result<(), DcsError<I::Error>> {
-            self.command(cmd::MADCTL, &[self.spec.madctl_for(r).bits()])
-                .await?;
-            self.rotation = r;
-            Ok(())
-        }
-
         /// Sets the address window for a logical `area` and starts a memory write (`RAMWR`).
         pub async fn set_window(&mut self, area: Rect) -> Result<(), DcsError<I::Error>> {
             let (c, r, _) = check_flush(self.spec, self.rotation, area, usize::MAX)?;
             self.command(cmd::CASET, &c).await?;
             self.command(cmd::RASET, &r).await?;
             self.command(cmd::RAMWR, &[]).await
-        }
-
-        /// Enters (`SLPIN` + 5 ms) or leaves (`SLPOUT` + 120 ms) sleep mode.
-        pub async fn sleep(
-            &mut self,
-            on: bool,
-            delay: &mut impl embedded_hal_async::delay::DelayNs,
-        ) -> Result<(), DcsError<I::Error>> {
-            self.command(if on { cmd::SLPIN } else { cmd::SLPOUT }, &[])
-                .await?;
-            delay.delay_us(if on { 5_000 } else { 120_000 }).await;
-            Ok(())
         }
 
         /// Turns the display output on (`DISPON`) or off (`DISPOFF`).
@@ -825,11 +878,6 @@ mod asynch {
             } else {
                 self.command(cmd::TEOFF, &[]).await
             }
-        }
-
-        /// Sets the display brightness (`WRDISBV`, `0x51`) of self-dimming controllers.
-        pub async fn set_brightness(&mut self, level: u8) -> Result<(), DcsError<I::Error>> {
-            self.command(cmd::WRDISBV, &[level]).await
         }
 
         /// Returns the interface and the reset pin.
@@ -860,6 +908,38 @@ mod asynch {
                 }
             }
         }
+
+        /// As [`MipiDcs`](super::MipiDcs)'s `set_brightness` (`WRDISBV`).
+        async fn set_brightness(&mut self, level: Fraction) -> Result<(), ControlError<Self::Error>> {
+            if !self.spec.brightness {
+                return Err(ControlError::Unsupported);
+            }
+            self.command(cmd::WRDISBV, &[level.raw()])
+                .await
+                .map_err(ControlError::Driver)
+        }
+
+        /// As [`MipiDcs`](super::MipiDcs)'s `sleep` (`SLPIN` / `SLPOUT`, settle time returned).
+        async fn sleep(&mut self, sleep: bool) -> Result<Duration, ControlError<Self::Error>> {
+            let (c, settle) = sleep_step(sleep);
+            self.command(c, &[]).await.map_err(ControlError::Driver)?;
+            Ok(settle)
+        }
+
+        /// As [`MipiDcs`](super::MipiDcs)'s `set_rotation` (`MADCTL`).
+        async fn set_rotation(
+            &mut self,
+            rotation: Rotation,
+        ) -> Result<DisplayInfo, ControlError<Self::Error>> {
+            if self.spec.sw_rotation {
+                return Err(ControlError::Unsupported);
+            }
+            self.command(cmd::MADCTL, &[self.spec.madctl_for(rotation).bits()])
+                .await
+                .map_err(ControlError::Driver)?;
+            self.rotation = rotation;
+            Ok(display_info(self.spec, rotation, self.dpi))
+        }
     }
 }
 
@@ -885,6 +965,7 @@ mod tests {
         colmod: 0x55,
         align: 1,
         sw_rotation: false,
+        brightness: false,
         invert: true,
         init: &[InitOp::Cmd(0xB1, &[0x00, 0x18]), InitOp::DelayMs(5)],
     };
@@ -1078,9 +1159,10 @@ mod tests {
         let (rec, mut d) = dut(&TEST, Rotation::Deg0);
         for (rot, madctl, size, offset) in table {
             let _ = rec.take_ops();
-            d.set_rotation(rot).unwrap();
+            let reported = d.set_rotation(rot).unwrap();
             assert_eq!(rec.ops(), [BusOp::Cmd(cmd::MADCTL), BusOp::Data(vec![madctl])]);
             let info = d.info();
+            assert_eq!(reported, info);
             assert_eq!((info.width, info.height), size);
             assert_eq!(info.rotation, rot);
             assert!(info.hw_rotation);
@@ -1093,8 +1175,8 @@ mod tests {
     fn misc_commands() {
         let (rec, mut d) = dut(&TEST, Rotation::Deg0);
         let _ = rec.take_ops();
-        d.sleep(true, &mut rec.delay()).unwrap();
-        d.sleep(false, &mut rec.delay()).unwrap();
+        assert_eq!(d.sleep(true).unwrap(), Duration::ms(5));
+        assert_eq!(d.sleep(false).unwrap(), Duration::ms(120));
         d.display_on(false).unwrap();
         d.tearing_effect(true).unwrap();
         d.tearing_effect(false).unwrap();
@@ -1102,9 +1184,7 @@ mod tests {
             rec.ops(),
             [
                 BusOp::Cmd(cmd::SLPIN),
-                BusOp::DelayUs(5_000),
                 BusOp::Cmd(cmd::SLPOUT),
-                BusOp::DelayUs(120_000),
                 BusOp::Cmd(cmd::DISPOFF),
                 BusOp::Cmd(cmd::TEON),
                 BusOp::Data(vec![0]),
@@ -1112,6 +1192,30 @@ mod tests {
             ]
         );
         assert_eq!(d.with_dpi(200).info().dpi, 200);
+    }
+
+    #[test]
+    fn controls_brightness_and_sw_rotation_panels() {
+        static AMOLED: PanelSpec = PanelSpec {
+            brightness: true,
+            sw_rotation: true,
+            ..TEST
+        };
+        let (rec, mut d) = dut(&TEST, Rotation::Deg0);
+        let _ = rec.take_ops();
+        assert_eq!(d.set_brightness(Fraction::HALF), Err(ControlError::Unsupported));
+        assert!(rec.ops().is_empty(), "nothing sent to an LCD controller");
+        let (rec, mut d) = dut(&AMOLED, Rotation::Deg0);
+        let _ = rec.take_ops();
+        d.set_brightness(Fraction::from_raw(0x40)).unwrap();
+        assert_eq!(rec.ops(), [BusOp::Cmd(cmd::WRDISBV), BusOp::Data(vec![0x40])]);
+        // No row/column exchange: the engine rotates in software.
+        assert_eq!(d.set_rotation(Rotation::Deg90), Err(ControlError::Unsupported));
+        rec.fail_next();
+        assert!(matches!(
+            d.sleep(true),
+            Err(ControlError::Driver(DcsError::Interface(_)))
+        ));
     }
 
     #[test]

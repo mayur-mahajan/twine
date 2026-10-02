@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 use twine_core::{Color, Opa};
 use twine_engine::{Engine, GroupId, InputId, NodeId, Obj, ObjFlags, ScreenLoad, fmt_node_id};
-use twine_reactive::{Scope, Signal, StoredValue, defer_current_effect, dispose_current_effect, untrack};
+use twine_reactive::{Scope, Signal, StoredValue};
 use twine_style::{Align, Length, Radius, Selector, StyleProp};
 
 use crate::access::EngineAccess;
@@ -218,6 +218,7 @@ impl Navigator {
     /// and the keypads' and encoders' group.
     fn build_screen(&self, e: &mut Engine, f: ScreenFn, own_group: bool) -> Option<Entry> {
         let (parent, anchor) = self.state.with(|s| (s.scope, s.anchor));
+        let rt = parent.runtime();
         let display = display_of(parent, e)?;
         let Ok(screen) = e.create_screen(display) else {
             twine_core::warn!(target: "twine::view", "navigator: cannot create a screen");
@@ -230,7 +231,7 @@ impl Navigator {
             e.default_group()
         };
         let child = parent.child();
-        let view = EngineAccess::provide(e, || untrack(|| f(child)));
+        let view = EngineAccess::provide(rt, e, || rt.untrack(|| f(child)));
         let root = {
             let mut bcx = BuildCx::new(e, screen, child);
             view.build(&mut bcx)
@@ -239,7 +240,7 @@ impl Navigator {
             e.set_style_parent(root, Some(a));
         }
         child.provide(StyleAnchor::new(root));
-        on_delete(e, screen, move || child.dispose());
+        on_delete(rt, e, screen, move || child.dispose());
         twine_core::debug!(target: "twine::view", "navigator: screen {} built", fmt_node_id(screen));
         Some(Entry {
             node: screen,
@@ -314,6 +315,7 @@ impl View for NavigatorView {
             }
         });
         let scope = cx.scope();
+        let rt = scope.runtime();
         let tick = nav.state.with(|s| s.tick);
         cx.provide(|| {
             scope.effect_with_cx(move |_| {
@@ -321,8 +323,8 @@ impl View for NavigatorView {
                 if nav.state.try_with(|s| s.queue.is_empty()).unwrap_or(true) {
                     return;
                 }
-                if EngineAccess::with(|e| nav.apply(e)).is_none() {
-                    defer_current_effect();
+                if EngineAccess::with(rt, |e| nav.apply(e)).is_none() {
+                    rt.defer_current_effect();
                 }
             });
         });
@@ -430,6 +432,7 @@ pub(crate) fn show_modal<V: View>(
     cx: Scope,
     view: impl FnOnce(Scope, ModalHandle) -> V + 'static,
 ) -> ModalHandle {
+    let rt = cx.runtime();
     let content = cx.child();
     let open = cx.signal(true);
     let state = cx.stored_value(ModalState::default());
@@ -441,20 +444,20 @@ pub(crate) fn show_modal<V: View>(
         // Cleanups run before the scope's stored values are dropped.
         // Without the engine (disposed outside `Ui::update`): at the next update.
         if let Some((node, grp)) = state.try_with_mut(ModalState::take) {
-            if EngineAccess::with(|e| close_modal(e, node, grp)).is_none() {
+            if EngineAccess::with(rt, |e| close_modal(e, node, grp)).is_none() {
                 crate::engine_queue::defer(cx, crate::engine_queue::EngineCmd::close_modal(node, grp));
             }
         }
     });
     cx.effect_with_cx(move |_| {
         let is_open = open.get();
-        if !crate::access::engine_ready() {
+        if !crate::access::engine_ready(rt) {
             return;
         }
         if is_open {
             let Some(v) = view.take() else { return };
-            let v = untrack(|| v(content, handle));
-            EngineAccess::with(|e| {
+            let v = rt.untrack(|| v(content, handle));
+            EngineAccess::with(rt, |e| {
                 let Some(display) = display_of(content, e) else {
                     return;
                 };
@@ -506,11 +509,11 @@ pub(crate) fn show_modal<V: View>(
             });
         } else {
             let (node, grp) = state.with_mut(ModalState::take);
-            EngineAccess::with(|e| {
+            EngineAccess::with(rt, |e| {
                 dispose_with(e, content);
                 close_modal(e, node, grp);
             });
-            dispose_current_effect();
+            rt.dispose_current_effect();
         }
     });
     handle

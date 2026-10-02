@@ -2,11 +2,19 @@
 //!
 //! Display, touch and input drivers of the Twine GUI library, implementing the `twine-hal`
 //! traits on top of `embedded-hal` 1.0 buses. Everything is `no_std` and allocation-free and
-//! works on any microcontroller HAL.
+//! works on any microcontroller HAL (the hosted Linux drivers `fbdev` / `evdev` use `std`).
 //!
 //! | Module | Devices |
 //! |--------|---------|
 //! | `interface` | transports: `SpiInterface` (SPI + DC), `QspiInterface` (quad SPI) and friends |
+#![cfg_attr(
+    feature = "spi-dma",
+    doc = "| `interface` (DMA) | [`DmaSpiInterface`](interface::DmaSpiInterface) over a chip's [`DmaSpiBus`](interface::DmaSpiBus) (feature `spi-dma`): SPI + CS + DC whose pixel transfers run by DMA while the next chunk renders, for blocking runtimes |"
+)]
+#![cfg_attr(
+    not(feature = "spi-dma"),
+    doc = "| `interface` (DMA) | `DmaSpiInterface` over a chip's `DmaSpiBus` (feature `spi-dma`): SPI + CS + DC whose pixel transfers run by DMA while the next chunk renders, for blocking runtimes |"
+)]
 //! | `mipi_dcs` | generic MIPI DCS panel driver `MipiDcs` |
 //! | `ili9341` | ILI9341 240 × 320 |
 //! | `ili9342` | ILI9342C 320 × 240 |
@@ -21,6 +29,7 @@
 //! | `touch` | touch: XPT2046, `FT6x36`, `FT5x06`, GT911, CST816S, AXS5106L, STMPE811 |
 //! | `encoder` | rotary encoder on GPIOs (quadrature + button) |
 //! | `keypad` | key matrix on GPIOs |
+//! | `fbdev`, `evdev` | hosted Linux: framebuffer display (`/dev/fbN`) and input events (`/dev/input/eventN`), with `std` |
 //!
 //! Every display driver has a blocking flavour (`DisplayDriver`) and, with feature `async`, an
 //! async flavour (`AsyncDisplayDriver`) that overlaps DMA transfers with rendering when the HAL
@@ -54,6 +63,8 @@
 //!   `jd9853`, `co5300`, `sh8601`, `rm67162`, `ssd1306`, `sh1106`.
 //! - Touch and input: `xpt2046`, `ft6x36` (also `FT5x06`, FT3168), `gt911`, `cst816s`,
 //!   `axs5106l`, `stmpe811`, `encoder`, `keypad`.
+//! - Hosted Linux (need `std`, not in `all`): `fbdev` (`FbDev`), `evdev` (`Evdev`); see the
+//!   `linux_fbdev` example of the `twine` crate.
 //! - `async`: async interfaces and drivers (`embedded-hal-async`), `AsyncInputWait` for IRQ pins.
 //! - `testkit`: recording mock buses (module `testkit`) for host tests of code built on these drivers.
 //! - `defmt` / `log`: logging backends (target `twine::driver`).
@@ -78,6 +89,8 @@
 
 #[cfg(any(test, feature = "testkit"))]
 extern crate alloc;
+#[cfg(feature = "std")]
+extern crate std;
 
 #[cfg(feature = "co5300")]
 #[cfg_attr(docsrs, doc(cfg(feature = "co5300")))]
@@ -88,6 +101,12 @@ pub mod debounce;
 #[cfg(feature = "encoder")]
 #[cfg_attr(docsrs, doc(cfg(feature = "encoder")))]
 pub mod encoder;
+#[cfg(all(feature = "evdev", unix))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "evdev", unix))))]
+pub mod evdev;
+#[cfg(all(feature = "fbdev", unix))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "fbdev", unix))))]
+pub mod fbdev;
 #[cfg(feature = "gc9a01")]
 #[cfg_attr(docsrs, doc(cfg(feature = "gc9a01")))]
 pub mod gc9a01;

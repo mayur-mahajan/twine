@@ -47,6 +47,7 @@ pub static ST7796: PanelSpec = PanelSpec {
     colmod: 0x55,
     align: 1,
     sw_rotation: false,
+    brightness: false,
     invert: false,
     init: &ST7796_INIT,
 };

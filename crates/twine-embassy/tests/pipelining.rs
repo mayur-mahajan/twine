@@ -12,7 +12,7 @@ use std::task::{Context, Poll, Wake as TaskWake, Waker};
 
 use embassy_time::{Duration as EmbDuration, MockDriver};
 use twine_core::{ColorFormat, Rect};
-use twine_embassy::{EmbassyClock, UiBuilderExt};
+use twine_embassy::{EmbassyPlatform, UiBuilderExt};
 use twine_hal::{AsyncDisplayDriver, DisplayDriver, DisplayInfo, DrawBufferMem};
 use twine_view::prelude::*;
 
@@ -139,9 +139,10 @@ fn async_ui(double: bool, fb: &Fb) -> AsyncUi<MockAsync> {
         BufferMode::partial_single(leak(len))
     };
     let mut ui = Ui::builder_async(MockAsync { fb: fb.clone() })
+        .runtime(Runtime::current_thread())
         .buffers(bufs)
         .theme(DefaultTheme::light())
-        .with_embassy_clock()
+        .with_embassy_platform()
         .build(app);
     ui.engine_mut().set_render_hook(Some(|_| log(Ev::Rendered)));
     ui
@@ -231,9 +232,10 @@ fn blocking_and_async_render_identical_pixels() {
         fb: fb_blocking.clone(),
         held: None,
     })
+    .runtime(Runtime::current_thread())
     .buffers(BufferMode::partial_double(leak(len), leak(len)))
     .theme(DefaultTheme::light())
-    .clock(EmbassyClock)
+    .clock(EmbassyPlatform)
     .build(app);
     let _ = blocking.update();
     assert!(
@@ -243,6 +245,53 @@ fn blocking_and_async_render_identical_pixels() {
     assert!(
         *fb_async.borrow() == *fb_blocking.borrow(),
         "async and blocking frames differ"
+    );
+}
+
+/// R3.S03: the async UI accepts the same buffer modes as the blocking one — `draw_buffers!`
+/// statics and heap buffers render exactly like caller memory — and requires buffers like it.
+#[test]
+fn async_ui_accepts_static_and_heap_buffers() {
+    draw_buffers!(static BUFS: 2 x 8 rows x 64 px @ Rgb565);
+    let reference = fb();
+    let mut ui = async_ui(true, &reference);
+    let _ = block_on(ui.update_async());
+    let modes = [
+        BufferMode::partial_double_from(BUFS.take().expect("taken once")),
+        BufferMode::alloc(BufferSpec::PartialDouble { rows: 8 }),
+        BufferMode::alloc(BufferSpec::PartialSingle { rows: 5 }),
+    ];
+    for mode in modes {
+        let got = fb();
+        let mut ui = Ui::builder_async(MockAsync { fb: got.clone() })
+            .runtime(Runtime::current_thread())
+            .buffers(mode)
+            .theme(DefaultTheme::light())
+            .with_embassy_platform()
+            .build(app);
+        let _ = block_on(ui.update_async());
+        assert!(*got.borrow() == *reference.borrow(), "frames differ");
+    }
+    assert!(BUFS.take().is_none());
+}
+
+/// Missing buffers are a compile error for both `Ui` and `AsyncUi` (R3.S09, see the
+/// compile-fail doctests of `twine_view::typestate` and `AsyncUiBuilder`); what remains a
+/// run-time error is a mode the async display cannot use.
+#[test]
+fn async_ui_refuses_framebuffer_modes() {
+    let err = Ui::builder_async(MockAsync { fb: fb() })
+        .runtime(Runtime::current_thread())
+        .buffers(BufferMode::Full)
+        .with_embassy_platform()
+        .try_build(app)
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            UiError::Engine(twine_engine::EngineError::BufferModeMismatch)
+        ),
+        "{err:?}"
     );
 }
 
@@ -289,11 +338,17 @@ fn idle_waits_without_timer_and_channel_send_wakes_run_loop() {
     let fb = fb();
     let len = usize::from(W) * 2 * ROWS;
     let ui = Ui::builder_async(MockAsync { fb: fb.clone() })
+        .runtime(Runtime::current_thread())
         .buffers(BufferMode::partial_double(leak(len), leak(len)))
-        .with_embassy_clock()
+        .with_embassy_platform()
         .build(channel_app);
     let counter = Arc::new(Counter(AtomicUsize::new(0)));
     let mut run = pin!(twine_embassy::run(ui));
+    run_until_asleep(&mut run, &counter);
+    // The mock flushes complete on their second poll, so each one armed its `flush_timeout`
+    // deadline (500 ms); embassy cannot cancel a scheduled wake-up, so the last one wakes the
+    // task once, for nothing. Let it pass.
+    MockDriver::get().advance(EmbDuration::from_secs(1));
     run_until_asleep(&mut run, &counter);
     // Idle: no timer is armed, so time passing wakes nothing.
     let before = counter.0.load(Ordering::SeqCst);

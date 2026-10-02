@@ -124,7 +124,8 @@ enum Cmd {
         #[arg(long, default_value_t = 60)]
         time: u32,
     },
-    /// Regenerate the local progress checklist from the planning files (maintainers only; no-op without them).
+    /// Report the API evolution plan's progress from its §5 checklist and check it against the
+    /// plan's steps (`docs/plan/api-evolution.md`; succeeds with a note when the plan is absent).
     Progress,
 }
 

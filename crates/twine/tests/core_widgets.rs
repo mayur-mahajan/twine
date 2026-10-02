@@ -2,7 +2,6 @@
 //! script; the shot after tapping the checkable button is compared with the snapshot.
 
 use std::path::PathBuf;
-use std::rc::Rc;
 
 // The scene of the `core_widgets` example (the example and this test share its source).
 #[path = "../examples/core_widgets/showcase.rs"]
@@ -21,7 +20,7 @@ fn core_widgets_headless_matches_snapshot() {
     let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/scripts/core_widgets.twinescript");
     let cfg = SimConfig::new(W, H)
         .engine_config(engine_config())
-        .theme(Rc::new(DefaultTheme::light()))
+        .theme(DefaultTheme::light())
         .headless(Some(Headless {
             frames: 1,
             script: Some(script),

@@ -100,6 +100,7 @@ pub static ILI9341: PanelSpec = PanelSpec {
     colmod: 0x55,
     align: 1,
     sw_rotation: false,
+    brightness: false,
     invert: false,
     init: &ILI9341_INIT,
 };

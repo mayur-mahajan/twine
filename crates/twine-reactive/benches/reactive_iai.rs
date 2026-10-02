@@ -10,11 +10,16 @@ mod linux {
     use std::hint::black_box;
 
     use iai_callgrind::{library_benchmark, library_benchmark_group};
-    use twine_reactive::{Memo, create_root};
+    use twine_reactive::{Memo, Runtime};
+
+    /// The calling thread's reactive runtime.
+    fn rt() -> Runtime {
+        Runtime::current_thread()
+    }
 
     #[library_benchmark]
     fn get_untracked() -> u32 {
-        let cx = create_root();
+        let cx = rt().create_root();
         let s = cx.signal(1u32);
         let mut sum = 0u32;
         for _ in 0..100 {
@@ -25,7 +30,7 @@ mod linux {
 
     #[library_benchmark]
     fn set_with_one_effect() {
-        let cx = create_root();
+        let cx = rt().create_root();
         let s = cx.signal(0u32);
         cx.effect(move || {
             black_box(s.get());
@@ -37,7 +42,7 @@ mod linux {
 
     #[library_benchmark]
     fn memo_chain_10() {
-        let cx = create_root();
+        let cx = rt().create_root();
         let a = cx.signal(0u64);
         let mut last: Option<Memo<u64>> = None;
         for _ in 0..10 {
@@ -55,7 +60,7 @@ mod linux {
 
     #[library_benchmark]
     fn scope_10_signals_10_effects() {
-        let root = create_root();
+        let root = rt().create_root();
         for _ in 0..10 {
             let cx = root.child();
             for i in 0..10u32 {

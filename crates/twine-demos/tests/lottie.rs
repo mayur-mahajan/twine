@@ -13,7 +13,9 @@ fn frame(t: &TestUi, id: &'static str) -> u32 {
 #[test]
 fn lottie_demo_smoke() {
     let ((), logs) = capture_logs(|| {
-        let mut t = TestUi::new(480, 320).mount(twine_demos::lottie::app);
+        let mut t = TestUi::new(480, 320)
+            .app_config(twine_demos::config())
+            .mount(twine_demos::lottie::app);
         t.advance(Duration::ms(500));
         for name in ["Loader", "Check", "Heart"] {
             assert!(frame(&t, name) >= 13, "{name} plays");

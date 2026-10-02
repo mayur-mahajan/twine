@@ -62,6 +62,7 @@ pub static RM67162_240X536: PanelSpec = PanelSpec {
     colmod: 0x55,
     align: 2,
     sw_rotation: false,
+    brightness: true,
     invert: false,
     init: &RM67162_INIT,
 };

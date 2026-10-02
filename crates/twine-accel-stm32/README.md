@@ -19,15 +19,18 @@ swap bytes). Blit sources: `Argb8888`, `Xrgb8888`, `Rgb888`, `Rgb565`, `L8`, `A8
 
 | Feature | Effect |
 |---------|--------|
-| `stm32f429zi`, `stm32f746ng`, `stm32h743zi` | `PacRegs` over the chip's DMA2D (`stm32-metapac`); enable exactly one |
+| `stm32f429zi`, `stm32f746ng`, `stm32h743zi` | `PacRegs`, owning the chip's DMA2D (`stm32-metapac`); enable exactly one |
 | `dcache` | D-cache maintenance through the Cortex-M7 `SCB` (implied by the F7/H7 chips) |
 | `mock` | `mock::MockRegs`, a recording register file for host tests |
 | `log`, `defmt` | logging backend |
 
 ```rust,ignore
 // Enable the DMA2D clock first (RCC_AHB1ENR.DMA2DEN on F4/F7, RCC_AHB3ENR.DMA2DEN on H7).
-let mut dma = Dma2d::new(PacRegs::new());
-let painter = Painter::new(buf, &mut caches).with_accel(&mut dma);
+// `PacRegs` takes the HAL's DMA2D handle (one owner at a time), the `Ui` takes the accelerator:
+let regs = PacRegs::new(p.DMA2D).expect("one DMA2D owner");
+let ui = Ui::builder_fb(display).accel(Dma2d::new(regs).with_timeout(1_000_000)) /* … */;
+// Or with a painter of your own:
+// let painter = Painter::new(buf, &mut caches).with_accel(&mut dma);
 ```
 
 ## Checking on a board

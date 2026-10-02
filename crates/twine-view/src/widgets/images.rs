@@ -47,7 +47,7 @@ fn set_slice(
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let on = cx.signal(false);
 /// let _v = image_button(Symbol::Play, Symbol::Play)
 ///     .checked_images(Symbol::Pause, Symbol::Pause)
@@ -163,7 +163,7 @@ struct AnimImgCfg {
 /// use twine_view::prelude::*;
 ///
 /// static FRAMES: [ImageSource; 2] = [ImageSource::symbol(Symbol::Play), ImageSource::symbol(Symbol::Pause)];
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let run = cx.signal(true);
 /// let _v = animimg(&FRAMES, Duration::ms(400)).repeat(Repeat::Forever).playing(run);
 /// cx.dispose();

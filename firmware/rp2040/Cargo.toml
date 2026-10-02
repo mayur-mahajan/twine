@@ -1,6 +1,6 @@
 [package]
 name = "twine-example-rp2040"
-description = "Example firmware: Twine on an RP2040 (Raspberry Pi Pico) with an SPI display and a touch controller"
+description = "Example firmware: Twine on an RP2040 (Raspberry Pi Pico), bare metal (`twine::run::blocking`), with a DMA-driven SPI display and a touch controller"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -16,23 +16,23 @@ feature-sets = ["", "panel-st7789,touch-ft6x36,demo-controls", "panel-ili9341,to
 [features]
 default = ["panel-ili9341", "touch-xpt2046", "demo-counter"]
 ## ILI9341 240 × 320 SPI panel (turned to 320 × 240).
-panel-ili9341 = ["spi-panel", "twine-drivers/ili9341"]
+panel-ili9341 = ["spi-panel", "twine/drivers-ili9341"]
 ## ILI9342C 320 × 240 SPI panel (landscape native).
-panel-ili9342 = ["spi-panel", "twine-drivers/ili9342"]
+panel-ili9342 = ["spi-panel", "twine/drivers-ili9342"]
 ## ST7789 240 × 320 SPI panel (turned to 320 × 240).
-panel-st7789 = ["spi-panel", "twine-drivers/st7789"]
+panel-st7789 = ["spi-panel", "twine/drivers-st7789"]
 ## ST7796S 320 × 480 SPI panel (turned to 480 × 320).
-panel-st7796 = ["spi-panel", "twine-drivers/st7796"]
+panel-st7796 = ["spi-panel", "twine/drivers-st7796"]
 ## SSD1306 128 × 64 mono OLED on the I2C pins of the capacitive touch (no touch; mono theme).
-oled-ssd1306 = ["twine-drivers/ssd1306", "twine-drivers/i2c", "twine/color-i1"]
+oled-ssd1306 = ["twine/drivers-ssd1306", "twine/drivers-i2c"]
 ## XPT2046 resistive touch on its own SPI bus.
-touch-xpt2046 = ["touch", "twine-drivers/xpt2046"]
+touch-xpt2046 = ["touch", "twine/drivers-xpt2046"]
 ## FT6x36 capacitive touch on I2C.
-touch-ft6x36 = ["touch", "i2c-touch", "twine-drivers/ft6x36"]
+touch-ft6x36 = ["touch", "i2c-touch", "twine/drivers-ft6x36"]
 ## GT911 capacitive touch on I2C.
-touch-gt911 = ["touch", "i2c-touch", "twine-drivers/gt911"]
+touch-gt911 = ["touch", "i2c-touch", "twine/drivers-gt911"]
 ## CST816S capacitive touch on I2C.
-touch-cst816s = ["touch", "i2c-touch", "twine-drivers/cst816s"]
+touch-cst816s = ["touch", "i2c-touch", "twine/drivers-cst816s"]
 ## The counter demo.
 demo-counter = []
 ## The controls demo (sliders, switches, arcs, spinner).
@@ -50,16 +50,17 @@ touch = []
 i2c-touch = []
 
 [dependencies]
-twine = { path = "../../crates/twine", default-features = false, features = ["defmt", "color-rgb565-swapped", "perf-monitor", "montserrat-20"] }
-twine-drivers = { path = "../../crates/twine-drivers", features = ["async", "defmt"] }
-twine-embassy = { path = "../../crates/twine-embassy", features = ["defmt"] }
-twine-demos = { path = "../../crates/twine-demos", features = ["async", "defmt"] }
+twine = { path = "../../crates/twine", default-features = false, features = ["defmt", "perf-monitor", "montserrat-20", "drivers-spi-dma"] }
+twine-demos = { path = "../../crates/twine-demos", features = ["defmt"] }
 
-embassy-rp = { version = "0.10", features = ["rp2040", "defmt", "time-driver", "critical-section-impl"] }
-embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread", "defmt"] }
-embassy-time = { version = "0.5", features = ["defmt", "defmt-timestamp-uptime"] }
+# `unstable-pac`: the SPI0/DMA registers for the display's DMA transfers (`PicoDmaSpi`).
+embassy-rp = { version = "0.10", features = ["rp2040", "defmt", "time-driver", "critical-section-impl", "unstable-pac"] }
+# embassy-rp as a HAL only (no executor): `embassy-time` reads the clock and times init delays;
+# its timer queue is the generic one (nothing schedules timers without an executor).
+embassy-time = { version = "0.5", features = ["defmt", "defmt-timestamp-uptime", "generic-queue-8"] }
 embassy-embedded-hal = { version = "0.6", features = ["defmt"] }
 embassy-sync = { version = "0.8", features = ["defmt"] }
+cortex-m = "0.7"
 cortex-m-rt = "0.7"
 embedded-alloc = "0.7"
 # The RP2040 has no atomic read-modify-write instructions: atomics go through critical sections.

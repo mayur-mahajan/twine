@@ -557,7 +557,7 @@ fn dd_open_close_animations() {
         DefaultTheme::light(),
         Rc::new(StyleBuf::new().anim_duration(twine_core::Duration::ms(200))),
     );
-    let mut h = EngineHarness::new(320, 240).theme(Rc::new(theme));
+    let mut h = EngineHarness::new(320, 240).theme(theme);
     let screen = h.screen();
     let d = dropdown::create(h.engine_mut(), screen).unwrap();
     h.engine_mut().align(d, Align::TopMid, 0, 10);

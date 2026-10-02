@@ -7,11 +7,12 @@ use std::rc::Rc;
 
 use twine_core::{ColorFormat, Duration, Point, Rect};
 use twine_engine::{
-    Engine, EngineConfig, InvalidateReason, NodeId, ObjFlags, RefreshStats, State, ThemeHook, Wake,
+    BufferSpec, Engine, EngineConfig, IntoTheme, InvalidateReason, NodeId, ObjFlags, RefreshStats, State,
+    Wake,
 };
-use twine_hal::{BufferSpec, Key};
-use twine_reactive::Scope;
-use twine_view::{UiCore, View};
+use twine_hal::Key;
+use twine_reactive::{Channel, Latest, Outbox, Runtime, Scope};
+use twine_view::{AppConfig, MemoryReport, UiCore, UiError, View};
 use twine_widgets::button::BUTTON_CLASS;
 
 use crate::{EngineHarness, FlushRecord, Query};
@@ -21,7 +22,10 @@ use crate::{EngineHarness, FlushRecord, Query};
 /// declarative `Ui` cycle.
 ///
 /// Defaults: LVGL's light default theme with Montserrat 14, two 40-row partial buffers, the
-/// default engine configuration. Builder methods come before [`mount`](Self::mount).
+/// default engine configuration. Builder methods come before [`mount`](Self::mount). The
+/// application runs on the calling thread's reactive runtime
+/// ([`Runtime::current_thread`](twine_reactive::Runtime::current_thread)), so a test may mount
+/// several `TestUi`s and still take the thread's token itself.
 ///
 /// Dropping a `TestUi` disposes the mounted application with the engine lent (its scopes'
 /// cleanups run: animations stopped, timers removed, modals closed), then drops the engine —
@@ -47,6 +51,10 @@ use crate::{EngineHarness, FlushRecord, Query};
 /// ```
 pub struct TestUi {
     h: RefCell<EngineHarness>,
+    /// The application's configuration given with [`app_config`](Self::app_config): what the
+    /// harness engine and display were built with and what the mount applies. `None`: the
+    /// harness's own settings, and whatever the test set on the engine, are left as they are.
+    app: Option<AppConfig>,
     /// The mounted application, shared with the harness's step and teardown functions
     /// (taken by the teardown, which disposes it with the engine).
     core: Option<Rc<RefCell<Option<UiCore>>>>,
@@ -69,15 +77,91 @@ impl TestUi {
     pub fn new(w: u16, h: u16) -> Self {
         Self {
             h: RefCell::new(EngineHarness::new(w, h)),
+            app: None,
             core: None,
             pinned_frame: std::cell::Cell::new(None),
         }
+    }
+
+    /// A fresh `'static` [`Channel`] for one test: give it to the application through its
+    /// ports (see [`Scope::on_message`] § Ports) instead of sharing a global `static` between
+    /// tests, which the test harness runs in parallel (a value sent by one test would reach
+    /// another test's UI). Leaks the channel (a few bytes per call; test-only).
+    ///
+    /// ```
+    /// use twine_reactive::Channel;
+    /// use twine_testing::{TestUi, by_id};
+    /// use twine_view::prelude::*;
+    ///
+    /// #[derive(Clone, Copy)]
+    /// struct Ports {
+    ///     status: &'static Channel<&'static str, 4>,
+    /// }
+    ///
+    /// fn app(cx: Scope, ports: Ports) -> impl View {
+    ///     let status = cx.signal("idle");
+    ///     cx.on_message(ports.status, move |s| status.set(s));
+    ///     label(text!("{}", status.get())).test_id("status")
+    /// }
+    ///
+    /// let ports = Ports { status: TestUi::channel() };
+    /// let mut t = TestUi::new(120, 40).mount(move |cx| app(cx, ports));
+    /// ports.status.try_send("busy").unwrap();
+    /// t.run_until_idle();
+    /// assert_eq!(t.find(by_id("status")).text(), "busy");
+    /// ```
+    #[must_use]
+    pub fn channel<T: 'static, const N: usize>() -> &'static Channel<T, N> {
+        Box::leak(Box::new(Channel::new()))
+    }
+
+    /// A fresh `'static` [`Latest`] holding `initial`, for one test (see
+    /// [`channel`](Self::channel)). Leaks the cell.
+    ///
+    /// ```
+    /// use twine_testing::{TestUi, by_id};
+    /// use twine_view::prelude::*;
+    ///
+    /// let level = TestUi::latest(50u8);
+    /// let mut t = TestUi::new(120, 40).mount(move |cx| {
+    ///     let l = cx.watch(level);
+    ///     label(text!("{} %", l.get())).test_id("level")
+    /// });
+    /// level.set(75); // e.g. from a sensor thread
+    /// t.run_until_idle();
+    /// assert_eq!(t.find(by_id("level")).text(), "75 %");
+    /// ```
+    #[must_use]
+    pub fn latest<T: 'static>(initial: T) -> &'static Latest<T> {
+        Box::leak(Box::new(Latest::new(initial)))
+    }
+
+    /// A fresh `'static` [`Outbox`] for one test (see [`channel`](Self::channel)): the test
+    /// plays the consumer with `try_recv`. Leaks the outbox.
+    ///
+    /// ```
+    /// use twine_testing::{TestUi, by_text};
+    /// use twine_view::prelude::*;
+    ///
+    /// let cmd = TestUi::outbox::<u8, 4>();
+    /// let mut t = TestUi::new(120, 60).mount(move |_cx| {
+    ///     button(label("Go")).on_click(move || {
+    ///         let _ = cmd.try_send(1);
+    ///     })
+    /// });
+    /// t.find(by_text("Go")).click();
+    /// assert_eq!(cmd.try_recv(), Some(1));
+    /// ```
+    #[must_use]
+    pub fn outbox<T: 'static, const N: usize>() -> &'static Outbox<T, N> {
+        Box::leak(Box::new(Outbox::new()))
     }
 
     fn map_harness(self, f: impl FnOnce(EngineHarness) -> EngineHarness) -> Self {
         let h = f(self.h.into_inner());
         Self {
             h: RefCell::new(h),
+            app: self.app,
             core: self.core,
             pinned_frame: std::cell::Cell::new(None),
         }
@@ -89,28 +173,100 @@ impl TestUi {
         self.map_harness(|h| h.format(f))
     }
 
-    /// Uses `t` as the display's theme.
+    /// Uses `t` as the display's theme (and as [`AppConfig::theme`] after
+    /// [`app_config`](Self::app_config)): a theme value or a shared one ([`IntoTheme`]).
+    ///
+    /// ```
+    /// use twine_testing::TestUi;
+    /// use twine_view::prelude::*;
+    ///
+    /// let t = TestUi::new(64, 32).theme(DefaultTheme::dark()).mount(|_| label("hi"));
+    /// let d = t.engine().default_display().unwrap();
+    /// assert_eq!(t.engine().theme_mode(d), ThemeMode::Dark);
+    /// ```
     #[must_use]
-    pub fn theme(self, t: Rc<dyn ThemeHook>) -> Self {
-        self.map_harness(|h| h.theme(t))
+    pub fn theme(mut self, t: impl IntoTheme) -> Self {
+        let theme = t.into_theme();
+        if let Some(app) = &mut self.app {
+            app.theme = Some(theme.clone());
+        }
+        self.map_harness(|h| h.theme(theme))
     }
 
-    /// Uses no theme.
+    /// Uses no theme (also clears [`AppConfig::theme`] after [`app_config`](Self::app_config)):
+    /// widgets draw only their local styles. Never panics.
+    ///
+    /// ```
+    /// use twine_testing::TestUi;
+    /// use twine_view::prelude::*;
+    ///
+    /// let t = TestUi::new(64, 32).no_theme().mount(|_| label("hi"));
+    /// let d = t.engine().default_display().unwrap();
+    /// assert!(t.engine().theme(d).is_none());
+    /// ```
     #[must_use]
-    pub fn no_theme(self) -> Self {
+    pub fn no_theme(mut self) -> Self {
+        if let Some(app) = &mut self.app {
+            app.theme = None;
+        }
         self.map_harness(EngineHarness::no_theme)
     }
 
-    /// Uses the buffer layout `m`.
+    /// Uses heap partial buffers as `m` describes (see [`EngineHarness::buffers`]).
     #[must_use]
     pub fn buffers(self, m: BufferSpec) -> Self {
         self.map_harness(|h| h.buffers(m))
     }
 
-    /// Uses the engine configuration `c`.
+    /// Uses the engine configuration `c` (also [`AppConfig::engine`] after
+    /// [`app_config`](Self::app_config)). Never panics.
+    ///
+    /// ```
+    /// use twine_engine::EngineConfig;
+    /// use twine_testing::TestUi;
+    /// use twine_view::prelude::*;
+    ///
+    /// let cfg = EngineConfig { glyph_cache_bytes: 8 * 1024, ..EngineConfig::default() };
+    /// let t = TestUi::new(64, 32).config(cfg).mount(|_| label("hi"));
+    /// assert_eq!(t.engine().config().glyph_cache_bytes, 8 * 1024);
+    /// ```
     #[must_use]
-    pub fn config(self, c: EngineConfig) -> Self {
+    pub fn config(mut self, c: EngineConfig) -> Self {
+        if let Some(app) = &mut self.app {
+            app.engine = c;
+        }
         self.map_harness(|h| h.config(c))
+    }
+
+    /// Runs the application with `config` — the very [`AppConfig`] the firmware gives
+    /// `Ui::builder(..).app_config(..)` and the simulator `SimConfig::app_config(..)` — so the
+    /// test sees the shipped engine configuration, theme (`None`: no theme), motion,
+    /// rotation (the in-memory panel is rotated in software), channel and queue budgets and
+    /// fault hook. The harness keeps its own panel size, format and buffers (the engine draws
+    /// the same pixels with any buffer geometry). Call before [`mount`](Self::mount); later
+    /// builder methods refine it, and the mount applies it (over settings a test made on the
+    /// engine with [`mount_engine`](Self::mount_engine)). Without it, the harness's defaults
+    /// stay as they are.
+    ///
+    /// ```
+    /// use twine_testing::{TestUi, by_id};
+    /// use twine_view::prelude::*;
+    ///
+    /// /// Shared by the firmware's `main`, the simulator example and the tests.
+    /// fn config() -> AppConfig {
+    ///     AppConfig::new().theme(DefaultTheme::dark()).motion(Motion::Reduced)
+    /// }
+    ///
+    /// let t = TestUi::new(120, 40).app_config(config()).mount(|_| label("hi").test_id("l"));
+    /// assert_eq!(t.engine().motion(), Motion::Reduced);
+    /// assert_eq!(t.find(by_id("l")).text(), "hi");
+    /// ```
+    #[must_use]
+    pub fn app_config(self, config: AppConfig) -> Self {
+        let (engine, theme, rotation) = (config.engine, config.theme.clone(), config.rotation);
+        let mut t = self.map_harness(|h| h.configure(engine, theme, rotation));
+        t.app = Some(config);
+        t
     }
 
     /// Builds `app` (once) on the display, like `Ui::build`: a default focus group for the
@@ -126,15 +282,21 @@ impl TestUi {
         }
     }
 
-    /// [`mount`](Self::mount), returning the build error (see `UiCore::mount`) instead of
-    /// panicking.
+    /// [`mount`](Self::mount), returning the error (see `UiCore::mount_configured`) instead
+    /// of panicking.
     ///
     /// # Errors
-    /// [`BuildError`](twine_view::BuildError) when a widget of `app` cannot be created.
-    pub fn try_mount<V: View>(
-        mut self,
-        app: impl FnOnce(Scope) -> V,
-    ) -> Result<Self, twine_view::BuildError> {
+    /// [`UiError::Build`] when a widget of `app` cannot be created; [`UiError::Engine`] when
+    /// the configuration cannot be applied (see [`AppConfig::configure_engine`]).
+    ///
+    /// ```
+    /// use twine_testing::{TestUi, by_text};
+    /// use twine_view::prelude::*;
+    ///
+    /// let t = TestUi::new(64, 32).try_mount(|_| label("ok")).expect("the app builds");
+    /// assert_eq!(t.find(by_text("ok")).text(), "ok");
+    /// ```
+    pub fn try_mount<V: View>(mut self, app: impl FnOnce(Scope) -> V) -> Result<Self, UiError> {
         let h = self.h.get_mut();
         let display = h.display();
         let e = h.engine_mut();
@@ -143,7 +305,12 @@ impl TestUi {
                 e.set_default_group(Some(g));
             }
         }
-        let core = Rc::new(RefCell::new(Some(UiCore::mount(e, display, app)?)));
+        let rt = Runtime::current_thread();
+        let core = match &self.app {
+            Some(config) => UiCore::mount_configured(rt, e, display, config, app)?,
+            None => UiCore::mount(rt, e, display, app)?,
+        };
+        let core = Rc::new(RefCell::new(Some(core)));
         let c = core.clone();
         h.set_step_fn(Box::new(move |e, now| match c.borrow_mut().as_mut() {
             Some(ui) => ui.update(e, now),
@@ -227,7 +394,7 @@ impl TestUi {
         let mut spins = 0u32;
         loop {
             match h.update() {
-                Wake::Idle => return h.now().saturating_duration_since(start),
+                Wake::Idle | Wake::IdleFor(_) => return h.now().saturating_duration_since(start),
                 Wake::At(t) => {
                     spins = 0;
                     if t > h.now() {
@@ -252,7 +419,11 @@ impl TestUi {
         let _ = writeln!(s, "running anims: {}", e.anim_count());
         let _ = writeln!(s, "pending timers: {}", e.timer_count());
         let _ = writeln!(s, "pointer pressed: {pressed}");
-        let _ = writeln!(s, "pending effects: {}", twine_reactive::has_pending_effects());
+        let _ = writeln!(
+            s,
+            "pending effects: {}",
+            Runtime::current_thread().has_pending_effects()
+        );
         let _ = writeln!(s, "{}", e.dump());
         s
     }
@@ -452,6 +623,33 @@ impl TestUi {
     #[must_use]
     pub fn flushes(&self) -> Ref<'_, [FlushRecord]> {
         Ref::map(self.h.borrow(), EngineHarness::flushes)
+    }
+
+    /// What the scene's memory is used for: the engine, the reactive runtime, the command
+    /// queues and the waker pool ([`MemoryReport`]; as `Ui::memory_report`, so a test can pin
+    /// the memory of a scene). Before [`mount`](Self::mount) only the engine part is filled.
+    /// Allocates nothing; never panics.
+    ///
+    /// ```
+    /// use twine_testing::TestUi;
+    /// use twine_view::prelude::*;
+    ///
+    /// let t = TestUi::new(64, 32).mount(|_| column((label("a"), label("b"))));
+    /// let m = t.memory_report();
+    /// assert_eq!(m.engine.nodes, t.engine().tree().len());
+    /// assert!(m.reactive.scopes >= 1);
+    /// ```
+    #[must_use]
+    pub fn memory_report(&self) -> MemoryReport {
+        let engine = self.engine();
+        let core = self.core.as_ref().map(|c| c.borrow());
+        match core.as_deref() {
+            Some(Some(core)) => core.memory_report(&engine),
+            _ => MemoryReport {
+                engine: engine.memory_report(),
+                ..MemoryReport::default()
+            },
+        }
     }
 
     /// The engine.

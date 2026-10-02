@@ -7,6 +7,13 @@ use twine_testing::{TestUi, by_id};
 use twine_view::prelude::*;
 use twine_widgets::image::Image;
 
+use twine_reactive::Runtime;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
+
 #[global_allocator]
 static ALLOC: CountingAllocator = CountingAllocator;
 
@@ -65,7 +72,7 @@ fn icon_constants_are_static() {
 
 #[test]
 fn icon_reactive_forms_are_dynamic() {
-    let cx = twine_reactive::create_root();
+    let cx = rt().create_root();
     let src: Signal<Option<ImageSource>> = cx.signal(None);
     let sym = cx.signal(Symbol::Ok);
     let opt = cx.signal(Some(Symbol::Ok));

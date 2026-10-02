@@ -4,8 +4,8 @@ mod common;
 
 use common::{boxed, style, white_screen};
 use twine_core::{Color, ColorFormat, Instant, Opa, Rect, Rotation};
-use twine_engine::{BufferMode, Engine, EngineConfig, InvalidateReason, Wake};
-use twine_hal::{BufferSpec, DisplayDriver, DisplayInfo, DrawBufferMem};
+use twine_engine::{BufferMode, BufferSpec, Engine, EngineConfig, InvalidateReason, Wake};
+use twine_hal::{DisplayDriver, DisplayInfo, DrawBufferMem};
 use twine_style::Length;
 use twine_style::Radius;
 use twine_style::StyleProp;

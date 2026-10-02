@@ -4,8 +4,8 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use twine_core::{Color, Rect};
-use twine_hal::{DisplayDriver, DisplayInfo, DrawBufferMem};
+use twine_core::{Color, Duration, Fraction, Rect, Rotation};
+use twine_hal::{ControlError, DisplayDriver, DisplayInfo, DrawBufferMem};
 
 use crate::convert;
 
@@ -151,6 +151,15 @@ pub struct MemoryDisplay {
     failed: u64,
     /// Buffers are never handed back (`never_complete`).
     hung: bool,
+    /// Brightness and sleep are supported (`with_power_control`).
+    power_control: bool,
+    /// Hardware rotation at run time is supported (`with_rotation_control`).
+    rotation_control: bool,
+    brightness: Option<Fraction>,
+    asleep: bool,
+    sleep_settle: Duration,
+    /// Flushes begun while asleep.
+    flushes_asleep: u64,
 }
 
 impl MemoryDisplay {
@@ -190,7 +199,81 @@ impl MemoryDisplay {
             injection: Injection::None,
             failed: 0,
             hung: false,
+            power_control: false,
+            rotation_control: false,
+            brightness: None,
+            asleep: false,
+            sleep_settle: Duration::ZERO,
+            flushes_asleep: 0,
         }
+    }
+
+    /// Supports brightness and sleep ([`DisplayDriver::set_brightness`],
+    /// [`DisplayDriver::sleep`]): recorded and readable with [`brightness`](Self::brightness) and
+    /// [`is_asleep`](Self::is_asleep). Without it the display answers `Unsupported`, like a
+    /// driver that does not override them.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Fraction};
+    /// use twine_hal::{ControlError, DisplayDriver, DisplayInfo};
+    /// use twine_testing::MemoryDisplay;
+    ///
+    /// let mut d = MemoryDisplay::new(DisplayInfo::new(4, 4, ColorFormat::L8));
+    /// assert_eq!(d.set_brightness(Fraction::HALF), Err(ControlError::Unsupported));
+    /// let mut d = d.with_power_control();
+    /// d.set_brightness(Fraction::HALF).unwrap();
+    /// assert_eq!(d.brightness(), Some(Fraction::HALF));
+    /// ```
+    #[must_use]
+    pub fn with_power_control(mut self) -> Self {
+        self.power_control = true;
+        self
+    }
+
+    /// The settle time [`DisplayDriver::sleep`] reports (default zero).
+    #[must_use]
+    pub fn with_sleep_settle(mut self, settle: Duration) -> Self {
+        self.sleep_settle = settle;
+        self
+    }
+
+    /// Supports hardware rotation at run time ([`DisplayDriver::set_rotation`]): the
+    /// description becomes the rotated logical size with `hw_rotation = true`, and the
+    /// framebuffer is laid out in logical coordinates from then on (its content is scrambled
+    /// until redrawn, as on a panel whose `MADCTL` changed).
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Rotation};
+    /// use twine_hal::{DisplayDriver, DisplayInfo};
+    /// use twine_testing::MemoryDisplay;
+    ///
+    /// let mut d = MemoryDisplay::new(DisplayInfo::new(8, 4, ColorFormat::L8)).with_rotation_control();
+    /// let info = d.set_rotation(Rotation::Deg90).unwrap();
+    /// assert_eq!((info.width, info.height, info.hw_rotation), (4, 8, true));
+    /// assert_eq!(d.panel_size(), (4, 8));
+    /// ```
+    #[must_use]
+    pub fn with_rotation_control(mut self) -> Self {
+        self.rotation_control = true;
+        self
+    }
+
+    /// The brightness last set (`None` before any).
+    #[must_use]
+    pub fn brightness(&self) -> Option<Fraction> {
+        self.brightness
+    }
+
+    /// Whether the display was put to sleep (and not woken since).
+    #[must_use]
+    pub fn is_asleep(&self) -> bool {
+        self.asleep
+    }
+
+    /// Flushes begun while the display was asleep (the engine sends none).
+    #[must_use]
+    pub fn flushes_while_asleep(&self) -> u64 {
+        self.flushes_asleep
     }
 
     /// Lets the next `n` flushes succeed, then fails every later one with
@@ -478,6 +561,9 @@ impl DisplayDriver for MemoryDisplay {
             self.failed += 1;
             return Err(e);
         }
+        if self.asleep {
+            self.flushes_asleep += 1;
+        }
         self.copy_in(area, buf.as_slice());
         let bytes = self.info.format.stride(area.width() as u32) as usize * area.height() as usize;
         let seq = self.next_seq;
@@ -530,6 +616,45 @@ impl DisplayDriver for MemoryDisplay {
 
     fn error_code(&self, error: &Self::Error) -> u32 {
         error.code()
+    }
+
+    fn set_brightness(&mut self, level: Fraction) -> Result<(), ControlError<Self::Error>> {
+        if !self.power_control {
+            return Err(ControlError::Unsupported);
+        }
+        self.brightness = Some(level);
+        Ok(())
+    }
+
+    fn sleep(&mut self, sleep: bool) -> Result<Duration, ControlError<Self::Error>> {
+        if !self.power_control {
+            return Err(ControlError::Unsupported);
+        }
+        self.asleep = sleep;
+        Ok(self.sleep_settle)
+    }
+
+    fn set_rotation(&mut self, rotation: Rotation) -> Result<DisplayInfo, ControlError<Self::Error>> {
+        if !self.rotation_control {
+            return Err(ControlError::Unsupported);
+        }
+        let (nw, nh) = self.info.native_size();
+        let (w, h) = if rotation.swaps_axes() { (nh, nw) } else { (nw, nh) };
+        self.info = DisplayInfo {
+            width: w,
+            height: h,
+            rotation,
+            hw_rotation: true,
+            ..self.info
+        };
+        self.panel_w = w;
+        self.panel_h = h;
+        self.stride = self.info.format.stride(u32::from(w)) as usize;
+        let len = self.stride * usize::from(h);
+        if self.framebuffer.len() != len {
+            self.framebuffer.resize(len, 0);
+        }
+        Ok(self.info)
     }
 }
 

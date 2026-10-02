@@ -12,6 +12,13 @@ use twine_testing::{EngineHarness, MemoryDisplay, MockClock, TestUi, by_id};
 use twine_view::prelude::*;
 use twine_view::{BuildFailure, UiCore};
 
+use twine_reactive::Runtime;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
+
 /// A small tree budget, so filling it is cheap (tree mutations are O(n) under `debug-checks`).
 fn small() -> EngineConfig {
     EngineConfig {
@@ -51,7 +58,7 @@ fn regression_failed_widget_is_not_aliased_to_its_parent() {
     let screen = h.screen();
     fill(h.engine_mut(), 1); // room for the column only
     let before = build_failed(h.engine());
-    let scope = twine_reactive::create_root();
+    let scope = rt().create_root();
     let (col, child) = {
         let mut cx = BuildCx::new(h.engine_mut(), screen, scope);
         let mut child = None;
@@ -94,7 +101,7 @@ fn children_of_a_failed_node_are_not_built_into_the_parent() {
     fill(h.engine_mut(), 1);
     let len = h.engine().tree().len();
     let before = build_failed(h.engine());
-    let scope = twine_reactive::create_root();
+    let scope = rt().create_root();
     let col = {
         let mut cx = BuildCx::new(h.engine_mut(), screen, scope);
         cx.build(column((
@@ -172,6 +179,8 @@ fn count_build_faults(r: &FaultRecord) {
 fn try_build_reports_a_build_failure() {
     let display = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
     let r = Ui::builder(display)
+        .runtime(Runtime::current_thread())
+        .buffers(BufferMode::alloc(BufferSpec::default()))
         .clock(MockClock::new())
         .config(EngineConfig {
             max_nodes: 8,
@@ -182,9 +191,9 @@ fn try_build_reports_a_build_failure() {
     let Err(UiError::Build(e)) = r else {
         panic!("expected a build error, got {r:?}");
     };
-    assert_eq!(e.cause, BuildFailure::Capacity);
+    assert_eq!(e.first.cause, BuildFailure::Capacity);
     assert!(e.failures >= 1);
-    assert!(e.parent.is_some());
+    assert!(e.first.parent.is_some() && e.last.parent.is_some());
     assert!(BUILD_FAULTS.load(Ordering::Relaxed) >= e.failures);
     assert!(UiError::Build(e).to_string().starts_with("build: "));
 }
@@ -193,6 +202,8 @@ fn try_build_reports_a_build_failure() {
 fn try_build_succeeds_within_the_budget() {
     let display = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
     let mut ui = Ui::builder(display)
+        .runtime(Runtime::current_thread())
+        .buffers(BufferMode::alloc(BufferSpec::default()))
         .clock(MockClock::new())
         .config(small())
         .try_build(|_| column((label("a"), label("b"))))
@@ -206,16 +217,16 @@ fn failed_mount_leaves_the_engine_as_it_was() {
     let d = h.display();
     let len = h.engine().tree().len();
     let screen = h.screen();
-    let r = UiCore::mount(h.engine_mut(), d, |_| {
+    let r = UiCore::mount(Runtime::current_thread(), h.engine_mut(), d, |_| {
         column((0..40).map(|_| label("x")).collect::<Vec<_>>())
     });
     let e = r.unwrap_err();
-    assert_eq!(e.cause, BuildFailure::Capacity);
+    assert_eq!(e.first.cause, BuildFailure::Capacity);
     assert!(e.failures >= 1);
     assert_eq!(h.engine().tree().len(), len, "the partial build was removed");
     assert_eq!(h.engine().tree().children(screen).count(), 0);
     // The engine still works: a smaller application mounts.
-    let core = UiCore::mount(h.engine_mut(), d, |_| label("ok"));
+    let core = UiCore::mount(Runtime::current_thread(), h.engine_mut(), d, |_| label("ok"));
     assert!(core.is_ok());
 }
 
@@ -228,4 +239,78 @@ fn test_ui_try_mount_reports_the_error() {
         })
         .try_mount(|_| column((0..10).map(|_| label("x")).collect::<Vec<_>>()));
     assert!(r.is_err());
+}
+
+// ---- The mount's build report (R3.S02, rework F9) ------------------------------------------
+
+#[test]
+fn build_report_counts_every_failure_with_first_and_last_cause() {
+    let mut h = EngineHarness::new(100, 60).config(small());
+    let d = h.display();
+    fill(h.engine_mut(), 2); // the column and one label fit; three labels do not
+    let screen = h.screen();
+    let e = UiCore::mount(Runtime::current_thread(), h.engine_mut(), d, |_| {
+        column((label("a"), label("b"), label("c"), label("d")))
+    })
+    .unwrap_err();
+    assert_eq!(e.failures, 3, "one failure per widget that did not fit");
+    assert_eq!(e.first.cause, BuildFailure::Capacity);
+    assert_eq!(e.last.cause, BuildFailure::Capacity);
+    assert!(e.first.parent.is_some(), "under the column");
+    assert_eq!(e.first.parent, e.last.parent);
+    assert_eq!(h.engine().tree().children(screen).count(), 0, "taken down again");
+}
+
+#[test]
+fn build_report_includes_nested_builds_during_mount() {
+    // The rows of a `for_each` are built by its effect while the mount runs (a nested
+    // `BuildCx`): their failure fails the mount, whatever the fault counters say.
+    let mut h = EngineHarness::new(100, 60).config(small());
+    let d = h.display();
+    fill(h.engine_mut(), 3); // column, the `for_each` wrapper and one row fit
+    let e = UiCore::mount(Runtime::current_thread(), h.engine_mut(), d, |_| {
+        column(for_each(|| vec![1, 2, 3], |i| *i, |_, _| label("row")))
+    })
+    .unwrap_err();
+    assert_eq!(e.failures, 2, "the two rows that did not fit");
+    assert_eq!(e.first.cause, BuildFailure::Capacity);
+}
+
+#[test]
+fn regression_unrelated_build_fault_does_not_fail_the_mount() {
+    // A `BuildFailed` fault raised on the engine during the mount by something other than the
+    // application's build (here: a build under an unrelated scope) is telemetry only: it no
+    // longer fails the mount (it did when the mount diffed the fault counter).
+    let mut h = EngineHarness::new(100, 60).config(small());
+    let d = h.display();
+    let other = Runtime::current_thread().create_root();
+    let core = UiCore::mount(Runtime::current_thread(), h.engine_mut(), d, move |_| {
+        twine_view::EngineAccess::with(other, |e| {
+            // A failure outside the application (a deleted parent): a fault, not the mount's.
+            let gone = e.create_root(Box::new(Obj)).unwrap();
+            e.delete(gone).unwrap();
+            let mut cx = BuildCx::new(e, gone, other);
+            assert_eq!(cx.create(Obj), DEAD_NODE);
+            assert!(e.pending_faults().contains(FaultKind::BuildFailed));
+        });
+        label("ok")
+    });
+    assert!(core.is_ok(), "the application itself built fine: {core:?}");
+    other.dispose();
+}
+
+#[test]
+fn build_report_after_mount_is_faults_only() {
+    // A `when` branch built after the mount into a full tree: a fault, the `Ui` keeps running.
+    let mut show = None;
+    let mut t = TestUi::new(100, 60).config(small()).mount(|cx| {
+        let s = cx.signal(false);
+        show = Some(s);
+        column(when(move || s.get(), |_| label("late")))
+    });
+    t.run_until_idle();
+    fill(t.engine_mut(), 0);
+    show.unwrap().set(true);
+    t.run_until_idle();
+    assert!(t.engine_mut().take_faults().contains(FaultKind::BuildFailed));
 }

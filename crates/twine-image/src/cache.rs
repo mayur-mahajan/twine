@@ -264,6 +264,33 @@ impl ImageCache {
     pub fn stats(&self) -> CacheStats {
         self.stats
     }
+
+    /// Heap bytes the cache holds: its entry table and the decoded pixels of every cached
+    /// image (and of the transient image decoded for the current draw, if any), by capacity.
+    /// At most the [budget](Self::budget) plus the table once the cache is full. Allocates
+    /// nothing; never panics; O(entries).
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_image::{ImageCache, ImageHeader, SourceKey};
+    /// let mut cache = ImageCache::new(1024, 4);
+    /// let empty = cache.bytes_reserved();
+    /// cache.get_or_decode(SourceKey::Ptr(1), |out| {
+    ///     out.resize(16, 7);
+    ///     Ok(ImageHeader::new(ColorFormat::L8, 4, 4))
+    /// }).unwrap();
+    /// assert!(cache.bytes_reserved() >= empty + 16);
+    /// ```
+    #[must_use]
+    pub fn bytes_reserved(&self) -> usize {
+        self.entries.capacity() * core::mem::size_of::<Entry>()
+            + self
+                .entries
+                .iter()
+                .chain(&self.transient)
+                .map(|e| e.data.capacity())
+                .sum::<usize>()
+    }
 }
 
 /// Number of entries of an [`ImageHeaderCache`].

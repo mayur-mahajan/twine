@@ -24,7 +24,8 @@ well tested. Please read them before opening a pull request.
 
 Every PR must meet this **Definition of Done**:
 
-1. **`cargo xtask ci` passes.** It runs formatting, clippy with `-D warnings`, all tests,
+1. **`cargo xtask ci` passes.** It runs formatting, clippy with `-D warnings` (default features, all
+   features, and every library crate with its `defmt` logging backend), all tests,
    `no_std` builds for every embedded target, rustdoc, the layering check, the work-marker check,
    the generated-fonts, generated-images and style-property-table checks, a benchmark build, snapshot tests, Miri and
    the example firmware builds. Use

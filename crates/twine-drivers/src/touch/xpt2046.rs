@@ -41,9 +41,9 @@
 //!
 //! let rec = Recorder::new();
 //! rec.set_level("t_irq", true); // not touched
+//! // Pass it to `Ui::builder(..).input(touch)`: it is fitted to the display (clamp size) there.
 //! let mut touch = Xpt2046::new(rec.spi(), Some(rec.quiet_pin("t_irq")))
-//!     .with_calibration(Calibration::DEFAULT_320X240_ROT90)
-//!     .with_screen_size(320, 240);
+//!     .with_calibration(Calibration::DEFAULT_240X320);
 //! assert_eq!(touch.poll_hint(), PollHint::Interrupt);
 //! assert!(matches!(touch.read(), InputData::Pointer(p) if !p.pressed));
 //! assert!(rec.ops().is_empty()); // no SPI traffic while idle
@@ -51,9 +51,11 @@
 
 use embedded_hal::digital::InputPin;
 use embedded_hal::spi::SpiDevice;
-use twine_core::Point;
 use twine_core::log::{debug, error, trace, warn};
-use twine_hal::{Calibration, DeviceHealth, InputData, InputDevice, InputKind, PointerData, PollHint};
+use twine_hal::{
+    Calibration, DeviceHealth, DisplayInfo, InputData, InputDevice, InputKind, PointerData, PollHint,
+    TouchTransform,
+};
 
 /// Control byte: Z1 (12-bit, differential, powered).
 pub const CMD_Z1: u8 = 0xB3;
@@ -78,26 +80,26 @@ pub struct Xpt2046<SPI, IRQ> {
     last: PointerData,
     z_threshold: u16,
     samples: u8,
-    width: u16,
-    height: u16,
+    /// Calibrated native points → logical screen (from the fit; pass-through until then).
+    transform: TouchTransform,
     health: DeviceHealth,
     fail_after: u16,
 }
 
 impl<SPI, IRQ> Xpt2046<SPI, IRQ> {
-    /// A driver with the defaults: [`Calibration::DEFAULT_320X240_ROT90`], screen 320 × 240,
-    /// pressure threshold 400, 5 samples. `irq` is the `T_IRQ` pin (active low), if wired.
+    /// A driver with the defaults: [`Calibration::DEFAULT_240X320`], pressure threshold
+    /// 400, 5 samples, not clamped until fitted to a display ([`for_display`](Self::for_display)).
+    /// `irq` is the `T_IRQ` pin (active low), if wired.
     #[must_use]
     pub fn new(spi: SPI, irq: Option<IRQ>) -> Self {
         Self {
             spi,
             irq,
-            cal: Calibration::DEFAULT_320X240_ROT90,
+            cal: Calibration::DEFAULT_240X320,
             last: PointerData::default(),
             z_threshold: 400,
             samples: 5,
-            width: 320,
-            height: 240,
+            transform: TouchTransform::PASS_THROUGH,
             health: DeviceHealth::Ok,
             fail_after: DeviceHealth::DEFAULT_FAIL_AFTER,
         }
@@ -112,19 +114,57 @@ impl<SPI, IRQ> Xpt2046<SPI, IRQ> {
         self
     }
 
-    /// Sets the calibration (raw → screen).
+    /// Sets the calibration (raw → native panel pixels, see [`Calibration`]).
     #[must_use]
     pub fn with_calibration(mut self, cal: Calibration) -> Self {
         self.cal = cal;
         self
     }
 
-    /// Sets the logical screen size points are clamped to.
+    /// Fits the driver to the display described by `info`: calibrated (native) points are
+    /// rotated to its logical screen and clamped to its size. The engine does this when the driver is added (`Ui::builder(..).input(touch)`,
+    /// `Engine::add_input`) through
+    /// [`InputDevice::fit_to_display`]; call it yourself only when you read the driver without
+    /// the engine. Until fitted, points are not clamped (raw readings with
+    /// [`Calibration::IDENTITY`], e.g. for a calibration screen). The [`Calibration`] maps raw
+    /// readings to the display's **native** (unrotated) pixels; the fit adds the rotation, so
+    /// one calibration holds in every rotation (also when the display is rotated at run time,
+    /// which fits the driver again). Never panics.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Rotation};
+    /// use twine_drivers::touch::Xpt2046;
+    /// use twine_drivers::testkit::Recorder;
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let rec = Recorder::new();
+    /// let info = DisplayInfo::new(320, 240, ColorFormat::Rgb565Swapped).with_rotation(Rotation::Deg90);
+    /// let touch = Xpt2046::new(rec.spi(), Some(rec.quiet_pin("irq"))).for_display(&info);
+    /// assert_eq!(touch.screen_size(), (320, 240));
+    /// ```
     #[must_use]
-    pub fn with_screen_size(mut self, width: u16, height: u16) -> Self {
-        self.width = width;
-        self.height = height;
+    pub fn for_display(mut self, info: &DisplayInfo) -> Self {
+        self.fit(info);
         self
+    }
+
+    /// The logical screen size points are clamped to (`(u16::MAX, u16::MAX)` until fitted).
+    ///
+    /// ```
+    /// use twine_drivers::touch::Xpt2046;
+    /// use twine_drivers::testkit::Recorder;
+    ///
+    /// let rec = Recorder::new();
+    /// let touch = Xpt2046::new(rec.spi(), Some(rec.quiet_pin("irq")));
+    /// assert_eq!(touch.screen_size(), (u16::MAX, u16::MAX));
+    /// ```
+    #[must_use]
+    pub fn screen_size(&self) -> (u16, u16) {
+        (self.transform.width, self.transform.height)
+    }
+
+    fn fit(&mut self, info: &DisplayInfo) {
+        self.transform = TouchTransform::for_display(info);
     }
 
     /// Sets the pressure threshold (`z = z1 + 4095 − z2` must exceed it).
@@ -221,10 +261,8 @@ impl<SPI: SpiDevice, IRQ: InputPin> Xpt2046<SPI, IRQ> {
         match result {
             Ok(Some((x, y, _))) => {
                 let (sx, sy) = self.cal.apply(i32::from(x), i32::from(y));
-                let point = Point::new(
-                    sx.clamp(0, i32::from(self.width.max(1)) - 1),
-                    sy.clamp(0, i32::from(self.height.max(1)) - 1),
-                );
+                // Native panel pixels, rotated to the logical screen and clamped.
+                let point = self.transform.apply(sx, sy);
                 PointerData { point, pressed: true }
             }
             Ok(None) => PointerData {
@@ -286,6 +324,10 @@ impl<SPI: SpiDevice, IRQ: InputPin> InputDevice for Xpt2046<SPI, IRQ> {
     fn health(&self) -> DeviceHealth {
         self.health
     }
+
+    fn fit_to_display(&mut self, info: &DisplayInfo) {
+        self.fit(info);
+    }
 }
 
 #[cfg(feature = "async")]
@@ -313,6 +355,7 @@ mod tests {
     use alloc::vec::Vec;
     use core::cell::Cell;
     use proptest::prelude::*;
+    use twine_core::Point;
 
     fn encode(v: u16) -> [u8; 2] {
         let s = v << 3;
@@ -343,9 +386,7 @@ mod tests {
     }
 
     fn dut(rec: &Recorder) -> Xpt2046<RecordingSpi, RecordingPin> {
-        Xpt2046::new(rec.spi(), Some(rec.quiet_pin("irq")))
-            .with_calibration(Calibration::IDENTITY)
-            .with_screen_size(4096, 4096)
+        Xpt2046::new(rec.spi(), Some(rec.quiet_pin("irq"))).with_calibration(Calibration::IDENTITY)
     }
 
     #[test]
@@ -487,8 +528,14 @@ mod tests {
         touch(&rec, 2000, 2000, vec![200], vec![3900]);
         let mut t: Xpt2046<_, RecordingPin> = Xpt2046::new(rec.spi(), None);
         assert_eq!(t.poll_hint(), PollHint::Periodic);
-        assert_eq!(t.calibration(), Calibration::DEFAULT_320X240_ROT90);
-        // raw (x 200, y 3900) → (0, 240), clamped to y = 239.
+        assert_eq!(t.calibration(), Calibration::DEFAULT_240X320);
+        // Not fitted yet: native panel pixels, not clamped.
+        assert!(matches!(t.read(), InputData::Pointer(p) if p.point == Point::new(240, 320)));
+        // What the engine does when the driver is added for a 320 × 240 landscape display.
+        let landscape = crate::touch::test_util::display(320, 240).with_rotation(twine_core::Rotation::Deg90);
+        t.fit_to_display(&landscape);
+        assert_eq!(t.screen_size(), (320, 240));
+        // Native (240, 320) → logical (−1, 240), clamped to (0, 239).
         assert_eq!(
             t.read(),
             InputData::Pointer(PointerData {
@@ -500,6 +547,31 @@ mod tests {
         assert_eq!(t.kind(), InputKind::Pointer);
         let (_spi, irq) = t.release();
         assert!(irq.is_none());
+    }
+
+    #[test]
+    fn calibration_survives_rotation() {
+        // One calibration (native pixels); the same raw tap lands on the same physical spot of
+        // the panel in every rotation: logical = TouchTransform::for_display(info)(native).
+        let rec = Recorder::new();
+        touch(&rec, 2000, 2000, vec![1950], vec![1000]);
+        let mut t: Xpt2046<_, RecordingPin> = Xpt2046::new(rec.spi(), None);
+        let native = Calibration::DEFAULT_240X320.apply(1950, 1000);
+        for rot in [
+            twine_core::Rotation::Deg0,
+            twine_core::Rotation::Deg90,
+            twine_core::Rotation::Deg180,
+            twine_core::Rotation::Deg270,
+        ] {
+            let (w, h) = if rot.swaps_axes() { (320, 240) } else { (240, 320) };
+            let info = crate::touch::test_util::display(w, h).with_rotation(rot);
+            t.fit_to_display(&info);
+            let expect = TouchTransform::for_display(&info).apply(native.0, native.1);
+            assert!(
+                matches!(t.read(), InputData::Pointer(p) if p.point == expect),
+                "{rot:?}"
+            );
+        }
     }
 
     #[test]

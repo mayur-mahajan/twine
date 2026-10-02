@@ -32,7 +32,7 @@ impl<T: core::fmt::Debug + 'static> core::fmt::Debug for Model<T> {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let on = cx.signal(false);
 /// let _bound = button(label("Wi-Fi")).checkable(true).checked(on); // two-way
 /// let _owned = button(label("Bluetooth")).checkable(true).checked(true)
@@ -126,6 +126,7 @@ pub fn bind_model<T: PartialEq + Clone + 'static>(
     show: impl Fn(&mut Engine, NodeId, T) + 'static,
     read: impl Fn(&Engine, NodeId, &Event) -> T + 'static,
 ) {
+    let rt = cx.runtime();
     match model {
         Model::Owned(v) => show(cx.engine(), node, v),
         Model::Bound(sig) => {
@@ -141,7 +142,7 @@ pub fn bind_model<T: PartialEq + Clone + 'static>(
                 move |ecx, ev| {
                     if ev.target == ecx.node() && sig.is_alive() {
                         let v = read(ecx.engine(), ev.target, ev);
-                        EngineAccess::provide(ecx.engine_mut(), || sig.set_if_changed(v));
+                        EngineAccess::provide(rt, ecx.engine_mut(), || sig.set_if_changed(v));
                     }
                     EventResult::Continue
                 },
@@ -171,13 +172,16 @@ pub(crate) fn bind_model_synced<T: PartialEq + Clone + 'static>(
                 show,
             );
             let scope = cx.scope();
+            let rt = scope.runtime();
             let tick = scope.signal(0u32);
             cx.engine().add_event_handler(
                 node,
                 EventFilter::Code(EventCode::ValueChanged),
                 move |ecx, ev| {
                     if ev.target == ecx.node() && tick.is_alive() {
-                        EngineAccess::provide(ecx.engine_mut(), || tick.update(|t| *t = t.wrapping_add(1)));
+                        EngineAccess::provide(rt, ecx.engine_mut(), || {
+                            tick.update(|t| *t = t.wrapping_add(1));
+                        });
                     }
                     EventResult::Continue
                 },
@@ -188,10 +192,10 @@ pub(crate) fn bind_model_synced<T: PartialEq + Clone + 'static>(
                 if core::mem::take(&mut first) {
                     return;
                 }
-                if !crate::access::engine_ready() {
+                if !crate::access::engine_ready(rt) {
                     return;
                 }
-                let v = EngineAccess::with(|e| {
+                let v = EngineAccess::with(rt, |e| {
                     if e.tree().contains(node) {
                         read(e, node)
                     } else {
@@ -256,13 +260,14 @@ pub fn on_value_changed<T: 'static>(
     map: impl Fn(&Engine, NodeId, &Event) -> Option<T> + 'static,
     mut f: impl FnMut(T) + 'static,
 ) {
+    let rt = cx.runtime();
     cx.engine().add_event_handler(
         node,
         EventFilter::Code(EventCode::ValueChanged),
         move |ecx, ev| {
             if ev.target == ecx.node() {
                 if let Some(v) = map(ecx.engine(), ev.target, ev) {
-                    EngineAccess::provide(ecx.engine_mut(), || f(v));
+                    EngineAccess::provide(rt, ecx.engine_mut(), || f(v));
                 }
             }
             EventResult::Continue

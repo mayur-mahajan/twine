@@ -60,10 +60,10 @@
 //!
 //! `color-rgb565`, `color-rgb565-swapped`, `color-rgb888`, `color-xrgb8888`, `color-l8`,
 //! `color-i1` select the buffer formats that are compiled (`Argb8888` is always compiled
-//! because layers need it); drawing into a disabled format draws nothing, logs a warning once
-//! and is recorded once for [`take_format_disabled`] (the engine raises
-//! `FaultKind::FormatDisabled` from it, and refuses displays in a disabled format up front). `log` / `defmt` select the logging backend (target `"twine::render"`); `std`
-//! enables std-only conveniences.
+//! because layers need it); a draw target in a disabled format cannot be created
+//! ([`DrawBuf::new`] returns [`RenderError::FormatDisabled`]; the engine refuses such displays
+//! up front), so drawing never meets one. `log` / `defmt` select the logging backend (target
+//! `"twine::render"`); `std` enables std-only conveniences.
 //!
 //! ## Example
 //!
@@ -131,7 +131,7 @@ pub use buf::{DrawBuf, is_draw_format};
 pub use caches::{CacheStats, RenderCacheStats, RenderCaches, RenderConfig};
 pub use circle::{CircleCache, MAX_CACHED_RADIUS};
 pub use coverage::{PixelFn, SpanSource};
-pub use dispatch::{is_format_enabled, report_format_disabled, take_format_disabled};
+pub use dispatch::is_format_enabled;
 pub use error::RenderError;
 pub use glyph::SubpxOrder;
 pub use gradient::{GradExtend, GradKind, GradStop, Gradient, GradientCache, MAX_STOPS, build_color_map};

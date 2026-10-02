@@ -2,8 +2,6 @@
 //! same text in the model; the preview follows the name; OK hides the keyboard; the form is
 //! idle when no field is focused.
 
-use std::rc::Rc;
-
 use twine::core::Duration;
 use twine::engine::NodeId;
 use twine::prelude::*;
@@ -75,7 +73,7 @@ fn preview(t: &TestUi) -> String {
 
 #[test]
 fn keyboard_keypad_and_encoder_type_the_same() {
-    let mut t = TestUi::new(320, 240).mount(app);
+    let mut t = TestUi::new(320, 240).app_config(twine_demos::config()).mount(app);
     t.run_until_idle();
     let form = t.root_scope().expect_context::<Form>();
 
@@ -111,7 +109,7 @@ fn keyboard_keypad_and_encoder_type_the_same() {
 
 #[test]
 fn ok_hides_the_keyboard_and_the_form_idles() {
-    let mut t = TestUi::new(320, 240).mount(app);
+    let mut t = TestUi::new(320, 240).app_config(twine_demos::config()).mount(app);
     t.run_until_idle();
     t.assert_idle();
     let form = t.root_scope().expect_context::<Form>();
@@ -132,7 +130,7 @@ fn ok_hides_the_keyboard_and_the_form_idles() {
 
 #[test]
 fn spinbox_buttons_change_the_quantity() {
-    let mut t = TestUi::new(320, 240).mount(app);
+    let mut t = TestUi::new(320, 240).app_config(twine_demos::config()).mount(app);
     t.run_until_idle();
     let form = t.root_scope().expect_context::<Form>();
     let page = t.find(by_id("page")).id();
@@ -152,7 +150,7 @@ fn snapshots_keyboard_open() {
         ("text_input_keyboard_open_light", DefaultTheme::light()),
         ("text_input_keyboard_open_dark", DefaultTheme::dark()),
     ] {
-        let mut t = TestUi::new(320, 240).theme(Rc::new(theme)).mount(app);
+        let mut t = TestUi::new(320, 240).theme(theme).mount(app);
         t.run_until_idle();
         let form = t.root_scope().expect_context::<Form>();
         form.name.set(String::from("Ada"));

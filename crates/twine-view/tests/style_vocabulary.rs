@@ -17,7 +17,7 @@ use twine_image::ImageSource;
 use twine_render::{BlendMode, BorderSide, GradKind, GradStop, Gradient, ShadowDsc};
 use twine_style::{
     Align, BaseDir, BlurQuality, ColorFilter, CrossAlign, FlexFlow, GradDir, GridAlign, GridSpan, GridTrack,
-    ImageColorkey, LayoutKind, Length, MainAlign, PROP_ALIASES, PROP_COUNT, PROP_META, Part, PropId,
+    ImageColorkey, LayoutKind, Length, MainAlign, PROP_ALIASES, PROP_COUNT, PROP_NAMES, Part, PropId,
     PropValue, Props, SHORTHANDS, Style, StyleBuf, StyleProp, StyleValue, TextLeadingTrim, TracksRef,
     Transition, TransitionRef,
 };
@@ -278,7 +278,7 @@ fn every_table_property_has_modifier_builder_and_key() {
     let mut seen = BTreeSet::new();
     for ((id, key, buf, style, view, scope), want) in rows {
         assert!(seen.insert(id), "{id:?} twice");
-        assert_eq!(key, id.meta().snake_name, "{id:?}: key");
+        assert_eq!(key, id.snake_name(), "{id:?}: key");
         assert_ne!(
             want,
             id.meta().default,
@@ -328,12 +328,12 @@ fn every_shorthand_has_modifier_builder_and_key() {
 
 #[test]
 fn names_are_unique_and_old_names_are_only_aliases() {
-    let keys: BTreeSet<&str> = PROP_META.iter().map(|m| m.snake_name).collect();
+    let keys: BTreeSet<&str> = PROP_NAMES.iter().map(|m| m.snake_name).collect();
     assert_eq!(keys.len(), PROP_COUNT, "property keys are unique");
     let shorthands: BTreeSet<&str> = SHORTHANDS.iter().map(|s| s.name).collect();
     assert_eq!(shorthands.len(), SHORTHANDS.len(), "shorthand names are unique");
     assert!(keys.is_disjoint(&shorthands), "a shorthand shadows a property");
-    for (m, aliases) in PROP_META.iter().zip(PROP_ALIASES.iter()) {
+    for (m, aliases) in PROP_NAMES.iter().zip(PROP_ALIASES.iter()) {
         assert!(
             !aliases.is_empty(),
             "{}: every property names its LVGL constant",

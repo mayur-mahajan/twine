@@ -1,5 +1,5 @@
 //! Display traits and descriptions: [`DisplayDriver`], `AsyncDisplayDriver` (feature `async`),
-//! [`FramebufferDisplay`], [`DisplayInfo`], [`BufferSpec`].
+//! [`FramebufferDisplay`], [`DisplayInfo`].
 //!
 //! This module is the complete contract between the Twine engine and a display driver. A driver
 //! author needs nothing else.
@@ -25,75 +25,27 @@
 //! `area` is in **logical** (rotated) coordinates and the driver/controller rotates (e.g. MIPI
 //! DCS `MADCTL`). Otherwise the engine rotates the pixels in software and `area` is in physical
 //! panel coordinates.
+//!
+//! # Power and rotation at run time
+//!
+//! Besides flushing, a driver may offer three controls, each a provided method that answers
+//! [`ControlError::Unsupported`] unless the driver overrides it:
+//!
+//! | Control | Method | When the driver does not support it |
+//! |---------|--------|-------------------------------------|
+//! | brightness | [`DisplayDriver::set_brightness`] | the engine raises `FaultKind::DisplayControl`; panels dimmed by a backlight pin are dimmed by the application (its PWM) |
+//! | sleep / wake | [`DisplayDriver::sleep`] | the engine still stops drawing while "asleep" (and raises the fault) |
+//! | rotation | [`DisplayDriver::set_rotation`] | the engine rotates in software (needs `Engine::reserve_rotation`) |
+//!
+//! The engine calls them only between frames, with no flush in flight (never in the middle of
+//! a transfer), and never sends anything to the panel before the settle time a
+//! [`sleep`](DisplayDriver::sleep) call returned has passed — so drivers need no delay of their
+//! own.
 
 pub use twine_core::Rotation;
-use twine_core::{ColorFormat, Rect};
+use twine_core::{ColorFormat, Duration, Fraction, Rect};
 
 use crate::DrawBufferMem;
-
-/// How the simulator and the test harnesses should allocate draw buffers for a display.
-///
-/// This is only a *request*; the engine's `BufferMode` holds the actual memory.
-///
-/// ```
-/// use twine_core::ColorFormat;
-/// use twine_hal::{BufferSpec, DisplayInfo};
-///
-/// let info = DisplayInfo::new(320, 240, ColorFormat::Rgb565);
-/// assert_eq!(BufferSpec::default(), BufferSpec::PartialDouble { rows: 40 });
-/// assert_eq!(BufferSpec::default().bytes_per_buffer(&info), 320 * 2 * 40);
-/// assert_eq!(BufferSpec::Full.bytes_per_buffer(&info), 320 * 2 * 240);
-/// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum BufferSpec {
-    /// One partial buffer of `rows` full-width rows: render, flush, wait, repeat.
-    PartialSingle {
-        /// Rows per buffer.
-        rows: u16,
-    },
-    /// Two partial buffers of `rows` rows each (ping-pong with DMA).
-    PartialDouble {
-        /// Rows per buffer.
-        rows: u16,
-    },
-    /// Two full-screen framebuffers (memory-mapped panels, swapped at vsync).
-    Full,
-    /// One full-screen framebuffer rendered in place.
-    Direct,
-}
-
-impl Default for BufferSpec {
-    fn default() -> Self {
-        BufferSpec::PartialDouble { rows: 40 }
-    }
-}
-
-impl BufferSpec {
-    /// Number of buffers of this layout (1 or 2).
-    #[must_use]
-    pub const fn buffer_count(&self) -> usize {
-        match self {
-            BufferSpec::PartialSingle { .. } | BufferSpec::Direct => 1,
-            BufferSpec::PartialDouble { .. } | BufferSpec::Full => 2,
-        }
-    }
-
-    /// Bytes of **one** buffer for the display `info`.
-    ///
-    /// Partial rows are clamped to `1..=info.height` (a buffer taller than the screen is
-    /// useless, a zero-row buffer cannot render anything).
-    #[must_use]
-    pub fn bytes_per_buffer(&self, info: &DisplayInfo) -> usize {
-        let rows = match *self {
-            BufferSpec::PartialSingle { rows } | BufferSpec::PartialDouble { rows } => {
-                rows.clamp(1, info.height.max(1)).min(info.height)
-            }
-            BufferSpec::Full | BufferSpec::Direct => info.height,
-        };
-        info.bytes_per_row() * usize::from(rows)
-    }
-}
 
 /// Static description of a display, returned by the drivers' `info()`.
 ///
@@ -184,6 +136,65 @@ impl DisplayInfo {
     pub const fn area(&self) -> Rect {
         Rect::new(0, 0, self.width as i32, self.height as i32)
     }
+
+    /// The panel's native (unrotated) size `(width, height)`: the logical size with the axes
+    /// swapped back for [`Rotation::Deg90`] and [`Rotation::Deg270`]. Touch transforms
+    /// ([`TouchTransform::for_display`](crate::TouchTransform::for_display)) and anything else
+    /// that works in panel coordinates start from it.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Rotation};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let info = DisplayInfo::new(320, 240, ColorFormat::Rgb565Swapped).with_rotation(Rotation::Deg90);
+    /// assert_eq!(info.native_size(), (240, 320));
+    /// assert_eq!(info.with_rotation(Rotation::Deg180).native_size(), (320, 240));
+    /// ```
+    #[must_use]
+    pub const fn native_size(&self) -> (u16, u16) {
+        if self.rotation.swaps_axes() {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        }
+    }
+}
+
+/// Why a display control ([`DisplayDriver::set_brightness`], [`DisplayDriver::sleep`],
+/// [`DisplayDriver::set_rotation`] and their async and framebuffer counterparts) was not
+/// applied.
+///
+/// ```
+/// use twine_hal::ControlError;
+///
+/// let e: ControlError<&str> = ControlError::Driver("bus error");
+/// assert_eq!(e.map(str::len), ControlError::Driver(9));
+/// assert!(ControlError::<()>::Unsupported.is_unsupported());
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ControlError<E> {
+    /// The panel or driver cannot do this (the provided methods' answer). Nothing was sent.
+    Unsupported,
+    /// The driver tried and failed (bus error, …); the panel's state is unknown.
+    Driver(E),
+}
+
+impl<E> ControlError<E> {
+    /// Maps the driver error with `f` (e.g. to an error code); `Unsupported` stays.
+    #[must_use]
+    pub fn map<F>(self, f: impl FnOnce(E) -> F) -> ControlError<F> {
+        match self {
+            ControlError::Unsupported => ControlError::Unsupported,
+            ControlError::Driver(e) => ControlError::Driver(f(e)),
+        }
+    }
+
+    /// Whether this is [`ControlError::Unsupported`].
+    #[must_use]
+    pub const fn is_unsupported(&self) -> bool {
+        matches!(self, ControlError::Unsupported)
+    }
 }
 
 /// A blocking or DMA-capable display driver with an embedded frame memory (GRAM).
@@ -240,7 +251,8 @@ pub trait DisplayDriver {
     /// The driver's error type (bus errors, invalid areas…).
     type Error: core::fmt::Debug;
 
-    /// Static description of the display. Must not change while the engine runs.
+    /// Static description of the display. Must not change while the engine runs, except
+    /// through [`set_rotation`](Self::set_rotation) (which returns the new description).
     fn info(&self) -> DisplayInfo;
 
     /// Starts sending `buf` (the pixels of `area`, row-major, native format, `stride =
@@ -281,6 +293,51 @@ pub trait DisplayDriver {
         let _ = error;
         0
     }
+
+    /// Sets the panel brightness (`Fraction::ZERO` = darkest the panel allows, `ONE` =
+    /// brightest), for panels that dim themselves (AMOLED/OLED: MIPI DCS `WRDISBV`, SSD1306
+    /// contrast). Default: [`ControlError::Unsupported`] — LCDs are dimmed by their backlight,
+    /// which the application drives (PWM).
+    ///
+    /// Called by the engine between frames with no flush in flight (`Engine::set_display_brightness`,
+    /// `DisplayCmd::Brightness`).
+    ///
+    /// # Errors
+    /// [`ControlError::Unsupported`] (default), or [`ControlError::Driver`] when sending failed.
+    fn set_brightness(&mut self, level: Fraction) -> Result<(), ControlError<Self::Error>> {
+        let _ = level;
+        Err(ControlError::Unsupported)
+    }
+
+    /// Puts the panel to sleep (`true`: e.g. MIPI DCS `SLPIN`, frame memory kept) or wakes it
+    /// (`false`: `SLPOUT`). Returns the settle time: how long the panel needs before it accepts
+    /// the next command or pixels (MIPI DCS: 5 ms after `SLPIN`, 120 ms after `SLPOUT`). The
+    /// engine sends nothing to the driver before it has passed, so the driver never blocks.
+    /// Default: [`ControlError::Unsupported`].
+    ///
+    /// # Errors
+    /// [`ControlError::Unsupported`] (default), or [`ControlError::Driver`] when sending failed.
+    fn sleep(&mut self, sleep: bool) -> Result<Duration, ControlError<Self::Error>> {
+        let _ = sleep;
+        Err(ControlError::Unsupported)
+    }
+
+    /// Rotates the picture in hardware (e.g. MIPI DCS `MADCTL`) and returns the new
+    /// description: logical size and `rotation` of `rotation`, and `hw_rotation` telling
+    /// whether flush areas are now logical (`true`) or still native. The format may not
+    /// change. Default: [`ControlError::Unsupported`], and the engine rotates in software
+    /// instead (with the scratch buffers `Engine::reserve_rotation` allocated at start-up).
+    ///
+    /// Called by the engine between frames with no flush in flight; the whole screen is
+    /// redrawn afterwards.
+    ///
+    /// # Errors
+    /// [`ControlError::Unsupported`] (default), or [`ControlError::Driver`] when sending failed
+    /// (the driver must then keep reporting its previous rotation).
+    fn set_rotation(&mut self, rotation: Rotation) -> Result<DisplayInfo, ControlError<Self::Error>> {
+        let _ = rotation;
+        Err(ControlError::Unsupported)
+    }
 }
 
 /// Async display driver (embassy / embedded-hal-async), feature `async`.
@@ -289,11 +346,14 @@ pub trait DisplayDriver {
 /// (before returning `Pending`), so that `join(driver.flush(..), render_next_chunk)` overlaps the
 /// DMA transfer with rendering.
 ///
-/// **The future must complete in bounded time.** The runtime awaits it and has no timer of its
-/// own (it assumes no executor), so `EngineConfig::flush_timeout` does not apply: a transfer
-/// that never ends stalls the UI task. Bound the wait in the driver with the executor's timer
-/// (e.g. `embassy_time::with_timeout`) and return an error on timeout; the engine then applies
-/// its flush policy and health tracking (`FaultKind::FlushError`).
+/// **Bounded by the runtime.** `AsyncUi` races every flush still pending after its first poll
+/// against `EngineConfig::flush_timeout` on its [`AsyncPlatform`](crate::AsyncPlatform)'s
+/// timer. When the timeout wins, the flush future is **dropped** (so it must be cancel-safe: an
+/// embassy DMA transfer is aborted on drop) and the engine raises `FaultKind::FlushTimeout`
+/// and marks the display failed, exactly as for a blocking driver whose buffer never comes
+/// back. A driver therefore needs no timeout of its own; it may still return an error early
+/// when it detects a failure (a bus error, its own shorter deadline), which the engine handles
+/// as `FaultKind::FlushError`.
 #[cfg(feature = "async")]
 #[allow(async_fn_in_trait)]
 pub trait AsyncDisplayDriver {
@@ -314,6 +374,42 @@ pub trait AsyncDisplayDriver {
     fn error_code(&self, error: &Self::Error) -> u32 {
         let _ = error;
         0
+    }
+
+    /// Called when the UI has nothing more to draw (after a frame that left nothing due), for
+    /// power saving; the next [`flush`](Self::flush) must wake the bus again. Default: completes
+    /// immediately. Same contract as [`DisplayDriver::idle`].
+    async fn idle(&mut self) {}
+
+    /// Sets the panel brightness (see [`DisplayDriver::set_brightness`]). Default:
+    /// [`ControlError::Unsupported`].
+    ///
+    /// # Errors
+    /// As [`DisplayDriver::set_brightness`].
+    async fn set_brightness(&mut self, level: Fraction) -> Result<(), ControlError<Self::Error>> {
+        let _ = level;
+        Err(ControlError::Unsupported)
+    }
+
+    /// Sleeps (`true`) or wakes (`false`) the panel and returns its settle time (see
+    /// [`DisplayDriver::sleep`]). Default: [`ControlError::Unsupported`].
+    ///
+    /// # Errors
+    /// As [`DisplayDriver::sleep`].
+    async fn sleep(&mut self, sleep: bool) -> Result<Duration, ControlError<Self::Error>> {
+        let _ = sleep;
+        Err(ControlError::Unsupported)
+    }
+
+    /// Rotates in hardware and returns the new description (see
+    /// [`DisplayDriver::set_rotation`]). Default: [`ControlError::Unsupported`] (software
+    /// rotation).
+    ///
+    /// # Errors
+    /// As [`DisplayDriver::set_rotation`].
+    async fn set_rotation(&mut self, rotation: Rotation) -> Result<DisplayInfo, ControlError<Self::Error>> {
+        let _ = rotation;
+        Err(ControlError::Unsupported)
     }
 }
 
@@ -347,6 +443,26 @@ pub trait FramebufferDisplay {
     fn error_code(&self, error: &Self::Error) -> u32 {
         let _ = error;
         0
+    }
+
+    /// Sets the panel brightness (see [`DisplayDriver::set_brightness`]). Default:
+    /// [`ControlError::Unsupported`]. Framebuffer displays cannot be rotated at run time.
+    ///
+    /// # Errors
+    /// As [`DisplayDriver::set_brightness`].
+    fn set_brightness(&mut self, level: Fraction) -> Result<(), ControlError<Self::Error>> {
+        let _ = level;
+        Err(ControlError::Unsupported)
+    }
+
+    /// Sleeps (`true`) or wakes (`false`) the panel and returns its settle time (see
+    /// [`DisplayDriver::sleep`]). Default: [`ControlError::Unsupported`].
+    ///
+    /// # Errors
+    /// As [`DisplayDriver::sleep`].
+    fn sleep(&mut self, sleep: bool) -> Result<Duration, ControlError<Self::Error>> {
+        let _ = sleep;
+        Err(ControlError::Unsupported)
     }
 }
 
@@ -399,24 +515,5 @@ mod tests {
         assert_eq!(DisplayInfo::new(128, 64, ColorFormat::I1).bytes_per_row(), 16);
         assert_eq!(DisplayInfo::new(129, 64, ColorFormat::I1).bytes_per_row(), 17);
         assert_eq!(DisplayInfo::new(10, 1, ColorFormat::Rgb888).bytes_per_row(), 30);
-    }
-
-    #[test]
-    fn buffer_spec_sizes() {
-        let info = DisplayInfo::new(100, 50, ColorFormat::Rgb565);
-        assert_eq!(
-            BufferSpec::PartialSingle { rows: 10 }.bytes_per_buffer(&info),
-            2000
-        );
-        assert_eq!(
-            BufferSpec::PartialDouble { rows: 500 }.bytes_per_buffer(&info),
-            10_000
-        );
-        assert_eq!(BufferSpec::PartialDouble { rows: 0 }.bytes_per_buffer(&info), 200);
-        assert_eq!(BufferSpec::Direct.bytes_per_buffer(&info), 10_000);
-        assert_eq!(BufferSpec::Full.buffer_count(), 2);
-        assert_eq!(BufferSpec::PartialSingle { rows: 1 }.buffer_count(), 1);
-        let empty = DisplayInfo::new(0, 0, ColorFormat::Rgb565);
-        assert_eq!(BufferSpec::default().bytes_per_buffer(&empty), 0);
     }
 }

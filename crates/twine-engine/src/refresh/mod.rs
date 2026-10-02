@@ -18,11 +18,11 @@ use twine_hal::{DisplayInfo, DrawBufferMem};
 use twine_render::{DrawAccel, DrawBuf, Painter};
 
 use crate::display::Backend;
-use crate::{Engine, EngineError, RefreshStats, Wake};
+use crate::{Engine, EngineError, RefreshStats, StepBudget, Wake};
 
 pub(crate) use framebuffer::{DirectState, FullState};
 use partial::ChunkStep;
-pub(crate) use partial::PartialState;
+pub(crate) use partial::{PartialState, Refit};
 
 /// Maximum areas of one frame: the dirty areas plus the performance overlay's area.
 const MAX_FRAME_AREAS: usize = 34;
@@ -239,7 +239,7 @@ fn debug_color(frame: u32) -> Color {
 }
 
 /// What one display's refresh did.
-enum DisplayOutcome {
+pub(crate) enum DisplayOutcome {
     Idle,
     Due(Instant),
     /// A frame was completed; the next one is due at the instant if areas are dirty again
@@ -252,7 +252,8 @@ enum DisplayOutcome {
 enum JobStep {
     /// The frame is complete (or was abandoned because the display is halted).
     Done,
-    /// No draw buffer was free: the frame continues in a later step.
+    /// No draw buffer was free, or the step's [`StepBudget`] is spent: the frame continues in
+    /// a later step.
     Waiting,
     /// The driver hung (`flush_timeout`): the frame was abandoned, its areas stay dirty.
     TimedOut,
@@ -267,9 +268,15 @@ impl Engine {
     /// Renders and flushes every display whose dirty areas are due at `now` (at most one frame
     /// per `refr_period` per display). Called by [`step`](Self::step).
     pub fn refresh(&mut self, now: Instant) -> RefreshOutcome {
+        self.refresh_within(now, &mut StepBudget::UNLIMITED.chunk_allowance())
+    }
+
+    /// [`refresh`](Self::refresh) rendering at most `*chunks_left` chunks (decremented per
+    /// chunk); a frame cut short is [`in_progress`](RefreshOutcome::in_progress).
+    fn refresh_within(&mut self, now: Instant, chunks_left: &mut u32) -> RefreshOutcome {
         let mut out = RefreshOutcome::default();
         for d in 0..self.displays.len() {
-            match self.refresh_display(d, now) {
+            match self.refresh_display(d, now, chunks_left) {
                 DisplayOutcome::Idle => {}
                 DisplayOutcome::Due(t) => out.next_due = Some(out.next_due.map_or(t, |n| n.min(t))),
                 DisplayOutcome::Rendered(due) => {
@@ -296,11 +303,36 @@ impl Engine {
     /// input read (polled devices, held devices, long press timers) and pending flushes;
     /// [`Wake::Idle`] when nothing is pending — an idle UI costs no CPU at all.
     pub fn step(&mut self, now: Instant) -> Wake {
+        self.step_budgeted(now, StepBudget::UNLIMITED)
+    }
+
+    /// [`step`](Self::step) rendering at most `budget` (see [`StepBudget`]): when a frame is
+    /// cut short, the step returns [`Wake::Now`] and the next step continues it. The pixels of
+    /// a frame finished over several steps are those of the same frame rendered at once.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Instant};
+    /// use twine_engine::{BufferMode, BufferSpec, Engine, EngineConfig, StepBudget, Wake};
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::MemoryDisplay;
+    ///
+    /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
+    /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
+    /// // 8-row buffers: the first frame (the whole 32-row screen) is 4 chunks.
+    /// engine.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 })).unwrap();
+    /// let now = Instant::from_millis(0);
+    /// let mut steps = 1;
+    /// while engine.step_budgeted(now, StepBudget::chunks(1)) == Wake::Now {
+    ///     steps += 1;
+    /// }
+    /// assert_eq!(steps, 4);
+    /// ```
+    pub fn step_budgeted(&mut self, now: Instant, budget: StepBudget) -> Wake {
         self.begin_step(now);
         self.read_inputs(now);
         self.run_timers(now);
         self.run_anims(now);
-        self.finish_step(now)
+        self.finish_step_budgeted(now, budget)
     }
 
     /// Starts an update at `now` (the first part of [`step`](Self::step), for callers that run
@@ -308,6 +340,8 @@ impl Engine {
     /// animations and timers started before the next animation step.
     pub fn begin_step(&mut self, now: Instant) {
         self.set_anim_now(now);
+        // `inactive_for` counts from the first step until the first input.
+        self.last_activity.get_or_insert(now);
     }
 
     /// Finishes an update (the last part of [`step`](Self::step), after
@@ -315,8 +349,36 @@ impl Engine {
     /// [`run_anims`](Self::run_anims)): the layout pass, the refresh of every due display and
     /// the performance bookkeeping. Returns when to call again (see [`step`](Self::step)).
     pub fn finish_step(&mut self, now: Instant) -> Wake {
+        self.finish_step_budgeted(now, StepBudget::UNLIMITED)
+    }
+
+    /// [`finish_step`](Self::finish_step) rendering at most `budget` (see [`StepBudget`] and
+    /// [`step_budgeted`](Self::step_budgeted)): returns [`Wake::Now`] when a frame was cut
+    /// short.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Instant};
+    /// use twine_engine::{BufferMode, BufferSpec, Engine, EngineConfig, StepBudget, Wake};
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::MemoryDisplay;
+    ///
+    /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
+    /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
+    /// engine.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 })).unwrap();
+    /// let now = Instant::from_millis(0);
+    /// // The parts of a step, run one by one (as the view layer does between them).
+    /// engine.begin_step(now);
+    /// engine.read_inputs(now);
+    /// engine.run_timers(now);
+    /// engine.run_anims(now);
+    /// // Two of the frame's four chunks: the rest comes with the next step.
+    /// assert_eq!(engine.finish_step_budgeted(now, StepBudget::chunks(2)), Wake::Now);
+    /// ```
+    pub fn finish_step_budgeted(&mut self, now: Instant, budget: StepBudget) -> Wake {
+        // Brightness / sleep / rotation requests first: a rotation is laid out and drawn now.
+        self.apply_display_requests(now);
         self.update_layout();
-        let out = self.refresh(now);
+        let out = self.refresh_within(now, &mut budget.chunk_allowance());
         self.after_refresh(now, out.rendered);
         // The performance overlay may have changed its size: lay it out for the next frame.
         self.update_layout();
@@ -327,10 +389,12 @@ impl Engine {
             return Wake::Now;
         }
         let input = self.input_deadline().map_or(Wake::Idle, Wake::At);
-        out.next_due
+        let wake = out
+            .next_due
             .map_or(Wake::Idle, Wake::At)
             .min(input)
-            .min(self.anim_wake(now))
+            .min(self.anim_wake(now));
+        self.idle_wake(now, wake)
     }
 
     /// Whether a display driver still holds a draw buffer or a framebuffer swap is pending.
@@ -347,12 +411,25 @@ impl Engine {
             .map_or_else(RefreshStats::default, |d| d.refresher.stats)
     }
 
-    fn refresh_display(&mut self, d: usize, now: Instant) -> DisplayOutcome {
+    fn refresh_display(&mut self, d: usize, now: Instant, chunks_left: &mut u32) -> DisplayOutcome {
         if matches!(self.displays[d].backend, Backend::External(())) {
             // Rendered by the caller through `refresh_begin` / `render_chunk`: only report when
             // the next frame is due (a frame due now is rendered right after this update).
-            let r = &self.displays[d].refresher;
-            if r.job.is_none() && (!r.dirty.is_empty() || r.overlay_dirty.is_some()) {
+            let disp = &self.displays[d];
+            let r = &disp.refresher;
+            let dirty = !r.dirty.is_empty() || r.overlay_dirty.is_some();
+            let c = &disp.control;
+            if let Some(t) = c.ready_at.filter(|t| now < *t) {
+                // Settling after a sleep or wake: requests and drawing wait until then.
+                if c.pending() || (!c.asleep && dirty) {
+                    return DisplayOutcome::Due(t);
+                }
+            }
+            if c.asleep {
+                // A wake request is taken by the owner right after this update.
+                return DisplayOutcome::Idle;
+            }
+            if r.job.is_none() && dirty {
                 if let Some(last) = r.last_refresh {
                     let due = last + self.config.refr_period;
                     if now < due {
@@ -368,6 +445,12 @@ impl Engine {
         if self.display_halted(d) {
             // `FlushPolicy::Halt`: nothing is rendered until `recover_display`.
             return DisplayOutcome::Idle;
+        }
+        if self.displays[d].control.needs_attention() {
+            // Brightness / sleep / rotation requests, asleep or settling (cold).
+            if let Some(out) = self.display_control_outcome(d, now) {
+                return out;
+            }
         }
         if self.displays[d].refresher.job.is_none() {
             let r = &mut self.displays[d].refresher;
@@ -399,15 +482,24 @@ impl Engine {
                     DisplayOutcome::Due(now + Duration::ms(1))
                 };
             }
+            if *chunks_left == 0 {
+                // The step's budget went to another display: start this frame next step.
+                return DisplayOutcome::InProgress;
+            }
             self.start_job(d, now);
         }
-        match self.run_job(d) {
+        match self.run_job(d, chunks_left) {
             JobStep::Done => {
                 let r = &self.displays[d].refresher;
                 let again = !self.display_halted(d) && (!r.dirty.is_empty() || r.overlay_dirty.is_some());
-                DisplayOutcome::Rendered(
-                    again.then(|| r.last_refresh.map_or(now, |last| last + self.config.refr_period)),
-                )
+                let due = again.then(|| r.last_refresh.map_or(now, |last| last + self.config.refr_period));
+                // Requests wait for the end of the frame: take them in the next step.
+                let due = if self.displays[d].control.pending() {
+                    Some(now)
+                } else {
+                    due
+                };
+                DisplayOutcome::Rendered(due)
             }
             JobStep::Waiting => DisplayOutcome::InProgress,
             JobStep::TimedOut if self.display_halted(d) => DisplayOutcome::Idle,
@@ -422,7 +514,7 @@ impl Engine {
     pub fn refresh_due(&self) -> Option<Instant> {
         self.displays
             .iter()
-            .filter(|d| !d.health.halted && d.refresher.job.is_none())
+            .filter(|d| !d.health.halted && !d.control.asleep && d.refresher.job.is_none())
             .filter(|d| !d.refresher.dirty.is_empty() || d.refresher.overlay_dirty.is_some())
             .map(|d| {
                 d.refresher
@@ -465,6 +557,28 @@ impl Engine {
             }
             i += 1;
         }
+    }
+
+    /// Abandons the open chunked frame of display `d` after a flush timeout (the async
+    /// runtime dropped the flush): the unrendered rest of the frame stays dirty, the frame ends
+    /// with no further chunk ([`render_chunk`](Self::render_chunk) returns `None`, and
+    /// [`refresh_end`](Self::refresh_end) records it without a warning), and the next frame
+    /// starts no earlier than `refr_period` after the timeout (`waited` after the frame
+    /// started), as on the blocking path.
+    pub(crate) fn abandon_chunked_frame(&mut self, d: usize, waited: Duration) {
+        let r = &mut self.displays[d].refresher;
+        r.last_refresh = r.last_refresh.map(|t| t + waited);
+        if self.chunk_display != Some(d) {
+            return;
+        }
+        let Some((idx, y)) = self.displays[d].refresher.job.as_ref().map(|j| (j.idx, j.next_y)) else {
+            return;
+        };
+        self.requeue_job_rest(d, idx, Some(y));
+        if let Some(job) = self.displays[d].refresher.job.as_mut() {
+            job.idx = job.areas.len();
+        }
+        twine_core::warn!(target: "twine::refresh", "display {}: frame abandoned (flush timeout)", d);
     }
 
     /// Abandons the frame of display `d` (halted by the flush policy, or its driver hung):
@@ -563,9 +677,13 @@ impl Engine {
         }
     }
 
-    /// Continues the frame of display `d` (see [`JobStep`]).
-    fn run_job(&mut self, d: usize) -> JobStep {
+    /// Continues the frame of display `d` (see [`JobStep`]), rendering at most `*chunks_left`
+    /// chunks (each one decrements it).
+    fn run_job(&mut self, d: usize, chunks_left: &mut u32) -> JobStep {
         while let Some((area, y, counted)) = self.job_next(d) {
+            if *chunks_left == 0 {
+                return JobStep::Waiting;
+            }
             let t0 = self.hires_us();
             let next_y = match self.displays[d].refresher.strategy {
                 Strategy::Partial(_) => match self.partial_chunk(d, area, y) {
@@ -581,6 +699,7 @@ impl Engine {
                     area.y1
                 }
             };
+            *chunks_left -= 1;
             if !counted {
                 if let (Some(a), Some(b)) = (t0, self.hires_us()) {
                     self.job_mut(d).excluded_us += b.saturating_sub(a);
@@ -640,6 +759,7 @@ impl Engine {
             let r = &disp.refresher;
             matches!(disp.backend, Backend::External(()))
                 && !disp.health.halted
+                && !disp.control.blocks_drawing(now)
                 && r.job.is_none()
                 && (!r.dirty.is_empty() || r.overlay_dirty.is_some())
                 && r.last_refresh

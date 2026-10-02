@@ -8,10 +8,17 @@ use twine_testing::alloc::{CountingAllocator, count_allocs};
 #[global_allocator]
 static ALLOC: CountingAllocator = CountingAllocator;
 
-/// Live heap bytes after mounting `app` and running until idle (the `TestUi` included).
+/// The harness with the shipped configuration (built outside the measurements: they compare
+/// applications, not harness set-ups).
+fn harness() -> TestUi {
+    TestUi::new(320, 240).app_config(twine_demos::config())
+}
+
+/// Live heap bytes after mounting `app` and running until idle.
 fn live<V: View>(app: impl FnOnce(Scope) -> V) -> i64 {
-    let (t, stats) = count_allocs(|| {
-        let mut t = TestUi::new(320, 240).mount(app);
+    let h = harness();
+    let (t, stats) = count_allocs(move || {
+        let mut t = h.mount(app);
         t.run_until_idle();
         t
     });
@@ -35,14 +42,16 @@ fn controls_heap() {
 /// `demo-selection`, the engine's own caches come on top).
 #[test]
 fn selection_heap_usage() {
-    let (empty, base) = count_allocs(|| {
-        let mut t = TestUi::new(320, 240).mount(|_| container(()));
+    let h = harness();
+    let (empty, base) = count_allocs(move || {
+        let mut t = h.mount(|_| container(()));
         t.run_until_idle();
         t
     });
     drop(empty);
-    let (t, stats) = count_allocs(|| {
-        let mut t = TestUi::new(320, 240).mount(twine_demos::selection::app);
+    let h = harness();
+    let (t, stats) = count_allocs(move || {
+        let mut t = h.mount(twine_demos::selection::app);
         t.run_until_idle();
         let s = t
             .root_scope()

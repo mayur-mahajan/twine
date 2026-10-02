@@ -6,8 +6,8 @@ mod common;
 
 use common::white_screen;
 use twine_core::{Duration, Point, Rect};
+use twine_engine::BufferSpec;
 use twine_engine::NodeId;
-use twine_hal::BufferSpec;
 use twine_testing::EngineHarness;
 use twine_testing::alloc::{CountingAllocator, count_allocs};
 use twine_testing::scenes::scroll_list;

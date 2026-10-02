@@ -25,27 +25,27 @@ feature-sets = [
 [features]
 default = ["panel-jd9853", "touch-axs5106l", "demo-counter"]
 ## JD9853 172 × 320 SPI panel (1.47" IPS, portrait).
-panel-jd9853 = ["spi-panel", "twine-drivers/jd9853"]
+panel-jd9853 = ["spi-panel", "twine/drivers-jd9853"]
 ## ILI9341 240 × 320 SPI panel (turned to 320 × 240).
-panel-ili9341 = ["spi-panel", "twine-drivers/ili9341"]
+panel-ili9341 = ["spi-panel", "twine/drivers-ili9341"]
 ## ILI9342C 320 × 240 SPI panel (landscape native).
-panel-ili9342 = ["spi-panel", "twine-drivers/ili9342"]
+panel-ili9342 = ["spi-panel", "twine/drivers-ili9342"]
 ## ST7789 240 × 320 SPI panel (turned to 320 × 240).
-panel-st7789 = ["spi-panel", "twine-drivers/st7789"]
+panel-st7789 = ["spi-panel", "twine/drivers-st7789"]
 ## ST7796S 320 × 480 SPI panel (turned to 480 × 320).
-panel-st7796 = ["spi-panel", "twine-drivers/st7796"]
+panel-st7796 = ["spi-panel", "twine/drivers-st7796"]
 ## SSD1306 128 × 64 mono OLED on the I2C pins of the capacitive touch (no touch; mono theme).
-oled-ssd1306 = ["twine-drivers/ssd1306", "twine-drivers/i2c", "twine/color-i1"]
+oled-ssd1306 = ["twine/drivers-ssd1306", "twine/drivers-i2c"]
 ## AXS5106L capacitive touch on I2C.
-touch-axs5106l = ["touch", "i2c-touch", "twine-drivers/axs5106l"]
+touch-axs5106l = ["touch", "i2c-touch", "twine/drivers-axs5106l"]
 ## XPT2046 resistive touch sharing the display's SPI bus (own chip select).
-touch-xpt2046 = ["touch", "twine-drivers/xpt2046"]
+touch-xpt2046 = ["touch", "twine/drivers-xpt2046"]
 ## FT6x36 capacitive touch on I2C.
-touch-ft6x36 = ["touch", "i2c-touch", "twine-drivers/ft6x36"]
+touch-ft6x36 = ["touch", "i2c-touch", "twine/drivers-ft6x36"]
 ## GT911 capacitive touch on I2C.
-touch-gt911 = ["touch", "i2c-touch", "twine-drivers/gt911"]
+touch-gt911 = ["touch", "i2c-touch", "twine/drivers-gt911"]
 ## CST816S capacitive touch on I2C.
-touch-cst816s = ["touch", "i2c-touch", "twine-drivers/cst816s"]
+touch-cst816s = ["touch", "i2c-touch", "twine/drivers-cst816s"]
 ## The counter demo.
 demo-counter = []
 ## The controls demo (sliders, switches, arcs, spinner).
@@ -60,9 +60,7 @@ touch = []
 i2c-touch = []
 
 [dependencies]
-twine = { path = "../../crates/twine", default-features = false, features = ["log", "color-rgb565-swapped", "perf-monitor", "montserrat-20"] }
-twine-drivers = { path = "../../crates/twine-drivers", features = ["async", "log"] }
-twine-embassy = { path = "../../crates/twine-embassy" }
+twine = { path = "../../crates/twine", default-features = false, features = ["log", "perf-monitor", "montserrat-20", "embassy"] }
 twine-demos = { path = "../../crates/twine-demos", features = ["async"] }
 
 esp-hal = { version = "~1.2.2", features = ["esp32c6", "log-04", "unstable"] }

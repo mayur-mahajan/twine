@@ -134,6 +134,26 @@ impl GlyphCache {
         self.arena.len()
     }
 
+    /// Heap bytes the cache reserves: the glyph arena and its block map, the entry table and
+    /// the text renderer's scratch rows (by capacity; the glyph scratch grows once to the
+    /// largest glyph drawn). Allocates nothing; never panics; O(1).
+    ///
+    /// ```
+    /// use twine_text::GlyphCache;
+    /// let c = GlyphCache::new(1024);
+    /// assert!(c.bytes_reserved() >= c.budget());
+    /// ```
+    #[must_use]
+    pub fn bytes_reserved(&self) -> usize {
+        self.arena.capacity()
+            + self.used.capacity()
+            + self.entries.capacity() * core::mem::size_of::<Entry>()
+            + self.row_a.capacity()
+            + self.row_b.capacity()
+            + self.glyph.capacity()
+            + self.lcd_row.capacity()
+    }
+
     /// Whether glyphs can be cached at all.
     #[must_use]
     pub fn is_enabled(&self) -> bool {

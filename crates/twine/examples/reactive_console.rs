@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use twine::reactive::{Channel, batch, create_root, drain_channels};
+use twine::reactive::{Channel, Runtime};
 
 /// Values sent to the UI thread from a worker thread.
 static INPUT: Channel<i32, 8> = Channel::new();
@@ -55,7 +55,9 @@ fn count(ran: &[String], prefix: &str) -> usize {
 fn main() {
     env_logger::init();
     let trace: Trace = Rc::default();
-    let root = create_root();
+    // The runtime token of this (the UI) thread: every runtime-wide operation goes through it.
+    let rt = Runtime::take().expect("runtime already taken");
+    let root = rt.create_root();
     let effects_scope = root.child();
 
     let (a, b) = (root.signal(1), root.signal(2));
@@ -100,10 +102,10 @@ fn main() {
 
     let ran = step(
         4,
-        "batch(|| { a.set(1); b.set(1); }): one flush for two writes",
+        "rt.batch(|| { a.set(1); b.set(1); }): one flush for two writes",
         &trace,
         || {
-            batch(|| {
+            rt.batch(|| {
                 a.set(1);
                 b.set(1);
             });
@@ -137,7 +139,7 @@ fn main() {
             while !INPUT.waker().take() {
                 std::thread::sleep(Duration::from_millis(1));
             }
-            let n = drain_channels(16);
+            let n = rt.drain_channels(16);
             println!("      drained {n} message(s)");
             worker.join().expect("worker thread");
         },
@@ -146,7 +148,7 @@ fn main() {
     assert_eq!(a.get(), 10);
 
     root.dispose();
-    let stats = twine::reactive::runtime_stats();
+    let stats = rt.stats();
     println!(
         "done: {} nodes and {} scopes left after disposing the root",
         stats.nodes, stats.scopes

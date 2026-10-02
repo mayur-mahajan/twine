@@ -63,6 +63,7 @@ const MAX_HREF_CHAIN: usize = 8;
 
 /// Why an SVG document could not be parsed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, thiserror::Error)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SvgError {
     /// The input is not UTF-8.
     #[error("svg: input is not valid UTF-8")]
@@ -83,6 +84,7 @@ pub enum SvgError {
 
 /// `preserveAspectRatio` alignment.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Align {
     /// Scale non-uniformly to fill the viewport.
     None,
@@ -109,6 +111,7 @@ pub enum Align {
 
 /// `preserveAspectRatio`: alignment and `meet` (fit inside, the default) or `slice` (cover).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AspectRatio {
     /// Alignment.
     pub align: Align,

@@ -4,7 +4,7 @@ Twine on ST's STM32F429I-DISC1 (STM32F429ZIT6, 2 MiB flash, 192 KiB SRAM + 64 Ki
 SDRAM, 2.4" 240 × 320 ILI9341 in RGB interface mode, STMPE811 resistive touch). This is the
 full-framebuffer example: the LTDC scans out one of two RGB565 framebuffers in SDRAM while the
 engine renders the dirty areas of the next frame into the other (`BufferMode::Full`); the DMA2D
-does fills, blits and glyph blending (`Engine::set_accel`), and the buffers swap at vertical
+does fills, blits and glyph blending (`UiBuilder::accel`), and the buffers swap at vertical
 blanking. Unlike the SPI examples there is no flush: presenting a frame is one register write.
 
 | Part | How |
@@ -14,7 +14,7 @@ blanking. Unlike the SPI examples there is no flush: presenting a frame is one r
 | Panel | ILI9341 configured over SPI5 (SCK PF7, MOSI PF9, CS PC2, D/CX PD13) for RGB mode (ST BSP `ili9341_Init`) |
 | LTDC | layer 1 RGB565 240 × 320; HSYNC 10, HBP 20, HFP 10, VSYNC 2, VBP 2, VFP 4; 18 data lines (R/G/B 2..7) |
 | Framebuffers | 2 × 150 KiB at the start of the SDRAM; `present` writes `L1CFBAR` + `SRCR.VBR`, done when `VBR` clears |
-| DMA2D | `twine_accel_stm32::Dma2d<PacRegs>` (clock enabled in `Board::init`) |
+| DMA2D | `twine_accel_stm32::Dma2d<PacRegs<_>>` owning `Board::dma2d` (clock enabled in `Board::init`), owned by the `Ui` (`UiBuilder::accel`) |
 | Touch | STMPE811 on I2C3 (SCL PA8, SDA PC9), `INT` PA15 (EXTI 15) |
 | Heap | 128 KiB (`embedded-alloc`) in internal SRAM |
 

@@ -6,10 +6,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Wake as TaskWake, Waker};
 
-use twine_reactive::runtime_stats;
+use twine_reactive::Runtime;
 use twine_testing::{TestUi, by_id, by_text, capture_logs};
 use twine_view::prelude::*;
 use twine_widgets::label::Label;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 #[test]
 fn node_ref_with_mut_in_handler() {
@@ -208,10 +213,10 @@ fn on_message_drains_in_batch() {
     for v in [1, 2, 3] {
         BATCH_CH.try_send(v).unwrap();
     }
-    let runs = runtime_stats().effect_runs;
+    let runs = rt().stats().effect_runs;
     t.update();
     assert_eq!(
-        runtime_stats().effect_runs - runs,
+        rt().stats().effect_runs - runs,
         1,
         "one binding run for three messages"
     );

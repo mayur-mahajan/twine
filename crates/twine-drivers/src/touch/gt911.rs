@@ -6,7 +6,7 @@
 //! | Address | `0x5D` or `0x14` (selected by the `INT` level during reset) |
 //! | Bus speed | I2C up to 400 kHz |
 //! | IRQ | `INT`; the default configuration triggers on the falling edge → active low |
-//! | Rotation | reports panel coordinates (resolution from its config): use [`TouchTransform`] |
+//! | Rotation | reports panel coordinates (resolution from its config), mapped to the display by [`TouchTransform`](super::TouchTransform) (fitted automatically, see [module docs](super#coordinates)) |
 //!
 //! A reading reads the status register `0x814E` (bit 7: buffer ready, bits 3:0: number of
 //! points). When ready and touched, the first point is read at `0x8150` (X low, X high, Y low,
@@ -25,22 +25,22 @@
 //! | `RST` | not driven by the driver: hold it high from your firmware; the address is latched from `INT` during reset |
 //!
 //! ```
-//! use twine_drivers::touch::{Gt911, TouchTransform};
+//! use twine_drivers::touch::Gt911;
 //! use twine_drivers::testkit::Recorder;
 //! use twine_drivers::NoPin;
 //! use twine_hal::{InputDevice, PollHint};
 //!
 //! let rec = Recorder::new();
-//! let touch = Gt911::new(rec.i2c(), None::<NoPin>, TouchTransform::identity(800, 480));
+//! let touch = Gt911::new(rec.i2c(), None::<NoPin>);
 //! assert_eq!(touch.poll_hint(), PollHint::Periodic);
 //! ```
 
 use embedded_hal::digital::InputPin;
 use embedded_hal::i2c::I2c;
 use twine_core::log::{info, trace, warn};
-use twine_hal::{DeviceHealth, InputData, InputDevice, InputKind, PointerData, PollHint};
+use twine_hal::{DeviceHealth, DisplayInfo, InputData, InputDevice, InputKind, PointerData, PollHint};
 
-use super::{IrqState, TouchTransform, irq_touch_common};
+use super::{IrqState, PanelMap, irq_touch_common, panel_map_methods};
 
 /// Default I2C address.
 pub const ADDR: u8 = 0x5D;
@@ -61,20 +61,35 @@ pub struct Gt911<I2C, IRQ> {
     i2c: I2C,
     addr: u8,
     pub(super) irq: IrqState<IRQ>,
-    transform: TouchTransform,
+    map: PanelMap,
 }
 
 impl<I2C, IRQ> Gt911<I2C, IRQ> {
-    /// A driver at address [`ADDR`] (`0x5D`); `irq` is the `INT` pin, if wired.
+    /// A driver at address [`ADDR`] (`0x5D`); `irq` is the `INT` pin, if wired. Its
+    /// coordinates are fitted to the display when it is added to the engine (see
+    /// [`for_display`](Self::for_display)). Touches no bus; never panics.
+    ///
+    /// ```
+    /// use twine_drivers::testkit::Recorder;
+    /// use twine_drivers::touch::Gt911;
+    /// use twine_hal::{InputDevice, PollHint};
+    ///
+    /// // On hardware: the HAL's `I2c` and, if wired, the interrupt input pin.
+    /// let rec = Recorder::new();
+    /// let touch = Gt911::new(rec.i2c(), Some(rec.quiet_pin("int")));
+    /// assert_eq!(touch.poll_hint(), PollHint::Interrupt);
+    /// ```
     #[must_use]
-    pub fn new(i2c: I2C, irq: Option<IRQ>, transform: TouchTransform) -> Self {
+    pub fn new(i2c: I2C, irq: Option<IRQ>) -> Self {
         Self {
             i2c,
             addr: ADDR,
             irq: IrqState::new(irq),
-            transform,
+            map: PanelMap::new(),
         }
     }
+
+    panel_map_methods!(Gt911);
 
     /// Reports the device [`Failed`](DeviceHealth::Failed) after `n` consecutive bus errors
     /// (default [`DeviceHealth::DEFAULT_FAIL_AFTER`]; see [`health`](InputDevice::health)).
@@ -157,7 +172,7 @@ impl<I2C: I2c, IRQ: InputPin> InputDevice for Gt911<I2C, IRQ> {
         }
         let data = match self.read_raw() {
             Ok(Some(Some((x, y)))) => PointerData {
-                point: self.transform.apply(i32::from(x), i32::from(y)),
+                point: self.map.apply(x, y),
                 pressed: true,
             },
             Ok(Some(None)) => self.irq.released(),
@@ -177,6 +192,10 @@ impl<I2C: I2c, IRQ: InputPin> InputDevice for Gt911<I2C, IRQ> {
     fn health(&self) -> DeviceHealth {
         self.irq.health
     }
+
+    fn fit_to_display(&mut self, info: &DisplayInfo) {
+        self.map.fit(info);
+    }
 }
 
 irq_touch_common!(Gt911, "gt911");
@@ -195,7 +214,8 @@ mod tests {
         let regs = Regs::install(&rec);
         regs.set(0x814E, &[0x81]);
         regs.set(0x8150, &[0x2C, 0x01, 0xC8, 0x00]); // x 300, y 200
-        let mut t: Gt911<_, crate::NoPin> = Gt911::new(rec.i2c(), None, TouchTransform::identity(800, 480));
+        let mut t: Gt911<_, crate::NoPin> =
+            Gt911::new(rec.i2c(), None).for_display(&crate::touch::test_util::display(800, 480));
         assert_eq!(
             t.read(),
             InputData::Pointer(PointerData {
@@ -238,8 +258,9 @@ mod tests {
         let regs = Regs::install(&rec);
         regs.set(0x8140, b"911\0");
         regs.set(0x8047, &[0x41]);
-        let mut t: Gt911<_, crate::NoPin> =
-            Gt911::new(rec.i2c(), None, TouchTransform::identity(1, 1)).with_address(ADDR_ALT);
+        let mut t: Gt911<_, crate::NoPin> = Gt911::new(rec.i2c(), None)
+            .for_display(&crate::touch::test_util::display(1, 1))
+            .with_address(ADDR_ALT);
         assert_eq!(t.probe().unwrap(), (*b"911\0", 0x41));
         assert_eq!(
             rec.ops()[0],
@@ -254,11 +275,8 @@ mod tests {
     #[test]
     fn gt911_irq_idle_no_traffic() {
         let rec = Recorder::new();
-        let mut t = Gt911::new(
-            rec.i2c(),
-            Some(rec.quiet_pin("int")),
-            TouchTransform::identity(1, 1),
-        );
+        let mut t = Gt911::new(rec.i2c(), Some(rec.quiet_pin("int")))
+            .for_display(&crate::touch::test_util::display(1, 1));
         rec.set_level("int", true);
         let _ = t.read();
         assert!(rec.ops().is_empty());
@@ -272,13 +290,15 @@ mod tests {
         let regs = Regs::install(&rec);
         regs.set(0x814E, &[0x81]);
         regs.set(0x8150, &[0x2C, 0x01, 0xC8, 0x00]);
-        let mut t: Gt911<_, crate::NoPin> = Gt911::new(rec.i2c(), None, TouchTransform::identity(800, 480));
+        let mut t: Gt911<_, crate::NoPin> =
+            Gt911::new(rec.i2c(), None).for_display(&crate::touch::test_util::display(800, 480));
         // The status is cleared by each read: keep it "ready, 1 point" for the recovery read.
         let r = regs.clone();
         let mut t = Probe(&mut t, move || r.set(0x814E, &[0x81]));
         crate::touch::test_util::assert_bus_failure_sequence(&rec, &mut t);
-        let _ =
-            Gt911::<_, crate::NoPin>::new(rec.i2c(), None, TouchTransform::identity(1, 1)).with_fail_after(5);
+        let _ = Gt911::<_, crate::NoPin>::new(rec.i2c(), None)
+            .for_display(&crate::touch::test_util::display(1, 1))
+            .with_fail_after(5);
     }
 
     /// Runs `before` ahead of every read of the wrapped driver.

@@ -13,13 +13,13 @@ workspace = true
 [features]
 default = []
 ## Log through `defmt`.
-defmt = ["dep:defmt", "twine-core/defmt", "twine-view/defmt"]
+defmt = ["dep:defmt", "twine-core/defmt", "twine-view/defmt", "twine-hal/defmt", "twine-reactive/defmt"]
 ## Log through the `log` crate.
-log = ["twine-core/log", "twine-view/log"]
+log = ["twine-core/log", "twine-view/log", "twine-hal/log", "twine-reactive/log"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }
-twine-hal = { path = "../twine-hal", features = ["async"] }
+twine-hal = { path = "../twine-hal", features = ["async", "platform-embassy"] }
 twine-reactive = { path = "../twine-reactive" }
 twine-view = { path = "../twine-view", features = ["async"] }
 embassy-time = "0.5"

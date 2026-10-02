@@ -10,7 +10,8 @@ use std::task::{Context, Poll, Waker};
 
 use twine_core::{ColorFormat, Rect};
 use twine_engine::EngineConfig;
-use twine_hal::{AsyncDisplayDriver, Clock, DisplayInfo};
+use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+use twine_testing::MockPlatform;
 use twine_view::prelude::*;
 
 const W: u16 = 64;
@@ -73,16 +74,6 @@ impl AsyncDisplayDriver for FlakyAsync {
     }
 }
 
-/// A clock the test moves by hand.
-#[derive(Clone, Default)]
-struct TestClock(Rc<Cell<Instant>>);
-
-impl Clock for TestClock {
-    fn now(&self) -> Instant {
-        self.0.get()
-    }
-}
-
 fn leak(len: usize) -> &'static mut [u8] {
     Box::leak(vec![0u8; len].into_boxed_slice())
 }
@@ -95,7 +86,7 @@ fn app(_cx: Scope) -> impl View {
         .size(Length::Pct(100), Length::Pct(100))
 }
 
-fn ui(panel: &Panel, clock: &TestClock, double: bool, cfg: EngineConfig) -> AsyncUi<FlakyAsync> {
+fn ui(panel: &Panel, platform: &MockPlatform, double: bool, cfg: EngineConfig) -> AsyncUi<FlakyAsync> {
     let len = usize::from(W) * 2 * ROWS;
     let bufs = if double {
         BufferMode::partial_double(leak(len), leak(len))
@@ -103,9 +94,10 @@ fn ui(panel: &Panel, clock: &TestClock, double: bool, cfg: EngineConfig) -> Asyn
         BufferMode::partial_single(leak(len))
     };
     Ui::builder_async(FlakyAsync(panel.clone()))
+        .runtime(Runtime::current_thread())
         .buffers(bufs)
         .config(cfg)
-        .clock(clock.clone())
+        .platform(platform)
         .build(app)
 }
 
@@ -123,14 +115,14 @@ fn block_on<F: Future>(f: F) -> F::Output {
 /// The frame of a UI whose flushes never fail.
 fn reference() -> Vec<u8> {
     let panel = Panel::new();
-    let mut u = ui(&panel, &TestClock::default(), true, EngineConfig::default());
+    let mut u = ui(&panel, &MockPlatform::new(), true, EngineConfig::default());
     let _ = block_on(u.update_async());
     panel.fb.borrow().clone()
 }
 
 fn failed_flush_is_retried(double: bool) {
     let panel = Panel::new();
-    let clock = TestClock::default();
+    let clock = MockPlatform::new();
     let mut u = ui(&panel, &clock, double, EngineConfig::default());
     panel.fail.set(1);
     let wake = block_on(u.update_async());
@@ -148,7 +140,7 @@ fn failed_flush_is_retried(double: bool) {
     // The run loop is told to come back for the retry.
     let due = Instant::from_millis(16);
     assert!(matches!(wake, Wake::At(t) if t <= due), "{wake:?}");
-    clock.0.set(due);
+    clock.set(due);
     let flushes = panel.flushes.get();
     let _ = block_on(u.update_async());
     assert_eq!(
@@ -173,7 +165,7 @@ fn regression_failed_async_flush_is_redrawn_double_buffer() {
 #[test]
 fn async_display_halts_and_recovers() {
     let panel = Panel::new();
-    let clock = TestClock::default();
+    let clock = MockPlatform::new();
     let cfg = EngineConfig {
         flush_policy: FlushPolicy::Halt,
         max_consecutive_flush_errors: 2,
@@ -189,13 +181,13 @@ fn async_display_halts_and_recovers() {
     );
     let h = u.display_health().unwrap();
     assert_eq!((h.state, h.consecutive_errors), (DisplayState::Halted, 2));
-    clock.0.set(Instant::from_millis(100));
+    clock.set(Instant::from_millis(100));
     let _ = block_on(u.update_async());
     assert_eq!(panel.flushes.get(), 2, "a halted display is not refreshed");
     // The application resets the panel, then recovers the display.
     panel.fail.set(0);
     u.recover_display();
-    clock.0.set(Instant::from_millis(200));
+    clock.set(Instant::from_millis(200));
     let _ = block_on(u.update_async());
     assert_eq!(u.display_health().unwrap().state, DisplayState::Healthy);
     assert_eq!(*panel.fb.borrow(), reference());

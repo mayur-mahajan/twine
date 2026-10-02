@@ -8,6 +8,13 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
+use twine_reactive::Runtime;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
+
 thread_local! {
     // `const` init, no destructor: safe to touch from inside the allocator.
     static LIVE: Cell<isize> = const { Cell::new(0) };
@@ -55,7 +62,7 @@ fn signal_memory_bytes() {
     // (arena slots and the scope's node list grow by doubling).
     let per_signal = std::thread::spawn(|| {
         const N: isize = 1024;
-        let cx = twine_reactive::create_root();
+        let cx = rt().create_root();
         let before = live();
         let signals: Vec<_> = (0..N).map(|i| cx.signal(i as u32)).collect();
         let handles = std::mem::size_of_val(signals.as_slice()) as isize;
@@ -80,7 +87,7 @@ fn stored_value_churn_does_not_leak() {
     // heap must stay flat. The warm-up covers more than `Arena::ROTATE_PERIOD` (4 096) reuses
     // of every slot, so the arenas' wear-leveling reserves (R0.S07) are at their peak size too.
     let growth = std::thread::spawn(|| {
-        let root = twine_reactive::create_root();
+        let root = rt().create_root();
         let cycle = || {
             let cx = root.child();
             for i in 0..16u32 {
@@ -106,5 +113,49 @@ fn stored_value_churn_does_not_leak() {
     assert_eq!(
         growth, 0,
         "stored value create/dispose churn leaked {growth} bytes"
+    );
+}
+
+#[test]
+fn memory_report_matches_the_live_heap() {
+    // `Runtime::memory` counts capacities and box / `Rc` sizes; on a fresh thread (an empty
+    // runtime) its growth must equal the heap the scene actually took, byte for byte.
+    let (reported, taken, m) = std::thread::spawn(|| {
+        let rt = rt();
+        let (before, before_live) = (rt.memory(), live());
+        let cx = rt.create_root();
+        let a = cx.signal(1u32);
+        let big = cx.signal([7u8; 100]);
+        let doubled = cx.memo(move || a.get() * 2);
+        let seen = cx.stored_value(0u32);
+        cx.effect(move || seen.set(doubled.get() + u32::from(big.get()[0])));
+        let child = cx.child();
+        let captured = [1u64; 4];
+        child.on_cleanup(move || assert_eq!(captured[0], 1));
+        child.provide(5u16);
+        for i in 0..40u32 {
+            let s = child.signal(i);
+            // Many subscribers: the signal's subscriber list spills to the heap.
+            for _ in 0..5 {
+                let _ = child.memo(move || s.get());
+            }
+        }
+        a.set(2);
+        let m = rt.memory();
+        let reported = m.bytes() as isize - before.bytes() as isize;
+        let taken = live() - before_live;
+        cx.dispose();
+        (reported, taken, m)
+    })
+    .join()
+    .unwrap();
+    assert!(m.nodes >= 245 && m.scopes >= 2, "{m:?}");
+    assert!(
+        m.values > 0 && m.scope_data > 0 && m.arenas > 0 && m.queues > 0,
+        "{m:?}"
+    );
+    assert_eq!(
+        reported, taken,
+        "reported {reported} B, the heap grew by {taken} B ({m:?})"
     );
 }

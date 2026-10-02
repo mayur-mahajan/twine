@@ -13,11 +13,11 @@ workspace = true
 [features]
 default = []
 ## std-only conveniences.
-std = ["twine-core/std", "twine-render/std", "twine-vector/std", "twine-engine/std", "twine-view/std"]
+std = ["twine-core/std", "twine-render/std", "twine-vector/std", "twine-engine/std", "twine-view/std", "twine-style/std"]
 ## Log through the `log` crate.
-log = ["twine-core/log", "twine-render/log", "twine-vector/log", "twine-engine/log", "twine-view/log"]
+log = ["twine-core/log", "twine-render/log", "twine-vector/log", "twine-engine/log", "twine-view/log", "twine-style/log"]
 ## Log through `defmt`.
-defmt = ["dep:defmt", "twine-core/defmt", "twine-render/defmt", "twine-vector/defmt", "twine-engine/defmt", "twine-view/defmt"]
+defmt = ["dep:defmt", "twine-core/defmt", "twine-render/defmt", "twine-vector/defmt", "twine-engine/defmt", "twine-view/defmt", "twine-style/defmt"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }

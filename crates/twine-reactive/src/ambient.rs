@@ -1,19 +1,19 @@
 //! The ambient context slot: a scoped, exclusive `&mut dyn Any` that code running further
-//! down the call stack of the same UI context can borrow ([`provide_ambient`],
-//! [`with_ambient`], [`ambient_is`]).
+//! down the call stack of the same UI context can borrow ([`Runtime::provide_ambient`],
+//! [`Runtime::with_ambient`], [`Runtime::ambient_is`]).
 //!
 //! The view layer uses it to reach the engine from event handlers, effects and timer
 //! callbacks that do not receive it as a parameter (`NodeRef::with_mut`). The slot lives in
 //! the runtime, so it inherits the runtime's confinement to one execution context (a
-//! thread-local with `std`, the bound context without it).
+//! thread-local with `std`, the context that took the [`Runtime`] token without it).
 //!
 //! Borrowing *takes* the value out of the slot for the duration of the borrow, so there is
-//! never more than one live `&mut` to it: a nested [`with_ambient`] sees `None`.
+//! never more than one live `&mut` to it: a nested `with_ambient` sees `None`.
 
 use core::any::{Any, TypeId};
 use core::ptr::NonNull;
 
-use crate::global::with_runtime;
+use crate::global::{Runtime, with_runtime};
 
 /// Restores the slot's previous content when a [`provide_ambient`] or [`with_ambient`] frame
 /// ends (also on unwinding).
@@ -53,86 +53,99 @@ fn slot_type() -> Option<TypeId> {
     Some(ty)
 }
 
-/// Whether the slot holds a `T` that [`with_ambient`] could borrow right now: `false` outside
-/// a [`provide_ambient`], while an enclosing [`with_ambient`] borrows the value, or when it is
-/// of another type. It neither takes the value out of the slot nor puts it back (one read of
-/// the slot instead of [`with_ambient`]'s two writes), so it is the cheap way to ask before
-/// doing work that needs the value.
-///
-/// ```
-/// use twine_reactive::{ambient_is, provide_ambient, with_ambient};
-///
-/// let mut n = 0u32;
-/// assert!(!ambient_is::<u32>());
-/// provide_ambient(&mut n, || {
-///     assert!(ambient_is::<u32>());
-///     assert!(!ambient_is::<i32>());
-///     with_ambient(|_| assert!(!ambient_is::<u32>())); // borrowed
-/// });
-/// assert!(!ambient_is::<u32>());
-/// ```
-///
-/// # Panics
-///
-/// Only without the `std` feature, before the runtime is bound with
-/// [`bind_to_current_context`](crate::bind_to_current_context) (like every function that
-/// reaches the runtime). With a bound runtime it never panics: it reads the slot without
-/// touching the value.
+/// See [`Runtime::ambient_is`].
 #[inline]
-#[must_use]
-pub fn ambient_is<T: Any>() -> bool {
+pub(crate) fn ambient_is<T: Any>() -> bool {
     slot_type() == Some(TypeId::of::<T>())
 }
 
-/// Makes `value` available to [`with_ambient`] calls made (directly or indirectly) by `f`,
-/// then restores the previous ambient value (also when `f` panics). Nested calls shadow the
-/// outer value until they return.
-///
-/// ```
-/// use twine_reactive::{provide_ambient, with_ambient};
-///
-/// let mut counter = 0u32;
-/// provide_ambient(&mut counter, || {
-///     with_ambient(|v| *v.unwrap().downcast_mut::<u32>().unwrap() += 1);
-///     // Borrowed: a nested borrow sees nothing.
-///     with_ambient(|outer| {
-///         assert!(outer.is_some());
-///         with_ambient(|inner| assert!(inner.is_none()));
-///     });
-/// });
-/// assert_eq!(counter, 1);
-/// with_ambient(|v| assert!(v.is_none())); // gone once `provide_ambient` returned
-/// ```
-pub fn provide_ambient<R>(value: &mut dyn Any, f: impl FnOnce() -> R) -> R {
+/// See [`Runtime::provide_ambient`].
+pub(crate) fn provide_ambient<R>(value: &mut dyn Any, f: impl FnOnce() -> R) -> R {
     let _restore = Restore(swap_slot(Some(NonNull::from(value))));
     f()
 }
 
-/// Calls `f` with the value of the innermost active [`provide_ambient`] (`None` when there is
-/// none, or while it is already borrowed by an enclosing `with_ambient`). The value is taken
-/// out of the slot while `f` runs and put back afterwards (also when `f` panics).
-///
-/// ```
-/// use twine_reactive::{provide_ambient, with_ambient};
-///
-/// struct Engine { frames: u32 }
-///
-/// fn count_frame() -> bool {
-///     // `None` outside `provide_ambient`, or when the value is not an `Engine`.
-///     with_ambient(|v| v.and_then(|v| v.downcast_mut::<Engine>()).map(|e| e.frames += 1)).is_some()
-/// }
-///
-/// let mut engine = Engine { frames: 0 };
-/// assert!(!count_frame());
-/// provide_ambient(&mut engine, || assert!(count_frame()));
-/// assert_eq!(engine.frames, 1);
-/// ```
-///
-/// # Panics
-///
-/// Only without the `std` feature, before the runtime is bound (see [`ambient_is`]), or
-/// when `f` panics (the panic propagates after the value was put back).
-pub fn with_ambient<R>(f: impl FnOnce(Option<&mut dyn Any>) -> R) -> R {
+impl Runtime {
+    /// Whether the ambient slot holds a `T` that [`with_ambient`](Self::with_ambient) could
+    /// borrow right now: `false` outside a [`provide_ambient`](Self::provide_ambient), while
+    /// an enclosing `with_ambient` borrows the value, or when it is of another type. It neither
+    /// takes the value out of the slot nor puts it back (one read of the slot instead of
+    /// `with_ambient`'s two writes), so it is the cheap way to ask before doing work that needs
+    /// the value. Never panics; allocates nothing.
+    ///
+    /// ```
+    /// let rt = twine_reactive::Runtime::take().unwrap();
+    /// let mut n = 0u32;
+    /// assert!(!rt.ambient_is::<u32>());
+    /// rt.provide_ambient(&mut n, || {
+    ///     assert!(rt.ambient_is::<u32>());
+    ///     assert!(!rt.ambient_is::<i32>());
+    ///     rt.with_ambient(|_| assert!(!rt.ambient_is::<u32>())); // borrowed
+    /// });
+    /// assert!(!rt.ambient_is::<u32>());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn ambient_is<T: Any>(self) -> bool {
+        ambient_is::<T>()
+    }
+
+    /// Makes `value` available to [`with_ambient`](Self::with_ambient) calls made (directly or
+    /// indirectly) by `f`, then restores the previous ambient value (also when `f` panics).
+    /// Nested calls shadow the outer value until they return. Allocates nothing.
+    ///
+    /// ```
+    /// let rt = twine_reactive::Runtime::take().unwrap();
+    /// let mut counter = 0u32;
+    /// rt.provide_ambient(&mut counter, || {
+    ///     rt.with_ambient(|v| *v.unwrap().downcast_mut::<u32>().unwrap() += 1);
+    ///     // Borrowed: a nested borrow sees nothing.
+    ///     rt.with_ambient(|outer| {
+    ///         assert!(outer.is_some());
+    ///         rt.with_ambient(|inner| assert!(inner.is_none()));
+    ///     });
+    /// });
+    /// assert_eq!(counter, 1);
+    /// rt.with_ambient(|v| assert!(v.is_none())); // gone once `provide_ambient` returned
+    /// ```
+    #[inline]
+    pub fn provide_ambient<R>(self, value: &mut dyn Any, f: impl FnOnce() -> R) -> R {
+        provide_ambient(value, f)
+    }
+
+    /// Calls `f` with the value of the innermost active
+    /// [`provide_ambient`](Self::provide_ambient) (`None` when there is none, or while it is
+    /// already borrowed by an enclosing `with_ambient`). The value is taken out of the slot
+    /// while `f` runs and put back afterwards (also when `f` panics). Allocates nothing.
+    ///
+    /// ```
+    /// use twine_reactive::Runtime;
+    ///
+    /// struct Engine { frames: u32 }
+    ///
+    /// fn count_frame(rt: Runtime) -> bool {
+    ///     // `None` outside `provide_ambient`, or when the value is not an `Engine`.
+    ///     rt.with_ambient(|v| v.and_then(|v| v.downcast_mut::<Engine>()).map(|e| e.frames += 1)).is_some()
+    /// }
+    ///
+    /// let rt = Runtime::take().unwrap();
+    /// let mut engine = Engine { frames: 0 };
+    /// assert!(!count_frame(rt));
+    /// rt.provide_ambient(&mut engine, || assert!(count_frame(rt)));
+    /// assert_eq!(engine.frames, 1);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Only when `f` panics (the panic propagates after the value was put back).
+    #[inline]
+    pub fn with_ambient<R>(self, f: impl FnOnce(Option<&mut dyn Any>) -> R) -> R {
+        with_ambient(f)
+    }
+}
+
+/// See [`Runtime::with_ambient`].
+pub(crate) fn with_ambient<R>(f: impl FnOnce(Option<&mut dyn Any>) -> R) -> R {
     let taken = swap_slot(None);
     let _restore = Restore(taken);
     let value = taken.map(|p| {
@@ -140,7 +153,7 @@ pub fn with_ambient<R>(f: impl FnOnce(Option<&mut dyn Any>) -> R) -> R {
         // lasts for that function's whole frame, and the slot is reset to the previous value
         // before the frame ends (`Restore`, also on unwinding). The slot lives in the reactive
         // runtime, which is confined to one execution context (thread-local with `std`, the
-        // bound context otherwise), so the providing frame is still active further down this
+        // context holding the `Runtime` token otherwise), so the providing frame is still active further down this
         // very call stack while we run: the pointee is alive. Nobody else can access it:
         // `provide_ambient` gives up its access to `value` for its whole frame (the caller's
         // `&mut` is reborrowed into `p` and not used until it returns), and we just took `p`

@@ -6,8 +6,8 @@ use std::collections::HashSet;
 
 use proptest::prelude::*;
 use twine_core::{Duration, Rect};
+use twine_engine::BufferSpec;
 use twine_engine::{EngineConfig, InvalidateReason, Wake};
-use twine_hal::BufferSpec;
 use twine_testing::scenes::engine_boxes;
 use twine_testing::{DmaEvent, EngineHarness, clear_dma_log, dma_log};
 

@@ -63,6 +63,12 @@ pub struct EngineConfig {
     /// bounded wait never spins: the step returns [`Wake::Now`](crate::Wake::Now) (as with
     /// [`cooperative_flush`](Self::cooperative_flush)) and the timeout is measured with the
     /// `now` of the following steps. Only `None` without a `hires_timer` spins inside a step.
+    ///
+    /// **Async runtime.** Displays added with
+    /// [`add_chunked_display`](crate::Engine::add_chunked_display) are flushed by their caller;
+    /// `AsyncUi` bounds each flush with this timeout on its `AsyncPlatform`'s timer and reports
+    /// an expired one with [`Engine::report_flush_timeout`](crate::Engine::report_flush_timeout),
+    /// with the same effects.
     pub flush_timeout: Option<Duration>,
     /// What happens when a display driver reports a failed flush or present (default
     /// [`FlushPolicy::Reinvalidate`]: the area is redrawn on the next frame). Every failure
@@ -78,7 +84,10 @@ pub struct EngineConfig {
     /// `LV_USE_REFR_DEBUG`). Default `false`.
     pub debug_refresh: bool,
     /// Bytes of the ARGB8888 layer buffer used for opacity groups, transforms and blend modes
-    /// (≥ 4 KiB, default 24 KiB).
+    /// (≥ 4 KiB, default 24 KiB), allocated on the heap by [`Engine::new`](crate::Engine::new).
+    /// To keep it out of the heap, give the engine a `static` buffer instead
+    /// ([`Engine::with_layer_buf`](crate::Engine::with_layer_buf), `UiBuilder::layer_buf`);
+    /// this field then reports that buffer's size.
     pub layer_buf_bytes: usize,
     /// Glyph cache budget in bytes (default 8 KiB).
     pub glyph_cache_bytes: usize,
@@ -95,8 +104,10 @@ pub struct EngineConfig {
     pub default_font: Option<&'static Font>,
     /// Period of the `twine::perf` log line (default 5 s).
     pub perf_log_period: Duration,
-    /// Memory statistics provider for [`RefreshStats`](crate::RefreshStats) (e.g. the heap
-    /// allocator's counters). Default `None`.
+    /// Memory statistics provider for [`RefreshStats`](crate::RefreshStats) and the
+    /// `twine::perf` log line (the heap allocator's counters; see [`MemInfo`] for the
+    /// pattern with `embedded-alloc` / `esp-alloc` and [`HeapPeak`](crate::HeapPeak)). Default
+    /// `None`.
     pub mem_info: Option<fn() -> MemInfo>,
     /// High-resolution time source for intra-frame timing (render / flush durations). `None`:
     /// the timing fields of [`RefreshStats`](crate::RefreshStats) stay 0.
@@ -125,6 +136,13 @@ pub struct EngineConfig {
     pub multi_click_distance: i32,
     /// Input device read period while pressed or for polled devices (default 30 ms).
     pub read_period: Duration,
+    /// After this long without user input (see [`Engine::inactive_for`](crate::Engine::inactive_for)),
+    /// a step that has nothing to do returns [`Wake::IdleFor`](crate::Wake::IdleFor) instead of
+    /// [`Wake::Idle`](crate::Wake::Idle), so the run loop can pick a deep-sleep mode or put
+    /// the display to sleep. Until then, an otherwise idle step asks to be woken once, when the
+    /// timeout passes (one wake-up per inactive period; no polling). Default `None`: never
+    /// (no extra wake-up). Must be > 0 when set.
+    pub idle_timeout: Option<Duration>,
 }
 
 impl Default for EngineConfig {
@@ -157,6 +175,7 @@ impl Default for EngineConfig {
             multi_click_time: Duration::ms(300),
             multi_click_distance: 5,
             read_period: Duration::ms(30),
+            idle_timeout: None,
         }
     }
 }
@@ -164,7 +183,7 @@ impl Default for EngineConfig {
 impl EngineConfig {
     /// Checks the values: `refr_period > 0`, `max_dirty_areas` in `1..=32`,
     /// `layer_buf_bytes ≥ 4096`, `max_nodes ≥ 1`, `max_consecutive_flush_errors ≥ 1`,
-    /// `flush_timeout > 0` (when set). [`Engine::new`](crate::Engine::new) calls it.
+    /// `flush_timeout > 0` and `idle_timeout > 0` (when set). [`Engine::new`](crate::Engine::new) calls it.
     ///
     /// # Errors
     /// [`EngineError::InvalidConfig`] naming the first value out of range. Never panics.
@@ -196,6 +215,9 @@ impl EngineConfig {
         }
         if self.flush_timeout.is_some_and(|t| t.as_micros() == 0) {
             return Err(EngineError::InvalidConfig("flush_timeout must be > 0"));
+        }
+        if self.idle_timeout.is_some_and(|t| t.as_micros() == 0) {
+            return Err(EngineError::InvalidConfig("idle_timeout must be > 0"));
         }
         Ok(())
     }

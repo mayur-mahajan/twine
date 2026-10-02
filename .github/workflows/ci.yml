@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
-      - run: cargo xtask ci --only clippy --only clippy-all-features
+      - run: cargo xtask ci --only clippy --only clippy-all-features --only clippy-defmt
 
   test:
     strategy:

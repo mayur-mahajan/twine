@@ -57,7 +57,7 @@ impl core::fmt::Debug for TextProp {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let name = cx.signal(String::from("Ada"));
 /// let n = cx.signal(3);
 /// let on = cx.signal(true);
@@ -185,7 +185,7 @@ impl TextFn {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let temp = cx.signal(21.5f32);
 /// let _v = label(text!("{:.1} °C", temp.get()));
 /// cx.dispose();

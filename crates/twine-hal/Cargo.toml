@@ -1,6 +1,6 @@
 [package]
 name = "twine-hal"
-description = "Display, input and clock traits"
+description = "Display, input, clock and platform traits"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,8 +12,16 @@ workspace = true
 
 [features]
 default = []
-## Async driver traits (`AsyncDisplayDriver`, `AsyncInputWait`).
+## Async traits (`AsyncDisplayDriver`, `AsyncInputWait`, `AsyncPlatform`).
 async = []
+## `CortexMPlatform`: `WFE`/`SEV` waiting and `SCB::vect_active` (any Cortex-M).
+platform-cortex-m = ["dep:cortex-m"]
+## `RiscvPlatform`: `WFI` waiting (single-hart RISC-V).
+platform-riscv = ["dep:riscv", "dep:critical-section"]
+## `StdPlatform`: condition-variable waiting on hosted operating systems (uses `std`).
+platform-std = []
+## `EmbassyPlatform`: an `AsyncPlatform` over `embassy-time`.
+platform-embassy = ["async", "dep:embassy-time"]
 ## Log through `defmt` and derive `defmt::Format` on public types.
 defmt = ["dep:defmt", "twine-core/defmt"]
 ## Log through the `log` crate.
@@ -22,3 +30,12 @@ log = ["twine-core/log"]
 [dependencies]
 twine-core = { path = "../twine-core" }
 defmt = { version = "1", optional = true }
+cortex-m = { version = "0.7", default-features = false, optional = true }
+riscv = { version = "0.15", default-features = false, optional = true }
+critical-section = { version = "1", optional = true }
+embassy-time = { version = "0.5", default-features = false, optional = true }
+
+[dev-dependencies]
+# Links `embassy-time` (with a mock time driver) for the doc-tests of `platform-embassy`.
+embassy-time = { version = "0.5", features = ["mock-driver", "generic-queue-8"] }
+critical-section = { version = "1", features = ["std"] }

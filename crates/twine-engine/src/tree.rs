@@ -92,6 +92,19 @@ impl fmt::Debug for Node {
 }
 
 impl Node {
+    /// Heap bytes this node owns outside the arena slot: the boxed widget, the style entry
+    /// vector, the layout extension and the event handlers. What the widget allocates itself
+    /// (a label's text, a list's items) and shared styles are not included.
+    fn heap_bytes(&self) -> usize {
+        core::mem::size_of_val(&*self.widget)
+            + self.styles.heap_bytes()
+            + self
+                .layout_ext
+                .as_ref()
+                .map_or(0, |_| core::mem::size_of::<LayoutExt>())
+            + self.handlers.as_ref().map_or(0, |h| h.heap_bytes())
+    }
+
     fn new(widget: Box<dyn Widget>) -> Self {
         let class = widget.class();
         Self {
@@ -276,6 +289,24 @@ impl Tree {
     #[must_use]
     pub fn len(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Heap bytes of the tree: the node arena (slots by capacity and free lists), the root
+    /// and style-link vectors, and what every node owns outside its slot (boxed widget, style
+    /// entry vector, layout extension, event handlers). Widgets' own allocations (texts,
+    /// item lists) and shared styles are not included.
+    ///
+    /// Allocates nothing; never panics; O(nodes).
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.nodes.bytes_reserved()
+            + self.roots.capacity() * core::mem::size_of::<NodeId>()
+            + self.style_links.capacity() * core::mem::size_of::<(NodeId, NodeId)>()
+            + self.nodes.iter().map(|(_, n)| n.heap_bytes()).sum::<usize>()
+    }
+
+    /// Number of slots of the node arena (live, free and retired; by capacity).
+    pub(crate) fn slot_capacity(&self) -> usize {
+        self.nodes.capacity()
     }
 
     /// Number of retired node slots: slots that used up their 65 535 generations and are

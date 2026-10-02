@@ -307,21 +307,28 @@ fn navigation_back_and_forth_leaks_nothing() {
         cycle(&mut t);
     }
     let nodes = t.engine().tree().len();
-    let reactive = twine_reactive::runtime_stats();
+    let reactive = rt().stats();
     let ((), stats) = count_allocs(|| {
         for _ in 0..100 {
             cycle(&mut t);
         }
     });
     assert_eq!(t.engine().tree().len(), nodes);
-    assert_eq!(twine_reactive::runtime_stats().nodes, reactive.nodes);
-    assert_eq!(twine_reactive::runtime_stats().scopes, reactive.scopes);
+    assert_eq!(rt().stats().nodes, reactive.nodes);
+    assert_eq!(rt().stats().scopes, reactive.scopes);
     assert!(stats.live.abs() <= 256, "heap changed by {} bytes", stats.live);
 }
 
 // ---- Text style of screens and modals ------------------------------------------------------
 
 use twine_assets::fonts::{MONTSERRAT_14, MONTSERRAT_20};
+
+use twine_reactive::Runtime;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 /// Whether the node found by `id` is drawn with `font`.
 fn font_is(t: &TestUi, id: &'static str, font: &'static twine_text::Font) -> bool {

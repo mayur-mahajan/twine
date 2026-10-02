@@ -102,7 +102,7 @@ pub(crate) use handle_impls;
 /// where a signal is intentionally shared across scopes.
 ///
 /// ```
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let count = cx.signal(0);
 /// count.set(1);
 /// count.update(|n| *n += 1);
@@ -112,7 +112,7 @@ pub(crate) use handle_impls;
 /// Signals cannot be sent to another thread:
 ///
 /// ```compile_fail
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let s = cx.signal(0u32);
 /// std::thread::spawn(move || s.get_untracked());
 /// ```
@@ -130,7 +130,7 @@ impl<T: 'static> Signal<T> {
     /// The current value (tracked: subscribes the running memo/effect).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let s = cx.signal(3);
     /// assert_eq!(s.get(), 3);
     /// ```
@@ -149,7 +149,7 @@ impl<T: 'static> Signal<T> {
     /// The current value without subscribing.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let s = cx.signal(3);
     /// assert_eq!(s.get_untracked(), 3);
     /// ```
@@ -171,7 +171,7 @@ impl<T: 'static> Signal<T> {
     /// `RefCell` borrow error) — use [`update`](Signal::update) instead.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let v = cx.signal(vec![1, 2, 3]);
     /// assert_eq!(v.with(|v| v.len()), 3);
     /// ```
@@ -187,7 +187,7 @@ impl<T: 'static> Signal<T> {
     /// Like [`with`](Signal::with), without subscribing.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let v = cx.signal(String::from("abc"));
     /// assert!(v.with_untracked(|s| s.starts_with('a')));
     /// ```
@@ -203,7 +203,7 @@ impl<T: 'static> Signal<T> {
     /// The current value (tracked), or `None` if the signal was disposed.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let s = cx.signal(1);
     /// assert_eq!(s.try_get(), Some(1));
     /// cx.dispose();
@@ -219,7 +219,7 @@ impl<T: 'static> Signal<T> {
     /// Whether the signal's scope is still alive.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let s = cx.signal(1);
     /// assert!(s.is_alive());
     /// ```
@@ -230,7 +230,7 @@ impl<T: 'static> Signal<T> {
     /// Replaces the value and notifies subscribers (always, even if equal).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let s = cx.signal(1);
     /// s.set(2);
     /// assert_eq!(s.get(), 2);
@@ -248,7 +248,7 @@ impl<T: 'static> Signal<T> {
     /// Replaces the value and notifies subscribers only if it differs from the current one.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let s = cx.signal(1);
     /// s.set_if_changed(1); // no notification
     /// s.set_if_changed(2);
@@ -269,7 +269,7 @@ impl<T: 'static> Signal<T> {
     /// Mutates the value in place and notifies subscribers (always).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let v = cx.signal(vec![1]);
     /// v.update(|v| v.push(2));
     /// assert_eq!(v.get(), [1, 2]);
@@ -286,7 +286,7 @@ impl<T: 'static> Signal<T> {
     /// A read-only handle to the same value.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let s = cx.signal(1);
     /// let r = s.read_only();
     /// s.set(2);
@@ -299,7 +299,7 @@ impl<T: 'static> Signal<T> {
     /// A write-only handle to the same value.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let s = cx.signal(1);
     /// s.write_only().set(5);
     /// assert_eq!(s.get(), 5);
@@ -311,7 +311,7 @@ impl<T: 'static> Signal<T> {
     /// Read and write handles to the same value.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let (count, set_count) = cx.signal(0).split();
     /// set_count.set(3);
     /// assert_eq!(count.get(), 3);
@@ -323,7 +323,7 @@ impl<T: 'static> Signal<T> {
     /// A [`Memo`] derived from this signal, owned by the signal's scope.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let n = cx.signal(3);
     /// let even = n.map(|n| n % 2 == 0);
     /// assert!(!even.get());
@@ -353,7 +353,7 @@ pub(crate) fn owner_scope<T>(h: NodeHandle<T>, what: &str) -> Scope {
 /// A read-only view of a [`Signal`] (see [`Signal::read_only`], [`Signal::split`]).
 ///
 /// ```
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let (r, w) = cx.signal(1).split();
 /// w.set(2);
 /// assert_eq!(r.get(), 2);
@@ -368,7 +368,7 @@ impl<T: 'static> ReadSignal<T> {
     /// The current value (tracked). Panics if the signal's scope was disposed.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// assert_eq!(cx.signal(1).read_only().get(), 1);
     /// ```
     #[track_caller]
@@ -382,7 +382,7 @@ impl<T: 'static> ReadSignal<T> {
     /// The current value without subscribing. Panics if the signal's scope was disposed.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// assert_eq!(cx.signal(1).read_only().get_untracked(), 1);
     /// ```
     #[track_caller]
@@ -396,7 +396,7 @@ impl<T: 'static> ReadSignal<T> {
     /// Calls `f` with a reference to the value (tracked). See [`Signal::with`].
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let r = cx.signal(vec![1, 2]).read_only();
     /// assert_eq!(r.with(Vec::len), 2);
     /// ```
@@ -408,7 +408,7 @@ impl<T: 'static> ReadSignal<T> {
     /// Like [`with`](ReadSignal::with), without subscribing.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let r = cx.signal(vec![1, 2]).read_only();
     /// assert_eq!(r.with_untracked(Vec::len), 2);
     /// ```
@@ -420,7 +420,7 @@ impl<T: 'static> ReadSignal<T> {
     /// The current value (tracked), or `None` if the signal was disposed.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let r = cx.signal(1).read_only();
     /// cx.dispose();
     /// assert_eq!(r.try_get(), None);
@@ -435,7 +435,7 @@ impl<T: 'static> ReadSignal<T> {
     /// Whether the signal's scope is still alive.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// assert!(cx.signal(1).read_only().is_alive());
     /// ```
     pub fn is_alive(&self) -> bool {
@@ -445,7 +445,7 @@ impl<T: 'static> ReadSignal<T> {
     /// A [`Memo`] derived from this signal (see [`Signal::map`]).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let r = cx.signal(2).read_only();
     /// assert_eq!(r.map(|n| n * 10).get(), 20);
     /// ```
@@ -459,7 +459,7 @@ impl<T: 'static> ReadSignal<T> {
 /// A write-only view of a [`Signal`] (see [`Signal::write_only`], [`Signal::split`]).
 ///
 /// ```
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let s = cx.signal(1);
 /// let w = s.write_only();
 /// w.update(|n| *n += 1);
@@ -475,7 +475,7 @@ impl<T: 'static> WriteSignal<T> {
     /// Replaces the value and notifies (see [`Signal::set`]).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let (r, w) = cx.signal(1).split();
     /// w.set(9);
     /// assert_eq!(r.get(), 9);
@@ -488,7 +488,7 @@ impl<T: 'static> WriteSignal<T> {
     /// Replaces the value and notifies only if it changed (see [`Signal::set_if_changed`]).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let (r, w) = cx.signal(1).split();
     /// w.set_if_changed(2);
     /// assert_eq!(r.get(), 2);
@@ -504,7 +504,7 @@ impl<T: 'static> WriteSignal<T> {
     /// Mutates the value in place and notifies (see [`Signal::update`]).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let (r, w) = cx.signal(1).split();
     /// w.update(|n| *n *= 3);
     /// assert_eq!(r.get(), 3);
@@ -517,7 +517,7 @@ impl<T: 'static> WriteSignal<T> {
     /// Whether the signal's scope is still alive.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// assert!(cx.signal(1).write_only().is_alive());
     /// ```
     pub fn is_alive(&self) -> bool {

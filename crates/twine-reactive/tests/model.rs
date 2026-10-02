@@ -16,7 +16,12 @@ use std::rc::Rc;
 
 use proptest::prelude::*;
 use proptest::sample::Index;
-use twine_reactive::{EffectId, Memo, Signal, batch, create_root};
+use twine_reactive::{EffectId, Memo, Runtime, Signal};
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 #[derive(Debug, Clone)]
 enum Step {
@@ -240,8 +245,8 @@ impl World {
 }
 
 fn run(p: &Program) -> Result<(), TestCaseError> {
-    twine_reactive::reset();
-    let cx = create_root();
+    rt().reset();
+    let cx = rt().create_root();
     let n_sig = p.signals.len();
     let memo_deps: Vec<Vec<Dep>> = p
         .memo_deps
@@ -278,7 +283,7 @@ fn run(p: &Program) -> Result<(), TestCaseError> {
             Op::Batch(steps) => {
                 let mut res = Ok(());
                 let w_ref = &mut w;
-                batch(|| {
+                rt().batch(|| {
                     for s in steps {
                         res = w_ref.step(s, &mut written);
                         if res.is_err() {
@@ -299,7 +304,7 @@ fn run(p: &Program) -> Result<(), TestCaseError> {
         w.check(&runs_before, &last_before, &written, memo_read_in_batch)?;
     }
     cx.dispose();
-    let st = twine_reactive::runtime_stats();
+    let st = rt().stats();
     prop_assert_eq!((st.nodes, st.scopes, st.pending, st.deferred), (0, 0, 0, 0));
     Ok(())
 }

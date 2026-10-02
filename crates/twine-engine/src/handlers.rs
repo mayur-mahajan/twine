@@ -65,6 +65,19 @@ impl core::fmt::Debug for Handlers {
 }
 
 impl Handlers {
+    /// Heap bytes of this box, its list and the boxed handler closures (for
+    /// [`Engine::memory_report`](crate::Engine::memory_report)).
+    pub(crate) fn heap_bytes(&self) -> usize {
+        core::mem::size_of::<Self>()
+            + self.list.capacity() * core::mem::size_of::<(HandlerId, EventFilter, Option<Handler>)>()
+            + self
+                .list
+                .iter()
+                .filter_map(|(_, _, h)| h.as_ref())
+                .map(|h| core::mem::size_of_val(&**h))
+                .sum::<usize>()
+    }
+
     /// Takes the first handler after `after` (exclusive) and before `limit` (exclusive) that
     /// matches `code` and is not running.
     fn take_next(

@@ -3,7 +3,12 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use twine_reactive::{Memo, batch, create_root, runtime_stats};
+use twine_reactive::{Memo, Runtime};
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 fn counter() -> (Rc<Cell<u32>>, Rc<Cell<u32>>) {
     let c = Rc::new(Cell::new(0));
@@ -12,7 +17,7 @@ fn counter() -> (Rc<Cell<u32>>, Rc<Cell<u32>>) {
 
 #[test]
 fn memo_is_lazy() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let a = cx.signal(1);
     let (runs, r) = counter();
     let m = cx.memo(move || {
@@ -28,7 +33,7 @@ fn memo_is_lazy() {
 
 #[test]
 fn memo_caches_until_dependency_changes() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let a = cx.signal(1);
     let (runs, r) = counter();
     let m = cx.memo(move || {
@@ -49,7 +54,7 @@ fn memo_caches_until_dependency_changes() {
 
 #[test]
 fn memo_diamond_runs_effect_once_per_change() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let a = cx.signal(1);
     let b = cx.memo(move || a.get() + 1);
     let c = cx.memo(move || a.get() * 10);
@@ -75,7 +80,7 @@ fn memo_diamond_runs_effect_once_per_change() {
 
 #[test]
 fn memo_equal_value_stops_propagation() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let x = cx.signal(1);
     let (memo_runs, mr) = counter();
     let parity = cx.memo(move || {
@@ -108,7 +113,7 @@ fn memo_equal_value_stops_propagation() {
 
 #[test]
 fn memo_chain_of_10_memos_recomputes_once_each() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let a = cx.signal(0u64);
     let runs = Rc::new(RefCell::new([0u32; 10]));
     let mut prev: Option<Memo<u64>> = None;
@@ -136,7 +141,7 @@ fn memo_chain_of_10_memos_recomputes_once_each() {
 #[test]
 #[should_panic(expected = "disposed")]
 fn memo_reading_disposed_signal_panics() {
-    let root = create_root();
+    let root = rt().create_root();
     let child = root.child();
     let s = child.signal(1);
     let m = root.memo(move || s.get());
@@ -147,7 +152,7 @@ fn memo_reading_disposed_signal_panics() {
 #[test]
 #[should_panic(expected = "memo used after its scope was disposed")]
 fn memo_use_after_dispose_panics() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let m = cx.memo(|| 1);
     cx.dispose();
     let _ = m.get();
@@ -156,7 +161,7 @@ fn memo_use_after_dispose_panics() {
 #[test]
 #[should_panic(expected = "cycle")]
 fn memo_cycle_panics() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let slot: Rc<Cell<Option<Memo<u32>>>> = Rc::new(Cell::new(None));
     let s = slot.clone();
     let m = cx.memo(move || s.get().map_or(0, |m| m.get()) + 1);
@@ -171,7 +176,7 @@ fn memo_deep_chain_depth_guard_logs() {
     let hits = std::thread::Builder::new()
         .stack_size(32 << 20)
         .spawn(|| {
-            let cx = create_root();
+            let cx = rt().create_root();
             let a = cx.signal(1u64);
             let mut prev: Option<Memo<u64>> = None;
             for _ in 0..300 {
@@ -181,16 +186,12 @@ fn memo_deep_chain_depth_guard_logs() {
             let last = prev.unwrap();
             assert_eq!(last.get(), 301);
             assert_eq!(
-                runtime_stats()
-                    .faults
-                    .get(twine_core::fault::FaultKind::DepthGuard),
+                rt().stats().faults.get(twine_core::fault::FaultKind::DepthGuard),
                 0
             );
             a.set(2);
             assert_eq!(last.get(), 302, "values stay correct past the guard");
-            runtime_stats()
-                .faults
-                .get(twine_core::fault::FaultKind::DepthGuard)
+            rt().stats().faults.get(twine_core::fault::FaultKind::DepthGuard)
         })
         .unwrap()
         .join()
@@ -200,13 +201,13 @@ fn memo_deep_chain_depth_guard_logs() {
 
 #[test]
 fn memo_map_on_signal_readsignal_and_memo() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let a = cx.signal(2);
     let m1 = a.map(|v| v + 1);
     let m2 = a.read_only().map(|v| v * 2);
     let m3 = m1.map(|v| v * 100);
     assert_eq!((m1.get(), m2.get(), m3.get()), (3, 4, 300));
-    batch(|| a.set(3));
+    rt().batch(|| a.set(3));
     assert_eq!((m1.get(), m2.get(), m3.get()), (4, 6, 400));
     assert_eq!(m3.with_untracked(|v| *v), 400);
 }
@@ -214,7 +215,7 @@ fn memo_map_on_signal_readsignal_and_memo() {
 #[test]
 fn memo_can_create_and_set_signals_inside() {
     // R1: memo bodies may re-enter the runtime.
-    let cx = create_root();
+    let cx = rt().create_root();
     let a = cx.signal(1);
     let side = cx.signal(0);
     let m = cx.memo(move || {

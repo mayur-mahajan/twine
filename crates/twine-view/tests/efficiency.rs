@@ -4,10 +4,15 @@
 use twine_core::{Point, Rect};
 use twine_engine::EngineConfig;
 use twine_hal::Key;
-use twine_reactive::runtime_stats;
+use twine_reactive::Runtime;
 use twine_testing::alloc::{CountingAllocator, count_allocs};
 use twine_testing::{TestUi, by_id, by_text};
 use twine_view::prelude::*;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 #[global_allocator]
 static ALLOC: CountingAllocator = CountingAllocator;
@@ -43,9 +48,9 @@ fn signal_update_runs_one_binding() {
     t.run_until_idle();
     let signals = t.root_scope().expect_context::<Vec<Signal<i32>>>();
     signals[17].set(1000); // outside the Ui: deferred to the next update
-    let runs = runtime_stats().effect_runs;
+    let runs = rt().stats().effect_runs;
     t.run_until_idle();
-    assert_eq!(runtime_stats().effect_runs - runs, 1);
+    assert_eq!(rt().stats().effect_runs - runs, 1);
     assert_eq!(t.find(by_id("l17")).text(), "1000");
 }
 
@@ -137,10 +142,10 @@ fn unchanged_value_no_work() {
     });
     t.run_until_idle();
     let n = t.root_scope().expect_context::<Signal<i32>>();
-    let runs = runtime_stats().effect_runs;
+    let runs = rt().stats().effect_runs;
     n.set_if_changed(5);
     t.update();
-    assert_eq!(runtime_stats().effect_runs, runs, "no effect ran");
+    assert_eq!(rt().stats().effect_runs, runs, "no effect ran");
     assert!(t.invalidations().is_empty());
     t.assert_idle();
 }

@@ -40,7 +40,7 @@ impl<T: 'static> Prop<T> {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let n = cx.signal(3);
 /// let wide = cx.signal(false);
 /// let _v = label("a")
@@ -72,7 +72,7 @@ impl<T: 'static> Prop<T> {
 ///     }
 /// }
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let state = cx.signal(Brand::Primary);
 /// let _v = button(label("OK")).bg(Brand::Danger).text_color(state);
 /// cx.dispose();
@@ -94,7 +94,7 @@ impl<T: 'static> Prop<T> {
 ///     let value = value.into_prop();
 ///     label("").op(move |_cx, _node| drop(value))
 /// }
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let n = cx.signal(3u8);
 /// let _a = level(42);
 /// let _b = level(n);
@@ -218,7 +218,7 @@ impl<T> IntoProp<T, marker::Prop> for Prop<T> {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let shown = cx.signal(true);
 /// let sym = cx.signal(Symbol::Ok);
 /// let _v = list((

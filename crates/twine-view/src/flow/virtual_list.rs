@@ -7,7 +7,7 @@ use core::cell::RefCell;
 
 use twine_core::Opa;
 use twine_engine::{Engine, EventCode, EventFilter, EventResult, NodeId, Obj, ObjFlags};
-use twine_reactive::{Scope, defer_current_effect, dispose_current_effect, untrack};
+use twine_reactive::Scope;
 use twine_style::{Axis, Length, ScrollbarMode, Selector, StyleProp};
 
 use super::dispose_with;
@@ -75,6 +75,7 @@ pub fn virtual_list<V: View>(
         }
         state.borrow_mut().content = Some(content);
         let scope = cx.scope();
+        let rt = scope.runtime();
         let rows = state.clone();
         cx.on_delete(node, move || {
             for (_, _, s) in rows.borrow_mut().rows.drain(..) {
@@ -95,13 +96,13 @@ pub fn virtual_list<V: View>(
         cx.provide(|| {
             scope.effect_with_cx(move |_| {
                 let n = count();
-                match EngineAccess::with(|e| e.tree().contains(node)) {
-                    None => return defer_current_effect(),
-                    Some(false) => return dispose_current_effect(),
+                match EngineAccess::with(rt, |e| e.tree().contains(node)) {
+                    None => return rt.defer_current_effect(),
+                    Some(false) => return rt.dispose_current_effect(),
                     Some(true) => {}
                 }
-                untrack(|| {
-                    EngineAccess::with(|e| {
+                rt.untrack(|| {
+                    EngineAccess::with(rt, |e| {
                         {
                             let mut s = st.borrow_mut();
                             for (_, _, sc) in s.rows.drain(..) {
@@ -127,7 +128,7 @@ pub fn virtual_list<V: View>(
                             e.set_local_prop(c, Selector::MAIN, StyleProp::Height(Length::Px(h).into()));
                         }
                     });
-                    EngineAccess::with(|e| update_range(e, node, scope, &st, &*v));
+                    EngineAccess::with(rt, |e| update_range(e, node, scope, &st, &*v));
                 });
             });
         });
@@ -153,6 +154,7 @@ fn update_range(
     st: &RefCell<ListState>,
     view: &dyn Fn(Scope, usize) -> AnyView,
 ) {
+    let rt = scope.runtime();
     let area = e.content_area(node);
     let scroll_y = e.scroll_offset(node).y.max(0);
     let (count, rh) = {
@@ -185,7 +187,7 @@ fn update_range(
             continue;
         }
         let child = scope.child();
-        let v = EngineAccess::provide(e, || view(child, i));
+        let v = EngineAccess::provide(rt, e, || view(child, i));
         let row = {
             let mut bcx = BuildCx::new(e, node, child);
             v.build(&mut bcx)

@@ -19,6 +19,17 @@ pub const fn is_draw_format(format: ColorFormat) -> bool {
     )
 }
 
+/// The error for a format [`DrawBuf::new`] does not accept (cold: one check on the hot path).
+#[cold]
+#[inline(never)]
+fn format_error(format: ColorFormat) -> RenderError {
+    if is_draw_format(format) {
+        RenderError::FormatDisabled(format)
+    } else {
+        RenderError::UnsupportedFormat(format)
+    }
+}
+
 /// Pixel memory in one [`ColorFormat`] representing the screen rectangle `area`.
 ///
 /// All drawing uses absolute screen coordinates; the buffer maps them to its memory. `stride`
@@ -51,6 +62,8 @@ impl<'a> DrawBuf<'a> {
     /// Wraps `data` as the pixels of `area` (screen coordinates) with rows `stride` bytes apart.
     ///
     /// Errors: [`RenderError::UnsupportedFormat`] for formats that cannot be drawn into,
+    /// [`RenderError::FormatDisabled`] for draw formats whose renderer is not compiled in (see
+    /// [`is_format_enabled`](crate::is_format_enabled): drawing never meets a disabled format),
     /// [`RenderError::InvalidArea`] for an empty area, a stride shorter than a row, or an `I1`
     /// area whose `x0`/`x1` are not multiples of 8, and [`RenderError::BufferTooSmall`].
     pub fn new(
@@ -59,8 +72,8 @@ impl<'a> DrawBuf<'a> {
         stride: usize,
         area: Rect,
     ) -> Result<Self, RenderError> {
-        if !is_draw_format(format) {
-            return Err(RenderError::UnsupportedFormat(format));
+        if !crate::is_format_enabled(format) {
+            return Err(format_error(format));
         }
         if area.is_empty() {
             return Err(RenderError::InvalidArea);

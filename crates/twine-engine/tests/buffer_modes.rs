@@ -1,17 +1,27 @@
 //! Every buffer mode renders the `engine_boxes` scene pixel-identically, before and after the
-//! player box moves.
+//! player box moves; buffers declared with `draw_buffers!`-style statics are accepted, caller
+//! memory is checked, and a refused display allocates nothing (R3.S03).
 
 use twine_core::{Duration, Rect};
-use twine_hal::BufferSpec;
-use twine_testing::EngineHarness;
+use twine_engine::BufferSpec;
 use twine_testing::scenes::engine_boxes;
+use twine_testing::{EngineHarness, FbMode};
 
-fn render(spec: BufferSpec) -> (Vec<u8>, Vec<u8>) {
+/// The buffers of a harness: heap partial buffers or a framebuffer display.
+#[derive(Clone, Copy, Debug)]
+enum Mode {
+    Heap(BufferSpec),
+    Framebuffer(FbMode),
+}
+
+fn render(mode: Mode) -> (Vec<u8>, Vec<u8>) {
     let mut player = None;
-    let mut h = EngineHarness::new(320, 240)
-        .no_theme()
-        .buffers(spec)
-        .mount_engine(|e| player = Some(engine_boxes(e).player));
+    let h = EngineHarness::new(320, 240).no_theme();
+    let h = match mode {
+        Mode::Heap(spec) => h.buffers(spec),
+        Mode::Framebuffer(fb) => h.framebuffer(fb, 0),
+    };
+    let mut h = h.mount_engine(|e| player = Some(engine_boxes(e).player));
     h.run_until_idle();
     let first = h.panel_rgb888();
     let p = player.unwrap();
@@ -27,12 +37,12 @@ fn render(spec: BufferSpec) -> (Vec<u8>, Vec<u8>) {
 
 #[test]
 fn all_modes_render_identically() {
-    let reference = render(BufferSpec::PartialDouble { rows: 40 });
+    let reference = render(Mode::Heap(BufferSpec::PartialDouble { rows: 40 }));
     for spec in [
-        BufferSpec::PartialSingle { rows: 10 },
-        BufferSpec::PartialDouble { rows: 7 },
-        BufferSpec::Full,
-        BufferSpec::Direct,
+        Mode::Heap(BufferSpec::PartialSingle { rows: 10 }),
+        Mode::Heap(BufferSpec::PartialDouble { rows: 7 }),
+        Mode::Framebuffer(FbMode::Full),
+        Mode::Framebuffer(FbMode::Direct),
     ] {
         let got = render(spec);
         assert!(got.0 == reference.0, "{spec:?}: first frame differs");

@@ -7,7 +7,11 @@ use twine_sim::SimConfig;
 
 fn main() {
     twine_sim::run(
-        SimConfig::new(320, 240).title("Text input").scale(3),
+        SimConfig::new(320, 240)
+            .title("Text input")
+            .scale(3)
+            // The configuration the firmware ships (theme, engine, motion).
+            .app_config(twine_demos::config()),
         twine_demos::text_input::app,
     );
 }

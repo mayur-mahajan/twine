@@ -5,13 +5,18 @@ use std::rc::Rc;
 
 use twine_core::Rect;
 use twine_hal::Key;
-use twine_reactive::runtime_stats;
+use twine_reactive::Runtime;
 use twine_testing::{TestUi, by_class, by_id, capture_logs};
 use twine_view::prelude::*;
 use twine_widgets::buttonmatrix::ButtonMatrix;
 use twine_widgets::keyboard::Keyboard;
 use twine_widgets::spangroup::SpanGroup;
 use twine_widgets::textarea::text_of;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 fn node(t: &TestUi, id: &'static str) -> NodeId {
     t.find(by_id(id)).id()
@@ -65,9 +70,7 @@ fn textarea_view_two_way() {
     settle(&mut t);
     assert_eq!(name.get_untracked(), "Adam");
     assert_eq!(
-        runtime_stats()
-            .faults
-            .get(twine_reactive::FaultKind::EffectLoopCut),
+        rt().stats().faults.get(twine_reactive::FaultKind::EffectLoopCut),
         0
     );
     // Signal → text (cursor at the end).
@@ -283,10 +286,10 @@ fn span_text_binding_redraws_only_the_group() {
     assert_eq!(texts(&t), ["Hello, ", "Ada", "!"]);
     let area = t.find(by_id("g")).coords();
     name.set(String::from("Grace"));
-    let runs = runtime_stats().effect_runs;
+    let runs = rt().stats().effect_runs;
     let period = t.engine().config().refr_period;
     t.advance(period);
-    assert_eq!(runtime_stats().effect_runs - runs, 1);
+    assert_eq!(rt().stats().effect_runs - runs, 1);
     assert_eq!(texts(&t), ["Hello, ", "Grace", "!"]);
     let inv: Vec<Rect> = t.invalidations().iter().map(|(r, _)| *r).collect();
     for r in &inv {

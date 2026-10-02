@@ -87,6 +87,8 @@ trait Sampler {
     fn sample(&mut self) -> (InputData, DeviceHealth);
     fn poll_hint(&self) -> PollHint;
     fn rearm(&mut self);
+    /// [`InputDevice::fit_to_display`] through the box (a runtime rotation; never per read).
+    fn fit(&mut self, info: &twine_hal::DisplayInfo);
 }
 
 impl<T: InputDevice> Sampler for T {
@@ -104,6 +106,10 @@ impl<T: InputDevice> Sampler for T {
     #[inline]
     fn rearm(&mut self) {
         InputDevice::rearm(self);
+    }
+
+    fn fit(&mut self, info: &twine_hal::DisplayInfo) {
+        InputDevice::fit_to_display(self, info);
     }
 }
 
@@ -341,7 +347,12 @@ impl Engine {
     }
 
     /// Registers an input device for `display`. At most [`MAX_INPUTS`] devices; more fail with
-    /// [`EngineError::TooManyInputs`].
+    /// [`EngineError::TooManyInputs`], an unknown display with [`EngineError::DisplayNotFound`].
+    ///
+    /// Before the first read the device is fitted to the display
+    /// ([`InputDevice::fit_to_display`] with its [`DisplayInfo`](twine_hal::DisplayInfo)): touch
+    /// drivers derive their coordinate transform from the display's rotation and size there, so
+    /// pointer coordinates arrive in logical screen coordinates without application code.
     ///
     /// ```
     /// use twine_core::Point;
@@ -376,13 +387,13 @@ impl Engine {
     /// ```
     pub fn add_input(
         &mut self,
-        dev: impl InputDevice + 'static,
+        mut dev: impl InputDevice + 'static,
         display: DisplayId,
     ) -> Result<InputId, EngineError> {
-        if display.index() >= self.displays.len() {
+        let Some(info) = self.display_info(display) else {
             twine_core::warn!(target: "twine::input", "add_input: display {} not found", display);
             return Err(EngineError::DisplayNotFound(display));
-        }
+        };
         let idx = match self.inputs.iter().position(Option::is_none) {
             Some(i) => i,
             None if self.inputs.len() < MAX_INPUTS => {
@@ -394,6 +405,10 @@ impl Engine {
                 return Err(EngineError::TooManyInputs);
             }
         };
+        // Pointer drivers map their coordinates to this display (rotation, size) once, here:
+        // statically dispatched, nothing per read. A rotation at run time fits them again
+        // (`refit_inputs`).
+        dev.fit_to_display(&info);
         let kind = dev.kind();
         let id = InputId(idx as u8);
         self.input_serial = self.input_serial.wrapping_add(1);
@@ -688,6 +703,8 @@ impl Engine {
                     if st.last_data != Some(data) {
                         twine_core::debug!(target: "twine::input", "read {:?} -> {:?}", st.id, data);
                         st.last_data = Some(data);
+                        // A changed sample is user input (`inactive_for`).
+                        self.last_activity = Some(now);
                     }
                     data
                 } else {
@@ -706,6 +723,10 @@ impl Engine {
                 continue;
             };
             let active = st.proc.as_ref().is_some_and(Proc::is_active);
+            if active {
+                // A held device (pressed pointer, key, button) is user input too.
+                self.last_activity = Some(now);
+            }
             if more {
                 // Events left in the driver's queue: read on at the next update, right away.
                 twine_core::debug!(target: "twine::input", "{:?}: more than {} keypad events, continuing next update", st.id, MAX_KEYPAD_READS);
@@ -837,6 +858,61 @@ impl Engine {
             st.proc = Some(proc);
             self.sync_indev_scroll(id, scroll);
         }
+    }
+
+    /// Fits every input device of `display` to its new description again (a rotation at run
+    /// time) and resets their processing: a press in progress ends without a click (the
+    /// device waits for its release), as on a screen load.
+    pub(crate) fn refit_inputs(&mut self, display: DisplayId, info: &twine_hal::DisplayInfo) {
+        let mut ids = heapless::Vec::<InputId, MAX_INPUTS>::new();
+        for st in self.inputs.iter_mut().flatten().filter(|s| s.display == display) {
+            st.driver.fit(info);
+            let _ = ids.push(st.id);
+        }
+        for id in ids {
+            self.input_reset(Some(id), None);
+        }
+    }
+
+    /// The time since the last user input: a changed sample of any input device, a device
+    /// held down (pressed pointer, key or button), or [`trigger_activity`](Self::trigger_activity)
+    /// — LVGL's `lv_display_get_inactive_time`. Before any input, the time since the first
+    /// step. Costs nothing on the input path beyond one store per changed or held sample.
+    ///
+    /// ```
+    /// use twine_core::{Duration, Instant};
+    /// use twine_engine::{Engine, EngineConfig};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// e.step(Instant::from_millis(1_000));
+    /// assert_eq!(e.inactive_for(Instant::from_millis(4_000)), Duration::secs(3));
+    /// e.trigger_activity(Instant::from_millis(4_000));
+    /// assert_eq!(e.inactive_for(Instant::from_millis(4_500)), Duration::ms(500));
+    /// ```
+    #[doc(alias = "lv_display_get_inactive_time")]
+    #[must_use]
+    pub fn inactive_for(&self, now: Instant) -> Duration {
+        self.last_activity
+            .map_or(Duration::ZERO, |t| now.saturating_duration_since(t))
+    }
+
+    /// Records user input at `now` that did not come through an input device (e.g. a
+    /// hardware button the application handles itself), restarting
+    /// [`inactive_for`](Self::inactive_for) and the `EngineConfig::idle_timeout`. Never panics.
+    ///
+    /// ```
+    /// use twine_core::{Duration, Instant};
+    /// use twine_engine::{Engine, EngineConfig};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// e.step(Instant::from_millis(0));
+    /// // A hardware button read by the application at t = 2 s.
+    /// e.trigger_activity(Instant::from_millis(2_000));
+    /// assert_eq!(e.inactive_for(Instant::from_millis(2_250)), Duration::ms(250));
+    /// ```
+    #[doc(alias = "lv_display_trigger_activity")]
+    pub fn trigger_activity(&mut self, now: Instant) {
+        self.last_activity = Some(now);
     }
 
     /// The earliest instant an input device needs to be read (polling period, held devices,

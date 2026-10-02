@@ -134,7 +134,7 @@ pub fn run() -> R {
         Ok(())
     } else {
         Err(format!(
-            "todo-check: {count} forbidden marker(s); only `NOTE(Pxx.Syy): …` / `NOTE(Rn.Smm): …` are allowed (plan README §1 rule 4)"
+            "todo-check: {count} forbidden marker(s); only `NOTE(Pxx.Syy): …` / `NOTE(Rn.Smm): …` are allowed (CLAUDE.md, workflow step 2)"
         )
         .into())
     }

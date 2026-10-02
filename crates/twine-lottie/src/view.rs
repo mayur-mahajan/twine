@@ -132,10 +132,11 @@ impl LottieView {
     /// Called when a non-looping animation reaches its last frame (once per playback).
     pub fn on_complete(self, f: impl Fn() + 'static) -> Self {
         Self(self.0.op(move |cx, node| {
+            let rt = cx.runtime();
             cx.engine()
                 .add_event_handler(node, EventFilter::Code(EventCode::Ready), move |ecx, ev| {
                     if ev.target == ecx.node() {
-                        EngineAccess::provide(ecx.engine_mut(), &f);
+                        EngineAccess::provide(rt, ecx.engine_mut(), &f);
                     }
                     EventResult::Continue
                 });

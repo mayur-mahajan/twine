@@ -148,7 +148,8 @@ pub fn run_engine(cfg: SimConfig, setup: impl FnOnce(&mut twine_engine::Engine))
 
 /// Runs a declarative app and never returns: builds `app` (once) with a `Ui` update cycle on
 /// a simulated display (like [`run_engine`], after [`SimConfig::from_env`]) with the pointer,
-/// keypad and encoder of `cfg.input` and `cfg.theme` (default: LVGL's light default theme),
+/// keypad and encoder of `cfg.input` and the application's configuration `cfg.app`
+/// ([`SimConfig::app_config`]: theme, motion, engine configuration, …; no theme by default),
 /// then updates whenever the `Ui` asks to be woken — `Wake::Idle` leaves the event loop
 /// waiting, using no CPU, until an input or a channel message arrives (channel sends from
 /// other threads wake the window). `app` is any `FnOnce(Scope) -> V`: a `fn` item or a closure
@@ -162,7 +163,7 @@ pub fn run_engine(cfg: SimConfig, setup: impl FnOnce(&mut twine_engine::Engine))
 ///     label("Hello, twine!")
 /// }
 ///
-/// twine_sim::run(SimConfig::new(320, 240).title("hello"), hello);
+/// twine_sim::run(SimConfig::new(320, 240).title("hello").theme(DefaultTheme::light()), hello);
 /// ```
 pub fn run<V: twine_view::View>(cfg: SimConfig, app: impl FnOnce(twine_reactive::Scope) -> V) -> ! {
     init_logging();
@@ -176,9 +177,9 @@ pub fn run<V: twine_view::View>(cfg: SimConfig, app: impl FnOnce(twine_reactive:
 }
 
 /// Runs a declarative app headless (with `cfg.headless` or the defaults) and returns a
-/// report. The environment is **not** applied. `app` is called once, like in [`run`]. The
-/// default theme ([`DefaultTheme::light`](twine_theme::DefaultTheme::light)) is installed when
-/// `cfg` sets none. No window is opened, so it runs in CI.
+/// report. The environment is **not** applied. `app` is called once, like in [`run`], with
+/// the application's configuration `cfg.app` ([`SimConfig::app_config`]; no theme unless it
+/// sets one). No window is opened, so it runs in CI.
 ///
 /// # Errors
 ///
@@ -212,23 +213,27 @@ pub fn run_headless<V: twine_view::View>(
     build_ui_app(cfg, app)?.run_headless()
 }
 
-/// A [`SimApp`] running `app` through a `UiCore` (see [`run`]).
+/// A [`SimApp`] running `app` through a `UiCore` mounted with `cfg.app` (see [`run`]).
 fn build_ui_app<V: twine_view::View>(
-    mut cfg: SimConfig,
+    cfg: SimConfig,
     app: impl FnOnce(twine_reactive::Scope) -> V,
 ) -> Result<SimApp, SimError> {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    if cfg.theme.is_none() {
-        cfg.theme = Some(Rc::new(twine_theme::DefaultTheme::light()));
-    }
+    let config = cfg.app.clone();
     let core: Rc<RefCell<Option<twine_view::UiCore>>> = Rc::default();
     let c = core.clone();
     let mut failed = None;
     let mut sim = SimApp::engine(cfg, |engine| {
         if let Some(d) = engine.default_display() {
-            match twine_view::UiCore::mount(engine, d, app) {
+            match twine_view::UiCore::mount_configured(
+                twine_reactive::Runtime::current_thread(),
+                engine,
+                d,
+                &config,
+                app,
+            ) {
                 Ok(ui) => *c.borrow_mut() = Some(ui),
                 Err(e) => failed = Some(e),
             }

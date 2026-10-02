@@ -317,7 +317,7 @@ impl DrawAccel for TimingOut {
 #[test]
 fn accelerator_timeouts_are_raised_and_drawn_in_software() {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
-    e.set_accel(Some(Box::new(TimingOut)));
+    e.set_accel(TimingOut);
     let panel = MemoryDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565));
     let d = e
         .add_display(panel, BufferMode::partial_single(leak(usize::from(W) * 2 * ROWS)))

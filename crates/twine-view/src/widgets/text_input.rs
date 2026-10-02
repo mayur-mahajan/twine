@@ -273,6 +273,7 @@ impl WidgetView<ButtonMatrix> {
 /// ```
 pub fn keyboard(target: NodeRef<Textarea>) -> WidgetView<Keyboard> {
     widget_view(Keyboard::new).op(move |cx, node| {
+        let rt = cx.runtime();
         crate::bind::bind_node(
             cx,
             node,
@@ -289,7 +290,7 @@ pub fn keyboard(target: NodeRef<Textarea>) -> WidgetView<Keyboard> {
         // looking focused and stops blinking — unless the textarea has the input focus of its
         // group (keypad typing goes on there).
         cx.on_delete(node, move || {
-            crate::access::EngineAccess::with(|e| {
+            crate::access::EngineAccess::with(rt, |e| {
                 let ta = e.widget::<Keyboard>(node).and_then(Keyboard::textarea);
                 let group_focused = ta.is_some_and(|t| e.group_of(t).and_then(|g| e.focused(g)) == Some(t));
                 if !group_focused {
@@ -354,7 +355,7 @@ impl WidgetView<Keyboard> {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let name = cx.signal(String::new());
 /// let _v = textarea(name).placeholder("Your name").one_line(true).max_length(24);
 /// cx.dispose();
@@ -463,7 +464,7 @@ impl WidgetView<Textarea> {
     /// ```
     /// use twine_view::prelude::*;
     ///
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let code = cx.signal(String::new());
     /// let _v = textarea(code).on_insert(|s| {
     ///     s.chars().any(char::is_lowercase).then(|| s.to_uppercase())

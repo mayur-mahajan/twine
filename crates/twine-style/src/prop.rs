@@ -1,4 +1,5 @@
-//! The property catalogue: [`PropId`], [`StyleProp`], [`PropMeta`] and [`PROP_META`].
+//! The property catalogue: [`PropId`], [`StyleProp`], [`PropMeta`] / [`PROP_META`] and
+//! [`PropNames`] / [`PROP_NAMES`].
 //!
 //! Everything here is generated from one table (`__prop_table!` in `table.rs`) so the id enum,
 //! the typed property enum, the metadata, the `StyleBuf` builder methods, the `style!` keys and
@@ -37,16 +38,12 @@ impl defmt::Format for PropFlags {
     }
 }
 
-/// Static metadata of one property (see [`PROP_META`]).
+/// Static metadata of one property (see [`PROP_META`]): what resolution, invalidation and
+/// layout read on every style lookup. The property's names are in [`PropNames`]
+/// ([`PROP_NAMES`]), kept apart so that firmware that never prints a property name does not
+/// link the strings (about 3 KiB of names plus 24 bytes of `&str`s per property).
 #[derive(Clone, Copy, Debug)]
 pub struct PropMeta {
-    /// Property name (`"BgColor"`).
-    pub name: &'static str,
-    /// The property's key: the `style!` key, the `StyleBuf` builder method and the view
-    /// modifier (`"bg_color"`).
-    pub snake_name: &'static str,
-    /// Rust payload type of the [`StyleProp`] variant (`"Color"`).
-    pub type_name: &'static str,
     /// Inherited from the parent's `Main` part when not set.
     pub inherited: bool,
     /// A change needs a layout update.
@@ -64,18 +61,8 @@ pub struct PropMeta {
 }
 
 impl PropMeta {
-    const fn new(
-        name: &'static str,
-        snake_name: &'static str,
-        type_name: &'static str,
-        flags: PropFlags,
-        default: StyleValue,
-        id: u8,
-    ) -> Self {
+    const fn new(flags: PropFlags, default: StyleValue, id: u8) -> Self {
         Self {
-            name,
-            snake_name,
-            type_name,
             inherited: flags.contains(PropFlags::INHERITABLE),
             layout: flags.contains(PropFlags::LAYOUT),
             ext_draw: flags.contains(PropFlags::EXT_DRAW),
@@ -84,6 +71,29 @@ impl PropMeta {
             group: id >> 4,
         }
     }
+}
+
+/// The names of one property (see [`PROP_NAMES`] and [`PropId::names`]): for diagnostics,
+/// tools and generated documentation. Nothing on the rendering path reads them, so they are
+/// linked only into programs that do (the `Display` of [`PropId`], `log`-backend messages,
+/// tools); `defmt` logs print a [`PropId`] through its interned `defmt::Format` instead.
+///
+/// ```
+/// use twine_style::PropId;
+///
+/// let n = PropId::BgColor.names();
+/// assert_eq!((n.name, n.snake_name, n.type_name), ("BgColor", "bg_color", "ColorValue"));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PropNames {
+    /// Property name (`"BgColor"`), the variant of [`PropId`] and [`StyleProp`].
+    pub name: &'static str,
+    /// The property's key: the `style!` key, the `StyleBuf` builder method and the view
+    /// modifier (`"bg_color"`).
+    pub snake_name: &'static str,
+    /// Rust payload type of the [`StyleProp`] variant (`"ColorValue"`: a color or a design
+    /// element).
+    pub type_name: &'static str,
 }
 
 /// Converts `style!` values of `Length`/`Radius`/design-value/`DurationMs`/`GridTracks`
@@ -156,8 +166,12 @@ macro_rules! define_props {
 
         /// Identifier of a style property: the fieldless discriminant of [`StyleProp`]
         /// (`1..=PROP_COUNT`; LVGL `lv_style_prop_t`, with Twine's own numbering and names).
+        ///
+        /// `Debug` and `Display` both print the variant name (`BgColor`) from [`PROP_NAMES`]:
+        /// one table instead of a derived per-variant match (about 1 KiB per call site that
+        /// inlines it on 32-bit targets).
         #[repr(u8)]
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
         #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         pub enum PropId {
             $($( $(#[doc = $doc])* $(#[doc(alias = $alias)])* $name = Order::$name as u8, )*)*
@@ -224,13 +238,23 @@ macro_rules! define_props {
         pub static PROP_META: [$crate::PropMeta; PROP_COUNT] = [
             $($(
                 $crate::PropMeta::new(
-                    ::core::stringify!($name),
-                    ::core::stringify!($key),
-                    $crate::__prop_type_name!($($ty)+),
                     $crate::PropFlags::empty()$(.union($crate::PropFlags::$flag))*,
                     $crate::__private::$default,
                     $crate::PropId::$name as u8,
                 ),
+            )*)*
+        ];
+
+        /// The names of every property, indexed like [`PROP_META`] (use [`PropId::names`]).
+        /// Separate from [`PROP_META`] so firmware that never reads a name does not link the
+        /// strings.
+        pub static PROP_NAMES: [$crate::PropNames; PROP_COUNT] = [
+            $($(
+                $crate::PropNames {
+                    name: ::core::stringify!($name),
+                    snake_name: ::core::stringify!($key),
+                    type_name: $crate::__prop_type_name!($($ty)+),
+                },
             )*)*
         ];
 
@@ -319,14 +343,52 @@ impl PropId {
         1 << self.group()
     }
 
-    /// Property name (`"BgColor"`).
+    /// The property's names (see [`PropNames`]).
+    #[inline]
     #[must_use]
-    pub fn name(self) -> &'static str {
-        self.meta().name
+    pub const fn names(self) -> &'static PropNames {
+        &PROP_NAMES[self as usize - 1]
+    }
+
+    /// Property name (`"BgColor"`).
+    ///
+    /// ```
+    /// assert_eq!(twine_style::PropId::BgColor.name(), "BgColor");
+    /// ```
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        self.names().name
+    }
+
+    /// The property's key: its `style!` key, `StyleBuf` builder method and view modifier
+    /// (`"bg_color"`).
+    ///
+    /// ```
+    /// assert_eq!(twine_style::PropId::BgColor.snake_name(), "bg_color");
+    /// ```
+    #[must_use]
+    pub const fn snake_name(self) -> &'static str {
+        self.names().snake_name
+    }
+
+    /// Rust payload type of the property's [`StyleProp`] variant (`"ColorValue"`).
+    ///
+    /// ```
+    /// assert_eq!(twine_style::PropId::BgColor.type_name(), "ColorValue");
+    /// ```
+    #[must_use]
+    pub const fn type_name(self) -> &'static str {
+        self.names().type_name
     }
 }
 
 impl core::fmt::Display for PropId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl core::fmt::Debug for PropId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.name())
     }
@@ -382,7 +444,7 @@ mod tests {
         static ANIM: AnimSpec = AnimSpec::new(twine_core::Duration::ms(1));
         static TR: Transition = Transition::of(crate::Props::BG, twine_core::Duration::ms(1));
         static TRACKS: [GridTrack; 2] = [GridTrack::Px(10), GridTrack::Fr(1)];
-        match id.meta().type_name {
+        match id.type_name() {
             "&'static Gradient" => StyleValue::Grad(&GRAD),
             "&'static ImageSource" => StyleValue::Image(&IMG),
             "&'static ImageColorkey" => StyleValue::Colorkey(&KEY),
@@ -399,8 +461,8 @@ mod tests {
         assert_eq!(ROWS.len(), PROP_COUNT);
         for &(id, snake) in ROWS {
             let m = id.meta();
-            assert_eq!(m.snake_name, snake);
-            assert_eq!(m.name, alloc::format!("{id:?}"));
+            assert_eq!(id.snake_name(), snake);
+            assert_eq!(id.name(), alloc::format!("{id:?}"));
             assert_eq!(m.group, id as u8 >> 4);
             let v = sample(id);
             assert!(!v.is_none(), "{id:?} has no sample");
@@ -427,7 +489,7 @@ mod tests {
             assert!(lvgl.starts_with("LV_STYLE_"), "{id:?}: {aliases:?}");
             // Former Twine keys are snake_case and differ from the current key.
             for a in &aliases[..aliases.len() - 1] {
-                assert_ne!(*a, id.meta().snake_name, "{id:?}");
+                assert_ne!(*a, id.snake_name(), "{id:?}");
                 assert!(
                     a.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
                     "{id:?}: {a}"

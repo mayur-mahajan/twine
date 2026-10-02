@@ -24,7 +24,7 @@ ui = ["engine", "dep:twine-reactive", "dep:twine-view", "dep:twine-widgets", "de
 
 [dependencies]
 twine-core = { path = "../twine-core", features = ["std", "log"] }
-twine-hal = { path = "../twine-hal", features = ["log"] }
+twine-hal = { path = "../twine-hal", features = ["log", "async"] }
 twine-render = { path = "../twine-render", optional = true, features = [
     "log",
     "color-rgb565",
@@ -63,3 +63,12 @@ critical-section = { version = "1", optional = true, features = ["std"] }
 png = "0.17"
 log = "0.4"
 env_logger = "0.11"
+
+# Tests of `TestUi` need the `ui` feature (built by default).
+[[test]]
+name = "ui"
+required-features = ["ui"]
+
+[[test]]
+name = "ports"
+required-features = ["ui"]

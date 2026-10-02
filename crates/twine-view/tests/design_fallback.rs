@@ -2,8 +2,6 @@
 //! warns once per element kind and never panics. In its own test binary: the "warned" flags
 //! are process-wide.
 
-use std::rc::Rc;
-
 use twine_style::StyleValue;
 use twine_style::design::{ColorElement, LengthElement};
 use twine_testing::{TestUi, by_id, capture_logs};
@@ -16,18 +14,16 @@ fn missing_element_falls_back_to_the_default_and_warns_once() {
     const MISSING_TOO: ColorElement = ColorElement::custom(41);
     const NO_SPACE: LengthElement = LengthElement::custom(3);
     let (t, logs) = capture_logs(|| {
-        let mut t = TestUi::new(100, 100)
-            .theme(Rc::new(DefaultTheme::light()))
-            .mount(|_| {
-                column((
-                    container(())
-                        .size(10, 10)
-                        .border_color(MISSING)
-                        .padding(NO_SPACE)
-                        .test_id("a"),
-                    container(()).size(10, 10).border_color(MISSING_TOO).test_id("b"),
-                ))
-            });
+        let mut t = TestUi::new(100, 100).theme(DefaultTheme::light()).mount(|_| {
+            column((
+                container(())
+                    .size(10, 10)
+                    .border_color(MISSING)
+                    .padding(NO_SPACE)
+                    .test_id("a"),
+                container(()).size(10, 10).border_color(MISSING_TOO).test_id("b"),
+            ))
+        });
         t.run_until_idle();
         t
     });

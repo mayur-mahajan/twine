@@ -9,7 +9,7 @@ use core::hash::Hash;
 
 use hashbrown::{HashMap, HashSet};
 use twine_engine::{Engine, NodeId, fmt_node_id};
-use twine_reactive::{Scope, defer_current_effect, dispose_current_effect, untrack};
+use twine_reactive::Scope;
 
 use super::{FOR_EACH_CLASS, Wrapper, dispose_with};
 use crate::access::EngineAccess;
@@ -108,6 +108,7 @@ impl<T: 'static, K: Eq + Hash + Clone + 'static> View for ForEach<T, K> {
             return wrapper; // not created (reported); nothing to keep up to date
         }
         let scope = cx.scope();
+        let rt = scope.runtime();
         let rows: Rc<RefCell<Vec<Row<T, K>>>> = Rc::default();
         let r = rows.clone();
         cx.on_delete(wrapper, move || {
@@ -124,12 +125,12 @@ impl<T: 'static, K: Eq + Hash + Clone + 'static> View for ForEach<T, K> {
         cx.provide(|| {
             scope.effect_with_cx(move |_| {
                 let new_items = items();
-                match EngineAccess::with(|e| e.tree().contains(wrapper)) {
-                    None => return defer_current_effect(),
-                    Some(false) => return dispose_current_effect(),
+                match EngineAccess::with(rt, |e| e.tree().contains(wrapper)) {
+                    None => return rt.defer_current_effect(),
+                    Some(false) => return rt.dispose_current_effect(),
                     Some(true) => {}
                 }
-                untrack(|| {
+                rt.untrack(|| {
                     let c = reconcile(wrapper, scope, &rows, new_items, &*key, &*view, keep.as_ref());
                     twine_core::debug!(
                         target: "twine::view",
@@ -164,6 +165,7 @@ fn reconcile<T: 'static, K: Eq + Hash + Clone + 'static>(
     keep: Option<&Keep<T>>,
 ) -> Counts {
     let mut counts = Counts::default();
+    let rt = scope.runtime();
     let mut old: Vec<Option<Row<T, K>>> = rows.borrow_mut().drain(..).map(Some).collect();
     let old_index: HashMap<K, usize> = old
         .iter()
@@ -202,7 +204,7 @@ fn reconcile<T: 'static, K: Eq + Hash + Clone + 'static>(
     }
 
     // 2. Dispose and delete the rows that are gone (scope first, then node).
-    EngineAccess::with(|e| {
+    EngineAccess::with(rt, |e| {
         for (j, r) in old.iter_mut().enumerate() {
             if !reused[j] {
                 if let Some(row) = r.take() {
@@ -254,7 +256,7 @@ fn reconcile<T: 'static, K: Eq + Hash + Clone + 'static>(
     let n = plan.len();
     let mut new_rows: Vec<Option<Row<T, K>>> = (0..n).map(|_| None).collect();
     let mut plan = plan;
-    EngineAccess::with(|e| {
+    EngineAccess::with(rt, |e| {
         let mut next: Option<NodeId> = None;
         while let Some((k, p)) = plan.pop() {
             let i = plan.len();

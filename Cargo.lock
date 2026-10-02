@@ -2057,6 +2057,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2392,6 +2398,24 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "riscv"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b05cfa3f7b30c84536a9025150d44d26b8e1cc20ddf436448d74cd9591eefb25"
+dependencies = [
+ "critical-section",
+ "embedded-hal 1.0.0",
+ "paste",
+ "riscv-pac",
+]
+
+[[package]]
+name = "riscv-pac"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8188909339ccc0c68cfb5a04648313f09621e8b87dc03095454f1a11f6c5d436"
 
 [[package]]
 name = "rustc_version"
@@ -3024,6 +3048,8 @@ dependencies = [
  "twine-assets",
  "twine-core",
  "twine-demos",
+ "twine-drivers",
+ "twine-embassy",
  "twine-engine",
  "twine-fs",
  "twine-hal",
@@ -3246,7 +3272,11 @@ dependencies = [
 name = "twine-hal"
 version = "0.1.0"
 dependencies = [
+ "cortex-m",
+ "critical-section",
  "defmt",
+ "embassy-time",
+ "riscv",
  "twine-core",
 ]
 
@@ -3462,6 +3492,7 @@ dependencies = [
  "twine-anim",
  "twine-assets",
  "twine-core",
+ "twine-drivers",
  "twine-engine",
  "twine-hal",
  "twine-image",

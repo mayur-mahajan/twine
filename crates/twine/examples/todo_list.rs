@@ -69,5 +69,11 @@ fn app(cx: Scope) -> impl View {
 }
 
 fn main() {
-    twine_sim::run(SimConfig::new(320, 240).title("todo list").scale(2), app);
+    twine_sim::run(
+        SimConfig::new(320, 240)
+            .title("todo list")
+            .scale(2)
+            .theme(DefaultTheme::light()),
+        app,
+    );
 }

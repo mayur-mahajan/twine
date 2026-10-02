@@ -194,12 +194,12 @@ fn snapshot_checkbox_states() {
 
 #[test]
 fn snapshot_checkbox_mono_i1() {
-    let mut h = EngineHarness::new(128, 32).format(ColorFormat::I1).theme(Rc::new(
+    let mut h = EngineHarness::new(128, 32).format(ColorFormat::I1).theme(
         MonoTheme::builder()
             .mode(ThemeMode::Light)
             .font(&twine_assets::fonts::MONTSERRAT_14)
             .build(),
-    ));
+    );
     let screen = h.screen();
     let e = h.engine_mut();
     let a = checkbox::create_with(e, screen, "Off").unwrap();

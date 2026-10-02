@@ -443,7 +443,7 @@ fn missing_element(prop: PropId, e: ElementRef, defaults: StyleDefaults) -> Styl
             target: "twine::style",
             "{} of {} is not defined by the theme; using the property's default (further missing {} elements are not reported)",
             e,
-            prop.name(),
+            prop,
             e.kind().name()
         );
     }
@@ -512,7 +512,7 @@ pub fn resolve_traced<S: StyleSource>(
             TraceEvent::Entry(e) => twine_core::trace!(
                 target: "twine::style",
                 "{} depth {} entry#{} {:?} {:?} w={} matched={} had_prop={} chosen={}",
-                prop.name(),
+                prop,
                 e.depth,
                 e.entry_index,
                 e.kind,
@@ -523,10 +523,10 @@ pub fn resolve_traced<S: StyleSource>(
                 e.chosen
             ),
             TraceEvent::Inherited { depth, part, .. } => {
-                twine_core::trace!(target: "twine::style", "{} inherited: depth {} {:?}", prop.name(), depth, part);
+                twine_core::trace!(target: "twine::style", "{} inherited: depth {} {:?}", prop, depth, part);
             }
             TraceEvent::Default(v) => {
-                twine_core::trace!(target: "twine::style", "{} default {:?}", prop.name(), v);
+                twine_core::trace!(target: "twine::style", "{} default {:?}", prop, v);
             }
         }
         trace(ev);
@@ -589,13 +589,13 @@ fn typed<T: PropValue>(prop: PropId, v: StyleValue, defaults: StyleDefaults) -> 
     debug_assert!(
         false,
         "style value {v:?} does not fit property {prop} ({})",
-        prop.meta().type_name
+        prop.type_name()
     );
     // Load + store instead of a swap: thumbv6m has no atomic read-modify-write; a rare duplicate
     // warning is harmless.
     if !WARNED[prop as usize].load(Ordering::Relaxed) {
         WARNED[prop as usize].store(true, Ordering::Relaxed);
-        twine_core::warn!(target: "twine::style", "value of {} has the wrong type; using the default", prop.name());
+        twine_core::warn!(target: "twine::style", "value of {} has the wrong type; using the default", prop);
     }
     T::from_value(default_value(prop, defaults))
 }

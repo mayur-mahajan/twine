@@ -21,7 +21,7 @@ use crate::view::{View, ViewSeq};
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let name = cx.signal(String::from("Ada"));
 /// let _v = spangroup((
 ///     span("Hello, "),

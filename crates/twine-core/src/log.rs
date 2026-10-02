@@ -30,6 +30,19 @@
 //! Only `{}` and `{:?}` placeholders are portable across backends; every logged type implements
 //! `Display`/`Debug` and, with `defmt`, `defmt::Format`.
 //!
+//! Every backend expands a call to the same shape: one block `{ … }` holding a single expression
+//! of type `()`. A call therefore fits anywhere an expression or statement does (a `match` arm,
+//! a closure body, after `else`) and lints such as `clippy::single_match` see the same code
+//! whichever backend is compiled, so call sites never need per-backend workarounds.
+//!
+//! ```
+//! # let found: Option<u32> = None;
+//! match found {
+//!     Some(v) => twine_core::info!("found {}", v),
+//!     None => twine_core::warn!(target: "twine::core", "not found"),
+//! }
+//! ```
+//!
 //! # Level policy
 //!
 //! - `error!`: invariant violation recovered from, effect loop limit, driver error.
@@ -92,52 +105,52 @@ mod imp_defmt {
     /// Logs at trace level (see the [module docs](crate::log)).
     #[macro_export]
     macro_rules! trace {
-        (target: $target:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
+        (target: $target:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {{
             $crate::__private::defmt::trace!($fmt $(, $arg)*)
-        };
-        ($fmt:literal $(, $arg:expr)* $(,)?) => {
+        }};
+        ($fmt:literal $(, $arg:expr)* $(,)?) => {{
             $crate::__private::defmt::trace!($fmt $(, $arg)*)
-        };
+        }};
     }
     /// Logs at debug level (see the [module docs](crate::log)).
     #[macro_export]
     macro_rules! debug {
-        (target: $target:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
+        (target: $target:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {{
             $crate::__private::defmt::debug!($fmt $(, $arg)*)
-        };
-        ($fmt:literal $(, $arg:expr)* $(,)?) => {
+        }};
+        ($fmt:literal $(, $arg:expr)* $(,)?) => {{
             $crate::__private::defmt::debug!($fmt $(, $arg)*)
-        };
+        }};
     }
     /// Logs at info level (see the [module docs](crate::log)).
     #[macro_export]
     macro_rules! info {
-        (target: $target:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
+        (target: $target:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {{
             $crate::__private::defmt::info!($fmt $(, $arg)*)
-        };
-        ($fmt:literal $(, $arg:expr)* $(,)?) => {
+        }};
+        ($fmt:literal $(, $arg:expr)* $(,)?) => {{
             $crate::__private::defmt::info!($fmt $(, $arg)*)
-        };
+        }};
     }
     /// Logs at warn level (see the [module docs](crate::log)).
     #[macro_export]
     macro_rules! warn {
-        (target: $target:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
+        (target: $target:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {{
             $crate::__private::defmt::warn!($fmt $(, $arg)*)
-        };
-        ($fmt:literal $(, $arg:expr)* $(,)?) => {
+        }};
+        ($fmt:literal $(, $arg:expr)* $(,)?) => {{
             $crate::__private::defmt::warn!($fmt $(, $arg)*)
-        };
+        }};
     }
     /// Logs at error level (see the [module docs](crate::log)).
     #[macro_export]
     macro_rules! error {
-        (target: $target:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
+        (target: $target:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {{
             $crate::__private::defmt::error!($fmt $(, $arg)*)
-        };
-        ($fmt:literal $(, $arg:expr)* $(,)?) => {
+        }};
+        ($fmt:literal $(, $arg:expr)* $(,)?) => {{
             $crate::__private::defmt::error!($fmt $(, $arg)*)
-        };
+        }};
     }
 }
 
@@ -146,52 +159,52 @@ mod imp_log {
     /// Logs at trace level (see the [module docs](crate::log)).
     #[macro_export]
     macro_rules! trace {
-        (target: $target:expr, $($arg:tt)+) => {
+        (target: $target:expr, $($arg:tt)+) => {{
             $crate::__private::log::log!(target: $target, $crate::__private::log::Level::Trace, $($arg)+)
-        };
-        ($($arg:tt)+) => {
+        }};
+        ($($arg:tt)+) => {{
             $crate::__private::log::log!(target: "twine", $crate::__private::log::Level::Trace, $($arg)+)
-        };
+        }};
     }
     /// Logs at debug level (see the [module docs](crate::log)).
     #[macro_export]
     macro_rules! debug {
-        (target: $target:expr, $($arg:tt)+) => {
+        (target: $target:expr, $($arg:tt)+) => {{
             $crate::__private::log::log!(target: $target, $crate::__private::log::Level::Debug, $($arg)+)
-        };
-        ($($arg:tt)+) => {
+        }};
+        ($($arg:tt)+) => {{
             $crate::__private::log::log!(target: "twine", $crate::__private::log::Level::Debug, $($arg)+)
-        };
+        }};
     }
     /// Logs at info level (see the [module docs](crate::log)).
     #[macro_export]
     macro_rules! info {
-        (target: $target:expr, $($arg:tt)+) => {
+        (target: $target:expr, $($arg:tt)+) => {{
             $crate::__private::log::log!(target: $target, $crate::__private::log::Level::Info, $($arg)+)
-        };
-        ($($arg:tt)+) => {
+        }};
+        ($($arg:tt)+) => {{
             $crate::__private::log::log!(target: "twine", $crate::__private::log::Level::Info, $($arg)+)
-        };
+        }};
     }
     /// Logs at warn level (see the [module docs](crate::log)).
     #[macro_export]
     macro_rules! warn {
-        (target: $target:expr, $($arg:tt)+) => {
+        (target: $target:expr, $($arg:tt)+) => {{
             $crate::__private::log::log!(target: $target, $crate::__private::log::Level::Warn, $($arg)+)
-        };
-        ($($arg:tt)+) => {
+        }};
+        ($($arg:tt)+) => {{
             $crate::__private::log::log!(target: "twine", $crate::__private::log::Level::Warn, $($arg)+)
-        };
+        }};
     }
     /// Logs at error level (see the [module docs](crate::log)).
     #[macro_export]
     macro_rules! error {
-        (target: $target:expr, $($arg:tt)+) => {
+        (target: $target:expr, $($arg:tt)+) => {{
             $crate::__private::log::log!(target: $target, $crate::__private::log::Level::Error, $($arg)+)
-        };
-        ($($arg:tt)+) => {
+        }};
+        ($($arg:tt)+) => {{
             $crate::__private::log::log!(target: "twine", $crate::__private::log::Level::Error, $($arg)+)
-        };
+        }};
     }
 }
 

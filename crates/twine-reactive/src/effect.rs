@@ -11,7 +11,7 @@ use crate::handles::NodeHandle;
 ///
 /// ```
 /// use std::{cell::Cell, rc::Rc};
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let a = cx.signal(0);
 /// let runs = Rc::new(Cell::new(0));
 /// let r = runs.clone();
@@ -47,7 +47,7 @@ impl EffectId {
     /// Whether the effect is still alive (not disposed, scope alive).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let e = cx.effect(|| {});
     /// assert!(e.is_alive());
     /// cx.dispose();

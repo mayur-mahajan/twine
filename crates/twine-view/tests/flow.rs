@@ -3,9 +3,14 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use twine_reactive::runtime_stats;
+use twine_reactive::Runtime;
 use twine_testing::{TestUi, by_class, by_id, by_text};
 use twine_view::prelude::*;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 #[test]
 fn when_switches_branch_and_disposes_scope() {
@@ -142,11 +147,11 @@ fn regions_release_everything_on_switch() {
     t.run_until_idle_bounded();
     let on = t.root_scope().expect_context::<Signal<bool>>();
     let nodes_on = t.engine().tree().len();
-    let reactive_on = runtime_stats().nodes;
+    let reactive_on = rt().stats().nodes;
     on.set(false);
     t.run_until_idle();
     assert!(t.engine().tree().len() < nodes_on);
-    assert!(runtime_stats().nodes < reactive_on);
+    assert!(rt().stats().nodes < reactive_on);
     assert_eq!(
         t.engine().timer_count(),
         0,

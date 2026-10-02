@@ -7,7 +7,7 @@
 //! | Address | `0x15` |
 //! | IRQ | `IRQ`, active-low pulses per report; **required**: the chip sleeps when idle and NACKs I2C until touched |
 //! | Reset | optional `RST` (active low) to wake / restart it |
-//! | Rotation | reports panel coordinates (12-bit): use [`TouchTransform`] |
+//! | Rotation | reports panel coordinates (12-bit), mapped to the display by [`TouchTransform`](super::TouchTransform) (fitted automatically, see [module docs](super#coordinates)) |
 //!
 //! A reading reads 6 registers from `0x01`: gesture, finger count, `XH` (bits 11:8 in 3:0),
 //! `XL`, `YH`, `YL`. Because the controller does not answer while asleep, a failed read while
@@ -23,12 +23,12 @@
 //! | `RST` | not driven by the driver: hold it high from your firmware; the chip sleeps between touches and does not answer then |
 //!
 //! ```
-//! use twine_drivers::touch::{Cst816s, TouchTransform};
+//! use twine_drivers::touch::Cst816s;
 //! use twine_drivers::testkit::Recorder;
 //! use twine_hal::{InputDevice, PollHint};
 //!
 //! let rec = Recorder::new();
-//! let touch = Cst816s::new(rec.i2c(), Some(rec.quiet_pin("irq")), TouchTransform::identity(240, 240));
+//! let touch = Cst816s::new(rec.i2c(), Some(rec.quiet_pin("irq")));
 //! assert_eq!(touch.poll_hint(), PollHint::Interrupt);
 //! ```
 
@@ -36,9 +36,9 @@ use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal::i2c::I2c;
 use twine_core::log::{debug, trace};
-use twine_hal::{DeviceHealth, InputData, InputDevice, InputKind, PointerData, PollHint};
+use twine_hal::{DeviceHealth, DisplayInfo, InputData, InputDevice, InputKind, PointerData, PollHint};
 
-use super::{IrqState, TouchTransform};
+use super::{IrqState, PanelMap, panel_map_methods};
 use crate::NoPin;
 
 /// I2C address.
@@ -52,18 +52,31 @@ pub struct Cst816s<I2C, IRQ, RST = NoPin> {
     i2c: I2C,
     irq: IrqState<IRQ>,
     rst: Option<RST>,
-    transform: TouchTransform,
+    map: PanelMap,
 }
 
 impl<I2C, IRQ> Cst816s<I2C, IRQ, NoPin> {
-    /// A driver without reset pin; `irq` is the `IRQ` pin (active low).
+    /// A driver without reset pin; `irq` is the `IRQ` pin (active low). Its coordinates are
+    /// fitted to the display when it is added to the engine (see
+    /// [`for_display`](Self::for_display)). Touches no bus; never panics.
+    ///
+    /// ```
+    /// use twine_drivers::testkit::Recorder;
+    /// use twine_drivers::touch::Cst816s;
+    /// use twine_hal::{InputDevice, PollHint};
+    ///
+    /// // On hardware: the HAL's `I2c` and, if wired, the interrupt input pin.
+    /// let rec = Recorder::new();
+    /// let touch = Cst816s::new(rec.i2c(), Some(rec.quiet_pin("int")));
+    /// assert_eq!(touch.poll_hint(), PollHint::Interrupt);
+    /// ```
     #[must_use]
-    pub fn new(i2c: I2C, irq: Option<IRQ>, transform: TouchTransform) -> Self {
+    pub fn new(i2c: I2C, irq: Option<IRQ>) -> Self {
         Self {
             i2c,
             irq: IrqState::new(irq),
             rst: None,
-            transform,
+            map: PanelMap::new(),
         }
     }
 
@@ -74,12 +87,14 @@ impl<I2C, IRQ> Cst816s<I2C, IRQ, NoPin> {
             i2c: self.i2c,
             irq: self.irq,
             rst: Some(rst),
-            transform: self.transform,
+            map: self.map,
         }
     }
 }
 
 impl<I2C, IRQ, RST> Cst816s<I2C, IRQ, RST> {
+    panel_map_methods!(Cst816s);
+
     /// Reports the device [`Failed`](DeviceHealth::Failed) after `n` consecutive bus errors
     /// (default [`DeviceHealth::DEFAULT_FAIL_AFTER`]; see [`health`](InputDevice::health)).
     #[must_use]
@@ -135,7 +150,7 @@ impl<I2C: I2c, IRQ: InputPin, RST> InputDevice for Cst816s<I2C, IRQ, RST> {
         }
         let data = match self.read_raw() {
             Ok(Some((x, y))) => PointerData {
-                point: self.transform.apply(i32::from(x), i32::from(y)),
+                point: self.map.apply(x, y),
                 pressed: true,
             },
             Ok(None) => self.irq.released(),
@@ -161,6 +176,10 @@ impl<I2C: I2c, IRQ: InputPin, RST> InputDevice for Cst816s<I2C, IRQ, RST> {
     fn health(&self) -> DeviceHealth {
         self.irq.health
     }
+
+    fn fit_to_display(&mut self, info: &DisplayInfo) {
+        self.map.fit(info);
+    }
 }
 
 #[cfg(feature = "async")]
@@ -185,11 +204,8 @@ mod tests {
         rec.set_level("irq", false);
         // 1 finger, x = 0x3E8 = 1000 (upper nibble of XH carries event bits), y = 0x0F0 = 240.
         regs.set(0x01, &[0x00, 0x01, 0x83, 0xE8, 0x00, 0xF0]);
-        let mut t = Cst816s::new(
-            rec.i2c(),
-            Some(rec.quiet_pin("irq")),
-            TouchTransform::identity(4096, 4096),
-        );
+        let mut t = Cst816s::new(rec.i2c(), Some(rec.quiet_pin("irq")))
+            .for_display(&crate::touch::test_util::display(4096, 4096));
         assert_eq!(
             t.read(),
             InputData::Pointer(PointerData {
@@ -208,7 +224,8 @@ mod tests {
     #[test]
     fn cst816s_reset_pulse_and_wait() {
         let rec = Recorder::new();
-        let mut t = Cst816s::new(rec.i2c(), None::<NoPin>, TouchTransform::identity(1, 1))
+        let mut t = Cst816s::new(rec.i2c(), None::<NoPin>)
+            .for_display(&crate::touch::test_util::display(1, 1))
             .with_reset_pin(rec.pin("rst"));
         t.reset(&mut rec.delay()).unwrap();
         assert_eq!(
@@ -228,11 +245,8 @@ mod tests {
     fn cst816s_async_wait() {
         use twine_hal::AsyncInputWait;
         let rec = Recorder::new();
-        let mut t = Cst816s::new(
-            rec.i2c(),
-            Some(rec.quiet_pin("irq")),
-            TouchTransform::identity(1, 1),
-        );
+        let mut t = Cst816s::new(rec.i2c(), Some(rec.quiet_pin("irq")))
+            .for_display(&crate::touch::test_util::display(1, 1));
         block_on(t.wait_for_interrupt());
         assert_eq!(rec.ops(), [BusOp::Wait("irq", false)]);
     }
@@ -242,12 +256,9 @@ mod tests {
         let rec = Recorder::new();
         let regs = Regs::install(&rec);
         rec.set_level("irq", false);
-        let mut t = Cst816s::new(
-            rec.i2c(),
-            Some(rec.quiet_pin("irq")),
-            TouchTransform::identity(240, 240),
-        )
-        .with_fail_after(DeviceHealth::DEFAULT_FAIL_AFTER);
+        let mut t = Cst816s::new(rec.i2c(), Some(rec.quiet_pin("irq")))
+            .for_display(&crate::touch::test_util::display(240, 240))
+            .with_fail_after(DeviceHealth::DEFAULT_FAIL_AFTER);
         // Asleep (released): no answer is not a failure.
         rec.set_bus_down(true);
         for _ in 0..5 {

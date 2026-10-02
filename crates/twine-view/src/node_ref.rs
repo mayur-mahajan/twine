@@ -118,7 +118,7 @@ impl<W: Widget> NodeRef<W> {
             twine_core::warn!(target: "twine::view", "NodeRef::with_mut: reference not filled");
             return None;
         };
-        if let Some(r) = EngineAccess::with(|e| e.with_widget_mut::<W, R>(node, f)) {
+        if let Some(r) = EngineAccess::with(self.cell.runtime(), |e| e.with_widget_mut::<W, R>(node, f)) {
             r
         } else {
             no_engine("NodeRef::with_mut");

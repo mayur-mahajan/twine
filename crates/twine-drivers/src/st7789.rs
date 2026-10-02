@@ -54,6 +54,7 @@ pub static ST7789: PanelSpec = PanelSpec {
     colmod: 0x55,
     align: 1,
     sw_rotation: false,
+    brightness: false,
     invert: true,
     init: &ST7789_INIT,
 };

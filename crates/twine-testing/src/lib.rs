@@ -11,6 +11,7 @@
 //! |------|---------|
 //! | [`MemoryDisplay`], [`FlushRecord`], [`leak_buffer`] | in-memory [`DisplayDriver`](twine_hal::DisplayDriver) recording flushes, with DMA-like latency |
 //! | [`MockClock`] | manually advanced [`Clock`](twine_hal::Clock) |
+//! | [`MockPlatform`] | [`Platform`](twine_hal::Platform) and [`AsyncPlatform`](twine_hal::AsyncPlatform) on simulated time (records waits, counts notifications, simulates interrupt context) |
 //! | [`MockPointer`], [`MockKeypad`], [`MockEncoder`], [`MockButton`] | scriptable [`InputDevice`](twine_hal::InputDevice)s |
 //! | [`snapshot`] | pixel-exact PNG snapshots ([`assert_rgb_snapshot`], [`snapshot_config!`]) |
 //! | [`convert`] | any supported pixel format → RGB888 |
@@ -23,7 +24,7 @@
 //! |---------|-------|
 //! | `render` | [`RenderHarness`] over the renderer; [`gallery`]: the renderer's reference drawings (pages of the `render_gallery` example and the renderer snapshot tests) |
 //! | `engine` | [`EngineHarness`] over a bare engine, [`MockDmaDisplay`], [`MockFramebufferDisplay`]; [`scenes`]: reference engine scenes (`engine_boxes`, `scroll_list`, …) shared by tests, benchmarks and examples |
-//! | `ui` (default) | [`TestUi`] over the declarative UI |
+//! | `ui` (default) | [`TestUi`] over the declarative UI; per-test ports ([`TestUi::channel`], [`TestUi::latest`], [`TestUi::outbox`]: fresh `'static` queues handed to the application instead of global `static`s shared by parallel tests), the shipped configuration ([`TestUi::app_config`]) and [`TestUi::memory_report`] |
 //!
 //! ```
 //! use twine_core::{Color, ColorFormat, Rect};
@@ -52,6 +53,7 @@ pub mod memory_display;
 #[cfg(feature = "engine")]
 pub mod mock_display;
 pub mod mock_input;
+pub mod platform;
 pub mod png_io;
 #[cfg(feature = "render")]
 pub mod render_harness;
@@ -83,6 +85,7 @@ pub use mock_display::{
     record_render_start,
 };
 pub use mock_input::{MockButton, MockEncoder, MockKeypad, MockPointer};
+pub use platform::MockPlatform;
 #[cfg(feature = "render")]
 pub use render_harness::RenderHarness;
 pub use snapshot::{SnapshotConfig, Tolerance, assert_rgb_snapshot};

@@ -45,6 +45,16 @@ impl KeyList {
         }
     }
 
+    /// Heap bytes of a spilled list (the box and its vector), 0 inline.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        match self {
+            KeyList::Inline { .. } => 0,
+            KeyList::Heap(v) => {
+                core::mem::size_of::<Vec<NodeKey>>() + v.capacity() * core::mem::size_of::<NodeKey>()
+            }
+        }
+    }
+
     /// Number of keys.
     pub(crate) fn len(&self) -> usize {
         self.as_slice().len()

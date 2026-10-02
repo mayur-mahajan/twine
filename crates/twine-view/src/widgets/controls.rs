@@ -56,7 +56,7 @@ struct BarCfg {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let progress = cx.signal(30);
 /// let _v = bar(progress).range(0..=200).animated(Duration::ms(300)).width(160);
 /// cx.dispose();
@@ -120,7 +120,7 @@ impl WidgetView<Bar> {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let level = cx.signal(40);
 /// let _v = column((slider(level).range(0..=100), bar(level)));
 /// cx.dispose();
@@ -196,7 +196,7 @@ impl WidgetView<Slider> {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let wifi = cx.signal(true);
 /// let _v = row((label("Wi-Fi"), switch(wifi)));
 /// cx.dispose();
@@ -238,7 +238,7 @@ impl WidgetView<Switch> {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let agree = cx.signal(false);
 /// let _v = checkbox("I agree", agree);
 /// cx.dispose();
@@ -286,7 +286,7 @@ impl WidgetView<Checkbox> {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let volume = cx.signal(25);
 /// let _v = arc(volume).range(0..=50).rotation(Angle::deg(135)).bg_angles(Angle::deg(0), Angle::deg(270));
 /// cx.dispose();
@@ -443,7 +443,7 @@ impl Default for LedCfg {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let alarm = cx.signal(false);
 /// let _v = led(alarm).color(Color::RED).brightness(Fraction::pct(80));
 /// cx.dispose();
@@ -499,7 +499,7 @@ impl WidgetView<Led> {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let pts = cx.signal(vec![Point::new(0, 20), Point::new(30, 0), Point::new(60, 20)]);
 /// let _v = line(pts).width(3).rounded(true);
 /// cx.dispose();

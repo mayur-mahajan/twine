@@ -1,5 +1,7 @@
 //! Frame statistics ([`RefreshStats`]), the one-second performance window ([`PerfMonitor`])
-//! and memory statistics ([`MemInfo`]).
+//! and memory statistics ([`MemInfo`], [`HeapPeak`]).
+
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use twine_core::{Duration, Instant};
 
@@ -40,7 +42,33 @@ pub struct RefreshStats {
     pub mem_peak: u32,
 }
 
-/// Memory statistics reported by the application's allocator.
+/// Memory statistics reported by the application's allocator, through
+/// [`EngineConfig::mem_info`](crate::EngineConfig::mem_info) (a plain `fn() -> MemInfo`: the
+/// allocator is the application's choice, so the engine only asks). Values are bytes,
+/// saturated to `u32::MAX`.
+///
+/// Every heap allocator for microcontrollers reports its use; [`HeapPeak`] adds the peak:
+///
+/// ```
+/// use twine_engine::{EngineConfig, HeapPeak, MemInfo};
+///
+/// # struct Heap; impl Heap { fn used(&self) -> usize { 1000 } fn free(&self) -> usize { 3000 } }
+/// # static HEAP: Heap = Heap;
+/// // `static HEAP: embedded_alloc::LlffHeap` (or `TlsfHeap`), or `esp_alloc::HEAP`: both
+/// // have `used()` and `free()`.
+/// fn mem_info() -> MemInfo {
+///     static PEAK: HeapPeak = HeapPeak::new();
+///     PEAK.sample(HEAP.used(), HEAP.free())
+/// }
+///
+/// let mut config = EngineConfig::default();
+/// config.mem_info = Some(mem_info);
+/// assert_eq!(mem_info(), MemInfo { used: 1000, peak: 1000, free: 3000 });
+/// ```
+///
+/// On a host (`std`) there are no heap statistics without a counting global allocator; the
+/// application installs one if it wants these numbers (test binaries can use
+/// `twine_testing::alloc::CountingAllocator`).
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MemInfo {
@@ -50,6 +78,84 @@ pub struct MemInfo {
     pub peak: u32,
     /// Bytes still free.
     pub free: u32,
+}
+
+impl MemInfo {
+    /// `used` in percent of the heap (`used + free`), 0 for an empty heap. Never panics.
+    ///
+    /// ```
+    /// use twine_engine::MemInfo;
+    /// assert_eq!(MemInfo { used: 900, peak: 950, free: 100 }.used_percent(), 90);
+    /// assert_eq!(MemInfo::default().used_percent(), 0);
+    /// ```
+    #[must_use]
+    pub fn used_percent(&self) -> u8 {
+        let total = u64::from(self.used) + u64::from(self.free);
+        if total == 0 {
+            return 0;
+        }
+        (u64::from(self.used) * 100 / total) as u8
+    }
+}
+
+/// The highest heap use seen, kept in a `static` next to a [`MemInfo`] provider (see the
+/// example there): [`sample`](Self::sample) turns an allocator's `used()`/`free()` into a
+/// `MemInfo` with a peak.
+///
+/// The peak is **sampled**: it is the highest `used` passed to `sample`, not every
+/// allocation's high-water mark (allocators for microcontrollers do not track one). Call
+/// `sample` from one context (the engine calls the provider from its step); it uses only
+/// atomic loads and stores (no compare-and-swap), so it works on every target, `thumbv6m`
+/// included.
+#[derive(Debug, Default)]
+pub struct HeapPeak(AtomicU32);
+
+impl HeapPeak {
+    /// A tracker that has seen nothing (`peak` 0). `const`, for `static` items. Never panics.
+    ///
+    /// ```
+    /// use twine_engine::HeapPeak;
+    /// static PEAK: HeapPeak = HeapPeak::new();
+    /// assert_eq!(PEAK.peak(), 0);
+    /// ```
+    #[must_use]
+    pub const fn new() -> Self {
+        Self(AtomicU32::new(0))
+    }
+
+    /// The statistics for a heap with `used` and `free` bytes, raising the peak if `used` is
+    /// above it. Values above `u32::MAX` saturate. Allocates nothing; never panics.
+    ///
+    /// ```
+    /// use twine_engine::HeapPeak;
+    /// let p = HeapPeak::new();
+    /// assert_eq!(p.sample(500, 500).peak, 500);
+    /// let m = p.sample(200, 800);
+    /// assert_eq!((m.used, m.peak, m.free), (200, 500, 800));
+    /// assert_eq!(p.peak(), 500);
+    /// ```
+    pub fn sample(&self, used: usize, free: usize) -> MemInfo {
+        let used = u32::try_from(used).unwrap_or(u32::MAX);
+        let free = u32::try_from(free).unwrap_or(u32::MAX);
+        let peak = self.0.load(Ordering::Relaxed).max(used);
+        self.0.store(peak, Ordering::Relaxed);
+        MemInfo { used, peak, free }
+    }
+
+    /// The highest `used` sampled so far (0 before the first [`sample`](Self::sample)).
+    /// Never panics.
+    ///
+    /// ```
+    /// use twine_engine::HeapPeak;
+    /// let p = HeapPeak::new();
+    /// p.sample(700, 300);
+    /// p.sample(400, 600);
+    /// assert_eq!(p.peak(), 700);
+    /// ```
+    #[must_use]
+    pub fn peak(&self) -> u32 {
+        self.0.load(Ordering::Relaxed)
+    }
 }
 
 /// Accumulates frames and busy time over one-second windows (LVGL's `sysmon` performance

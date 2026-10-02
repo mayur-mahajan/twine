@@ -129,7 +129,9 @@ fn controller_and_theme_calls_between_updates_take_effect_at_the_next_update() {
     });
     t.update();
     let ctl = ctl.get().unwrap();
-    let playing = |t: &mut TestUi| EngineAccess::provide(t.engine_mut(), || ctl.is_playing());
+    let playing = |t: &mut TestUi| {
+        EngineAccess::provide(Runtime::current_thread(), t.engine_mut(), || ctl.is_playing())
+    };
     assert!(playing(&mut t));
 
     ctl.pause();
@@ -167,7 +169,11 @@ fn animation_created_then_paused_between_updates_stays_paused() {
     let (x, ctl) = t.root_scope().animation(0, 100, forever());
     ctl.pause();
     t.update();
-    assert!(!EngineAccess::provide(t.engine_mut(), || ctl.is_playing()));
+    assert!(!EngineAccess::provide(
+        Runtime::current_thread(),
+        t.engine_mut(),
+        || ctl.is_playing()
+    ));
     assert_eq!(t.engine().anim_count(), 1, "started, then paused");
     t.advance(Duration::ms(100));
     assert_eq!(x.get_untracked(), 0);
@@ -185,7 +191,7 @@ fn call_while_the_engine_is_borrowed_runs_at_the_next_update() {
         column((
             container(()).width(x),
             button(label("p")).on_click(move || {
-                EngineAccess::with(|_e| ctl.pause());
+                EngineAccess::with(Runtime::current_thread(), |_e| ctl.pause());
             }),
         ))
     });
@@ -193,7 +199,11 @@ fn call_while_the_engine_is_borrowed_runs_at_the_next_update() {
     let ctl = ctl.get().unwrap();
     t.find(twine_testing::by_text("p")).click();
     t.run_until_idle(); // idles only once the queued pause was applied
-    assert!(!EngineAccess::provide(t.engine_mut(), || ctl.is_playing()));
+    assert!(!EngineAccess::provide(
+        Runtime::current_thread(),
+        t.engine_mut(),
+        || ctl.is_playing()
+    ));
 }
 
 #[test]
@@ -202,6 +212,8 @@ fn queue_overflow_raises_a_fault_and_applies_the_rest() {
     let c2 = ctls.clone();
     let clock = MockClock::new();
     let mut ui = Ui::builder(MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)))
+        .runtime(Runtime::current_thread())
+        .buffers(BufferMode::alloc(BufferSpec::default()))
         .clock(clock.clone())
         .engine_queue_capacity(2)
         .try_build(move |cx| {
@@ -227,7 +239,9 @@ fn queue_overflow_raises_a_fault_and_applies_the_rest() {
     );
     assert_eq!(rec.occurrences, 1);
     assert_eq!(rec.display, Some(ui.display()));
-    let playing = |ui: &mut Ui, k: AnimController| EngineAccess::provide(ui.engine_mut(), || k.is_playing());
+    let playing = |ui: &mut Ui, k: AnimController| {
+        EngineAccess::provide(Runtime::current_thread(), ui.engine_mut(), || k.is_playing())
+    };
     assert!(!playing(&mut ui, a));
     assert!(!playing(&mut ui, b));
     assert!(playing(&mut ui, c), "the dropped command was not applied");
@@ -281,11 +295,15 @@ fn queuing_allocates_nothing() {
             ctl.resume();
             ctl.set_playing(false);
         }
-        theme.set_rc(dark.clone());
+        theme.set(dark.clone());
     });
     assert_eq!(stats.allocs, 0, "{stats:?}");
     t.update();
-    assert!(!EngineAccess::provide(t.engine_mut(), || ctl.is_playing()));
+    assert!(!EngineAccess::provide(
+        Runtime::current_thread(),
+        t.engine_mut(),
+        || ctl.is_playing()
+    ));
 }
 
 /// A queued stop of an animation that already ended (or a removal of a timer that already
@@ -307,7 +325,11 @@ fn stale_ids_are_ignored() {
     sub.dispose(); // queues a stop and a removal with stale ids
     t.update();
     assert_eq!((t.engine().anim_count(), t.engine().timer_count()), (1, 1));
-    assert!(EngineAccess::provide(t.engine_mut(), || other.is_playing()));
+    assert!(EngineAccess::provide(
+        Runtime::current_thread(),
+        t.engine_mut(),
+        || other.is_playing()
+    ));
 }
 
 #[test]
@@ -316,7 +338,7 @@ fn ui_core_dispose_applies_queued_commands_and_cleanups() {
     let d = h.display();
     let child: Rc<Cell<Option<Scope>>> = Rc::default();
     let c2 = child.clone();
-    let core = UiCore::mount(h.engine_mut(), d, move |cx| {
+    let core = UiCore::mount(Runtime::current_thread(), h.engine_mut(), d, move |cx| {
         let sub = cx.child();
         c2.set(Some(sub));
         let (x, _) = sub.animation(0, 100, forever());

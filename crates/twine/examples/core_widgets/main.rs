@@ -11,8 +11,6 @@
 
 mod showcase;
 
-use std::rc::Rc;
-
 use showcase::{H, W, build, engine_config};
 use twine::theme::DefaultTheme;
 use twine_sim::{SimConfig, run_engine};
@@ -22,7 +20,7 @@ fn main() {
         .title("core widgets")
         .scale(2)
         .engine_config(engine_config())
-        .theme(Rc::new(DefaultTheme::light()));
+        .theme(DefaultTheme::light());
     run_engine(cfg, |engine| {
         build(engine);
     });

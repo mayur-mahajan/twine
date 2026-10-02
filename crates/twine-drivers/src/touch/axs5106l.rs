@@ -8,15 +8,16 @@
 //! | Bus speed | I2C up to 400 kHz (the vendor demo's clock) |
 //! | IRQ | `INT`, active low (the demo triggers on the falling edge) |
 //! | Reset | optional `RST` (active low) |
-//! | Rotation | reports panel coordinates (12-bit): use [`TouchTransform`] |
+//! | Rotation | reports panel coordinates (12-bit), mapped to the display by [`TouchTransform`](super::TouchTransform) (fitted automatically, see [module docs](super#coordinates)) |
 //!
 //! A reading is a register write of `0x01` followed by a separate 14-byte read (with a STOP in
 //! between, as the vendor code does): byte 1 holds the number of points (bits 3:0), then per
 //! point 6 bytes starting at byte 2: `XH` (X bits 11:8 in 3:0), `XL`, `YH`, `YL`, two more.
 //! Only the first point is used. [`read_id`](Axs5106l::read_id) reads the 3 ID bytes at `0x08`.
 //!
-//! On the Waveshare 1.47" board the touch X axis runs opposite to the display's columns: use
-//! [`TouchTransform::with_raw_mirror_x`] (the vendor demo mirrors X at rotation 0).
+//! On the Waveshare 1.47" board the touch X axis runs opposite to the display's columns:
+//! describe it with [`with_mount`](Axs5106l::with_mount)`(TouchMount { mirror_x: true, .. })`
+//! (the vendor demo mirrors X at rotation 0); every display rotation then works.
 //!
 //! # Wiring
 //!
@@ -27,13 +28,13 @@
 //! | `RST` | optional: [`with_reset_pin`](Axs5106l::with_reset_pin) + [`reset`](Axs5106l::reset), or hold it high from your firmware |
 //!
 //! ```
-//! use twine_drivers::touch::{Axs5106l, TouchTransform};
+//! use twine_drivers::touch::{Axs5106l, TouchMount};
 //! use twine_drivers::testkit::Recorder;
 //! use twine_hal::{InputDevice, PollHint};
 //!
 //! let rec = Recorder::new();
-//! let transform = TouchTransform::identity(172, 320).with_raw_mirror_x();
-//! let touch = Axs5106l::new(rec.i2c(), Some(rec.quiet_pin("int")), transform);
+//! let touch = Axs5106l::new(rec.i2c(), Some(rec.quiet_pin("int")))
+//!     .with_mount(TouchMount { mirror_x: true, ..TouchMount::ALIGNED });
 //! assert_eq!(touch.poll_hint(), PollHint::Interrupt);
 //! ```
 
@@ -41,9 +42,9 @@ use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal::i2c::I2c;
 use twine_core::log::{trace, warn};
-use twine_hal::{DeviceHealth, InputData, InputDevice, InputKind, PointerData, PollHint};
+use twine_hal::{DeviceHealth, DisplayInfo, InputData, InputDevice, InputKind, PointerData, PollHint};
 
-use super::{IrqState, TouchTransform};
+use super::{IrqState, PanelMap, panel_map_methods};
 use crate::NoPin;
 
 /// I2C address.
@@ -63,18 +64,31 @@ pub struct Axs5106l<I2C, IRQ, RST = NoPin> {
     i2c: I2C,
     irq: IrqState<IRQ>,
     rst: Option<RST>,
-    transform: TouchTransform,
+    map: PanelMap,
 }
 
 impl<I2C, IRQ> Axs5106l<I2C, IRQ, NoPin> {
-    /// A driver without reset pin; `irq` is the `INT` pin (active low), if wired.
+    /// A driver without reset pin; `irq` is the `INT` pin (active low), if wired. Its
+    /// coordinates are fitted to the display when it is added to the engine (see
+    /// [`for_display`](Self::for_display)). Touches no bus; never panics.
+    ///
+    /// ```
+    /// use twine_drivers::testkit::Recorder;
+    /// use twine_drivers::touch::Axs5106l;
+    /// use twine_hal::{InputDevice, PollHint};
+    ///
+    /// // On hardware: the HAL's `I2c` and, if wired, the interrupt input pin.
+    /// let rec = Recorder::new();
+    /// let touch = Axs5106l::new(rec.i2c(), Some(rec.quiet_pin("int")));
+    /// assert_eq!(touch.poll_hint(), PollHint::Interrupt);
+    /// ```
     #[must_use]
-    pub fn new(i2c: I2C, irq: Option<IRQ>, transform: TouchTransform) -> Self {
+    pub fn new(i2c: I2C, irq: Option<IRQ>) -> Self {
         Self {
             i2c,
             irq: IrqState::new(irq),
             rst: None,
-            transform,
+            map: PanelMap::new(),
         }
     }
 
@@ -85,23 +99,20 @@ impl<I2C, IRQ> Axs5106l<I2C, IRQ, NoPin> {
             i2c: self.i2c,
             irq: self.irq,
             rst: Some(rst),
-            transform: self.transform,
+            map: self.map,
         }
     }
 }
 
 impl<I2C, IRQ, RST> Axs5106l<I2C, IRQ, RST> {
+    panel_map_methods!(Axs5106l);
+
     /// Reports the device [`Failed`](DeviceHealth::Failed) after `n` consecutive bus errors
     /// (default [`DeviceHealth::DEFAULT_FAIL_AFTER`]; see [`health`](InputDevice::health)).
     #[must_use]
     pub fn with_fail_after(mut self, n: u16) -> Self {
         self.irq.fail_after = n;
         self
-    }
-
-    /// Replaces the coordinate transform.
-    pub fn set_transform(&mut self, t: TouchTransform) {
-        self.transform = t;
     }
 
     /// Returns the bus and the pins.
@@ -165,7 +176,7 @@ impl<I2C: I2c, IRQ: InputPin, RST> InputDevice for Axs5106l<I2C, IRQ, RST> {
         }
         let data = match self.read_raw() {
             Ok(Some((x, y))) => PointerData {
-                point: self.transform.apply(i32::from(x), i32::from(y)),
+                point: self.map.apply(x, y),
                 pressed: true,
             },
             Ok(None) => self.irq.released(),
@@ -183,6 +194,10 @@ impl<I2C: I2c, IRQ: InputPin, RST> InputDevice for Axs5106l<I2C, IRQ, RST> {
 
     fn health(&self) -> DeviceHealth {
         self.irq.health
+    }
+
+    fn fit_to_display(&mut self, info: &DisplayInfo) {
+        self.map.fit(info);
     }
 }
 
@@ -221,11 +236,8 @@ mod tests {
     }
 
     fn dut(rec: &Recorder) -> Axs5106l<RecordingI2c, RecordingPin> {
-        Axs5106l::new(
-            rec.i2c(),
-            Some(rec.quiet_pin("int")),
-            TouchTransform::identity(4096, 4096),
-        )
+        Axs5106l::new(rec.i2c(), Some(rec.quiet_pin("int")))
+            .for_display(&crate::touch::test_util::display(4096, 4096))
     }
 
     fn report(points: u8, p: &[(u16, u16)]) -> Vec<u8> {
@@ -333,11 +345,12 @@ mod tests {
         let rec = Recorder::new();
         let r = Rc::new(RefCell::new(report(1, &[(10, 20)])));
         install(&rec, &r);
-        let mut t = Axs5106l::new(
-            rec.i2c(),
-            None::<NoPin>,
-            TouchTransform::identity(172, 320).with_raw_mirror_x(),
-        );
+        let mut t = Axs5106l::new(rec.i2c(), None::<NoPin>)
+            .for_display(&crate::touch::test_util::display(172, 320))
+            .with_mount(twine_hal::TouchMount {
+                mirror_x: true,
+                ..twine_hal::TouchMount::ALIGNED
+            });
         assert_eq!(t.poll_hint(), PollHint::Periodic);
         assert!(matches!(t.read(), InputData::Pointer(p) if p.point == Point::new(161, 20)));
     }
@@ -347,7 +360,8 @@ mod tests {
         let rec = Recorder::new();
         let r = Rc::new(RefCell::new(Vec::new()));
         install(&rec, &r);
-        let mut t = Axs5106l::new(rec.i2c(), None::<NoPin>, TouchTransform::identity(1, 1))
+        let mut t = Axs5106l::new(rec.i2c(), None::<NoPin>)
+            .for_display(&crate::touch::test_util::display(1, 1))
             .with_reset_pin(rec.pin("rst"));
         t.reset(&mut rec.delay()).unwrap();
         assert_eq!(t.read_id().unwrap(), [0x05, 0x10, 0x6A]);

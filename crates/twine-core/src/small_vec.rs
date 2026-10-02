@@ -70,6 +70,25 @@ impl<T: Copy + Default, const N: usize> SmallVec<T, N> {
         matches!(self.repr, Repr::Heap(_))
     }
 
+    /// Heap bytes of the elements: 0 while inline, the heap buffer's capacity once spilled.
+    /// Allocates nothing; never panics.
+    ///
+    /// ```
+    /// use twine_core::SmallVec;
+    /// let mut v: SmallVec<u32, 1> = SmallVec::new();
+    /// v.push(1);
+    /// assert_eq!(v.heap_bytes(), 0);
+    /// v.push(2);
+    /// assert!(v.heap_bytes() >= 2 * 4);
+    /// ```
+    #[must_use]
+    pub fn heap_bytes(&self) -> usize {
+        match &self.repr {
+            Repr::Inline { .. } => 0,
+            Repr::Heap(v) => v.capacity() * core::mem::size_of::<T>(),
+        }
+    }
+
     /// The elements as a slice.
     #[must_use]
     pub fn as_slice(&self) -> &[T] {

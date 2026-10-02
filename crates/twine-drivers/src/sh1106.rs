@@ -158,6 +158,23 @@ impl<I: DcsInterface> Sh1106<I> {
 impl<I: DcsInterface> DisplayDriver for Sh1106<I> {
     type Error = OledError<I::Error>;
 
+    /// The contrast (`0x81`), which is the brightness of an OLED (`Fraction::ONE` = 255).
+    fn set_brightness(
+        &mut self,
+        level: twine_core::Fraction,
+    ) -> Result<(), twine_hal::ControlError<Self::Error>> {
+        self.commands(&[0x81, level.raw()])
+            .map_err(twine_hal::ControlError::Driver)
+    }
+
+    /// Display off (`0xAE`, the controller's sleep mode; display RAM kept) or on (`0xAF`); no
+    /// settle time.
+    fn sleep(&mut self, sleep: bool) -> Result<twine_core::Duration, twine_hal::ControlError<Self::Error>> {
+        self.commands(&[if sleep { 0xAE } else { 0xAF }])
+            .map_err(twine_hal::ControlError::Driver)?;
+        Ok(twine_core::Duration::ZERO)
+    }
+
     fn info(&self) -> DisplayInfo {
         info(self.rotation)
     }
@@ -245,6 +262,27 @@ mod asynch {
 
     impl<I: AsyncDcsInterface> AsyncDisplayDriver for AsyncSh1106<I> {
         type Error = OledError<I::Error>;
+
+        /// The contrast (`0x81`), as the blocking driver.
+        async fn set_brightness(
+            &mut self,
+            level: twine_core::Fraction,
+        ) -> Result<(), twine_hal::ControlError<Self::Error>> {
+            self.commands(&[0x81, level.raw()])
+                .await
+                .map_err(twine_hal::ControlError::Driver)
+        }
+
+        /// Display off (`0xAE`) or on (`0xAF`), as the blocking driver.
+        async fn sleep(
+            &mut self,
+            sleep: bool,
+        ) -> Result<twine_core::Duration, twine_hal::ControlError<Self::Error>> {
+            self.commands(&[if sleep { 0xAE } else { 0xAF }])
+                .await
+                .map_err(twine_hal::ControlError::Driver)?;
+            Ok(twine_core::Duration::ZERO)
+        }
 
         fn info(&self) -> DisplayInfo {
             info(self.rotation)

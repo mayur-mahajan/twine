@@ -5,17 +5,16 @@ use std::rc::Rc;
 use twine_core::{ColorFormat, Duration, Instant, Point, Rect, Rotation};
 
 use twine_engine::{
-    BufferMode, DisplayId, Engine, EngineConfig, InputId, InvalidateReason, NodeId, RefreshStats, ThemeHook,
-    Wake,
+    BufferMode, BufferSpec, DisplayId, Engine, EngineConfig, InputId, IntoTheme, InvalidateReason, NodeId,
+    RefreshStats, ThemeHook, Wake,
 };
-use twine_hal::{BufferSpec, Clock, DisplayInfo, Key, PollHint};
+use twine_hal::{Clock, DisplayInfo, Key, PollHint};
 use twine_theme::DefaultTheme;
 
 use crate::mock_display::MockFramebufferDisplay;
 use crate::snapshot::{SnapshotConfig, Tolerance, assert_rgb_snapshot};
 use crate::{
     FlushRecord, MemoryDisplay, MockClock, MockDmaDisplay, MockEncoder, MockKeypad, MockPointer, convert,
-    leak_buffer,
 };
 
 /// Framebuffer mode of [`EngineHarness::framebuffer`].
@@ -206,11 +205,8 @@ impl Settings {
                 )
             }
             kind => {
-                let bytes = self.buffers.bytes_per_buffer(&info);
-                let mode = BufferMode::Partial {
-                    a: leak_buffer(bytes),
-                    b: (self.buffers.buffer_count() == 2).then(|| leak_buffer(bytes)),
-                };
+                // The engine allocates the buffers once it accepted the display.
+                let mode = BufferMode::alloc(self.buffers);
                 if let Kind::Dma(polls) = kind {
                     #[cfg(feature = "debug-checks")]
                     engine.set_render_hook(Some(crate::mock_display::record_render_start));
@@ -258,7 +254,7 @@ impl EngineHarness {
             rotation: Rotation::Deg0,
             align: 1,
             dpi: twine_style::DEFAULT_DPI,
-            theme: Some(Rc::new(DefaultTheme::light())),
+            theme: Some(DefaultTheme::light().into_theme()),
         };
         let (engine, display) = s.build();
         Self {
@@ -316,10 +312,36 @@ impl EngineHarness {
     }
 
     /// Installs `theme` on the display instead of the default light theme (rebuilds the
-    /// engine).
+    /// engine): a theme value or a shared one ([`IntoTheme`]).
+    ///
+    /// ```
+    /// use twine_testing::EngineHarness;
+    /// use twine_theme::DefaultTheme;
+    ///
+    /// let h = EngineHarness::new(64, 32).theme(DefaultTheme::dark());
+    /// assert!(h.engine().theme(h.display()).is_some());
+    /// ```
     #[must_use]
-    pub fn theme(mut self, theme: Rc<dyn ThemeHook>) -> Self {
-        self.s.theme = Some(theme);
+    pub fn theme(mut self, theme: impl IntoTheme) -> Self {
+        self.s.theme = Some(theme.into_theme());
+        self.rebuild();
+        self
+    }
+
+    /// The engine configuration, theme and (if `Some`) rotation of an application
+    /// configuration, applied with one rebuild (`TestUi::app_config`; only `TestUi` uses it).
+    #[cfg(feature = "ui")]
+    pub(crate) fn configure(
+        mut self,
+        config: EngineConfig,
+        theme: Option<Rc<dyn ThemeHook>>,
+        rotation: Option<Rotation>,
+    ) -> Self {
+        self.s.config = config;
+        self.s.theme = theme;
+        if let Some(r) = rotation {
+            self.s.rotation = r;
+        }
         self.rebuild();
         self
     }
@@ -341,25 +363,22 @@ impl EngineHarness {
         self
     }
 
-    /// Uses the buffer layout `b` (`Full` / `Direct` switch to a [`MockFramebufferDisplay`]).
+    /// Uses heap partial buffers as `b` describes (rebuilds the engine; a framebuffer display
+    /// set with [`framebuffer`](Self::framebuffer) goes back to a [`MemoryDisplay`]).
+    /// Framebuffer modes are chosen with [`framebuffer`](Self::framebuffer).
+    ///
+    /// ```
+    /// use twine_engine::BufferSpec;
+    /// use twine_testing::EngineHarness;
+    ///
+    /// let mut h = EngineHarness::new(64, 32).buffers(BufferSpec::PartialSingle { rows: 8 });
+    /// h.run_until_idle();
+    /// assert_eq!(h.flushes().len(), 4); // 32 rows in chunks of 8
+    /// ```
     #[must_use]
     pub fn buffers(mut self, b: BufferSpec) -> Self {
         self.s.buffers = b;
-        if matches!(b, BufferSpec::Full | BufferSpec::Direct) {
-            let delay = if let Kind::Framebuffer(_, d) = self.s.kind {
-                d
-            } else {
-                0
-            };
-            self.s.kind = Kind::Framebuffer(
-                if b == BufferSpec::Full {
-                    FbMode::Full
-                } else {
-                    FbMode::Direct
-                },
-                delay,
-            );
-        } else if matches!(self.s.kind, Kind::Framebuffer(..)) {
+        if matches!(self.s.kind, Kind::Framebuffer(..)) {
             self.s.kind = Kind::Memory;
         }
         self.rebuild();
@@ -387,10 +406,6 @@ impl EngineHarness {
     #[must_use]
     pub fn framebuffer(mut self, mode: FbMode, present_delay: u32) -> Self {
         self.s.kind = Kind::Framebuffer(mode, present_delay);
-        self.s.buffers = match mode {
-            FbMode::Full => BufferSpec::Full,
-            FbMode::Direct => BufferSpec::Direct,
-        };
         self.rebuild();
         self
     }
@@ -524,7 +539,7 @@ impl EngineHarness {
         let mut spins = 0u32;
         loop {
             match self.update() {
-                Wake::Idle => return self.clock.now().saturating_duration_since(start),
+                Wake::Idle | Wake::IdleFor(_) => return self.clock.now().saturating_duration_since(start),
                 Wake::At(t) => {
                     spins = 0;
                     if t > self.clock.now() {

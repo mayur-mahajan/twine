@@ -45,6 +45,7 @@ pub const NOSTD_FEATURE_SETS: &[(&str, &str)] = &[
     ("twine-core", "defmt"),
     ("twine-hal", "async"),
     ("twine-hal", "defmt"),
+    ("twine-hal", "platform-embassy"),
     ("twine-drivers", "all"),
     ("twine-drivers", "all,async"),
     ("twine-drivers", "all,defmt,async"),
@@ -53,6 +54,22 @@ pub const NOSTD_FEATURE_SETS: &[(&str, &str)] = &[
     ("twine-drivers", "co5300,ft6x36,async"),
     ("twine-drivers", "ssd1306,i2c,encoder"),
     ("twine-view", "async"),
+    // Facade panel features: the driver and its colour feature together (R3.S06).
+    ("twine", "log,drivers-ili9341,drivers-ssd1306,drivers-ili9488"),
+    ("twine", "async,drivers-co5300"),
+    // Facade features forwarded to every member (R3.S10): firmware-like sets with `defmt` /
+    // `log`, the embassy run loop, touch and bus drivers, and each font bundle.
+    (
+        "twine",
+        "defmt,embassy,drivers-st7789,drivers-ft6x36,drivers-spi-dma,fonts-latin-small",
+    ),
+    (
+        "twine",
+        "log,embassy,drivers-ssd1306,drivers-i2c,drivers-xpt2046,fonts-mono",
+    ),
+    ("twine", "fonts-latin-medium"),
+    ("twine", "fonts-latin-all"),
+    ("twine", "fonts-rtl,fonts-cjk"),
     ("twine-embassy", "defmt"),
     ("twine-embassy", "log"),
     ("twine-demos", "async"),
@@ -75,7 +92,7 @@ pub const NOSTD_FEATURE_SETS: &[(&str, &str)] = &[
     ("twine-text", "log,bidi,arabic-shaping"),
     ("twine-fs", "log,fs-fat"),
     ("twine-fs", "defmt,fs-fat"),
-    ("twine-assets", "all-fonts"),
+    ("twine-assets", "fonts-all"),
     (
         "twine-image",
         "log,img-qoi,img-png,img-jpeg,img-bmp,img-gif,img-lz4",
@@ -104,8 +121,17 @@ pub const NOSTD_FEATURE_SETS: &[(&str, &str)] = &[
 ];
 
 /// `(crate, features, target)` builds for features that only make sense on some targets
-/// (runtime TrueType fonts use `f32` and `static_cell`, which needs CAS atomics: FPU targets).
+/// (platform implementations for one CPU architecture; runtime TrueType fonts use `f32` and
+/// `static_cell`, which needs CAS atomics: FPU targets).
 pub const NOSTD_TARGET_FEATURE_SETS: &[(&str, &str, &str)] = &[
+    // Architecture-specific platforms (R3.S01), on every target of their architecture.
+    ("twine-hal", "platform-cortex-m", "thumbv6m-none-eabi"),
+    ("twine-hal", "platform-cortex-m", "thumbv7em-none-eabihf"),
+    ("twine-hal", "platform-cortex-m", "thumbv8m.main-none-eabihf"),
+    ("twine-hal", "platform-riscv", "riscv32imc-unknown-none-elf"),
+    // The same through the facade (R3.S10).
+    ("twine", "platform-cortex-m,defmt", "thumbv6m-none-eabi"),
+    ("twine", "platform-riscv,log", "riscv32imc-unknown-none-elf"),
     ("twine-text", "ttf,bidi,arabic-shaping", "thumbv7em-none-eabihf"),
     ("twine-text", "ttf", "thumbv8m.main-none-eabihf"),
     // DMA2D register access for the supported STM32 chips (Cortex-M4F / M7).

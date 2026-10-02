@@ -54,6 +54,12 @@ impl StyleList {
         &self.0
     }
 
+    /// Heap bytes of the entry vector (by capacity; the styles the entries point to are
+    /// shared and not included).
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.0.capacity() * core::mem::size_of::<StyleEntry>()
+    }
+
     /// Releases the unused capacity, keeping room for the local-style entry when there is
     /// none yet (local properties usually follow a node's creation).
     pub(crate) fn shrink_to_fit(&mut self) {

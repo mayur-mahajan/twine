@@ -27,7 +27,7 @@ const WHAT: &str = "stored value";
 /// [`is_alive`](Self::is_alive) exist for handles that may outlive their scope.
 ///
 /// ```
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let log = cx.stored_value(Vec::new());
 /// let push = move |s: &'static str| log.with_mut(|l| l.push(s));
 /// push("a");
@@ -40,7 +40,7 @@ const WHAT: &str = "stored value";
 /// Stored values cannot be sent to another thread:
 ///
 /// ```compile_fail
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let v = cx.stored_value(0u32);
 /// std::thread::spawn(move || v.get());
 /// ```
@@ -61,7 +61,7 @@ impl<T: 'static> StoredValue<T> {
     /// panics with a `RefCell` borrow error).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let v = cx.stored_value(vec![1, 2, 3]);
     /// assert_eq!(v.with(Vec::len), 3);
     /// ```
@@ -83,7 +83,7 @@ impl<T: 'static> StoredValue<T> {
     /// Calls `f` with a mutable reference to the value (nobody is notified).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let n = cx.stored_value(1);
     /// n.with_mut(|n| *n += 1);
     /// assert_eq!(n.get(), 2);
@@ -106,7 +106,7 @@ impl<T: 'static> StoredValue<T> {
     /// A clone of the value.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// assert_eq!(cx.stored_value(7).get(), 7);
     /// ```
     ///
@@ -127,7 +127,7 @@ impl<T: 'static> StoredValue<T> {
     /// released, so its `Drop` may use this stored value again.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let v = cx.stored_value("a");
     /// v.set("b");
     /// assert_eq!(v.get(), "b");
@@ -147,7 +147,7 @@ impl<T: 'static> StoredValue<T> {
     /// disposed.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let v = cx.stored_value(3);
     /// assert_eq!(v.try_with(|n| n * 2), Some(6));
     /// cx.dispose();
@@ -169,7 +169,7 @@ impl<T: 'static> StoredValue<T> {
     /// was disposed.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let v = cx.stored_value(3);
     /// assert_eq!(v.try_with_mut(|n| { *n += 1; *n }), Some(4));
     /// cx.dispose();
@@ -190,7 +190,7 @@ impl<T: 'static> StoredValue<T> {
     /// A clone of the value, or `None` if the value's scope was disposed.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let v = cx.stored_value(1);
     /// assert_eq!(v.try_get(), Some(1));
     /// cx.dispose();
@@ -206,7 +206,7 @@ impl<T: 'static> StoredValue<T> {
     /// Whether the value's scope is still alive.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let v = cx.stored_value(());
     /// assert!(v.is_alive());
     /// cx.dispose();

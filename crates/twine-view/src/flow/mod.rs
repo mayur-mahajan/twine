@@ -60,7 +60,7 @@ impl Widget for Wrapper {
 
 /// Disposes `scope` with the engine lent to its cleanups.
 pub(crate) fn dispose_with(e: &mut Engine, scope: Scope) {
-    EngineAccess::provide(e, || scope.dispose());
+    EngineAccess::provide(scope, e, || scope.dispose());
 }
 
 /// Deletes every child of `wrapper`.

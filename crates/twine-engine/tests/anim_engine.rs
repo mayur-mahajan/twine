@@ -104,7 +104,7 @@ fn anim_wake_is_refresh_period_while_running_then_idle() {
                 wake = h.update();
             }
             Wake::Now => wake = h.update(),
-            Wake::Idle => break,
+            Wake::Idle | Wake::IdleFor(_) => break,
         }
         assert!(frames < 100, "never idle");
     }

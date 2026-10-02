@@ -7,6 +7,14 @@
 //! | `I2cInterface` | I2C (control byte `0x00` / `0x40`) | SSD1306 / SH1106 OLEDs |
 //! | `I80Interface8`, `I80Interface16` | Intel 8080 parallel via GPIO bit-banging | slow (~1–3 MB/s), for completeness |
 //! | `QspiInterface` | quad SPI (`QspiBus`, no DC pin) | AMOLED controllers (CO5300, SH8601, RM67162) |
+#![cfg_attr(
+    feature = "spi-dma",
+    doc = "| [`DmaSpiInterface`] | 4-wire SPI over a [`DmaSpiBus`] + CS and DC pins (feature `spi-dma`) | blocking runtimes with DMA: the pixel transfer of a flush runs while the next chunk renders |"
+)]
+#![cfg_attr(
+    not(feature = "spi-dma"),
+    doc = "| `DmaSpiInterface` | 4-wire SPI over a `DmaSpiBus` + CS and DC pins (feature `spi-dma`) | blocking runtimes with DMA: the pixel transfer of a flush runs while the next chunk renders |"
+)]
 //!
 //! A panel driver (`MipiDcs`, `Ssd1306`,
 //! …) is generic over the interface, so the same panel works over any of them.
@@ -20,6 +28,8 @@ mod i80;
 pub mod qspi;
 #[cfg(feature = "spi")]
 mod spi;
+#[cfg(feature = "spi-dma")]
+mod spi_dma;
 
 #[cfg(feature = "i2c")]
 #[cfg_attr(docsrs, doc(cfg(feature = "i2c")))]
@@ -35,6 +45,11 @@ pub use qspi::{QspiBus, QspiInterface, QspiLines};
 #[cfg(feature = "spi")]
 #[cfg_attr(docsrs, doc(cfg(feature = "spi")))]
 pub use spi::SpiInterface;
+#[cfg(feature = "spi-dma")]
+#[cfg_attr(docsrs, doc(cfg(feature = "spi-dma")))]
+pub use spi_dma::{DmaSpiBus, DmaSpiError, DmaSpiInterface};
+
+use twine_hal::DrawBufferMem;
 
 /// Error of an interface that drives a bus plus GPIO pins.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +86,40 @@ pub trait DcsInterface {
             self.command(b, &[])?;
         }
         Ok(())
+    }
+
+    /// Starts sending the first `len` bytes of a draw buffer as pixel data, like
+    /// [`write_pixels`](Self::write_pixels), but may return before the transfer is done: the
+    /// non-blocking half of `DisplayDriver::begin_flush` (panel drivers such as `MipiDcs` call
+    /// it). Returns `Ok(Some(buf))` when the transfer is already complete, or `Ok(None)` when
+    /// the interface keeps `buf` until the transfer is done and
+    /// [`poll_pixels`](Self::poll_pixels) hands it back (a DMA interface such as
+    /// `DmaSpiInterface`). Every other method of the interface first waits for a transfer in
+    /// progress.
+    ///
+    /// Default: [`write_pixels`](Self::write_pixels) (blocking), then `Ok(Some(buf))`; `len`
+    /// is clamped to the buffer.
+    ///
+    /// # Errors
+    ///
+    /// The transport's error, with the buffer (it is not in flight).
+    fn start_pixels(
+        &mut self,
+        buf: DrawBufferMem,
+        len: usize,
+    ) -> Result<Option<DrawBufferMem>, (Self::Error, DrawBufferMem)> {
+        let len = len.min(buf.len());
+        match self.write_pixels(&buf.as_slice()[..len]) {
+            Ok(()) => Ok(Some(buf)),
+            Err(e) => Err((e, buf)),
+        }
+    }
+
+    /// The buffer of a [`start_pixels`](Self::start_pixels) transfer that has finished (each
+    /// once, oldest first); `None` while it runs. Non-blocking. Default: `None` (the default
+    /// `start_pixels` never keeps a buffer).
+    fn poll_pixels(&mut self) -> Option<DrawBufferMem> {
+        None
     }
 }
 

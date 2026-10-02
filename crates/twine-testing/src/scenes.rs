@@ -36,6 +36,11 @@ pub fn set_props(e: &mut Engine, id: NodeId, props: &[StyleProp]) {
 /// content area and the size as `Width`/`Height`, so the box stays in place when the layout
 /// runs. The layout is updated before (so that area is current) and after (so the box has its
 /// coordinates right away).
+///
+/// # Panics
+///
+/// If `parent` does not exist or the node arena is full (see [`child_box`]): a test fixture
+/// fails loudly instead of building a partial scene.
 pub fn styled_box(e: &mut Engine, parent: NodeId, r: Rect, props: &[StyleProp]) -> NodeId {
     e.update_layout();
     let c = e.content_area(parent);
@@ -46,6 +51,12 @@ pub fn styled_box(e: &mut Engine, parent: NodeId, r: Rect, props: &[StyleProp]) 
 
 /// Creates an `Obj` under `parent` at `r` relative to the parent's content area (`X`, `Y`,
 /// `Width`, `Height` styles) with the given local properties.
+///
+/// # Panics
+///
+/// If the node cannot be created: `parent` does not exist, or the engine's node limit
+/// (`EngineConfig::max_nodes`) is reached. A test fixture fails loudly instead of building a
+/// partial scene.
 pub fn child_box(e: &mut Engine, parent: NodeId, r: Rect, props: &[StyleProp]) -> NodeId {
     let b = e.create(parent, Box::new(Obj)).expect("parent exists");
     e.set_pos(b, r.x0, r.y0);
@@ -57,6 +68,11 @@ pub fn child_box(e: &mut Engine, parent: NodeId, r: Rect, props: &[StyleProp]) -
 /// The `engine_boxes` example scene on the default display's active screen, laid out for 320 × 240
 /// (it works on any size): a gradient header, a card with shadow, radius and border holding
 /// six boxes, a 50 % opacity group, a rotated box and the "player" box.
+///
+/// # Panics
+///
+/// If the engine has no default display, the display has no active screen, or a box cannot be
+/// created (see [`child_box`]).
 pub fn engine_boxes(e: &mut Engine) -> EngineBoxes {
     let d = e.default_display().expect("a display");
     let screen = e.active_screen(d).expect("a screen");

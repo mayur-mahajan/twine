@@ -59,6 +59,7 @@ pub static SH8601_368X448: PanelSpec = PanelSpec {
     colmod: 0x55,
     align: 2,
     sw_rotation: true,
+    brightness: true,
     invert: false,
     init: &SH8601_INIT,
 };
@@ -132,7 +133,7 @@ mod tests {
             d.begin_flush(Rect::from_xywh(1, 0, 3, 2), odd),
             Err(DcsError::BadArea)
         );
-        d.set_brightness(0x40).unwrap();
+        d.set_brightness(twine_core::Fraction::from_raw(0x40)).unwrap();
         assert_eq!(rec.ops().last(), Some(&q(0x51, &[0x40])));
     }
 

@@ -49,7 +49,7 @@ pub fn counter(cx: Scope) -> impl View {
 }
 
 fn main() {
-    twine_sim::run(SimConfig::new(320, 240).title("Counter").scale(2), counter);
+    twine_sim::run(SimConfig::new(320, 240).title("Counter").scale(2).theme(DefaultTheme::light()), counter);
 }
 ```
 
@@ -69,7 +69,7 @@ enforces this).
 | Crate | Role |
 |-------|------|
 | `twine-core` | geometry, fixed-point math, colors & pixel formats, time, arenas, `RectSet`, logging |
-| `twine-hal` | display / input / clock traits |
+| `twine-hal` | display / input / clock / platform traits (opt-in `platform-*` implementations) |
 | `twine-reactive` | signals, memos, effects, scopes |
 | `twine-anim` | animations, easing, timelines, timers |
 | `twine-render` | integer software renderer |
@@ -77,15 +77,18 @@ enforces this).
 | `twine-style`, `twine-layout` | style system, flex & grid layout |
 | `twine-engine` | widget tree, events, input, scrolling, invalidation, refresh pipeline |
 | `twine-theme`, `twine-widgets`, `twine-widgets-ext` | themes, basic and complex widgets |
-| `twine-view` | declarative view layer and `Ui` runtime |
+| `twine-view` | declarative view layer, `Ui` runtime and the blocking run loop (`twine::run`) |
 | `twine` | facade: re-exports and `prelude` |
-| `twine-drivers`, `twine-embassy`, `twine-accel-stm32`, `twine-embedded-graphics` | drivers, async run loop, DMA2D, embedded-graphics adapter |
+| `twine-drivers`, `twine-embassy`, `twine-accel-stm32`, `twine-embedded-graphics` | drivers, embassy run loop (`Ui` and `AsyncUi`), DMA2D, embedded-graphics adapter |
 | `twine-sim`, `twine-testing`, `twine-demos` | desktop simulator, test harnesses, demo apps |
 
 ## Supported targets
 
-Twine ships drivers, not board support: every display, touch and input driver in
-`twine-drivers` is a cargo feature that you enable and wire to your own board's pins. The
+Twine ships drivers, not board support: every display, touch and input driver and every bus
+interface in `twine-drivers` is a cargo feature that you enable and wire to your own board's
+pins. Through the facade each one is `twine/drivers-<name>` (`drivers-spi`, `drivers-xpt2046`,
+`drivers-encoder`, …); a panel's feature (`drivers-ili9341`, …) also enables the panel's pixel
+format. The
 `firmware/` directory holds one small example per chip family — a template with a single
 "Wiring: edit for your board" block — that proves the stack builds and fits on that chip:
 

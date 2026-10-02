@@ -9,7 +9,7 @@ use twine_demos::selection::{CITIES, Selection, app};
 use twine_testing::{TestUi, by_class, by_id};
 
 fn ui() -> (TestUi, Selection) {
-    let mut t = TestUi::new(320, 240).mount(app);
+    let mut t = TestUi::new(320, 240).app_config(twine_demos::config()).mount(app);
     t.run_until_idle();
     let s = t.root_scope().expect_context::<Selection>();
     (t, s)
@@ -197,7 +197,7 @@ fn heap_stable_after_20_open_close_cycles() {
 #[test]
 fn snapshot_selection() {
     for (theme, name) in [(DefaultTheme::light(), "light"), (DefaultTheme::dark(), "dark")] {
-        let mut t = TestUi::new(320, 240).theme(std::rc::Rc::new(theme)).mount(app);
+        let mut t = TestUi::new(320, 240).theme(theme).mount(app);
         t.run_until_idle();
         let s = t.root_scope().expect_context::<Selection>();
         for (tab, tab_name) in [(0usize, "pickers"), (1, "lists"), (2, "tiles")] {

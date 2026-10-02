@@ -4,8 +4,8 @@ mod common;
 
 use common::{boxed, white_screen};
 use twine_core::{Color, ColorFormat, Duration, Rect};
-use twine_engine::{BufferMode, Engine, EngineConfig, EngineError, InvalidateReason, Wake};
-use twine_hal::{BufferSpec, DisplayInfo, DrawBufferMem};
+use twine_engine::{BufferMode, BufferSpec, Engine, EngineConfig, EngineError, InvalidateReason, Wake};
+use twine_hal::{DisplayInfo, DrawBufferMem};
 use twine_testing::{EngineHarness, MemoryDisplay, leak_buffer};
 
 /// A harness with a rendered white screen and nothing pending.

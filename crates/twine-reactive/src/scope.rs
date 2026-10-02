@@ -15,7 +15,7 @@ use crate::effect::EffectId;
 use crate::global::with_runtime;
 use crate::handles::{NodeHandle, type_mismatch};
 use crate::memo::Memo;
-use crate::runtime::{Computation, Kind, ScopeKey, ValueRc};
+use crate::runtime::{Kind, ScopeKey, ValueRc};
 use crate::signal::Signal;
 use crate::stored::StoredValue;
 
@@ -26,7 +26,7 @@ use crate::stored::StoredValue;
 /// their parent.
 ///
 /// ```
-/// let root = twine_reactive::create_root();
+/// let root = twine_reactive::Runtime::take().unwrap().create_root();
 /// let child = root.child();
 /// let n = child.signal(5);
 /// root.dispose(); // disposes `child` too
@@ -37,7 +37,7 @@ use crate::stored::StoredValue;
 /// Scopes cannot be sent to another thread:
 ///
 /// ```compile_fail
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// std::thread::spawn(move || cx.is_alive());
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -71,13 +71,9 @@ impl Scope {
 
     /// Inserts a node owned by this scope; panics if the scope is dead.
     #[track_caller]
-    pub(crate) fn create_node<T>(
-        self,
-        value: Option<ValueRc>,
-        comp: Option<Box<Computation>>,
-    ) -> NodeHandle<T> {
+    pub(crate) fn create_node<T>(self, value: Option<ValueRc>, kind: Option<Kind>) -> NodeHandle<T> {
         let loc = Location::caller();
-        match with_runtime(|rt| rt.create_node(self.key, value, comp)) {
+        match with_runtime(|rt| rt.create_node(self.key, value, kind)) {
             Some(key) => NodeHandle::new(key, loc),
             None => scope_disposed(),
         }
@@ -86,7 +82,7 @@ impl Scope {
     /// Creates a signal holding `value`, owned by this scope.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let name = cx.signal(String::from("twine"));
     /// assert_eq!(name.with(|s| s.len()), 5);
     /// ```
@@ -104,7 +100,7 @@ impl Scope {
     /// `Copy` handle, dropped with the scope; reads never subscribe and writes notify nobody.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let clicks = cx.stored_value(0u32);
     /// let on_click = move || clicks.with_mut(|n| *n += 1);
     /// on_click();
@@ -128,7 +124,7 @@ impl Scope {
     /// dependents are not re-run.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let a = cx.signal(2);
     /// let double = cx.memo(move || a.get() * 2);
     /// assert_eq!(double.get(), 4);
@@ -156,11 +152,7 @@ impl Scope {
             drop(old); // user `Drop` runs without the cell borrowed
             true
         };
-        let comp = Box::new(Computation {
-            kind: Kind::Memo(Rc::new(compute)),
-            sources: twine_core::SmallVec::new(),
-        });
-        Memo::from_handle(self.create_node(Some(rc), Some(comp)))
+        Memo::from_handle(self.create_node(Some(rc), Some(Kind::Memo(Rc::new(compute)))))
     }
 
     /// Creates an effect: `f` runs now (collecting its dependencies) and again after any of
@@ -172,7 +164,7 @@ impl Scope {
     ///
     /// ```
     /// use std::{cell::Cell, rc::Rc};
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let a = cx.signal(1);
     /// let seen = Rc::new(Cell::new(0));
     /// let s = seen.clone();
@@ -191,10 +183,10 @@ impl Scope {
     }
 
     /// Like [`effect`](Scope::effect), but `f` receives the flush context passed to
-    /// [`flush_effects_with`](crate::flush_effects_with) (`&mut ()` for automatic flushes).
+    /// [`Runtime::flush_effects_with`](crate::Runtime::flush_effects_with) (`&mut ()` for automatic flushes).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let a = cx.signal(1);
     /// cx.effect_with_cx(move |ctx| {
     ///     let v = a.get();
@@ -203,9 +195,10 @@ impl Scope {
     ///     }
     /// });
     /// let mut total = 0u32;
-    /// twine_reactive::batch(|| {
+    /// let rt = cx.runtime();
+    /// rt.batch(|| {
     ///     a.set(5);
-    ///     twine_reactive::flush_effects_with(&mut total);
+    ///     rt.flush_effects_with(&mut total);
     /// });
     /// assert_eq!(total, 5);
     /// ```
@@ -215,11 +208,7 @@ impl Scope {
     /// If the scope was disposed.
     #[track_caller]
     pub fn effect_with_cx(self, f: impl FnMut(&mut dyn Any) + 'static) -> EffectId {
-        let comp = Box::new(Computation {
-            kind: Kind::Effect(Rc::new(RefCell::new(f))),
-            sources: twine_core::SmallVec::new(),
-        });
-        let h = self.create_node::<()>(None, Some(comp));
+        let h = self.create_node::<()>(None, Some(Kind::Effect(Rc::new(RefCell::new(f)))));
         with_runtime(|rt| rt.run_new_effect(h.key));
         EffectId::from_handle(h)
     }
@@ -244,7 +233,7 @@ impl Scope {
     ///
     /// ```
     /// use std::{cell::RefCell, rc::Rc};
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let log = Rc::new(RefCell::new(Vec::new()));
     /// let l = log.clone();
     /// cx.on_cleanup(move || l.borrow_mut().push("cleanup"));
@@ -272,7 +261,7 @@ impl Scope {
     /// ```
     /// #[derive(Clone, PartialEq, Debug)]
     /// struct Theme(&'static str);
-    /// let root = twine_reactive::create_root();
+    /// let root = twine_reactive::Runtime::take().unwrap().create_root();
     /// root.provide(Theme("dark"));
     /// let child = root.child();
     /// assert_eq!(child.use_context::<Theme>(), Some(Theme("dark")));

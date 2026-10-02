@@ -12,8 +12,33 @@ workspace = true
 
 [features]
 default = ["montserrat-14"]
+#! ### Bundles
+#! Sets of the individual fonts below, for applications that do not want to list sizes one by
+#! one; the individual features stay available for precise flash budgets. Bundles only add
+#! fonts, so they combine freely with each other and with individual fonts.
+## Montserrat 12, 14 and 16 px: caption, body and heading of small displays (≤ 320 px; ~59 KB).
+fonts-latin-small = ["montserrat-12", "montserrat-14", "montserrat-16"]
+## `fonts-latin-small` plus Montserrat 18 to 24 px: medium displays (320–480 px; ~150 KB).
+fonts-latin-medium = ["fonts-latin-small", "montserrat-18", "montserrat-20", "montserrat-22", "montserrat-24"]
+## Every Montserrat size (8 to 48 px), the subpixel 14 px and the Latin Extended 16 px fallback
+## (~683 KB).
+fonts-latin-all = [
+    "fonts-latin-medium",
+    "montserrat-8", "montserrat-10", "montserrat-26", "montserrat-28", "montserrat-30",
+    "montserrat-32", "montserrat-34", "montserrat-36", "montserrat-38", "montserrat-40",
+    "montserrat-42", "montserrat-44", "montserrat-46", "montserrat-48",
+    "montserrat-14-subpx", "montserrat-16-latin-ext",
+]
+## The unscii bitmap fonts (8 and 16 px, 1 bpp): pixel-exact text for monochrome displays (~4 KB).
+fonts-mono = ["unscii-8", "unscii-16"]
+## Right-to-left scripts: DejaVu Sans 16 px with Hebrew and Arabic/Persian (~38 KB).
+fonts-rtl = ["dejavu-16-persian-hebrew"]
+## Simplified Chinese and Japanese kana: Source Han Sans 14 and 16 px (~305 KB together).
+fonts-cjk = ["source-han-sans-sc-14-cjk", "source-han-sans-sc-16-cjk"]
 ## Every built-in font.
-all-fonts = ["montserrat-8", "montserrat-10", "montserrat-12", "montserrat-14", "montserrat-16", "montserrat-18", "montserrat-20", "montserrat-22", "montserrat-24", "montserrat-26", "montserrat-28", "montserrat-30", "montserrat-32", "montserrat-34", "montserrat-36", "montserrat-38", "montserrat-40", "montserrat-42", "montserrat-44", "montserrat-46", "montserrat-48", "montserrat-14-subpx", "montserrat-16-latin-ext", "unscii-8", "unscii-16", "dejavu-16-persian-hebrew", "source-han-sans-sc-14-cjk", "source-han-sans-sc-16-cjk"]
+fonts-all = ["fonts-latin-all", "fonts-mono", "fonts-rtl", "fonts-cjk"]
+
+#! ### Individual fonts
 montserrat-8 = []
 montserrat-10 = []
 montserrat-12 = []
@@ -53,4 +78,4 @@ source-han-sans-sc-16-cjk = []
 twine-text = { path = "../twine-text" }
 
 [dev-dependencies]
-twine-assets = { path = ".", features = ["all-fonts"] }
+twine-assets = { path = ".", features = ["fonts-all"] }

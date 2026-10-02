@@ -20,7 +20,7 @@ use core::ops::Range;
 use bitflags::bitflags;
 use twine_core::Point;
 
-use crate::layout::{Line, Pen, TextFlags, TextLayout, floor_boundary};
+use crate::layout::{Line, Pen, TextFlags, TextLayout, floor_boundary, sub};
 
 /// Horizontal alignment of lines.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -131,7 +131,7 @@ impl TextLayout<'_> {
         .saturating_sub(self.dots_width());
         let mut pen = Pen::default();
         let mut end = line.range.start;
-        for (i, c) in self.text[line.range.clone()].char_indices() {
+        for (i, c) in sub(self.text, line.range.clone()).char_indices() {
             let b = line.range.start + i;
             // The prefix's last glyph is followed by '.' when drawn.
             let mut with_dot = pen;
@@ -143,7 +143,7 @@ impl TextLayout<'_> {
             end = b + c.len_utf8();
             pen.add(self.adv(c, b), ls);
         }
-        let keep_end = line.range.start + self.text[line.range.start..end].trim_end_matches(' ').len();
+        let keep_end = line.range.start + sub(self.text, line.range.start..end).trim_end_matches(' ').len();
         Some(Ellipsis {
             line_index: max_lines - 1,
             keep: line.range.start..keep_end,
@@ -203,7 +203,7 @@ impl TextLayout<'_> {
         let line = self.line_at(idx);
         let x = p.x - self.line_x(&line, area_w, align);
         let mut pen = Pen::default();
-        for (i, c) in self.text[line.range.clone()].char_indices() {
+        for (i, c) in sub(self.text, line.range.clone()).char_indices() {
             let b = line.range.start + i;
             let a = self.adv(c, b);
             if x < pen.x + (a.max(0) + 1) / 2 {
@@ -222,7 +222,7 @@ impl TextLayout<'_> {
         let (k, line) = self.find_line(i);
         let end = i.clamp(line.range.start, line.range.end);
         let mut pen = Pen::default();
-        for (j, c) in self.text[line.range.start..end].char_indices() {
+        for (j, c) in sub(self.text, line.range.start..end).char_indices() {
             pen.add(self.adv(c, line.range.start + j), self.letter_space);
         }
         Point::new(

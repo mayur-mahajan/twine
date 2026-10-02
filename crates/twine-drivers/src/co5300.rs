@@ -61,6 +61,7 @@ pub static CO5300_410X502: PanelSpec = PanelSpec {
     colmod: 0x55,
     align: 2,
     sw_rotation: true,
+    brightness: true,
     invert: false,
     init: &CO5300_INIT,
 };

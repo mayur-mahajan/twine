@@ -647,7 +647,7 @@ impl ViewExt for GaugeView {
 # use real::Gauge;
 # use twine::prelude::*;
 # use twine::view::{BuildOp, event_value, on_value_changed};
-# let cx = twine::reactive::create_root();
+# let cx = twine::reactive::Runtime::take().unwrap().create_root();
 # let _v = gauge(cx.signal(3)).range(0..=10).on_change(|_| {}).padding(4);
 # cx.dispose();
 ```
@@ -712,12 +712,11 @@ Check, for every custom widget:
 # mod gauge {
 #     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/gauge/gauge.rs"));
 # }
-use std::rc::Rc;
 use gauge::{GAUGE_CLASS, Gauge, INDICATOR, gauge, style_gauge};
 use twine::prelude::*;
 use twine_testing::{TestUi, by_id};
 
-let theme = Rc::new(DefaultTheme::builder().class(&GAUGE_CLASS, style_gauge).build());
+let theme = DefaultTheme::builder().class(&GAUGE_CLASS, style_gauge).build();
 let mut t = TestUi::new(200, 160)
     .theme(theme)
     .mount(|_| gauge(50).on_change(|_| {}).test_id("g"));

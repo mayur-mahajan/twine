@@ -280,7 +280,7 @@ impl<V: ViewExt> sealed::Sealed for StyleScope<V> {}
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let hot = cx.signal(false);
 /// let _v = label("21 °C")
 ///     .text_color(move || if hot.get() { Color::RED } else { Color::BLACK })
@@ -522,7 +522,7 @@ impl<V: ViewExt> StyleExt for V {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let level = cx.signal(40);
 /// let alarm = cx.signal(false);
 /// let _v = slider(level)
@@ -552,7 +552,7 @@ impl<V: ViewExt> StyleScope<V> {
     ///
     /// ```
     /// use twine_view::prelude::*;
-    /// let _v = slider(twine_reactive::create_root().signal(0)).part(Part::Knob, |s| {
+    /// let _v = slider(twine_reactive::Runtime::take().unwrap().create_root().signal(0)).part(Part::Knob, |s| {
     ///     assert_eq!(s.selector(), Selector::part(Part::Knob));
     ///     s.on_state(State::PRESSED, |s| {
     ///         assert_eq!(s.selector(), Selector::part(Part::Knob).with_state(State::PRESSED));
@@ -572,7 +572,7 @@ impl<V: ViewExt> StyleScope<V> {
     ///
     /// ```
     /// use twine_view::prelude::*;
-    /// let _v = slider(twine_reactive::create_root().signal(0)).on_state(State::PRESSED, |s| {
+    /// let _v = slider(twine_reactive::Runtime::take().unwrap().create_root().signal(0)).on_state(State::PRESSED, |s| {
     ///     s.transform_scale(Scale::pct(97)) // the pressed slider
     ///         .part(Part::Knob, |s| {
     ///             assert_eq!(s.selector(), Selector::part(Part::Knob).with_state(State::PRESSED));
@@ -602,7 +602,7 @@ impl<V: ViewExt> StyleScope<V> {
     ///
     /// ```
     /// use twine_view::prelude::*;
-    /// let _v = switch(twine_reactive::create_root().signal(false)).part(Part::Indicator, |s| {
+    /// let _v = switch(twine_reactive::Runtime::take().unwrap().create_root().signal(false)).part(Part::Indicator, |s| {
     ///     s.bg(Color::hex(0x9E9E9E))
     ///         .on_state(State::CHECKED, |s| s.bg(Color::hex(0x2E7D32)))
     ///         .radius(Radius::Circle) // back to the indicator in every state

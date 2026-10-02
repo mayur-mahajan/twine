@@ -40,7 +40,7 @@ fn scene(h: EngineHarness) -> (EngineHarness, NodeId, NodeId) {
 
 #[test]
 fn simple_theme_screen_matches_lvgl() {
-    let (h, card, b) = scene(EngineHarness::new(240, 160).theme(Rc::new(SimpleTheme::new())));
+    let (h, card, b) = scene(EngineHarness::new(240, 160).theme(SimpleTheme::new()));
     let e = h.engine();
     let s = screen(e);
     // COLOR_SCR = lv_palette_lighten(GREY, 4), text COLOR_DIM = lv_palette_darken(GREY, 2)
@@ -116,7 +116,7 @@ fn harness_defaults_to_default_light() {
 
 #[test]
 fn snapshot_theme_simple_container() {
-    let (mut h, _, _) = scene(EngineHarness::new(240, 160).theme(Rc::new(SimpleTheme::new())));
+    let (mut h, _, _) = scene(EngineHarness::new(240, 160).theme(SimpleTheme::new()));
     h.assert_snapshot("theme_simple_container");
 }
 

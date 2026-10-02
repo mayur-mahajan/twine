@@ -1,14 +1,14 @@
 //! Everything an application needs: `use twine_view::prelude::*;` (the `twine` facade's
 //! prelude re-exports this one and adds the built-in fonts).
 
-pub use crate::text;
 pub use crate::{
-    AnimController, AnyView, BuildCx, BuildError, Container, Dynamic, Flex, ForEach, Grid, Icon, IntoAnyView,
-    IntoModel, IntoOptions, IntoProp, IntoText, Layout, ModalHandle, Model, MotionHandle, Navigator, NodeRef,
-    Prop, ScopeExt, ScreenAnim, ScreenLoad, StyleExt, StyleScope, TextFn, ThemeHandle, Ui, UiBuilder,
-    UiError, View, ViewExt, ViewSeq, VirtualList, Wake, When, WhenElse, WidgetView, button, card, column,
-    container, dynamic, flex, for_each, grid, image, label, navigator, row, scroll_view, spacer, stack,
-    use_motion, use_navigator, use_theme, virtual_list, when, widget_view,
+    AnimController, AnyView, AppConfig, BuildCx, BuildError, Container, DisplayBuilder, DisplayMut, Dynamic,
+    Flex, ForEach, Grid, Icon, IntoAnyView, IntoModel, IntoOptions, IntoProp, IntoText, LayerBuffer, Layout,
+    MemoryReport, ModalHandle, Model, MotionHandle, Navigator, NodeRef, Prop, ScopeExt, ScreenAnim,
+    ScreenLoad, StyleExt, StyleScope, TextFn, ThemeHandle, Ui, UiBuilder, UiError, View, ViewExt, ViewSeq,
+    VirtualList, Wake, When, WhenElse, WidgetView, button, card, column, container, dynamic, flex, for_each,
+    grid, image, label, navigator, row, scroll_view, spacer, stack, use_motion, use_navigator, use_theme,
+    virtual_list, when, widget_view,
 };
 pub use crate::{
     Btn, MenuPageRef, MenuPageView, SpanView, TabView, TilePos, TileView, animimg, arc, bar, btn,
@@ -16,6 +16,7 @@ pub use crate::{
     list_text, menu, menu_cont, menu_page, menu_section, menu_separator, msgbox, roller, slider, span,
     spangroup, spinbox, spinner, switch, tab, tabview, textarea, tile, tileview, window, window_button,
 };
+pub use crate::{draw_buffers, text};
 
 #[cfg(feature = "async")]
 pub use crate::{AsyncUi, AsyncUiBuilder};
@@ -24,17 +25,18 @@ pub use crate::{VectorCanvas, vector_canvas};
 pub use twine_anim::{Anim, AnimSpec, Easing, Interpolate, Motion, Repeat};
 pub use twine_core::fault::{FaultCounts, FaultKind, Faults};
 pub use twine_core::{
-    Angle, AngularSpeed, Color, Duration, Fraction, Insets, Instant, Opa, Point, Rect, Scale, Size,
+    Angle, AngularSpeed, Color, Duration, Fraction, Insets, Instant, Opa, Point, Rect, Rotation, Scale, Size,
 };
 pub use twine_engine::{
-    BufferMode, DEAD_NODE, DisplayHealth, DisplayState, DrawCx, Engine, Event, EventCode, EventCx,
-    EventResult, FaultHook, FaultRecord, FlushPolicy, GroupId, MeasureCx, NodeId, ObjFlags, Widget,
-    WidgetClass, WidgetCx,
+    BufferMode, BufferSpec, DEAD_NODE, DisplayCmd, DisplayControlFault, DisplayHealth, DisplayState, DrawCx,
+    Engine, EngineConfig, Event, EventCode, EventCx, EventResult, FaultHook, FaultRecord, FlushPolicy,
+    GroupId, IntoTheme, MeasureCx, NodeId, ObjFlags, StepBudget, Widget, WidgetClass, WidgetCx,
 };
 pub use twine_hal::Key;
 pub use twine_image::ImageSource;
 pub use twine_reactive::{
-    Channel, EffectId, Memo, ReadSignal, Scope, Signal, UiWaker, WriteSignal, batch, untrack,
+    Channel, EffectId, Latest, Memo, Outbox, Overflow, ReadSignal, Runtime, Scope, Signal, UiWaker,
+    WriteSignal,
 };
 pub use twine_render::{BlendMode, BorderSide, Gradient, ShadowDsc};
 pub use twine_style::design;

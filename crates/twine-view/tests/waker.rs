@@ -7,23 +7,34 @@ use twine_hal::DisplayInfo;
 use twine_testing::{MemoryDisplay, MockClock};
 use twine_view::prelude::*;
 
+use twine_reactive::Runtime;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
+
 fn ui_on(ch: &'static Channel<u32, 4>, seen: Signal<u32>) -> Ui {
     let display = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    Ui::builder(display).clock(MockClock::new()).build(move |cx| {
-        let local = cx.signal(0u32);
-        cx.on_message(ch, move |v| {
-            local.set(v);
-            seen.set(v);
-        });
-        label(text!("{}", local.get()))
-    })
+    Ui::builder(display)
+        .runtime(Runtime::current_thread())
+        .buffers(BufferMode::alloc(BufferSpec::default()))
+        .clock(MockClock::new())
+        .build(move |cx| {
+            let local = cx.signal(0u32);
+            cx.on_message(ch, move |v| {
+                local.set(v);
+                seen.set(v);
+            });
+            label(text!("{}", local.get()))
+        })
 }
 
 #[test]
 fn two_uis_on_one_runtime_wake_only_themselves() {
     static CH1: Channel<u32, 4> = Channel::new();
     static CH2: Channel<u32, 4> = Channel::new();
-    let host = twine_reactive::create_root();
+    let host = rt().create_root();
     let seen1 = host.signal(0u32);
     let seen2 = host.signal(0u32);
     let mut ui1 = ui_on(&CH1, seen1);
@@ -61,7 +72,7 @@ fn two_uis_on_one_runtime_wake_only_themselves() {
 fn send_from_another_thread_wakes_the_right_ui() {
     static CH1: Channel<u32, 4> = Channel::new();
     static CH2: Channel<u32, 4> = Channel::new();
-    let host = twine_reactive::create_root();
+    let host = rt().create_root();
     let seen1 = host.signal(0u32);
     let seen2 = host.signal(0u32);
     let mut ui1 = ui_on(&CH1, seen1);
@@ -85,6 +96,8 @@ fn app_provided_static_waker_is_used() {
     static CH: Channel<u32, 4> = Channel::new();
     let display = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
     let mut ui = Ui::builder(display)
+        .runtime(Runtime::current_thread())
+        .buffers(BufferMode::alloc(BufferSpec::default()))
         .clock(MockClock::new())
         .waker(&WAKER)
         .build(|cx| {

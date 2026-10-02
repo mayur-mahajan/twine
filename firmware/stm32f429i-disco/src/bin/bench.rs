@@ -282,7 +282,8 @@ async fn main(_spawner: Spawner) {
     let images = Images { full_565, argb_100 };
 
     let mut caches = RenderCaches::default();
-    let mut dma2d = Dma2d::new(PacRegs::new());
+    let regs = PacRegs::new(board.dma2d).unwrap_or_else(|_| defmt::panic!("DMA2D already owned"));
+    let mut dma2d = Dma2d::new(regs);
     defmt::info!(
         "bench: {} scenarios, {}x{} RGB565 in SDRAM, best of {} runs",
         SCENES.len(),

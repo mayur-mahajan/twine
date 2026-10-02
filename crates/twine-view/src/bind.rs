@@ -3,7 +3,7 @@
 use core::any::Any;
 
 use twine_engine::{Engine, NodeId, Widget, WidgetCx, fmt_node_id};
-use twine_reactive::{Scope, defer_current_effect, dispose_current_effect, with_ambient};
+use twine_reactive::{Runtime, Scope};
 
 use crate::access::engine_ready;
 use crate::build::BuildCx;
@@ -46,12 +46,13 @@ pub(crate) fn bind_effect<T: 'static>(
     f: impl Fn() -> T + 'static,
     apply: impl Fn(&mut Engine, NodeId, T) + 'static,
 ) {
+    let rt = scope.runtime();
     scope.effect_with_cx(move |_ctx| {
-        if !engine_ready() {
+        if !engine_ready(rt) {
             return;
         }
         let v = f();
-        let found = with_ambient(|a| match binding_target(a, node) {
+        let found = rt.with_ambient(|a| match binding_target(a, node) {
             Target::Live(e) => {
                 apply(e, node, v);
                 Found::Applied
@@ -59,7 +60,7 @@ pub(crate) fn bind_effect<T: 'static>(
             Target::Deleted => Found::Deleted,
             Target::NoEngine => Found::NoEngine,
         });
-        finish_run(node, found);
+        finish_run(rt, node, found);
     });
 }
 
@@ -98,14 +99,14 @@ fn binding_target(a: Option<&mut dyn Any>, node: NodeId) -> Target<'_> {
 /// Ends a binding run: disposes the binding of a deleted node, defers a run that found no
 /// engine.
 #[inline(never)]
-fn finish_run(node: NodeId, found: Found) {
+fn finish_run(rt: Runtime, node: NodeId, found: Found) {
     match found {
         Found::Applied => {}
         Found::Deleted => {
             twine_core::trace!(target: "twine::view", "binding of deleted node {} disposed", fmt_node_id(node));
-            dispose_current_effect();
+            rt.dispose_current_effect();
         }
-        Found::NoEngine => defer_current_effect(),
+        Found::NoEngine => rt.defer_current_effect(),
     }
 }
 

@@ -3,7 +3,12 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use twine_reactive::{create_root, runtime_stats};
+use twine_reactive::Runtime;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 type Log = Rc<RefCell<Vec<String>>>;
 
@@ -14,7 +19,7 @@ fn log() -> (Log, Log) {
 
 #[test]
 fn scope_dispose_removes_nodes_and_effects_stop() {
-    let root = create_root();
+    let root = rt().create_root();
     let a = root.signal(0);
     let child = root.child();
     let runs = Rc::new(Cell::new(0));
@@ -24,9 +29,9 @@ fn scope_dispose_removes_nodes_and_effects_stop() {
         r.set(r.get() + 1);
     });
     let m = child.memo(move || a.get());
-    assert_eq!(runtime_stats().nodes, 3);
+    assert_eq!(rt().stats().nodes, 3);
     child.dispose();
-    assert_eq!(runtime_stats().nodes, 1);
+    assert_eq!(rt().stats().nodes, 1);
     assert!(!m.is_alive());
     a.set(1);
     assert_eq!(runs.get(), 1);
@@ -34,20 +39,20 @@ fn scope_dispose_removes_nodes_and_effects_stop() {
 
 #[test]
 fn scope_child_disposed_with_parent() {
-    let root = create_root();
+    let root = rt().create_root();
     let c1 = root.child();
     let c2 = c1.child();
     let s = c2.signal(1);
     root.dispose();
     assert!(!c1.is_alive() && !c2.is_alive() && !root.is_alive());
     assert!(!s.is_alive());
-    let st = runtime_stats();
+    let st = rt().stats();
     assert_eq!((st.nodes, st.scopes), (0, 0));
 }
 
 #[test]
 fn scope_dispose_order_children_reverse_then_cleanups_reverse() {
-    let root = create_root();
+    let root = rt().create_root();
     let (order, o) = log();
     let push = |o: &Log, s: &str| {
         let o = o.clone();
@@ -79,7 +84,7 @@ fn scope_dispose_order_children_reverse_then_cleanups_reverse() {
 
 #[test]
 fn scope_cleanup_can_set_signals_and_create_scopes() {
-    let root = create_root();
+    let root = rt().create_root();
     let status = root.signal(String::from("open"));
     let (seen, s) = log();
     root.effect(move || s.borrow_mut().push(status.get()));
@@ -101,13 +106,13 @@ fn scope_cleanup_can_set_signals_and_create_scopes() {
     assert!(other.is_alive());
     root.dispose();
     assert!(!other.is_alive());
-    let st = runtime_stats();
+    let st = rt().stats();
     assert_eq!((st.nodes, st.scopes), (0, 0));
 }
 
 #[test]
 fn scope_cleanup_can_register_on_disposing_scope() {
-    let root = create_root();
+    let root = rt().create_root();
     let (order, o) = log();
     let o2 = o.clone();
     root.on_cleanup(move || {
@@ -122,7 +127,7 @@ fn scope_cleanup_can_register_on_disposing_scope() {
 
 #[test]
 fn scope_context_lookup_walks_parents() {
-    let root = create_root();
+    let root = rt().create_root();
     root.provide(7u32);
     root.provide("theme");
     let deep = root.child().child().child();
@@ -134,7 +139,7 @@ fn scope_context_lookup_walks_parents() {
 
 #[test]
 fn scope_context_shadowing() {
-    let root = create_root();
+    let root = rt().create_root();
     root.provide(1u8);
     let child = root.child();
     child.provide(2u8);
@@ -152,13 +157,13 @@ fn scope_context_shadowing() {
 #[test]
 #[should_panic(expected = "context u16 not provided")]
 fn scope_expect_context_panics_with_type_name() {
-    let root = create_root();
+    let root = rt().create_root();
     let _: u16 = root.expect_context();
 }
 
 #[test]
 fn scope_double_dispose_noop() {
-    let root = create_root();
+    let root = rt().create_root();
     let child = root.child();
     let n = Rc::new(Cell::new(0));
     let c = n.clone();
@@ -177,14 +182,14 @@ fn scope_double_dispose_noop() {
 #[test]
 #[should_panic(expected = "scope used after it was disposed")]
 fn scope_creating_signal_on_disposed_scope_panics() {
-    let root = create_root();
+    let root = rt().create_root();
     root.dispose();
     let _ = root.signal(1);
 }
 
 #[test]
 fn scope_disposing_scope_inside_its_own_effect_is_safe() {
-    let root = create_root();
+    let root = rt().create_root();
     let a = root.signal(0);
     let child = root.child();
     let runs = Rc::new(Cell::new(0));
@@ -211,7 +216,7 @@ fn scope_disposing_scope_inside_its_own_effect_is_safe() {
 
 #[test]
 fn scope_no_leaks_after_root_dispose() {
-    let root = create_root();
+    let root = rt().create_root();
     let a = root.signal(1);
     for i in 0..10 {
         let c = root.child();
@@ -224,13 +229,13 @@ fn scope_no_leaks_after_root_dispose() {
         c.on_cleanup(|| {});
     }
     root.dispose();
-    let st = runtime_stats();
+    let st = rt().stats();
     assert_eq!((st.nodes, st.scopes, st.pending, st.deferred), (0, 0, 0, 0));
 }
 
 #[test]
 fn scope_values_and_closures_dropped_on_dispose() {
-    let root = create_root();
+    let root = rt().create_root();
     let token = Rc::new(());
     let t1 = token.clone();
     let t2 = token.clone();
@@ -254,18 +259,18 @@ fn scope_values_and_closures_dropped_on_dispose() {
 fn runtime_stats_reports_retired_slots() {
     // A fresh runtime (one per test thread): the child scope's slot is the only free one, so
     // it is reused until its 65 535 generations are spent, then retired.
-    let root = create_root();
-    assert_eq!(runtime_stats().retired_slots, 0);
+    let root = rt().create_root();
+    assert_eq!(rt().stats().retired_slots, 0);
     for _ in 0..u16::MAX - 1 {
         root.child().dispose();
     }
-    assert_eq!(runtime_stats().retired_slots, 0);
+    assert_eq!(rt().stats().retired_slots, 0);
     root.child().dispose();
-    assert_eq!(runtime_stats().retired_slots, 1);
+    assert_eq!(rt().stats().retired_slots, 1);
     // A retired slot is replaced: scopes keep working.
     let c = root.child();
     let s = c.signal(1);
     assert_eq!(s.get(), 1);
     c.dispose();
-    assert_eq!(runtime_stats().scopes, 1);
+    assert_eq!(rt().stats().scopes, 1);
 }

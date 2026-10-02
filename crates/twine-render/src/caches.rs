@@ -87,17 +87,91 @@ pub struct RenderCaches {
     pub(crate) shadow: ShadowCache,
     pub(crate) gradient: GradientCache,
     /// The layer buffer (taken out while a layer is being drawn).
-    pub(crate) layer_buf: Vec<u8>,
+    pub(crate) layer_buf: LayerBuf,
     /// Debug counter: image rows copied with the same-format fast path.
     pub(crate) image_copy_rows: u32,
     /// Scratch state of a higher-level drawing crate (see [`take_extension`](Self::take_extension)).
     ext: Option<Box<dyn Any>>,
 }
 
+/// Where the layer buffer lives: on the heap ([`RenderCaches::new`]) or in caller memory
+/// ([`RenderCaches::with_layer_buf`]). Dereferences to the bytes; `Default` (an empty buffer,
+/// no allocation) is what `mem::take` leaves behind while a layer is drawn.
+#[derive(Debug, Default)]
+pub(crate) enum LayerBuf {
+    /// Taken out (a layer is being drawn), or a zero-byte budget.
+    #[default]
+    Empty,
+    /// Allocated by [`RenderCaches::new`].
+    Heap(Vec<u8>),
+    /// Caller memory (a `static`), never freed.
+    Static(&'static mut [u8]),
+}
+
+impl core::ops::Deref for LayerBuf {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        match self {
+            LayerBuf::Empty => &[],
+            LayerBuf::Heap(v) => v,
+            LayerBuf::Static(s) => s,
+        }
+    }
+}
+
+impl core::ops::DerefMut for LayerBuf {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [u8] {
+        match self {
+            LayerBuf::Empty => &mut [],
+            LayerBuf::Heap(v) => v,
+            LayerBuf::Static(s) => s,
+        }
+    }
+}
+
 impl RenderCaches {
-    /// Allocates every buffer and cache arena of `cfg`.
+    /// Allocates every buffer and cache arena of `cfg`, the layer buffer
+    /// (`cfg.layer_buf_bytes`) included.
     #[must_use]
     pub fn new(cfg: &RenderConfig) -> Self {
+        let layer_buf = if cfg.layer_buf_bytes == 0 {
+            LayerBuf::Empty
+        } else {
+            LayerBuf::Heap(vec![0; cfg.layer_buf_bytes as usize])
+        };
+        Self::with_layer(cfg, layer_buf)
+    }
+
+    /// Like [`new`](Self::new), but the layer buffer is `layer_buf` — caller memory, typically
+    /// a `static`, so the largest scratch buffer of the renderer stays out of the heap.
+    /// `cfg.layer_buf_bytes` is ignored; [`config`](Self::config) reports `layer_buf.len()`
+    /// (saturated to `u32::MAX`). The bytes need no particular alignment or initial content
+    /// (every layer clears what it uses).
+    ///
+    /// Allocates the other scratch buffers and caches of `cfg` as `new` does; never panics.
+    ///
+    /// ```
+    /// use twine_render::{RenderCaches, RenderConfig};
+    ///
+    /// // On firmware: `static LAYER: TakeOnce<[u8; 8192]>` and `LAYER.take()`.
+    /// let layer: &'static mut [u8] = Box::leak(Box::new([0u8; 8192]));
+    /// let caches = RenderCaches::with_layer_buf(&RenderConfig::default(), layer);
+    /// assert!(caches.layer_buf_is_static());
+    /// assert_eq!(caches.layer_buf_bytes(), 8192);
+    /// assert_eq!(caches.config().layer_buf_bytes, 8192);
+    /// ```
+    #[must_use]
+    pub fn with_layer_buf(cfg: &RenderConfig, layer_buf: &'static mut [u8]) -> Self {
+        let cfg = RenderConfig {
+            layer_buf_bytes: u32::try_from(layer_buf.len()).unwrap_or(u32::MAX),
+            ..*cfg
+        };
+        Self::with_layer(&cfg, LayerBuf::Static(layer_buf))
+    }
+
+    fn with_layer(cfg: &RenderConfig, layer_buf: LayerBuf) -> Self {
         let span = usize::from(cfg.max_span.max(16));
         Self {
             config: *cfg,
@@ -108,7 +182,7 @@ impl RenderCaches {
             circle: CircleCache::new(cfg.circle_cache_entries),
             shadow: ShadowCache::new(cfg.shadow_cache_entries),
             gradient: GradientCache::new(cfg.gradient_cache_entries),
-            layer_buf: vec![0; cfg.layer_buf_bytes as usize],
+            layer_buf,
             image_copy_rows: 0,
             ext: None,
         }
@@ -126,17 +200,57 @@ impl RenderCaches {
         self.cov.len()
     }
 
-    /// Total bytes reserved by the scratch buffers and caches.
+    /// Heap bytes reserved by the scratch buffers, the caches and a heap layer buffer:
+    /// [`scratch_bytes`](Self::scratch_bytes) + [`cache_bytes`](Self::cache_bytes) + the
+    /// layer buffer unless it [is static](Self::layer_buf_is_static). The extension slot
+    /// ([`put_extension`](Self::put_extension)) is not included.
+    ///
+    /// Allocates nothing; never panics; O(1).
     #[must_use]
     pub fn bytes_reserved(&self) -> usize {
+        let layer = if self.layer_buf_is_static() {
+            0
+        } else {
+            self.layer_buf_bytes()
+        };
+        self.scratch_bytes() + self.cache_bytes() + layer
+    }
+
+    /// Heap bytes of the per-span scratch buffers (coverage, mask, ARGB samples and 16-bit
+    /// accumulators: `8 × max_span` bytes by capacity). Allocates nothing; never panics.
+    ///
+    /// ```
+    /// use twine_render::{RenderCaches, RenderConfig};
+    /// let c = RenderCaches::new(&RenderConfig { max_span: 100, ..RenderConfig::default() });
+    /// assert_eq!(c.scratch_bytes(), 8 * 100);
+    /// ```
+    #[must_use]
+    pub fn scratch_bytes(&self) -> usize {
         self.cov.capacity()
             + self.mask.capacity()
             + self.span.capacity()
-            + self.acc.capacity() * 2
-            + self.circle.bytes_reserved()
-            + self.shadow.bytes_reserved()
-            + self.gradient.bytes_reserved()
-            + self.config.layer_buf_bytes as usize
+            + self.acc.capacity() * core::mem::size_of::<u16>()
+    }
+
+    /// Heap bytes of the quarter-circle, shadow and gradient caches (their fixed arenas).
+    /// Allocates nothing; never panics.
+    #[must_use]
+    pub fn cache_bytes(&self) -> usize {
+        self.circle.bytes_reserved() + self.shadow.bytes_reserved() + self.gradient.bytes_reserved()
+    }
+
+    /// Size of the layer buffer in bytes, wherever it lives (0 while a layer is being drawn,
+    /// which is never observable from outside a draw).
+    #[must_use]
+    pub fn layer_buf_bytes(&self) -> usize {
+        self.layer_buf.len()
+    }
+
+    /// Whether the layer buffer is caller memory ([`with_layer_buf`](Self::with_layer_buf))
+    /// rather than heap.
+    #[must_use]
+    pub fn layer_buf_is_static(&self) -> bool {
+        matches!(self.layer_buf, LayerBuf::Static(_))
     }
 
     /// The cached 256-entry color map (packed `0xAARRGGBB`, see [`build_color_map`]) of

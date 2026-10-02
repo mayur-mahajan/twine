@@ -31,7 +31,7 @@ pub fn harness(w: u16, h: u16, mode: Mode) -> EngineHarness {
         Mode::Light => DefaultTheme::light(),
         Mode::Dark => DefaultTheme::dark(),
     };
-    EngineHarness::new(w, h).theme(Rc::new(t))
+    EngineHarness::new(w, h).theme(t)
 }
 
 /// A harness with a default focus group (keypad and encoder tests).

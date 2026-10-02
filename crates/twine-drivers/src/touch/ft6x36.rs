@@ -6,7 +6,7 @@
 //! | Address | `0x38` |
 //! | Bus speed | I2C up to 400 kHz |
 //! | IRQ | `INT`, active low (pulses while touched in the default trigger mode) |
-//! | Rotation | reports panel coordinates: use [`TouchTransform`] |
+//! | Rotation | reports panel coordinates, mapped to the display by [`TouchTransform`](super::TouchTransform) (fitted automatically, see [module docs](super#coordinates)) |
 //!
 //! A reading is one `write_read` of 5 registers starting at `TD_STATUS` (`0x02`): number of
 //! touch points, then `P1_XH` (event flag in bits 7:6, X bits 11:8), `P1_XL`, `P1_YH`, `P1_YL`.
@@ -23,22 +23,23 @@
 //! | `RST` | not driven by the driver: hold it high from your firmware |
 //!
 //! ```
-//! use twine_drivers::touch::{Ft6x36, TouchTransform};
+//! use twine_drivers::touch::Ft6x36;
 //! use twine_drivers::testkit::Recorder;
 //! use twine_drivers::NoPin;
 //! use twine_hal::{InputData, InputDevice};
 //!
 //! let rec = Recorder::new();
-//! let mut touch = Ft6x36::new(rec.i2c(), None::<NoPin>, TouchTransform::identity(240, 320));
+//! // Pass it to `Ui::builder(..).input(touch)` as is: it fits itself to the display.
+//! let mut touch = Ft6x36::new(rec.i2c(), None::<NoPin>);
 //! assert!(matches!(touch.read(), InputData::Pointer(p) if !p.pressed));
 //! ```
 
 use embedded_hal::digital::InputPin;
 use embedded_hal::i2c::I2c;
 use twine_core::log::{trace, warn};
-use twine_hal::{DeviceHealth, InputData, InputDevice, InputKind, PointerData, PollHint};
+use twine_hal::{DeviceHealth, DisplayInfo, InputData, InputDevice, InputKind, PointerData, PollHint};
 
-use super::{IrqState, TouchTransform, irq_touch_common};
+use super::{IrqState, PanelMap, irq_touch_common, panel_map_methods};
 
 /// Default I2C address.
 pub const ADDR: u8 = 0x38;
@@ -79,21 +80,37 @@ pub struct Ft6x36<I2C, IRQ> {
     addr: u8,
     model: FtModel,
     pub(super) irq: IrqState<IRQ>,
-    transform: TouchTransform,
+    map: PanelMap,
 }
 
 impl<I2C, IRQ> Ft6x36<I2C, IRQ> {
-    /// A driver at address [`ADDR`]; `irq` is the `INT` pin (active low), if wired.
+    /// A driver at address [`ADDR`]; `irq` is the `INT` pin (active low), if wired. Its
+    /// coordinates are fitted to the display when it is added to the engine (see
+    /// [`for_display`](Self::for_display)). Touches no bus; never panics.
+    ///
+    /// ```
+    /// use twine_drivers::testkit::Recorder;
+    /// use twine_drivers::touch::Ft6x36;
+    /// use twine_drivers::NoPin;
+    /// use twine_hal::{InputDevice, PollHint};
+    ///
+    /// // On hardware: the HAL's `I2c` and, if wired, the interrupt input pin.
+    /// let rec = Recorder::new();
+    /// let touch = Ft6x36::new(rec.i2c(), None::<NoPin>);
+    /// assert_eq!(touch.poll_hint(), PollHint::Periodic);
+    /// ```
     #[must_use]
-    pub fn new(i2c: I2C, irq: Option<IRQ>, transform: TouchTransform) -> Self {
+    pub fn new(i2c: I2C, irq: Option<IRQ>) -> Self {
         Self {
             i2c,
             addr: ADDR,
             model: FtModel::Ft6x36,
             irq: IrqState::new(irq),
-            transform,
+            map: PanelMap::new(),
         }
     }
+
+    panel_map_methods!(Ft6x36);
 
     /// Sets the controller model (log names; all share the register map).
     #[must_use]
@@ -128,11 +145,6 @@ impl<I2C, IRQ> Ft6x36<I2C, IRQ> {
     pub fn with_fail_after(mut self, n: u16) -> Self {
         self.irq.fail_after = n;
         self
-    }
-
-    /// Replaces the coordinate transform.
-    pub fn set_transform(&mut self, t: TouchTransform) {
-        self.transform = t;
     }
 
     /// Returns the bus and the IRQ pin.
@@ -172,7 +184,7 @@ impl<I2C: I2c, IRQ: InputPin> InputDevice for Ft6x36<I2C, IRQ> {
         let name = self.model.name();
         let data = match self.read_raw() {
             Ok(Some((x, y))) => PointerData {
-                point: self.transform.apply(i32::from(x), i32::from(y)),
+                point: self.map.apply(x, y),
                 pressed: true,
             },
             Ok(None) => self.irq.released(),
@@ -191,6 +203,10 @@ impl<I2C: I2c, IRQ: InputPin> InputDevice for Ft6x36<I2C, IRQ> {
     fn health(&self) -> DeviceHealth {
         self.irq.health
     }
+
+    fn fit_to_display(&mut self, info: &DisplayInfo) {
+        self.map.fit(info);
+    }
 }
 
 irq_touch_common!(Ft6x36, "ft6x36");
@@ -204,11 +220,8 @@ mod tests {
     use twine_core::Point;
 
     fn dut(rec: &Recorder) -> Ft6x36<RecordingI2c, RecordingPin> {
-        Ft6x36::new(
-            rec.i2c(),
-            Some(rec.quiet_pin("int")),
-            TouchTransform::identity(240, 320),
-        )
+        Ft6x36::new(rec.i2c(), Some(rec.quiet_pin("int")))
+            .for_display(&crate::touch::test_util::display(240, 320))
     }
 
     #[test]
@@ -284,7 +297,8 @@ mod tests {
         rec.fail_next();
         assert!(matches!(t.read(), InputData::Pointer(p) if !p.pressed));
         assert_eq!(t.kind(), InputKind::Pointer);
-        t.set_transform(TouchTransform::identity(1, 1));
+        let t = t.for_display(&crate::touch::test_util::display(1, 1));
+        assert_eq!(t.transform(), twine_hal::TouchTransform::identity(1, 1));
         let _ = t.release();
     }
 

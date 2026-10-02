@@ -217,6 +217,15 @@ impl EngineQueue {
         self.waker.set(Some(w));
     }
 
+    /// Heap bytes of the queue: its `Rc` allocation and the ring of command slots (queued
+    /// commands' own boxes are transient and not included). Never panics.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        let slots = self.slots.try_borrow().map_or(0, |s| s.len());
+        2 * core::mem::size_of::<usize>()
+            + core::mem::size_of::<EngineQueue>()
+            + slots * core::mem::size_of::<Option<EngineCmd>>()
+    }
+
     /// Queued commands.
     pub(crate) fn len(&self) -> usize {
         self.len.get()

@@ -39,6 +39,13 @@ use twine_theme::DefaultTheme;
 use twine_view::prelude::*;
 use twine_widgets::label::Label;
 
+use twine_reactive::Runtime;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
+
 /// Promotable constants (a `const fn` call in a `&[..]` literal is not `'static`).
 const ANGLE_10: Angle = Angle::deg(10);
 const SCALE_300: Scale = Scale::from_raw_256(300);
@@ -721,13 +728,10 @@ fn modifier_idempotency_all() {
         });
         t.run_until_idle();
         let tick = t.root_scope().expect_context::<Signal<u32>>();
-        let runs = twine_reactive::runtime_stats().effect_runs;
+        let runs = rt().stats().effect_runs;
         tick.set(1);
         t.update();
-        assert!(
-            twine_reactive::runtime_stats().effect_runs > runs,
-            "{name}: no binding ran"
-        );
+        assert!(rt().stats().effect_runs > runs, "{name}: no binding ran");
         assert!(
             t.invalidations().is_empty(),
             "{name}: {:?}",
@@ -1119,26 +1123,24 @@ fn view_column_row_light() {
 
 #[test]
 fn view_grid_dark() {
-    let mut t = TestUi::new(240, 160)
-        .theme(Rc::new(DefaultTheme::dark()))
-        .mount(|_| {
-            let cells: Vec<_> = (0..6)
-                .map(|i| {
-                    button(label(["A", "B", "C", "D", "E", "F"][i]))
-                        .grid_col(i % 3)
-                        .grid_row(i / 3)
-                        .grid_align(GridAlign::Stretch, GridAlign::Stretch)
-                })
-                .collect();
-            grid(
-                grid_tracks![fr(1), fr(1), fr(1)],
-                grid_tracks![fr(1), fr(1)],
-                cells,
-            )
-            .gap(6)
-            .padding(6)
-            .size(Length::pct(100), Length::pct(100))
-        });
+    let mut t = TestUi::new(240, 160).theme(DefaultTheme::dark()).mount(|_| {
+        let cells: Vec<_> = (0..6)
+            .map(|i| {
+                button(label(["A", "B", "C", "D", "E", "F"][i]))
+                    .grid_col(i % 3)
+                    .grid_row(i / 3)
+                    .grid_align(GridAlign::Stretch, GridAlign::Stretch)
+            })
+            .collect();
+        grid(
+            grid_tracks![fr(1), fr(1), fr(1)],
+            grid_tracks![fr(1), fr(1)],
+            cells,
+        )
+        .gap(6)
+        .padding(6)
+        .size(Length::pct(100), Length::pct(100))
+    });
     t.run_until_idle();
     t.assert_snapshot("view_grid_dark");
     let _ = (by_text("A"), Rect::ZERO);

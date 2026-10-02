@@ -128,7 +128,7 @@
 //!
 //! | Item | Role | LVGL |
 //! |------|------|------|
-//! | [`PropId`], [`StyleProp`], [`StyleValue`], [`PROP_META`] | the 129 properties, typed values, metadata | `lv_style_prop_t`, `lv_style_value_t` |
+//! | [`PropId`], [`StyleProp`], [`StyleValue`], [`PROP_META`], [`PROP_NAMES`] | the 129 properties, typed values, metadata (hot) and names (diagnostics) | `lv_style_prop_t`, `lv_style_value_t` |
 //! | [`Style`], [`StyleBuf`], [`StyleRef`], [`style!`], [`StyleContainer`] | containers and their composition (`..BASE` spread, [`Style::merge`], [`StyleBuf::extend_from`]) | `lv_style_t`, `LV_STYLE_CONST_INIT` |
 //! | [`Part`], [`State`] ([`State::custom`], [`State::PRECEDENCE`]), [`Selector`] | selectors, application states, state precedence | `lv_part_t`, `lv_state_t`, `lv_style_selector_t` |
 //! | [`resolve`], [`StyleSource`] | resolution | `lv_obj_get_style_prop` |
@@ -165,7 +165,9 @@ mod value;
 mod value_types;
 
 pub use design::ThemeMode;
-pub use prop::{PROP_ALIASES, PROP_COUNT, PROP_META, PropFlags, PropId, PropMeta, StyleProp};
+pub use prop::{
+    PROP_ALIASES, PROP_COUNT, PROP_META, PROP_NAMES, PropFlags, PropId, PropMeta, PropNames, StyleProp,
+};
 pub use props::Props;
 pub use resolve::{
     EntryKind, EntryTrace, ResolveOptions, StyleDefaults, StyleEntry, StyleSource, TraceEvent, resolve,

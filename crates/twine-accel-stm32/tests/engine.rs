@@ -17,7 +17,7 @@ const H: u16 = 32;
 
 fn engine(regs: MockRegs) -> (Engine, twine_engine::DisplayId) {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
-    e.set_accel(Some(Box::new(Dma2d::new(regs).with_timeout(1_000))));
+    e.set_accel(Dma2d::new(regs).with_timeout(1_000));
     let panel = MemoryDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565));
     let buf: &'static mut [u8] = Box::leak(vec![0u8; usize::from(W) * 2 * 16].into_boxed_slice());
     let d = e.add_display(panel, BufferMode::partial_single(buf)).unwrap();

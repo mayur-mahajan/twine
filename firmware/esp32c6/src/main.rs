@@ -7,7 +7,7 @@
 //!
 //! The default pins and features fit a 1.47" 172 × 320 JD9853 IPS panel with AXS5106L touch
 //! (the wiring of Waveshare's ESP32-C6-Touch-LCD-1.47). The display is flushed with SPI DMA
-//! while the next chunk renders (`twine_embassy::run`); an XPT2046 would share the bus with its
+//! while the next chunk renders (`twine::embassy::run`); an XPT2046 would share the bus with its
 //! own chip select, capacitive touch is on I2C0. The UI sleeps until the touch interrupt, a
 //! channel message or its next deadline. Every 5 s the log shows a `twine::perf` line (fps,
 //! CPU, render and flush time, heap).
@@ -28,56 +28,29 @@ use esp_hal::gpio::{Level, Output, OutputConfig};
 use esp_hal::spi::master::{Config as SpiConfig, Spi, SpiDma};
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
-use static_cell::ConstStaticCell;
 #[cfg(feature = "spi-panel")]
 use static_cell::StaticCell;
 use twine::core::Rotation;
-use twine::engine::{EngineConfig, MemInfo};
+use twine::engine::{HeapPeak, MemInfo};
 use twine::hal::AsyncDisplayDriver;
 use twine::prelude::*;
 #[cfg(feature = "touch-xpt2046")]
-use twine_drivers::Calibration;
-use twine_embassy::UiBuilderExt;
+use twine::drivers::Calibration;
+use twine::embassy::UiBuilderExt;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
 // Feature groups (use `--no-default-features` to switch, or `cargo xtask firmware <board>
 // --features …`, which replaces the default of the same group): exactly one display, at most one
 // touch controller, at most one demo.
-#[cfg(not(any(
-    feature = "panel-jd9853",
-    feature = "panel-ili9341",
-    feature = "panel-ili9342",
-    feature = "panel-st7789",
-    feature = "panel-st7796",
-    feature = "oled-ssd1306"
-)))]
-compile_error!("enable one display feature: panel-jd9853, panel-ili9341, panel-ili9342, panel-st7789, panel-st7796, oled-ssd1306");
-#[cfg(any(
-    all(feature = "panel-jd9853", any(feature = "panel-ili9341", feature = "panel-ili9342", feature = "panel-st7789", feature = "panel-st7796", feature = "oled-ssd1306")),
-    all(feature = "panel-ili9341", any(feature = "panel-ili9342", feature = "panel-st7789", feature = "panel-st7796", feature = "oled-ssd1306")),
-    all(feature = "panel-ili9342", any(feature = "panel-st7789", feature = "panel-st7796", feature = "oled-ssd1306")),
-    all(feature = "panel-st7789", any(feature = "panel-st7796", feature = "oled-ssd1306")),
-    all(feature = "panel-st7796", feature = "oled-ssd1306"),
-))]
-compile_error!("enable only one display feature (panel-* / oled-*)");
-#[cfg(any(
-    all(feature = "touch-axs5106l", any(feature = "touch-ft6x36", feature = "touch-gt911", feature = "touch-cst816s", feature = "touch-xpt2046")),
-    all(feature = "touch-ft6x36", any(feature = "touch-gt911", feature = "touch-cst816s", feature = "touch-xpt2046")),
-    all(feature = "touch-gt911", any(feature = "touch-cst816s", feature = "touch-xpt2046")),
-    all(feature = "touch-cst816s", feature = "touch-xpt2046"),
-))]
-compile_error!("enable at most one touch-* feature");
-#[cfg(all(feature = "oled-ssd1306", feature = "touch"))]
-compile_error!("oled-ssd1306 uses the touch I2C pins: disable the touch-* feature");
-#[cfg(any(
-    all(feature = "demo-counter", any(feature = "demo-controls", feature = "demo-selection", feature = "demo-calibrate")),
-    all(feature = "demo-controls", any(feature = "demo-selection", feature = "demo-calibrate")),
-    all(feature = "demo-selection", feature = "demo-calibrate"),
-))]
-compile_error!("enable at most one demo-* feature");
-#[cfg(all(feature = "demo-calibrate", not(feature = "touch")))]
-compile_error!("demo-calibrate needs a touch-* feature");
+twine::feature_rules! {
+    exactly_one "display": ["panel-jd9853", "panel-ili9341", "panel-ili9342", "panel-st7789", "panel-st7796", "oled-ssd1306"];
+    at_most_one "touch": ["touch-axs5106l", "touch-xpt2046", "touch-ft6x36", "touch-gt911", "touch-cst816s"];
+    at_most_one "demo": ["demo-counter", "demo-controls", "demo-selection", "demo-calibrate"];
+    // The OLED uses the touch controller's I2C pins.
+    excludes "oled-ssd1306": ["touch"];
+    requires "demo-calibrate": ["touch"];
+}
 
 /// Display rotation: portrait 172 × 320 on the 1.47" JD9853 panel.
 #[cfg(feature = "panel-jd9853")]
@@ -124,10 +97,14 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     let (oled_sda, oled_scl) = (p.GPIO18, p.GPIO19);
     #[cfg(feature = "touch-axs5106l")]
     let touch_rst = p.GPIO20;
-    /// The touch panel's raw X axis runs opposite to the display columns (true on the
-    /// Waveshare 1.47" board, whose demo mirrors touch X at rotation 0).
+    /// How the touch panel sits on the display: on the Waveshare 1.47" board (AXS5106L) its raw
+    /// X axis runs opposite to the display columns (its demo mirrors touch X at rotation 0).
+    /// The driver composes this with `ROTATION` itself when the `Ui` is built.
     #[cfg(feature = "i2c-touch")]
-    const TOUCH_MIRROR_RAW_X: bool = cfg!(feature = "touch-axs5106l");
+    const TOUCH_MOUNT: twine::drivers::touch::TouchMount = twine::drivers::touch::TouchMount {
+        mirror_x: cfg!(feature = "touch-axs5106l"),
+        ..twine::drivers::touch::TouchMount::ALIGNED
+    };
     // XPT2046 on the same SPI bus (feature `touch-xpt2046`), T_IRQ idles high.
     #[cfg(feature = "touch-xpt2046")]
     let (touch_cs, touch_irq) = (p.GPIO4, p.GPIO21);
@@ -136,7 +113,7 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     /// Replace with the output of `--features demo-calibrate` (the placeholder assumes a
     /// 320 × 240 module at `Rotation::Deg90`).
     #[cfg(feature = "touch-xpt2046")]
-    const TOUCH_CAL: Calibration = Calibration::DEFAULT_320X240_ROT90;
+    const TOUCH_CAL: Calibration = Calibration::DEFAULT_240X320;
     // ============================================================================================
 
     #[cfg(feature = "spi-panel")]
@@ -172,27 +149,27 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
         let dc = Output::new(lcd_dc, Level::Low, OutputConfig::default());
         let rst = Output::new(lcd_rst, Level::High, OutputConfig::default());
         #[cfg(feature = "panel-jd9853")]
-        let d = twine_drivers::jd9853::new_async(
+        let d = twine::drivers::jd9853::new_async(
             spi,
             dc,
             Some(rst),
-            &twine_drivers::jd9853::JD9853_172X320,
+            &twine::drivers::jd9853::JD9853_172X320,
             ROTATION,
             delay,
         )
         .await;
         #[cfg(feature = "panel-ili9341")]
-        let d = twine_drivers::ili9341::new_async(spi, dc, Some(rst), ROTATION, delay).await;
+        let d = twine::drivers::ili9341::new_async(spi, dc, Some(rst), ROTATION, delay).await;
         #[cfg(feature = "panel-ili9342")]
-        let d = twine_drivers::ili9342::new_async(spi, dc, Some(rst), ROTATION, delay).await;
+        let d = twine::drivers::ili9342::new_async(spi, dc, Some(rst), ROTATION, delay).await;
         #[cfg(feature = "panel-st7796")]
-        let d = twine_drivers::st7796::new_async(spi, dc, Some(rst), ROTATION, delay).await;
+        let d = twine::drivers::st7796::new_async(spi, dc, Some(rst), ROTATION, delay).await;
         #[cfg(feature = "panel-st7789")]
-        let d = twine_drivers::st7789::new_async(
+        let d = twine::drivers::st7789::new_async(
             spi,
             dc,
             Some(rst),
-            &twine_drivers::st7789::ST7789,
+            &twine::drivers::st7789::ST7789,
             ROTATION,
             delay,
         )
@@ -207,8 +184,8 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
             .with_sda(oled_sda)
             .with_scl(oled_scl)
             .into_async();
-        let iface = twine_drivers::interface::I2cInterface::new(i2c, 0x3C);
-        twine_drivers::ssd1306::AsyncSsd1306::new(iface, twine_drivers::ssd1306::Ssd1306Size::Size128x64, ROTATION)
+        let iface = twine::drivers::interface::I2cInterface::new(i2c, 0x3C);
+        twine::drivers::ssd1306::AsyncSsd1306::new(iface, twine::drivers::ssd1306::Ssd1306Size::Size128x64, ROTATION)
             .await
             .unwrap_or_else(|e| panic!("display init failed: {e:?}"))
     };
@@ -228,12 +205,8 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
         } else {
             TOUCH_CAL
         };
-        twine_drivers::touch::Xpt2046::new(dev, Some(irq))
+        twine::drivers::touch::Xpt2046::new(dev, Some(irq))
             .with_calibration(cal)
-            .with_screen_size(
-                if CALIBRATE { 4096 } else { info.width },
-                if CALIBRATE { 4096 } else { info.height },
-            )
     };
     #[cfg(feature = "i2c-touch")]
     let touch = {
@@ -243,19 +216,12 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
             .with_sda(touch_sda)
             .with_scl(touch_scl);
         let irq = Input::new(touch_irq, InputConfig::default().with_pull(Pull::Up));
-        let native = if ROTATION.swaps_axes() {
-            (info.height, info.width)
-        } else {
-            (info.width, info.height)
-        };
-        let mut transform = twine_drivers::touch::TouchTransform::for_rotation(ROTATION, native.0, native.1);
-        if TOUCH_MIRROR_RAW_X {
-            transform = transform.with_raw_mirror_x();
-        }
         #[cfg(feature = "touch-axs5106l")]
         let t = {
             let rst = Output::new(touch_rst, Level::High, OutputConfig::default());
-            let mut t = twine_drivers::touch::Axs5106l::new(i2c, Some(irq), transform).with_reset_pin(rst);
+            let mut t = twine::drivers::touch::Axs5106l::new(i2c, Some(irq))
+                .with_mount(TOUCH_MOUNT)
+                .with_reset_pin(rst);
             t.reset(delay).unwrap_or_else(|e| match e {});
             match t.read_id() {
                 Ok(id) => log::info!("axs5106l id {id:02x?}"),
@@ -264,42 +230,41 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
             t
         };
         #[cfg(feature = "touch-ft6x36")]
-        let t = twine_drivers::touch::Ft6x36::new(i2c, Some(irq), transform);
+        let t = twine::drivers::touch::Ft6x36::new(i2c, Some(irq)).with_mount(TOUCH_MOUNT);
         #[cfg(feature = "touch-gt911")]
-        let t = twine_drivers::touch::Gt911::new(i2c, Some(irq), transform);
+        let t = twine::drivers::touch::Gt911::new(i2c, Some(irq)).with_mount(TOUCH_MOUNT);
         #[cfg(feature = "touch-cst816s")]
-        let t = twine_drivers::touch::Cst816s::new(i2c, Some(irq), transform);
+        let t = twine::drivers::touch::Cst816s::new(i2c, Some(irq)).with_mount(TOUCH_MOUNT);
         t
     };
 
-    // `demo-calibrate`: raw readings go to the calibration demo, not to the UI.
+    // `demo-calibrate`: raw readings go to the calibration demo (through `demo::RAW`), not to
+    // the UI; the wrapper does not fit the driver to the display, so they stay unclamped.
     #[cfg(feature = "demo-calibrate")]
-    let touch = twine_demos::calibration::RawTouchInput::new(touch);
+    let touch = twine_demos::calibration::RawTouchInput::new(touch, &demo::RAW);
 
-    // The UI: two DMA-pipelined partial buffers (SPI panels: 40 rows of 320 px; OLED: the
-    // whole 128 × 64 × 1 bpp frame).
-    static BUF_A: ConstStaticCell<DrawBuffer> = ConstStaticCell::new(DrawBuffer([0; BUFFER_BYTES]));
-    static BUF_B: ConstStaticCell<DrawBuffer> = ConstStaticCell::new(DrawBuffer([0; BUFFER_BYTES]));
-    let config = EngineConfig {
-        mem_info: Some(mem_info),
-        hires_timer: Some(twine_embassy::hires_now),
-        ..EngineConfig::default()
-    };
-    // SAFETY: the UI and every reactive handle live in this task on the executor and are never
-    // touched from an interrupt handler or another executor; other contexts only use channels
-    // and the UI waker.
-    let builder = unsafe { Ui::builder_async(display).bind_to_current_context() };
-    let builder = builder.buffers(BufferMode::partial_double(&mut BUF_A.take().0, &mut BUF_B.take().0));
+    // The UI, drawing into the two DMA-pipelined `BUFS` (declared with `draw_buffers!` below).
+    // The demos' configuration — the one their simulator examples and tests run — plus this
+    // board's hooks. An OLED build takes it with the monochrome theme (white on black: lit
+    // pixels are the foreground), so the default theme is not linked.
+    #[cfg(not(feature = "oled-ssd1306"))]
+    let mut config = twine_demos::config();
+    #[cfg(feature = "oled-ssd1306")]
+    let mut config = twine_demos::config_with_theme(
+        MonoTheme::builder().mode(ThemeMode::Dark).font(&twine::assets::fonts::MONTSERRAT_14).build(),
+    );
+    config.engine.mem_info = Some(mem_info);
+    config.engine.hires_timer = Some(twine::embassy::hires_now);
+    // The runtime belongs to this task: the `!Send` token keeps the UI and every reactive
+    // handle here; interrupt handlers and other tasks only use channels and the UI waker.
+    let rt = Runtime::take().expect("runtime already taken");
+    let builder = Ui::builder_async(display).runtime(rt);
+    let builder = builder.buffers(BufferMode::partial_double_from(BUFS.take().expect("draw buffers already taken")));
     #[cfg(feature = "touch")]
     let builder = builder.input_wait(touch);
-    #[cfg(feature = "spi-panel")]
-    let theme = DefaultTheme::light();
-    // White on black: lit OLED pixels are the foreground.
-    #[cfg(feature = "oled-ssd1306")]
-    let theme = MonoTheme::builder().mode(ThemeMode::Dark).font(&twine::assets::fonts::MONTSERRAT_14).build();
-    let ui = builder.config(config).theme(theme).with_embassy_clock().build(demo::app);
+    let ui = builder.app_config(config).with_embassy_platform().build(demo::app);
     log::info!("twine: {} demo on {}x{}", demo::NAME, info.width, info.height);
-    twine_embassy::run(ui).await
+    twine::embassy::run(ui).await
 }
 
 /// A blocking `SpiDevice` on the async display bus, for the touch controller.
@@ -368,25 +333,34 @@ mod shared {
     }
 }
 
-/// Bytes of one partial draw buffer: 40 rows of 320 px (RGB565).
-#[cfg(feature = "spi-panel")]
-const BUFFER_BYTES: usize = 320 * 40 * 2;
-/// Bytes of one draw buffer: the whole 128 × 64 OLED at 1 bpp.
-#[cfg(feature = "oled-ssd1306")]
-const BUFFER_BYTES: usize = 128 * 64 / 8;
+// The draw buffers: sized at compile time, 4-byte aligned by their type, zeroed `.bss`, taken
+// once in `main`.
+twine::draw_buffers! {
+    /// Two DMA-pipelined partial draw buffers: 40 rows of the 320 px panel (RGB565).
+    #[cfg(feature = "spi-panel")]
+    static BUFS: 2 x 40 rows x 320 px @ Rgb565Swapped;
+    /// Two draw buffers of the whole 128 × 64 OLED at 1 bpp.
+    #[cfg(feature = "oled-ssd1306")]
+    static BUFS: 2 x 64 rows x 128 px @ I1;
+}
 
-/// A 4-byte aligned draw buffer (the engine needs word-aligned buffers).
-#[repr(C, align(4))]
-struct DrawBuffer([u8; BUFFER_BYTES]);
-
-/// Calibration mode: the touch driver reports raw readings (identity calibration, no clamping).
+/// Calibration mode: the touch driver reports raw readings (identity calibration; not clamped,
+/// as `RawTouchInput` does not fit it to the display).
 #[cfg(feature = "touch-xpt2046")]
 const CALIBRATE: bool = cfg!(feature = "demo-calibrate");
 
 /// The demo selected by cargo feature (the counter without a `demo-*` feature).
 mod demo {
+    /// The raw taps of the calibration demo (ports pattern): owned here, passed to
+    /// `RawTouchInput` and to the demo.
     #[cfg(feature = "demo-calibrate")]
-    pub use twine_demos::calibration::app;
+    pub static RAW: twine_demos::calibration::RawTaps = twine_demos::calibration::RawTaps::new();
+
+    /// The calibration demo, reading the raw taps of [`RAW`].
+    #[cfg(feature = "demo-calibrate")]
+    pub fn app(cx: twine::prelude::Scope) -> impl twine::prelude::View {
+        twine_demos::calibration::app(cx, &RAW)
+    }
     #[cfg(feature = "demo-controls")]
     pub use twine_demos::controls::app;
     #[cfg(feature = "demo-selection")]
@@ -408,14 +382,10 @@ mod demo {
 
 /// Heap statistics for the `twine::perf` log line; warns when the heap is more than 90 % full.
 fn mem_info() -> MemInfo {
-    use core::sync::atomic::{AtomicU32, Ordering};
-    static PEAK: AtomicU32 = AtomicU32::new(0);
-    let used = esp_alloc::HEAP.used() as u32;
-    let free = esp_alloc::HEAP.free() as u32;
-    let peak = PEAK.load(Ordering::Relaxed).max(used);
-    PEAK.store(peak, Ordering::Relaxed);
-    if u64::from(used) * 10 > u64::from(used + free) * 9 {
-        log::warn!("heap above 90%: {used} of {} bytes", used + free);
+    static PEAK: HeapPeak = HeapPeak::new();
+    let m = PEAK.sample(esp_alloc::HEAP.used(), esp_alloc::HEAP.free());
+    if m.used_percent() > 90 {
+        log::warn!("heap above 90%: {} of {} bytes", m.used, m.used + m.free);
     }
-    MemInfo { used, peak, free }
+    m
 }

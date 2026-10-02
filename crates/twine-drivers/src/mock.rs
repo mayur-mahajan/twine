@@ -306,6 +306,7 @@ impl Recorder {
     }
 
     /// A recording quad-SPI bus.
+    #[cfg(feature = "qspi")]
     #[must_use]
     pub fn qspi(&self) -> RecordingQspi {
         RecordingQspi(self.clone())
@@ -421,14 +422,17 @@ impl Recorder {
         f(&mut self.0.borrow_mut())
     }
 
+    #[cfg(feature = "async")]
     fn take_pending(&self) -> bool {
         core::mem::take(&mut self.0.borrow_mut().pending_once)
     }
 }
 
 /// Returns `Pending` once (waking itself), then `Ready`.
+#[cfg(feature = "async")]
 struct YieldOnce(bool);
 
+#[cfg(feature = "async")]
 impl Future for YieldOnce {
     type Output = ();
     fn poll(mut self: CorePin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
@@ -442,6 +446,7 @@ impl Future for YieldOnce {
     }
 }
 
+#[cfg(feature = "async")]
 async fn maybe_yield(rec: &Recorder) {
     if rec.take_pending() {
         YieldOnce(false).await;
@@ -497,9 +502,11 @@ impl embedded_hal_async::spi::SpiDevice for RecordingSpi {
 
 /// Recording quad-SPI bus (blocking and async): one [`BusOp::QspiCmd`] or
 /// [`BusOp::QspiPixels`] per transaction.
+#[cfg(feature = "qspi")]
 #[derive(Clone, Debug)]
 pub struct RecordingQspi(Recorder);
 
+#[cfg(feature = "qspi")]
 impl State {
     fn qspi_write(
         &mut self,
@@ -529,6 +536,7 @@ impl State {
     }
 }
 
+#[cfg(feature = "qspi")]
 impl crate::interface::QspiBus for RecordingQspi {
     type Error = MockError;
     fn write(
@@ -542,6 +550,7 @@ impl crate::interface::QspiBus for RecordingQspi {
     }
 }
 
+#[cfg(feature = "qspi")]
 #[cfg(feature = "async")]
 impl crate::interface::AsyncQspiBus for RecordingQspi {
     type Error = MockError;

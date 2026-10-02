@@ -3,7 +3,12 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use twine_reactive::{StoredValue, create_root, runtime_stats};
+use twine_reactive::{Runtime, StoredValue};
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 /// Compile-time check: the handle is `Copy` for any `T` (also non-`Clone` ones).
 const _: fn() = || {
@@ -15,7 +20,7 @@ const _: fn() = || {
 
 #[test]
 fn stored_value_roundtrip() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let v = cx.stored_value(vec![1, 2]);
     assert_eq!(v.with(Vec::len), 2);
     v.with_mut(|v| v.push(3));
@@ -30,7 +35,7 @@ fn stored_value_roundtrip() {
 
 #[test]
 fn stored_value_is_copy_into_many_closures() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let n = cx.stored_value(0u32);
     let inc = move || n.with_mut(|n| *n += 1);
     let read = move || n.get();
@@ -43,7 +48,7 @@ fn stored_value_is_copy_into_many_closures() {
 
 #[test]
 fn stored_value_reads_do_not_track_and_writes_do_not_notify() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let v = cx.stored_value(1u32);
     let runs = Rc::new(Cell::new(0));
     let r = runs.clone();
@@ -68,23 +73,23 @@ fn stored_value_disposed_with_its_scope() {
             self.0.set(true);
         }
     }
-    let root = create_root();
+    let root = rt().create_root();
     let child = root.child();
     let dropped = Rc::new(Cell::new(false));
     let v = child.stored_value(Flag(dropped.clone()));
-    let nodes = runtime_stats().nodes;
+    let nodes = rt().stats().nodes;
     root.dispose();
     assert!(dropped.get(), "value dropped with the scope");
     assert!(!v.is_alive());
     assert!(v.try_with(|_| ()).is_none());
     assert!(v.try_with_mut(|_| ()).is_none());
-    assert!(runtime_stats().nodes < nodes);
+    assert!(rt().stats().nodes < nodes);
 }
 
 #[test]
 #[should_panic(expected = "stored value used after its scope was disposed")]
 fn stored_value_use_after_dispose_panics() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let v = cx.stored_value(1);
     cx.dispose();
     let _ = v.get();
@@ -93,7 +98,7 @@ fn stored_value_use_after_dispose_panics() {
 #[test]
 #[should_panic(expected = "disposed")]
 fn stored_value_with_mut_after_dispose_panics() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let v = cx.stored_value(1);
     cx.dispose();
     v.with_mut(|n| *n += 1);
@@ -102,7 +107,7 @@ fn stored_value_with_mut_after_dispose_panics() {
 #[cfg(debug_assertions)]
 #[test]
 fn stored_value_use_after_dispose_names_creation_site() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let v = cx.stored_value(1);
     cx.dispose();
     let err = std::panic::catch_unwind(move || v.get()).unwrap_err();
@@ -121,7 +126,7 @@ fn stored_value_old_value_drop_can_use_it_again() {
             }
         }
     }
-    let cx = create_root();
+    let cx = rt().create_root();
     let slot = Rc::new(Cell::new(None));
     let v = cx.stored_value(Touch(slot.clone()));
     slot.set(Some(v));
@@ -131,7 +136,7 @@ fn stored_value_old_value_drop_can_use_it_again() {
 
 #[test]
 fn stored_value_equality_and_debug() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let a = cx.stored_value(1);
     let b = cx.stored_value(1);
     let a2 = a;

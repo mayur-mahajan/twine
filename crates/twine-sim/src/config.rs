@@ -2,11 +2,9 @@
 
 use std::fmt;
 use std::path::PathBuf;
-use std::rc::Rc;
-
 use twine_core::{Color, ColorFormat, Rotation};
-use twine_engine::ThemeHook;
-use twine_hal::BufferSpec;
+use twine_engine::{BufferMode, BufferSpec, IntoTheme};
+use twine_view::AppConfig;
 
 use crate::paths;
 
@@ -90,8 +88,11 @@ pub struct SimConfig {
     pub scale: u8,
     /// Emulated panel pixel format (default `Rgb565`).
     pub format: ColorFormat,
-    /// Draw buffer layout used by engine apps.
-    pub buffer_mode: BufferSpec,
+    /// The draw buffers of engine apps (default: two 40-row heap buffers,
+    /// `BufferMode::Alloc(BufferSpec::default())`). `Full` / `Direct` emulate a framebuffer
+    /// panel; `Partial` / `Alloc` a panel with its own frame memory. Consumed by
+    /// [`SimApp::engine`](crate::SimApp::engine) (the memory moves into the engine).
+    pub buffer_mode: BufferMode,
     /// Emulated bus throughput in bits per second (`None` = instant flushes).
     pub bus_hz: Option<u32>,
     /// Display rotation.
@@ -100,10 +101,15 @@ pub struct SimConfig {
     /// shows the logical screen). `false`: the panel keeps its physical orientation and engine
     /// apps rotate in software (the window shows the physical panel).
     pub hw_rotation: bool,
-    /// The theme installed on the display of engine apps before `setup` runs (any theme:
-    /// `twine_theme::DefaultTheme`, `SimpleTheme`, `MonoTheme` or a custom [`ThemeHook`]).
-    /// `F12` cycles through its modes ([`ThemeHook::modes`]).
-    pub theme: Option<Rc<dyn ThemeHook>>,
+    /// The application's configuration ([`AppConfig`]: engine configuration, theme, motion,
+    /// channel and queue budgets, fault hook) — the same value the firmware gives
+    /// `Ui::builder(..).app_config(..)`; set it with [`app_config`](Self::app_config). The
+    /// simulator adds its high-resolution timer to the engine configuration. The theme (any:
+    /// `twine_theme::DefaultTheme`, `SimpleTheme`, `MonoTheme` or a custom
+    /// [`ThemeHook`](twine_engine::ThemeHook); default none) is installed before engine apps'
+    /// `setup` runs and declarative apps are built; `F12` cycles through its modes
+    /// ([`ThemeHook::modes`](twine_engine::ThemeHook::modes)).
+    pub app: AppConfig,
     /// Registered input devices.
     pub input: SimInputs,
     /// Headless mode when `Some`.
@@ -114,9 +120,6 @@ pub struct SimConfig {
     pub fps_limit: Option<u16>,
     /// Engine apps: called with every key pressed (see [`RawKeyHook`]).
     pub on_raw_key: Option<RawKeyHook>,
-    /// The configuration of engine apps' engine (the simulator adds its high-resolution
-    /// timer).
-    pub engine_config: twine_engine::EngineConfig,
 }
 
 /// Formats the simulator panel can emulate.
@@ -130,18 +133,18 @@ pub const SUPPORTED_FORMATS: [ColorFormat; 7] = [
     ColorFormat::I1,
 ];
 
-/// Rows per partial buffer when `TWINE_SIM_BUFFERS` selects a partial mode while a full-screen
-/// mode is configured (the rows of [`BufferSpec::default`]).
+/// Rows per partial buffer when `TWINE_SIM_BUFFERS` selects a partial mode while no heap
+/// partial mode is configured (the rows of [`BufferSpec::default`]).
 const DEFAULT_PARTIAL_ROWS: u16 = 40;
 
 /// Parses a buffer mode name as used by `TWINE_SIM_BUFFERS` (`single`, `double`, `full`,
 /// `direct`; case-insensitive). The partial modes get `rows` rows per buffer.
-fn parse_buffers(name: &str, rows: u16) -> Option<BufferSpec> {
+fn parse_buffers(name: &str, rows: u16) -> Option<BufferMode> {
     match name.trim().to_ascii_lowercase().as_str() {
-        "single" => Some(BufferSpec::PartialSingle { rows }),
-        "double" => Some(BufferSpec::PartialDouble { rows }),
-        "full" => Some(BufferSpec::Full),
-        "direct" => Some(BufferSpec::Direct),
+        "single" => Some(BufferMode::alloc(BufferSpec::PartialSingle { rows })),
+        "double" => Some(BufferMode::alloc(BufferSpec::PartialDouble { rows })),
+        "full" => Some(BufferMode::Full),
+        "direct" => Some(BufferMode::Direct),
         _ => None,
     }
 }
@@ -182,17 +185,16 @@ impl SimConfig {
             title: "twine".into(),
             scale: 1,
             format: ColorFormat::Rgb565,
-            buffer_mode: BufferSpec::default(),
+            buffer_mode: BufferMode::alloc(BufferSpec::default()),
             bus_hz: None,
             rotation: Rotation::Deg0,
             hw_rotation: true,
-            theme: None,
+            app: AppConfig::new(),
             input: SimInputs::default(),
             headless: None,
             mono_colors: (Color::BLACK, Color::hex(0xB0_C8_A0)),
             fps_limit: Some(60),
             on_raw_key: None,
-            engine_config: twine_engine::EngineConfig::default(),
         }
     }
 
@@ -215,19 +217,67 @@ impl SimConfig {
         self
     }
 
-    /// Uses `cfg` for the engine of an engine app (e.g. to give the image cache a budget).
+    /// Uses `cfg` for the engine (sets [`AppConfig::engine`] of [`app`](Self::app); e.g. to
+    /// give the image cache a budget).
+    ///
+    /// ```
+    /// use twine_engine::EngineConfig;
+    /// use twine_sim::SimConfig;
+    ///
+    /// let cfg = SimConfig::new(320, 240).engine_config(EngineConfig { max_nodes: 512, ..EngineConfig::default() });
+    /// assert_eq!(cfg.app.engine.max_nodes, 512);
+    /// ```
     #[must_use]
     pub fn engine_config(mut self, cfg: twine_engine::EngineConfig) -> Self {
-        self.engine_config = cfg;
+        self.app.engine = cfg;
         self
     }
 
-    /// Installs `theme` on the display of an engine app (before `setup` runs); `F12` switches
-    /// it to its next mode (light → dark → night → high contrast, as far as the theme supports
-    /// them).
+    /// Installs `theme` on the display (sets [`AppConfig::theme`] of [`app`](Self::app)): a
+    /// theme value or a shared one ([`IntoTheme`]). `F12` switches it to its next mode
+    /// (light → dark → night → high contrast, as far as the theme supports them).
+    ///
+    /// ```
+    /// use twine_sim::SimConfig;
+    /// use twine_theme::DefaultTheme;
+    ///
+    /// let cfg = SimConfig::new(320, 240).theme(DefaultTheme::dark());
+    /// assert!(cfg.app.theme.is_some());
+    /// ```
     #[must_use]
-    pub fn theme(mut self, theme: Rc<dyn ThemeHook>) -> Self {
-        self.theme = Some(theme);
+    pub fn theme(mut self, theme: impl IntoTheme) -> Self {
+        self.app.theme = Some(theme.into_theme());
+        self
+    }
+
+    /// Runs the application with `config` — the very [`AppConfig`] the firmware ships
+    /// (`Ui::builder(..).app_config(config())`) — so the simulator shows the shipped engine
+    /// configuration, theme, motion, channel and queue budgets and fault hook. A configured
+    /// rotation becomes the simulated panel's rotation ([`rotation`](Self::rotation), emulated
+    /// in hardware like `MADCTL`); `TWINE_SIM_ROTATION` still overrides it. The window, panel
+    /// format, buffers and bus emulation stay the simulator's (the engine draws the same
+    /// pixels with any buffer geometry). Later builder methods refine it.
+    ///
+    /// ```
+    /// use twine_core::Rotation;
+    /// use twine_sim::SimConfig;
+    /// use twine_view::prelude::*;
+    ///
+    /// fn config() -> AppConfig {
+    ///     AppConfig::new().theme(DefaultTheme::light()).motion(Motion::Reduced).rotation(Rotation::Deg90)
+    /// }
+    ///
+    /// let cfg = SimConfig::new(320, 240).app_config(config());
+    /// assert_eq!(cfg.app.motion, Motion::Reduced);
+    /// assert_eq!(cfg.rotation, Rotation::Deg90);
+    /// ```
+    #[must_use]
+    pub fn app_config(mut self, mut config: AppConfig) -> Self {
+        if let Some(r) = config.rotation.take() {
+            self.rotation = r;
+            self.hw_rotation = true;
+        }
+        self.app = config;
         self
     }
 
@@ -268,9 +318,19 @@ impl SimConfig {
         self
     }
 
-    /// Sets the draw buffer layout for engine apps.
+    /// Sets the draw buffers of engine apps: [`BufferMode::alloc`] (heap partial buffers),
+    /// caller memory (`BufferMode::partial_double_from` with `draw_buffers!` statics, as on
+    /// firmware), or `Full` / `Direct` (a framebuffer panel).
+    ///
+    /// ```
+    /// use twine_engine::{BufferMode, BufferSpec};
+    /// use twine_sim::SimConfig;
+    ///
+    /// let cfg = SimConfig::new(320, 240).buffers(BufferMode::alloc(BufferSpec::PartialSingle { rows: 20 }));
+    /// assert!(matches!(cfg.buffer_mode, BufferMode::Alloc(BufferSpec::PartialSingle { rows: 20 })));
+    /// ```
     #[must_use]
-    pub fn buffers(mut self, mode: BufferSpec) -> Self {
+    pub fn buffers(mut self, mode: BufferMode) -> Self {
         self.buffer_mode = mode;
         self
     }
@@ -346,9 +406,9 @@ impl SimConfig {
             }
         }
         if let Some(v) = lookup("TWINE_SIM_BUFFERS") {
-            let rows = match self.buffer_mode {
-                BufferSpec::PartialSingle { rows } | BufferSpec::PartialDouble { rows } => rows,
-                BufferSpec::Full | BufferSpec::Direct => DEFAULT_PARTIAL_ROWS,
+            let rows = match &self.buffer_mode {
+                BufferMode::Alloc(spec) => spec.rows(),
+                BufferMode::Partial { .. } | BufferMode::Full | BufferMode::Direct => DEFAULT_PARTIAL_ROWS,
             };
             match parse_buffers(&v, rows) {
                 Some(mode) => self.buffer_mode = mode,
@@ -414,7 +474,7 @@ mod tests {
         assert_eq!(cfg.scale, 3);
         assert_eq!(cfg.bus_hz, Some(10_000_000));
         assert_eq!(cfg.format, ColorFormat::Rgb565Swapped);
-        assert_eq!(cfg.buffer_mode, BufferSpec::Full);
+        assert!(matches!(cfg.buffer_mode, BufferMode::Full));
         assert_eq!(cfg.rotation, Rotation::Deg90);
         assert!(
             !cfg.hw_rotation,
@@ -439,7 +499,7 @@ mod tests {
             .from_lookup(|k| bad.get(k).map(ToString::to_string));
         assert_eq!(cfg.scale, 2);
         assert!(cfg.headless.is_none());
-        assert_eq!(cfg.buffer_mode, BufferSpec::default());
+        assert!(matches!(cfg.buffer_mode, BufferMode::Alloc(spec) if spec == BufferSpec::default()));
         assert_eq!(cfg.rotation, Rotation::Deg0);
         assert!(cfg.hw_rotation);
         assert_eq!(cfg.format, ColorFormat::Rgb565);
@@ -449,18 +509,21 @@ mod tests {
     fn buffer_modes_keep_the_partial_rows() {
         let env = |v: &'static str| move |k: &str| (k == "TWINE_SIM_BUFFERS").then(|| v.to_string());
         let cfg = SimConfig::new(8, 8)
-            .buffers(BufferSpec::PartialDouble { rows: 10 })
+            .buffers(BufferMode::alloc(BufferSpec::PartialDouble { rows: 10 }))
             .from_lookup(env("single"));
-        assert_eq!(cfg.buffer_mode, BufferSpec::PartialSingle { rows: 10 });
-        let cfg = SimConfig::new(8, 8)
-            .buffers(BufferSpec::Full)
-            .from_lookup(env("Double"));
-        assert_eq!(
+        assert!(matches!(
             cfg.buffer_mode,
-            BufferSpec::PartialDouble {
+            BufferMode::Alloc(BufferSpec::PartialSingle { rows: 10 })
+        ));
+        let cfg = SimConfig::new(8, 8)
+            .buffers(BufferMode::Full)
+            .from_lookup(env("Double"));
+        assert!(matches!(
+            cfg.buffer_mode,
+            BufferMode::Alloc(BufferSpec::PartialDouble {
                 rows: DEFAULT_PARTIAL_ROWS
-            }
-        );
+            })
+        ));
         assert_eq!(
             BufferSpec::default(),
             BufferSpec::PartialDouble {
@@ -468,7 +531,7 @@ mod tests {
             }
         );
         let cfg = SimConfig::new(8, 8).from_lookup(env("direct"));
-        assert_eq!(cfg.buffer_mode, BufferSpec::Direct);
+        assert!(matches!(cfg.buffer_mode, BufferMode::Direct));
     }
 
     #[test]

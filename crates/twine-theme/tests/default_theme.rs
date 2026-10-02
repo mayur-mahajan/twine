@@ -38,7 +38,7 @@ fn card_scene(h: EngineHarness) -> (EngineHarness, NodeId) {
 
 #[test]
 fn screen_bg_matches_lvgl_light() {
-    let h = EngineHarness::new(240, 160).theme(Rc::new(DefaultTheme::light()));
+    let h = EngineHarness::new(240, 160).theme(DefaultTheme::light());
     let e = h.engine();
     let s = screen(e);
     // LIGHT_COLOR_SCR = lv_palette_lighten(LV_PALETTE_GREY, 4); LIGHT_COLOR_TEXT = darken(GREY, 4)
@@ -59,7 +59,7 @@ fn screen_bg_matches_lvgl_light() {
 
 #[test]
 fn screen_bg_matches_lvgl_dark() {
-    let h = EngineHarness::new(240, 160).theme(Rc::new(DefaultTheme::dark()));
+    let h = EngineHarness::new(240, 160).theme(DefaultTheme::dark());
     let e = h.engine();
     let s = screen(e);
     // DARK_COLOR_SCR = 0x15171A; DARK_COLOR_TEXT = lv_palette_lighten(GREY, 5)
@@ -106,7 +106,7 @@ fn card_radius_scales_with_dpi() {
             .dpi(dpi)
             .display_size(DisplaySize::Large)
             .build();
-        let (h, card) = card_scene(EngineHarness::new(240, 160).theme(Rc::new(t)));
+        let (h, card) = card_scene(EngineHarness::new(240, 160).theme(t));
         // RADIUS_DEFAULT = LV_DPX_CALC(dpi, 12) on large displays.
         assert_eq!(
             h.engine().style_i32(card, Part::Main, PropId::Radius),
@@ -170,7 +170,7 @@ fn button_styles_match_lvgl() {
 
 #[test]
 fn dark_buttons_have_no_shadow() {
-    let mut h = EngineHarness::new(240, 160).theme(Rc::new(DefaultTheme::dark()));
+    let mut h = EngineHarness::new(240, 160).theme(DefaultTheme::dark());
     let s = screen(h.engine());
     let e = h.engine_mut();
     let b = e.create(s, Box::new(FakeButton)).unwrap();
@@ -211,7 +211,7 @@ fn parent_theme_applied_first() {
         StyleBuf::new().bg_color(Color::RED).shadow_width(9),
     )));
     let t = DefaultTheme::builder().parent(parent).build();
-    let (h, card) = card_scene(EngineHarness::new(240, 160).theme(Rc::new(t)));
+    let (h, card) = card_scene(EngineHarness::new(240, 160).theme(t));
     let e = h.engine();
     // The child theme (default) wins where both set a property...
     assert_eq!(e.style_color(card, Part::Main, PropId::BgColor), Color::WHITE);
@@ -223,7 +223,7 @@ fn parent_theme_applied_first() {
         Rc::new(DefaultTheme::light()),
         Rc::new(StyleBuf::new().bg_color(Color::RED)),
     );
-    let (h, card) = card_scene(EngineHarness::new(240, 160).theme(Rc::new(child)));
+    let (h, card) = card_scene(EngineHarness::new(240, 160).theme(child));
     assert_eq!(
         h.engine().style_color(card, Part::Main, PropId::BgColor),
         Color::RED
@@ -301,6 +301,6 @@ fn snapshot_theme_default_container_light() {
 
 #[test]
 fn snapshot_theme_default_container_dark() {
-    let (mut h, _) = card_scene(EngineHarness::new(240, 160).theme(Rc::new(DefaultTheme::dark())));
+    let (mut h, _) = card_scene(EngineHarness::new(240, 160).theme(DefaultTheme::dark()));
     h.assert_snapshot("theme_default_container_dark");
 }

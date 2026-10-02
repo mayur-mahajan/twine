@@ -43,16 +43,19 @@
 //! | tree | [`Tree`], [`Node`], [`NodeId`], iterators, [`Tree::check_invariants`] |
 //! | widgets | [`Widget`], [`WidgetClass`] (identity, [`WidgetClass::base`], [`WidgetClass::is_a`], [`WidgetClass::lineage`], [`Lineage`], [`MAX_CLASS_DEPTH`]), [`Obj`], [`MeasureCx`], [`WidgetCx`], [`DrawCx`] |
 //! | styles | [`Engine::add_style`], [`Engine::set_local_prop`], [`Engine::set_local_transition`], [`Engine::style_prop`], [`Engine::finish_style_value`], [`MainStyle`] |
-//! | themes | [`ThemeHook`], [`Engine::set_theme`], [`Engine::set_theme_mode`], [`Engine::theme_mode`], [`Engine::theme_modes`], [`Engine::design_value`], [`Engine::resolve_design_value`], [`Engine::design_table`], [`Engine::design_epoch`] ([design elements](twine_style::design)) |
-//! | displays | [`Engine::add_display`], [`Engine::add_framebuffer_display`], [`BufferMode`], [`DisplayId`] |
-//! | refresh | [`Engine::step`], [`Wake`], [`RefreshStats`], [`PerfMonitor`], [`InvalidateReason`] |
+//! | themes | [`ThemeHook`], [`IntoTheme`], [`Engine::set_theme`], [`Engine::set_theme_mode`], [`Engine::theme_mode`], [`Engine::theme_modes`], [`Engine::design_value`], [`Engine::resolve_design_value`], [`Engine::design_table`], [`Engine::design_epoch`] ([design elements](twine_style::design)) |
+//! | displays | [`Engine::add_display`], [`Engine::add_framebuffer_display`], [`Engine::add_chunked_display`], [`BufferMode`], [`BufferSpec`], [`DisplayId`] |
+//! | display control | [`Engine::set_rotation`], [`Engine::set_display_brightness`], [`Engine::set_display_sleep`], [`Engine::display_command`], [`DisplayCmd`], [`Engine::reserve_rotation`], [`DisplayControlFault`] |
+//! | refresh | [`Engine::step`], [`Engine::step_budgeted`], [`StepBudget`], [`Wake`] ([`Wake::IdleFor`]), [`RefreshStats`], [`PerfMonitor`], [`InvalidateReason`] |
 //! | events | [`Engine::send_event`], [`Engine::add_event_handler`], [`Event`], [`EventCode`], [`EventCx`] |
-//! | input | [`Engine::add_input`], [`Engine::notify_input`], [`Engine::read_inputs`], [`InputId`] |
+//! | input | [`Engine::add_input`], [`Engine::notify_input`], [`Engine::read_inputs`], [`Engine::inactive_for`], [`Engine::trigger_activity`], [`InputId`] |
 //! | layout | [`Engine::set_size`], [`Engine::set_pos`], [`Engine::align`], [`Engine::align_to`], [`Engine::set_flex_flow`], [`Engine::set_grid_tracks`], [`Engine::set_local_grid_tracks`] (grid tracks: [`GridTracks`](twine_style::GridTracks)), [`Engine::set_grid_cell`], [`Engine::update_layout`], [`LayoutStats`] |
 //! | animation | [`Engine::anim_start`], [`Engine::anim_start_fn`], [`Engine::timer_add`], [`Engine::load_screen_anim`], [`Engine::set_motion`], [`Engine::motion`], [`Motion`], [`AnimProp`], [`AnimSpec`], [`ScreenAnim`], [`Deferred`] |
 //! | focus | [`Engine::create_group`], [`Engine::group_add`], [`Engine::focus_next`], [`gridnav`] |
 //! | faults | [`Engine::raise_fault`], [`Engine::take_faults`], [`Engine::set_fault_hook`], [`FaultRecord`], [`FaultKind`](twine_core::fault::FaultKind) |
 //! | scrolling | [`Engine::scroll_by`], [`Engine::scroll_to`], [`Engine::scroll_to_view`], [`Engine::scroll_top`], [`Engine::set_scroll_snap_x`], [`Engine::update_snap`], [`Engine::scrollbar_areas`], [`ScrollbarMode`] |
+//! | memory | [`Engine::memory_report`], [`EngineMemory`], [`HeapPeak`], [`MemInfo`], [`Engine::with_layer_buf`] |
+//! | draw acceleration | [`Engine::set_accel`], [`Engine::clear_accel`] |
 //!
 //! ## Features
 //!
@@ -103,6 +106,7 @@ mod accel;
 mod anim;
 mod config;
 mod display;
+mod display_control;
 mod draw_cx;
 mod draw_dsc;
 mod engine;
@@ -119,6 +123,7 @@ mod id;
 mod input;
 mod invalidate;
 mod layout;
+mod memory;
 mod obj;
 mod outside;
 #[cfg(feature = "perf-monitor")]
@@ -142,7 +147,8 @@ mod widget;
 
 pub use anim::{AnimProp, Deferred, defer};
 pub use config::EngineConfig;
-pub use display::{BufferMode, MAX_DISPLAYS};
+pub use display::{BufferMode, BufferSpec, MAX_DISPLAYS};
+pub use display_control::{DisplayCmd, DisplayControlFault, DisplayRequests, DisplayResponses};
 pub use draw_cx::DrawCx;
 pub use draw_dsc::RectStyle;
 pub use engine::Engine;
@@ -160,22 +166,23 @@ pub use id::{DEAD_NODE, DisplayId, NodeId, NodeIdFmt, fmt_node_id};
 pub use input::{InputId, MAX_INPUTS};
 pub use invalidate::InvalidateReason;
 pub use layout::{LayoutStats, MAX_LAYOUT_ITERATIONS};
+pub use memory::EngineMemory;
 pub use obj::{OBJ_CLASS, OBJ_FLAGS, Obj};
 #[cfg(feature = "perf-monitor")]
 pub use perf_overlay::{PERF_OVERLAY_CLASS, PerfOverlay};
 pub use refresh::{FrameInfo, RefreshOutcome};
 pub use screen_anim::{ScreenAnim, ScreenLoad};
 pub use scroll::{SCROLL_ANIM_TIME_MAX, SCROLL_ANIM_TIME_MIN, SCROLL_ELASTIC_FACTOR};
-pub use stats::{MemInfo, PerfMonitor, RefreshStats};
+pub use stats::{HeapPeak, MemInfo, PerfMonitor, RefreshStats};
 pub use style_cache::MainStyle;
 pub use style_list::StyleList;
-pub use theme_hook::{ThemeCx, ThemeHook};
+pub use theme_hook::{IntoTheme, ThemeCx, ThemeHook};
 pub use tree::{Ancestors, Children, ChildrenRev, Descendants, Node, Tree};
 pub use twine_anim::{Anim, AnimId, AnimSpec, Easing, Motion, Repeat, TimerId};
 pub use twine_hal::{InputKind, Key};
 pub use twine_style::{Axis, ScrollSnap, ScrollbarMode, Side, Sides};
 pub use twine_style::{State, ThemeMode};
-pub use wake::Wake;
+pub use wake::{StepBudget, Wake};
 pub use widget::{
     AsAny, Editable, GroupDef, Lineage, MAX_CLASS_DEPTH, MeasureCx, Widget, WidgetClass, WidgetCx,
     default_covers, default_hit_test,

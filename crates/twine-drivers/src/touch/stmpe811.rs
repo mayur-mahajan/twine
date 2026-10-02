@@ -40,8 +40,7 @@
 //!
 //! let rec = Recorder::new();
 //! let mut touch = Stmpe811::new(rec.i2c(), Some(rec.quiet_pin("int")))
-//!     .with_calibration(Calibration::IDENTITY)
-//!     .with_screen_size(240, 320);
+//!     .with_calibration(Calibration::IDENTITY);
 //! touch.init(&mut rec.delay()).unwrap();
 //! assert_eq!(touch.poll_hint(), PollHint::Interrupt);
 //! ```
@@ -49,9 +48,11 @@
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::InputPin;
 use embedded_hal::i2c::I2c;
-use twine_core::Point;
 use twine_core::log::{trace, warn};
-use twine_hal::{Calibration, DeviceHealth, InputData, InputDevice, InputKind, PointerData, PollHint};
+use twine_hal::{
+    Calibration, DeviceHealth, DisplayInfo, InputData, InputDevice, InputKind, PointerData, PollHint,
+    TouchTransform,
+};
 
 use super::{Filter, IrqState, irq_touch_common, median3};
 
@@ -126,12 +127,13 @@ pub struct Stmpe811<I2C, IRQ> {
     pub(super) irq: IrqState<IRQ>,
     cal: Calibration,
     filter: Filter,
-    width: u16,
-    height: u16,
+    /// Calibrated native points → logical screen (from the fit; pass-through until then).
+    transform: TouchTransform,
 }
 
 impl<I2C, IRQ> Stmpe811<I2C, IRQ> {
-    /// A driver at [`ADDR`] with identity calibration, a 240 × 320 screen and the median filter.
+    /// A driver at [`ADDR`] with identity calibration and the median filter, not clamped until
+    /// fitted to a display ([`for_display`](Self::for_display)).
     #[must_use]
     pub fn new(i2c: I2C, irq: Option<IRQ>) -> Self {
         Self {
@@ -140,8 +142,7 @@ impl<I2C, IRQ> Stmpe811<I2C, IRQ> {
             irq: IrqState::new(irq),
             cal: Calibration::IDENTITY,
             filter: Filter::Median3,
-            width: 240,
-            height: 320,
+            transform: TouchTransform::PASS_THROUGH,
         }
     }
 
@@ -160,19 +161,57 @@ impl<I2C, IRQ> Stmpe811<I2C, IRQ> {
         self
     }
 
-    /// Sets the calibration (raw → screen).
+    /// Sets the calibration (raw → native panel pixels, see [`Calibration`]).
     #[must_use]
     pub fn with_calibration(mut self, cal: Calibration) -> Self {
         self.cal = cal;
         self
     }
 
-    /// Sets the logical screen size points are clamped to.
+    /// Fits the driver to the display described by `info`: calibrated (native) points are
+    /// rotated to its logical screen and clamped to its size. The engine does this when the driver is added (`Ui::builder(..).input(touch)`,
+    /// `Engine::add_input`) through
+    /// [`InputDevice::fit_to_display`]; call it yourself only when you read the driver without
+    /// the engine. Until fitted, points are not clamped (raw readings with
+    /// [`Calibration::IDENTITY`], e.g. for a calibration screen). The [`Calibration`] maps raw
+    /// readings to the display's **native** (unrotated) pixels; the fit adds the rotation, so
+    /// one calibration holds in every rotation (also when the display is rotated at run time,
+    /// which fits the driver again). Never panics.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Rotation};
+    /// use twine_drivers::touch::Stmpe811;
+    /// use twine_drivers::testkit::Recorder;
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let rec = Recorder::new();
+    /// let info = DisplayInfo::new(320, 240, ColorFormat::Rgb565Swapped).with_rotation(Rotation::Deg90);
+    /// let touch = Stmpe811::new(rec.i2c(), Some(rec.quiet_pin("irq"))).for_display(&info);
+    /// assert_eq!(touch.screen_size(), (320, 240));
+    /// ```
     #[must_use]
-    pub fn with_screen_size(mut self, width: u16, height: u16) -> Self {
-        self.width = width;
-        self.height = height;
+    pub fn for_display(mut self, info: &DisplayInfo) -> Self {
+        self.fit(info);
         self
+    }
+
+    /// The logical screen size points are clamped to (`(u16::MAX, u16::MAX)` until fitted).
+    ///
+    /// ```
+    /// use twine_drivers::touch::Stmpe811;
+    /// use twine_drivers::testkit::Recorder;
+    ///
+    /// let rec = Recorder::new();
+    /// let touch = Stmpe811::new(rec.i2c(), Some(rec.quiet_pin("irq")));
+    /// assert_eq!(touch.screen_size(), (u16::MAX, u16::MAX));
+    /// ```
+    #[must_use]
+    pub fn screen_size(&self) -> (u16, u16) {
+        (self.transform.width, self.transform.height)
+    }
+
+    fn fit(&mut self, info: &DisplayInfo) {
+        self.transform = TouchTransform::for_display(info);
     }
 
     /// Sets the noise filter.
@@ -263,10 +302,8 @@ impl<I2C: I2c, IRQ: InputPin> InputDevice for Stmpe811<I2C, IRQ> {
         let data = match self.read_raw() {
             Ok(Some(Some((x, y)))) => {
                 let (sx, sy) = self.cal.apply(i32::from(x), i32::from(y));
-                let point = Point::new(
-                    sx.clamp(0, i32::from(self.width.max(1)) - 1),
-                    sy.clamp(0, i32::from(self.height.max(1)) - 1),
-                );
+                // Native panel pixels, rotated to the logical screen and clamped.
+                let point = self.transform.apply(sx, sy);
                 PointerData { point, pressed: true }
             }
             Ok(Some(None)) => self.irq.last,
@@ -286,6 +323,10 @@ impl<I2C: I2c, IRQ: InputPin> InputDevice for Stmpe811<I2C, IRQ> {
     fn health(&self) -> DeviceHealth {
         self.irq.health
     }
+
+    fn fit_to_display(&mut self, info: &DisplayInfo) {
+        self.fit(info);
+    }
 }
 
 irq_touch_common!(Stmpe811, "stmpe811");
@@ -297,6 +338,7 @@ mod tests {
     use crate::touch::test_util::Regs;
     use alloc::vec;
     use alloc::vec::Vec;
+    use twine_core::Point;
 
     fn sample(x: u16, y: u16) -> [u8; 4] {
         [
@@ -308,7 +350,8 @@ mod tests {
     }
 
     fn dut(rec: &Recorder) -> Stmpe811<RecordingI2c, RecordingPin> {
-        Stmpe811::new(rec.i2c(), Some(rec.quiet_pin("int"))).with_screen_size(240, 320)
+        Stmpe811::new(rec.i2c(), Some(rec.quiet_pin("int")))
+            .for_display(&crate::touch::test_util::display(240, 320))
     }
 
     #[test]

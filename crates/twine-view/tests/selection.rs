@@ -4,10 +4,15 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use twine_reactive::runtime_stats;
+use twine_reactive::Runtime;
 use twine_testing::{TestUi, by_id};
 use twine_view::TextProp;
 use twine_view::prelude::*;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 fn node(t: &TestUi, id: &'static str) -> NodeId {
     t.find(by_id(id)).id()
@@ -59,9 +64,7 @@ fn dropdown_view_two_way() {
     t.run_until_idle();
     assert_eq!(sel.get_untracked(), 3);
     assert_eq!(
-        runtime_stats()
-            .faults
-            .get(twine_reactive::FaultKind::EffectLoopCut),
+        rt().stats().faults.get(twine_reactive::FaultKind::EffectLoopCut),
         0
     );
     // Signal → widget.
@@ -174,9 +177,7 @@ fn roller_view_two_way() {
     t.run_until_idle();
     assert_eq!(t.engine().widget::<Roller>(r).unwrap().selected(), 0);
     assert_eq!(
-        runtime_stats()
-            .faults
-            .get(twine_reactive::FaultKind::EffectLoopCut),
+        rt().stats().faults.get(twine_reactive::FaultKind::EffectLoopCut),
         0
     );
     t.assert_idle();
@@ -385,9 +386,7 @@ fn tabview_model_two_way() {
     );
     drop(e);
     assert_eq!(
-        runtime_stats()
-            .faults
-            .get(twine_reactive::FaultKind::EffectLoopCut),
+        rt().stats().faults.get(twine_reactive::FaultKind::EffectLoopCut),
         0
     );
     t.assert_idle();
@@ -551,10 +550,10 @@ fn msgbox_buttons_translated_by_text_fn() {
     };
     assert_eq!(labels(&t), ["Yes", "No"]);
     lang.set(1); // outside the Ui: deferred to the next update
-    let runs = runtime_stats().effect_runs;
+    let runs = rt().stats().effect_runs;
     t.run_until_idle();
     assert_eq!(labels(&t), ["Ja", "Nein"]);
-    assert_eq!(runtime_stats().effect_runs - runs, 2, "one binding per button");
+    assert_eq!(rt().stats().effect_runs - runs, 2, "one binding per button");
     t.assert_idle();
 }
 
@@ -581,13 +580,13 @@ fn dropdown_items_are_texts_translated_in_one_binding() {
         "Low\n--\nHigh"
     );
     lang.set(1); // outside the Ui: deferred to the next update
-    let runs = runtime_stats().effect_runs;
+    let runs = rt().stats().effect_runs;
     t.run_until_idle();
     let e = t.engine();
     let w = e.widget::<Dropdown>(d).unwrap();
     assert_eq!(w.options(), "Niedrig\n--\nHoch");
     assert_eq!(w.selected(), 2, "the selection is kept");
-    assert_eq!(runtime_stats().effect_runs - runs, 1, "one binding for all items");
+    assert_eq!(rt().stats().effect_runs - runs, 1, "one binding for all items");
 }
 
 #[test]

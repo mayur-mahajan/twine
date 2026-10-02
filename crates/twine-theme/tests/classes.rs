@@ -85,7 +85,7 @@ fn custom_class_with_button_base_gets_button_styling() {
         );
     }
     // State styles come along: the default theme's pressed recolor.
-    let mut h = EngineHarness::new(240, 160).theme(Rc::new(DefaultTheme::light()));
+    let mut h = EngineHarness::new(240, 160).theme(DefaultTheme::light());
     let key = create(&mut h, &KEY_CLASS);
     h.engine_mut().add_state(key, State::PRESSED);
     h.run_until_idle();
@@ -109,7 +109,7 @@ fn app_registered_class_style_is_applied_and_overrides_the_base() {
             cx.add_style(Selector::MAIN, Rc::new(StyleBuf::new().bg_color(Color::GREEN)));
         })
         .build();
-    let mut h = EngineHarness::new(240, 160).theme(Rc::new(theme));
+    let mut h = EngineHarness::new(240, 160).theme(theme);
     let button = create(&mut h, &BUTTON_CLASS);
     let key = create(&mut h, &KEY_CLASS);
     let big = create(&mut h, &BIG_KEY_CLASS);
@@ -138,7 +138,7 @@ fn registrations_style_built_in_classes_and_screens_too() {
             cx.add_style(Selector::MAIN, inv);
         })
         .build();
-    let mut h = EngineHarness::new(128, 64).theme(Rc::new(theme));
+    let mut h = EngineHarness::new(128, 64).theme(theme);
     let b = create(&mut h, &BUTTON_CLASS);
     let key = create(&mut h, &KEY_CLASS);
     let e = h.engine();
@@ -156,7 +156,7 @@ fn theme_styles_make_a_custom_widget_look_native() {
             cx.add_style(Selector::part(Part::Indicator), primary);
         })
         .build();
-    let mut h = EngineHarness::new(240, 160).theme(Rc::new(theme));
+    let mut h = EngineHarness::new(240, 160).theme(theme);
     let gauge = create(&mut h, &GAUGE_CLASS);
     let card = create(&mut h, &OBJ_CLASS);
     let e = h.engine();
@@ -221,7 +221,7 @@ fn card_matches_the_themes_card() {
             cx.add_style(Selector::MAIN, Rc::new(StyleBuf::new().radius(0)));
         })
         .build();
-    let mut h = EngineHarness::new(240, 160).theme(Rc::new(theme));
+    let mut h = EngineHarness::new(240, 160).theme(theme);
     let s = h.screen();
     let card = h.engine_mut().create(s, Box::new(Card)).unwrap();
     let obj = create(&mut h, &OBJ_CLASS);
@@ -243,8 +243,7 @@ fn a_theme_without_a_card_look_styles_cards_like_containers() {
             &twine_assets::fonts::MONTSERRAT_14
         }
     }
-    let mut h =
-        EngineHarness::new(64, 48).theme(Rc::new(ObjOnly(Rc::new(StyleBuf::new().bg_color(Color::RED)))));
+    let mut h = EngineHarness::new(64, 48).theme(ObjOnly(Rc::new(StyleBuf::new().bg_color(Color::RED))));
     let s = h.screen();
     let card = h.engine_mut().create(s, Box::new(Card)).unwrap();
     assert_eq!(bg(h.engine(), card), Color::RED);
@@ -256,7 +255,7 @@ fn mono_starts_in_each_mode() {
     for mode in ThemeMode::ALL {
         let t = MonoTheme::builder().mode(mode).build();
         assert_eq!(ThemeHook::mode(&t), mode);
-        let mut h = EngineHarness::new(128, 64).theme(Rc::new(t));
+        let mut h = EngineHarness::new(128, 64).theme(t);
         let d = h.engine().default_display().unwrap();
         assert_eq!(h.engine().theme_mode(d), mode);
         let b = create(&mut h, &BUTTON_CLASS);
@@ -348,7 +347,7 @@ fn line_and_menu_greys_follow_every_mode() {
     assert_ne!(neutral(ThemeMode::Night), Palette::Grey.main());
     assert_ne!(neutral(ThemeMode::HighContrast), Palette::Grey.main());
     // Resolved on a node, it switches with the mode.
-    let mut h = EngineHarness::new(240, 160).theme(Rc::new(DefaultTheme::light()));
+    let mut h = EngineHarness::new(240, 160).theme(DefaultTheme::light());
     let card = create(&mut h, &OBJ_CLASS);
     let d = h.engine().default_display().unwrap();
     for mode in ThemeMode::ALL {

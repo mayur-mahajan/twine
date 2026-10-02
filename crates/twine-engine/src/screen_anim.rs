@@ -522,7 +522,7 @@ impl Engine {
     }
 
     /// Finishes the screen load animation of display `d` at once (its end state and events).
-    fn finish_screen_anim(&mut self, d: usize) {
+    pub(crate) fn finish_screen_anim(&mut self, d: usize) {
         let Some(run) = self.displays[d].screen_load else {
             return;
         };

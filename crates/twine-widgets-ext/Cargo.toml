@@ -27,6 +27,8 @@ std = [
     "twine-image/std",
     "twine-render/std",
     "twine-widgets/std",
+    "twine-anim/std",
+    "twine-vector?/std",
 ]
 ## Log through the `log` crate.
 log = [
@@ -37,6 +39,8 @@ log = [
     "twine-image/log",
     "twine-render/log",
     "twine-widgets/log",
+    "twine-anim/log",
+    "twine-vector?/log",
 ]
 ## Log through `defmt` and derive `defmt::Format` on public types.
 defmt = [
@@ -48,6 +52,8 @@ defmt = [
     "twine-image/defmt",
     "twine-render/defmt",
     "twine-widgets/defmt",
+    "twine-anim/defmt",
+    "twine-vector?/defmt",
 ]
 
 [dependencies]

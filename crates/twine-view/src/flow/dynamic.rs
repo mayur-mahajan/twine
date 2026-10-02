@@ -5,7 +5,7 @@ use alloc::rc::Rc;
 use core::cell::RefCell;
 
 use twine_engine::{NodeId, fmt_node_id};
-use twine_reactive::{Scope, defer_current_effect, dispose_current_effect, untrack};
+use twine_reactive::Scope;
 
 use super::{DYNAMIC_CLASS, Wrapper, delete_children, dispose_with};
 use crate::access::EngineAccess;
@@ -50,6 +50,7 @@ impl View for Dynamic {
             return wrapper; // not created (reported); nothing to keep up to date
         }
         let scope = cx.scope();
+        let rt = scope.runtime();
         let f = self.f;
         let content: Rc<RefCell<Option<Scope>>> = Rc::default();
         let c = content.clone();
@@ -60,14 +61,14 @@ impl View for Dynamic {
         });
         cx.provide(|| {
             scope.effect_with_cx(move |_| {
-                match EngineAccess::with(|e| e.tree().contains(wrapper)) {
-                    None => return defer_current_effect(),
-                    Some(false) => return dispose_current_effect(),
+                match EngineAccess::with(rt, |e| e.tree().contains(wrapper)) {
+                    None => return rt.defer_current_effect(),
+                    Some(false) => return rt.dispose_current_effect(),
                     Some(true) => {}
                 }
                 twine_core::debug!(target: "twine::view", "dynamic {}: rebuild", fmt_node_id(wrapper));
                 let old = content.borrow_mut().take();
-                EngineAccess::with(|e| {
+                EngineAccess::with(rt, |e| {
                     if let Some(s) = old {
                         dispose_with(e, s);
                     }
@@ -78,8 +79,8 @@ impl View for Dynamic {
                 // Tracked: the signals `f` reads rebuild the region.
                 let view = f(child);
                 // Untracked: reads while building belong to the new bindings.
-                untrack(|| {
-                    EngineAccess::with(|e| {
+                rt.untrack(|| {
+                    EngineAccess::with(rt, |e| {
                         let mut bcx = BuildCx::new(e, wrapper, child);
                         view.build(&mut bcx);
                     });

@@ -1,4 +1,4 @@
-//! `Engine::set_accel`: every rendered chunk offers its fills to the attached accelerator, and
+//! `Engine::set_accel` / `clear_accel`: every rendered chunk offers its fills to the attached accelerator, and
 //! what the accelerator declines is drawn in software (identical pixels).
 
 mod common;
@@ -38,10 +38,12 @@ impl DrawAccel for Counting {
 }
 
 /// Renders the scene through the chunk API; returns the frame.
-fn frame(accel: Option<Box<dyn DrawAccel>>) -> Vec<u8> {
+fn frame(accel: Option<Counting>) -> Vec<u8> {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     let has = accel.is_some();
-    e.set_accel(accel);
+    if let Some(a) = accel {
+        e.set_accel(a);
+    }
     assert_eq!(e.has_accel(), has);
     let stride = usize::from(W) * 2;
     e.add_chunked_display(
@@ -68,23 +70,23 @@ fn frame(accel: Option<Box<dyn DrawAccel>>) -> Vec<u8> {
 #[test]
 fn accel_receives_fills_and_declined_work_is_drawn_in_software() {
     let (fills, waits) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
-    let with = frame(Some(Box::new(Counting {
+    let with = frame(Some(Counting {
         fills: fills.clone(),
         waits: waits.clone(),
-    })));
+    }));
     assert!(fills.get() >= 1, "fills offered to the accelerator");
     assert_eq!(with, frame(None), "software fallback renders identical pixels");
 }
 
 #[test]
-fn set_accel_none_detaches() {
+fn clear_accel_detaches() {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     assert!(!e.has_accel());
-    e.set_accel(Some(Box::new(Counting {
+    e.set_accel(Counting {
         fills: Rc::default(),
         waits: Rc::default(),
-    })));
+    });
     assert!(e.has_accel());
-    e.set_accel(None);
+    e.clear_accel();
     assert!(!e.has_accel());
 }

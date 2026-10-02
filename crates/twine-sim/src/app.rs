@@ -9,8 +9,8 @@ use std::time::Duration as StdDuration;
 use std::time::Instant as StdInstant;
 
 use twine_core::{ColorFormat, Duration, Instant};
-use twine_engine::{BufferMode, DisplayId, Engine, EngineConfig, InputId, Wake};
-use twine_hal::{BufferSpec, Clock, DisplayDriver, DrawBufferMem};
+use twine_engine::{BufferMode, BufferSpec, DisplayId, Engine, EngineConfig, InputId, Wake};
+use twine_hal::{Clock, DisplayDriver, DrawBufferMem};
 
 use crate::config::{RawKeyHook, SimConfig};
 use crate::display::SimDisplay;
@@ -41,6 +41,8 @@ pub enum SimError {
     Engine(twine_engine::EngineError),
     /// The application's views could not be built (see `twine_view::UiCore::mount`).
     Build(twine_view::BuildError),
+    /// Another error of the declarative runtime (see `twine_view::UiError`).
+    Ui(twine_view::UiError),
 }
 
 impl fmt::Display for SimError {
@@ -54,6 +56,7 @@ impl fmt::Display for SimError {
             SimError::Window(e) => write!(f, "window error: {e}"),
             SimError::Engine(e) => write!(f, "engine error: {e}"),
             SimError::Build(e) => write!(f, "build error: {e}"),
+            SimError::Ui(e) => write!(f, "ui error: {e}"),
         }
     }
 }
@@ -65,6 +68,7 @@ impl std::error::Error for SimError {
             SimError::Io(e) => Some(e),
             SimError::Engine(e) => Some(e),
             SimError::Build(e) => Some(e),
+            SimError::Ui(e) => Some(e),
             SimError::Window(_) => None,
         }
     }
@@ -79,6 +83,19 @@ impl From<twine_engine::EngineError> for SimError {
 impl From<twine_view::BuildError> for SimError {
     fn from(e: twine_view::BuildError) -> Self {
         SimError::Build(e)
+    }
+}
+
+impl From<twine_view::UiError> for SimError {
+    /// [`UiError::Engine`](twine_view::UiError::Engine) → [`SimError::Engine`],
+    /// [`UiError::Build`](twine_view::UiError::Build) → [`SimError::Build`], anything else
+    /// → [`SimError::Ui`].
+    fn from(e: twine_view::UiError) -> Self {
+        match e {
+            twine_view::UiError::Engine(e) => SimError::Engine(e),
+            twine_view::UiError::Build(e) => SimError::Build(e),
+            e => SimError::Ui(e),
+        }
     }
 }
 
@@ -348,13 +365,6 @@ fn sim_hires_timer() -> Instant {
     Instant::from_micros(u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX))
 }
 
-/// Leaks a zeroed, 4-byte aligned draw buffer (allocated once, like a `'static` MCU buffer).
-fn leak_draw_buffer(len: usize) -> DrawBufferMem {
-    let v: &'static mut [u8] = Box::leak(vec![0u8; len + 3].into_boxed_slice());
-    let off = v.as_ptr().align_offset(4).min(3);
-    DrawBufferMem::new(&mut v[off..off + len])
-}
-
 /// When the event loop should run the app again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Deadline {
@@ -505,35 +515,29 @@ impl SimApp {
     pub fn engine(mut cfg: SimConfig, setup: impl FnOnce(&mut Engine)) -> Result<Self, SimError> {
         let mut engine = Engine::new(EngineConfig {
             hires_timer: Some(sim_hires_timer),
-            ..cfg.engine_config
+            ..cfg.app.engine
         })?;
-        let framebuffer = matches!(cfg.buffer_mode, BufferSpec::Full | BufferSpec::Direct);
+        // The fault hook sees the display registration's faults too (as with `Ui::builder`).
+        engine.set_fault_hook(cfg.app.fault_hook);
+        // The buffers (and their memory) move into the engine; the configuration keeps the
+        // default in their place.
+        let buffers = std::mem::replace(&mut cfg.buffer_mode, BufferMode::alloc(BufferSpec::default()));
+        let framebuffer = matches!(buffers, BufferMode::Full | BufferMode::Direct);
         let display = if framebuffer {
-            let full = cfg.buffer_mode == BufferSpec::Full;
+            let full = matches!(buffers, BufferMode::Full);
             // Framebuffer panels rotate in "hardware" (the engine cannot rotate them).
             cfg.hw_rotation = true;
             engine.add_framebuffer_display(
                 SimFramebufferDisplay::new(cfg.width, cfg.height, cfg.format, cfg.rotation, full),
-                if full {
-                    BufferMode::full()
-                } else {
-                    BufferMode::direct()
-                },
+                buffers,
             )?
         } else {
-            let d = SimDisplay::from_config(&cfg);
-            let bytes = cfg.buffer_mode.bytes_per_buffer(&d.info());
-            let mode = BufferMode::Partial {
-                a: leak_draw_buffer(bytes),
-                b: (cfg.buffer_mode.buffer_count() == 2).then(|| leak_draw_buffer(bytes)),
-            };
-            engine.add_display(d, mode)?
+            // `Alloc`: the engine allocates once it accepted the display.
+            engine.add_display(SimDisplay::from_config(&cfg), buffers)?
         };
         let devices = SimDevices::new();
         let inputs = register_inputs(&mut engine, display, &cfg, &devices)?;
-        if let Some(t) = cfg.theme.clone() {
-            engine.set_theme(display, t);
-        }
+        cfg.app.configure_engine(&mut engine, display)?;
         setup(&mut engine);
         let raw_key = cfg.on_raw_key.take();
         let program = Program::Engine(Box::new(EngineProgram {
@@ -838,7 +842,7 @@ impl SimApp {
             let now = self.clock.now();
             let wake = self.engine_step(now);
             let mut deadline = match wake {
-                Wake::Idle => Deadline::Wait,
+                Wake::Idle | Wake::IdleFor(_) => Deadline::Wait,
                 Wake::Now => Deadline::At(now_std),
                 // Simulator time may run slower than the wall time or be paused (F5 / F6).
                 Wake::At(t) => match self.clock.wall_duration(t.saturating_duration_since(now)) {

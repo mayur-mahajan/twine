@@ -3,12 +3,12 @@
 One small example per chip family. They are **templates to copy, not board support**: each
 `src/main.rs` starts with a single `Wiring: edit for your board` block (peripherals, pins,
 clocks, rotation, touch calibration), and cargo features pick the drivers. They prove that the
-stack builds, links and fits on each chip; the drivers themselves are in `twine-drivers` (one
-cargo feature per driver) and work with any board.
+stack builds, links and fits on each chip; the drivers themselves are in `twine-drivers`
+(`twine::drivers`, one `twine/drivers-<name>` feature per driver) and work with any board.
 
 | Example | Chip | Target | Toolchain | Display path | Flash with |
 |---------|------|--------|-----------|--------------|------------|
-| [`rp2040`](rp2040) | RP2040 (Pico) | `thumbv6m-none-eabi` | stable | SPI0 + DMA, async | `probe-rs` |
+| [`rp2040`](rp2040) | RP2040 (Pico) | `thumbv6m-none-eabi` | stable | SPI0 + DMA (registers, `DmaSpiInterface`), bare metal (`twine::run::blocking`) | `probe-rs` |
 | [`rp2350`](rp2350) | RP2350A (Pico 2) | `thumbv8m.main-none-eabihf` | stable | SPI0 + DMA, async | `probe-rs` |
 | [`stm32f411`](stm32f411) | STM32F411CE (BlackPill) | `thumbv7em-none-eabihf` | stable | SPI1 + DMA2, async | `probe-rs` |
 | [`stm32f429i-disco`](stm32f429i-disco) | STM32F429ZI (STM32F429I-DISC1) | `thumbv7em-none-eabihf` | stable | LTDC, 2 framebuffers in SDRAM, DMA2D (`BufferMode::Full`) | `probe-rs` |
@@ -17,23 +17,42 @@ cargo feature per driver) and work with any board.
 | [`esp32s3`](esp32s3) | ESP32-S3 | `xtensa-esp32s3-none-elf` | `esp` | SPI2 + DMA, or QSPI AMOLED (`twine-esp`) | `espflash` |
 | [`esp32`](esp32) | ESP32 | `xtensa-esp32-none-elf` | `esp` | SPI2 + DMA, touch on SPI3 | `espflash` |
 
-Every example runs the Twine UI with `twine-embassy`: the display is flushed with SPI DMA while
-the next chunk renders, and the UI sleeps until the touch interrupt, a channel message or its
-next deadline. Every 5 s the log shows a `twine::perf` line with fps, CPU load, render and flush
-time and the heap.
+The examples show the run-loop adapters (Twine never owns the execution model; the UI is a
+step function plus a waker):
+
+- **Bare metal** (`rp2040`): no executor. `twine::run::blocking` steps the blocking `Ui` and
+  sleeps in a `Platform` implemented over SysTick (`WFE` until a one-shot alarm at the UI's
+  deadline, `SEV` on a wake-up). The panel is flushed by DMA (SPI0 + DMA channel 0 through the
+  registers, behind `twine-drivers`' `DmaSpiInterface`) while the next chunk renders into the
+  second draw buffer; the DMA-complete interrupt only notifies the loop. The touch controller
+  is polled.
+- **embassy, `AsyncUi`** (`rp2350`, `stm32f411`, the ESP32s): `twine::embassy::run` — the
+  display is flushed with SPI DMA while the next chunk renders, and the UI sleeps until the
+  touch interrupt, a channel message or its next deadline.
+- **embassy, blocking `Ui`** (`stm32f429i-disco`): `twine::embassy::run` with a framebuffer
+  display; a small task wakes the UI on the touch interrupt.
+- An RTOS task uses `twine::run::blocking` with a `Platform` over the kernel's task
+  notification: see the `rtos_notify` example of the `twine` crate (host threads) and the
+  `twine::run` documentation (FreeRTOS, Zephyr, ThreadX).
+
+Every 5 s the log shows a `twine::perf` line with fps, CPU load, render and flush time and the
+heap.
 
 ## Features
 
 | Feature | Meaning |
 |---------|---------|
-| `panel-ili9341` (default), `panel-ili9342`, `panel-st7789`, `panel-st7796`, `panel-jd9853` (`esp32c6`, its default) | SPI panel driver (all SPI panels share the pins of the wiring block) |
+| `panel-ili9341` (default), `panel-ili9342`, `panel-st7789`, `panel-st7796`, `panel-jd9853` (`esp32c6`, its default) | SPI panel driver (all SPI panels share the pins of the wiring block); enabled through `twine/drivers-<panel>`, which also compiles the renderer for the panel's pixel format |
 | `panel-co5300`, `panel-sh8601`, `panel-rm67162` (`esp32s3`) | QSPI AMOLED driver |
 | `oled-ssd1306` | SSD1306 128 × 64 mono OLED at I2C address `0x3C`, on the capacitive touch's I2C pins (so no touch feature), mono theme, whole-frame 1 KiB buffers |
-| `touch-xpt2046` (default), `touch-ft6x36`, `touch-gt911`, `touch-cst816s`, `touch-axs5106l` (`esp32c6`, its default) | touch driver; the capacitive ones share one set of I2C pins |
+| `touch-xpt2046` (default), `touch-ft6x36`, `touch-gt911`, `touch-cst816s`, `touch-axs5106l` (`esp32c6`, its default) | touch driver (through `twine/drivers-<driver>`); the capacitive ones share one set of I2C pins |
 | `demo-counter` (default), `demo-controls`, `demo-selection`, `demo-calibrate` | the demo (`demo-selection` needs ~130 KB of heap: the RP2040 example then uses a 160 KiB heap; it does not fit the STM32F411's 128 KiB of RAM; `demo-calibrate` needs a touch feature) |
 
-Feature groups are checked with `compile_error!`: exactly one display (`panel-*` or `oled-*`), at
-most one `touch-*` (none: no input) and at most one `demo-*`. Switch with
+Every example depends on the `twine` facade only (drivers, the embassy run loop and fonts are
+facade features: `drivers-<name>`, `embassy`, `montserrat-20`). Feature groups are checked with
+`twine::feature_rules!` at the top of each `main.rs`: exactly one display (`panel-*` or
+`oled-*`), at most one `touch-*` (none: no input), at most one `demo-*`, no touch with the OLED
+and a touch feature for `demo-calibrate`. Switch with
 `--no-default-features`, e.g.
 
 ```sh
@@ -72,7 +91,7 @@ controller and the OLED to catch bit-rot) and prints the flash and static RAM si
 
 | Example | Flash, counter / controls | Static RAM (incl. heap and draw buffers) |
 |---------|---------------------------|------------------------------------------|
-| rp2040 | 357 / 451 KiB | 154 KiB |
+| rp2040 | 385 / 470 KiB | 148 KiB |
 | rp2350 | 351 / 445 KiB | 314 KiB |
 | stm32f411 | 353 / 447 KiB (of 512) | 81 KiB (of 128) |
 | esp32c3 | 660 / 796 KiB | 226 KiB |
@@ -109,7 +128,7 @@ and example code.
 
 | Board | Example and features | Pins (display / touch) | Notes |
 |-------|----------------------|------------------------|-------|
-| Raspberry Pi Pico + 2.8" ILI9341 SPI module with XPT2046 (red PCB) | `rp2040` defaults | SCK 18, MOSI 19, CS 17, DC 20, RST 21, LED 22 / T_CLK 10, T_DIN 11, T_DO 12, T_CS 13, T_IRQ 14 | module wired by hand |
+| Raspberry Pi Pico + 2.8" ILI9341 SPI module with XPT2046 (red PCB) | `rp2040` defaults | SCK 18, MOSI 19, CS 17, DC 20, RST 21, LED 22 / T_CLK 10, T_DIN 11, T_DO 12, T_CS 13 (T_IRQ unused: polled) | module wired by hand |
 | Raspberry Pi Pico 2 + the same module | `rp2350` defaults | as the Pico | |
 | WeAct BlackPill STM32F411CE + the same module | `stm32f411` defaults | SCK PA5, MOSI PA7, CS PA4, DC PB0, RST PB1, LED PB10 / T_CLK PB13, T_DIN PB15, T_DO PB14, T_CS PB12, T_IRQ PA8 | KEY button on PA0 |
 | ESP32-C3-DevKitM-1 + the same module | `esp32c3` defaults | SCK 6, MOSI 7, MISO 5, CS 10, DC 4, RST 3, LED 1 / T_CS 0, T_IRQ 8 (shared SPI) | GPIO8 also drives the RGB LED |
@@ -117,7 +136,7 @@ and example code.
 | ESP32-2432S028R "Cheap Yellow Display" | `esp32` defaults (`panel-st7789` for the ST7789 revision) | HSPI: SCK 14, MOSI 13, MISO 12, CS 15, DC 2, BL 21, RST tied to EN / VSPI: CLK 25, MOSI 32, MISO 39, CS 33, IRQ 36 | RGB LED 4/16/17 active low; pins from [witnessmenow/ESP32-Cheap-Yellow-Display `PINS.md`](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display/blob/main/PINS.md) |
 | Waveshare ESP32-S3-Touch-AMOLED-2.06 | `esp32s3`, `panel-co5300,touch-ft6x36` (defaults of the QSPI branch) | QSPI: SCLK 11, CS 12, SIO0–3 4/5/6/7, RST 8 / I2C SDA 15, SCL 14, INT 38 (TP_RST 9) | 410 × 502, column offset 22; set the touch INT pin to 38; pins from the board's `pin_config.h` ([waveshareteam/ESP32-S3-Touch-AMOLED-2.06](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-2.06)) |
 | Waveshare ESP32-S3-Touch-AMOLED-1.8 | `esp32s3`, `panel-sh8601,touch-ft6x36` | QSPI: SCLK 11, CS 12, SIO0–3 4/5/6/7, no RST pin / I2C SDA 15, SCL 14, INT 21 | 368 × 448. Panel and touch reset go through a TCA9554 I/O expander at I2C `0x20`: drive its pins 0–2 low, wait 20 ms, drive them high before initializing the panel (pass `None` as reset). Pins from [waveshareteam/ESP32-S3-Touch-AMOLED-1.8](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8) |
-| Waveshare ESP32-C6-Touch-LCD-1.47 | `esp32c6` defaults (`panel-jd9853,touch-axs5106l`) | SPI: SCK 1, MOSI 2, (MISO 3), CS 14, DC 15, RST 22, BL 23 / I2C SDA 18, SCL 19, INT 21, TP_RST 20 | JD9853 172 × 320 IPS: the 172 visible columns sit at column 34 of the 240-column controller memory (the driver applies the offset for every rotation); backlight GPIO23, active high (PWM it for dimming); AXS5106L touch at I2C `0x63` with its X axis mirrored against the display (`TOUCH_MIRROR_RAW_X`); SD card on the same SPI bus with CS 4. Pins from the board's demo (`ESP32-C6-Touch-LCD-1.47-Demo.zip`, ESP-IDF `components/esp_bsp`, [wiki](https://www.waveshare.com/wiki/ESP32-C6-Touch-LCD-1.47)) |
+| Waveshare ESP32-C6-Touch-LCD-1.47 | `esp32c6` defaults (`panel-jd9853,touch-axs5106l`) | SPI: SCK 1, MOSI 2, (MISO 3), CS 14, DC 15, RST 22, BL 23 / I2C SDA 18, SCL 19, INT 21, TP_RST 20 | JD9853 172 × 320 IPS: the 172 visible columns sit at column 34 of the 240-column controller memory (the driver applies the offset for every rotation); backlight GPIO23, active high (PWM it for dimming); AXS5106L touch at I2C `0x63` with its X axis mirrored against the display (`TOUCH_MOUNT`); SD card on the same SPI bus with CS 4. Pins from the board's demo (`ESP32-C6-Touch-LCD-1.47-Demo.zip`, ESP-IDF `components/esp_bsp`, [wiki](https://www.waveshare.com/wiki/ESP32-C6-Touch-LCD-1.47)) |
 | LilyGO T-Display-S3 AMOLED 1.91" | `esp32s3`, `panel-rm67162,touch-cst816s` | QSPI: SCLK 47, CS 6, SIO0–3 18/7/48/5, RST 17, TE 9 / I2C SDA 3, SCL 2, INT 21 | 240 × 536; drive GPIO38 high first (panel power enable); pins from [Xinyuan-LilyGO/LilyGo-AMOLED-Series `LilyGo_AMOLED.h`](https://github.com/Xinyuan-LilyGO/LilyGo-AMOLED-Series) |
 
 ### Using another board
@@ -125,16 +144,37 @@ and example code.
 1. Copy the example for your chip.
 2. Edit the wiring block: peripherals, pins, clock, rotation (`Rotation::Deg90` = the panel
    turned 90° clockwise).
-3. Pick the panel and touch features. A panel that `twine-drivers` does not know yet is a
-   `twine_drivers::mipi_dcs::PanelSpec` (size, offsets, `MADCTL` per rotation, init table)
-   passed to `mipi_dcs::AsyncMipiDcs::new`.
+3. Pick the panel and touch features. A panel that `twine::drivers` does not know yet is a
+   `twine::drivers::mipi_dcs::PanelSpec` (size, offsets, `MADCTL` per rotation, init table)
+   passed to `mipi_dcs::AsyncMipiDcs::new` (enable `twine/drivers-mipi-dcs` and the
+   `twine/color-*` feature of its format yourself). Touch drivers need no transform: the `Ui` fits them to the display
+   (rotation, size) when they are added; a touch film glued with an axis mirrored or swapped is
+   described once with `.with_mount(TouchMount { .. })`.
 4. For resistive touch, run `--features demo-calibrate`: the example wraps the touch driver in
-   `twine_demos::calibration::RawTouchInput` (raw readings, no clamping), you tap the three
+   `twine_demos::calibration::RawTouchInput` (raw readings, no clamping; the raw taps go
+   through the `demo::RAW` channel the firmware owns), you tap the three
    crosses, and the log prints `Calibration { a: …, div: … }`. Paste it as `TOUCH_CAL` into the
    wiring block; the five crosses that follow show the remaining error of each tap.
 
-A blocking super-loop without embassy also works: `Ui::builder(display)` with a blocking
-driver (`twine_drivers::ili9341::new`) over a blocking `SpiDevice`, calling `ui.update()` and
+The draw buffers are `static`s declared with `twine::draw_buffers!` (e.g.
+`static BUFS: 2 x 40 rows x 320 px @ Rgb565Swapped`): sized at compile time, 4-byte aligned by
+their type, zeroed `.bss` (no flash), taken once with `BUFS.take()` and passed with
+`BufferMode::partial_double_from`. Change the rows there to trade RAM for fewer, larger
+transfers.
+
+Every main gives the builder `twine_demos::config()` — the demos' `AppConfig` (theme, engine
+configuration, motion, budgets), the same value their simulator examples
+(`SimConfig::app_config`) and tests (`TestUi::app_config`) run — and adds only its board hooks
+(`config.engine.mem_info` — the allocator's `used()`/`free()` through `twine::engine::HeapPeak` —
+and `config.engine.hires_timer`). OLED builds take the same configuration with a monochrome
+theme, `twine_demos::config_with_theme(MonoTheme::..)`, so the default theme is not linked. The
+runtime, the clock/platform and the draw buffers are compile-time requirements of the builder:
+a main that forgets one does not compile.
+
+A blocking super-loop without embassy also works:
+`Ui::builder(display).runtime(rt).platform(&platform).buffers(BufferMode::partial_double_from(BUFS.take()..))` (the
+`!Send` token from `Runtime::take()`, taken once in `main`) with a blocking
+driver (`twine::drivers::ili9341::new`) over a blocking `SpiDevice`, calling `ui.update()` and
 sleeping until the returned deadline. Transfers then do not overlap rendering.
 
 ## Hardware checklist
@@ -162,4 +202,4 @@ Board-specific items:
   upright, not mirrored, and no garbage stripe along the long edges (a stripe means the
   34-column offset is wrong); (c) touch: tapping each corner and the centre of the counter demo
   hits the tapped spot within ±4 px at `Deg0` and `Deg90` (a mirrored X means
-  `TOUCH_MIRROR_RAW_X` is wrong); (d) the log shows `axs5106l id …` at boot.
+  `TOUCH_MOUNT` is wrong); (d) the log shows `axs5106l id …` at boot.

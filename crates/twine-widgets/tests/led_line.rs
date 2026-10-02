@@ -272,14 +272,13 @@ fn snapshot_line() {
 
 #[test]
 fn led_takes_theme_primary_color() {
-    use std::rc::Rc;
     use twine_style::design;
     use twine_theme::{DefaultTheme, Palette};
     let theme = DefaultTheme::builder()
         .primary(Palette::Teal)
         .secondary(Palette::Amber)
         .build();
-    let mut h = EngineHarness::new(60, 60).theme(Rc::new(theme));
+    let mut h = EngineHarness::new(60, 60).theme(theme);
     let screen = h.screen();
     let l = led::create(h.engine_mut(), screen).unwrap();
     assert_eq!(get::<Led>(&h, l).color(), Palette::Teal.main());
@@ -339,4 +338,33 @@ fn led_color_follows_every_theme_mode() {
     // Night and high contrast have their own accents.
     assert_ne!(seen[1], seen[3]);
     assert_ne!(seen[2], seen[3]);
+}
+
+/// The LED's pixels (not only its resolved color) follow a theme mode switch in the update
+/// that applies it: the partial redraw after the switch shows what a full redraw shows, and
+/// the pixels change with the mode's primary color. Guards against stale pixels when a color
+/// resolved outside the style system is re-resolved (`set_theme_mode` invalidates the whole
+/// display, then sends `StyleChanged`, before the next render).
+#[test]
+fn regression_led_pixels_follow_theme_mode_in_one_update() {
+    use twine_style::ThemeMode;
+    use twine_theme::DefaultTheme;
+    let mut h = EngineHarness::new(60, 60).theme(DefaultTheme::light());
+    let screen = h.screen();
+    let l = led::create(h.engine_mut(), screen).unwrap();
+    h.run_until_idle();
+    let c = h.engine().coords(l).center();
+    let (x, y) = (c.x as u32, c.y as u32);
+    let d = h.engine().default_display().unwrap();
+    let mut seen = vec![h.pixel(x, y)];
+    for mode in [ThemeMode::HighContrast, ThemeMode::Night, ThemeMode::Light] {
+        h.engine_mut().set_theme_mode(d, mode);
+        h.run_until_idle();
+        let partial = h.pixel(x, y);
+        h.render_full();
+        assert_eq!(partial, h.pixel(x, y), "{mode:?}: stale LED pixels");
+        assert_ne!(Some(&partial), seen.last(), "{mode:?}: LED did not change");
+        seen.push(partial);
+    }
+    assert_eq!(seen[0], seen[3], "back to light");
 }

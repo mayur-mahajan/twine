@@ -105,6 +105,7 @@ pub static JD9853_172X320: PanelSpec = PanelSpec {
     colmod: 0x55,
     align: 1,
     sw_rotation: false,
+    brightness: false,
     invert: true,
     init: &JD9853_INIT,
 };

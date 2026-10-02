@@ -3,8 +3,6 @@
 
 mod common;
 
-use std::rc::Rc;
-
 use common::{Mode, center, class, count_events, get, harness_with_group, with};
 use twine_core::{ColorFormat, Duration};
 use twine_engine::{BufferMode, EventCode, NodeId};
@@ -59,7 +57,7 @@ fn window_structure_header_content() {
 #[test]
 fn window_header_height_follows_dpi() {
     // LVGL `lv_win_constructor`: the header is `lv_display_get_dpi / 2` high.
-    let mut h = EngineHarness::new(320, 240).theme(Rc::new(twine_theme::DefaultTheme::light()));
+    let mut h = EngineHarness::new(320, 240).theme(twine_theme::DefaultTheme::light());
     let mut info = DisplayInfo::new(320, 240, ColorFormat::Rgb565);
     info.dpi = 260;
     let buf: &'static mut [u8] = Box::leak(vec![0u8; 320 * 2 * 20].into_boxed_slice());

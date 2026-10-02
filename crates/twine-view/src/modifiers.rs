@@ -9,6 +9,8 @@ use twine_engine::{
 };
 use twine_style::{Anchor, Axis, Part, ScrollSnap, ScrollbarMode, Selector, Side};
 
+use twine_reactive::Runtime;
+
 use crate::access::EngineAccess;
 use crate::bind::{bind_effect, bind_node};
 use crate::build::{BuildCx, BuildOp};
@@ -42,10 +44,11 @@ fn current<T: Copy>(p: &Prop<T>) -> T {
 
 /// Wraps a no-argument handler as an engine handler that lends the engine to it.
 fn simple_handler<R>(
+    rt: Runtime,
     mut f: impl FnMut() -> R + 'static,
 ) -> impl FnMut(&mut EventCx<'_>, &twine_engine::Event) -> EventResult + 'static {
     move |cx, _ev| {
-        EngineAccess::provide(cx.engine_mut(), || {
+        EngineAccess::provide(rt, cx.engine_mut(), || {
             f();
         });
         EventResult::Continue
@@ -93,7 +96,7 @@ macro_rules! event_mods {
 /// ```
 /// use twine_view::prelude::*;
 ///
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let hot = cx.signal(false);
 /// let _v = label("21 °C")
 ///     .text_color(move || if hot.get() { Color::RED } else { Color::BLACK })
@@ -160,8 +163,9 @@ pub trait ViewExt: View + Sized {
     #[must_use]
     fn on_code<R>(self, code: EventCode, f: impl FnMut() -> R + 'static) -> Self {
         self.op(move |cx, node| {
+            let rt = cx.runtime();
             cx.engine()
-                .add_event_handler(node, EventFilter::Code(code), simple_handler(f));
+                .add_event_handler(node, EventFilter::Code(code), simple_handler(rt, f));
         })
     }
 
@@ -176,7 +180,7 @@ pub trait ViewExt: View + Sized {
     ///
     /// ```
     /// use twine_view::prelude::*;
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let alarm = cx.signal(false);
     /// let _v = bar(cx.signal(70))
     ///     .part(Part::Indicator, |s| {
@@ -229,7 +233,7 @@ pub trait ViewExt: View + Sized {
     /// // An application state, named for debug output and tree dumps.
     /// const ALARM: State = State::custom::<0>();
     /// State::set_custom_name(ALARM, "ALARM");
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let alarm = cx.signal(false);
     /// let _v = button(label("Pump"))
     ///     .state(ALARM, alarm) // in the ALARM state while the signal is true
@@ -249,7 +253,7 @@ pub trait ViewExt: View + Sized {
     /// ```
     /// use twine_view::prelude::*;
     /// let pressed_knob = Selector::part(Part::Knob).with_state(State::PRESSED);
-    /// let _v = slider(twine_reactive::create_root().signal(30))
+    /// let _v = slider(twine_reactive::Runtime::take().unwrap().create_root().signal(30))
     ///     .styled(pressed_knob, |s| s.bg(Color::RED).padding(6));
     /// ```
     #[must_use]
@@ -447,10 +451,11 @@ pub trait ViewExt: View + Sized {
     #[must_use]
     fn on_gesture(self, mut f: impl FnMut(Side) + 'static) -> Self {
         self.op(move |cx, node| {
+            let rt = cx.runtime();
             cx.engine()
                 .add_event_handler(node, EventFilter::Code(EventCode::Gesture), move |ecx, ev| {
                     if let Some(d) = ev.dir() {
-                        EngineAccess::provide(ecx.engine_mut(), || f(d));
+                        EngineAccess::provide(rt, ecx.engine_mut(), || f(d));
                     }
                     EventResult::Continue
                 });
@@ -461,10 +466,11 @@ pub trait ViewExt: View + Sized {
     #[must_use]
     fn on_key(self, mut f: impl FnMut(twine_engine::Key) + 'static) -> Self {
         self.op(move |cx, node| {
+            let rt = cx.runtime();
             cx.engine()
                 .add_event_handler(node, EventFilter::Code(EventCode::Key), move |ecx, ev| {
                     if let Some(k) = ev.key() {
-                        EngineAccess::provide(ecx.engine_mut(), || f(k));
+                        EngineAccess::provide(rt, ecx.engine_mut(), || f(k));
                     }
                     EventResult::Continue
                 });
@@ -475,11 +481,12 @@ pub trait ViewExt: View + Sized {
     #[must_use]
     fn on_scroll(self, mut f: impl FnMut(Point) + 'static) -> Self {
         self.op(move |cx, node| {
+            let rt = cx.runtime();
             cx.engine()
                 .add_event_handler(node, EventFilter::Code(EventCode::Scroll), move |ecx, ev| {
                     if ev.target == ecx.node() {
                         let p = ecx.engine().scroll_offset(ev.target);
-                        EngineAccess::provide(ecx.engine_mut(), || f(p));
+                        EngineAccess::provide(rt, ecx.engine_mut(), || f(p));
                     }
                     EventResult::Continue
                 });

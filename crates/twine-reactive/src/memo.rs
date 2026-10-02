@@ -21,7 +21,7 @@ const WHAT: &str = "memo";
 ///
 /// ```
 /// use std::{cell::Cell, rc::Rc};
-/// let cx = twine_reactive::create_root();
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
 /// let n = cx.signal(1);
 /// let runs = Rc::new(Cell::new(0));
 /// let r = runs.clone();
@@ -63,7 +63,7 @@ impl<T: 'static> Memo<T> {
     /// The current value (tracked).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let m = cx.memo(|| 40 + 2);
     /// assert_eq!(m.get(), 42);
     /// ```
@@ -82,7 +82,7 @@ impl<T: 'static> Memo<T> {
     /// The current value without subscribing (still recomputes if stale).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let m = cx.memo(|| 1);
     /// assert_eq!(m.get_untracked(), 1);
     /// ```
@@ -101,7 +101,7 @@ impl<T: 'static> Memo<T> {
     /// Calls `f` with a reference to the current value (tracked).
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let m = cx.memo(|| vec![1, 2, 3]);
     /// assert_eq!(m.with(Vec::len), 3);
     /// ```
@@ -117,7 +117,7 @@ impl<T: 'static> Memo<T> {
     /// Like [`with`](Memo::with), without subscribing.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let m = cx.memo(|| String::from("hi"));
     /// assert_eq!(m.with_untracked(String::len), 2);
     /// ```
@@ -133,7 +133,7 @@ impl<T: 'static> Memo<T> {
     /// The current value (tracked), or `None` if the memo was disposed.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let m = cx.memo(|| 7);
     /// assert_eq!(m.try_get(), Some(7));
     /// cx.dispose();
@@ -153,7 +153,7 @@ impl<T: 'static> Memo<T> {
     /// Whether the memo's scope is still alive.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// assert!(cx.memo(|| 1).is_alive());
     /// ```
     pub fn is_alive(&self) -> bool {
@@ -163,7 +163,7 @@ impl<T: 'static> Memo<T> {
     /// A memo derived from this one, owned by this memo's scope.
     ///
     /// ```
-    /// let cx = twine_reactive::create_root();
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let a = cx.signal(3);
     /// let sq = cx.memo(move || a.get() * a.get());
     /// let label = sq.map(|v| format!("{v}"));

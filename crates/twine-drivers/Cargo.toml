@@ -11,14 +11,14 @@ repository.workspace = true
 workspace = true
 
 [package.metadata.docs.rs]
-features = ["all", "async", "testkit"]
+features = ["all", "async", "testkit", "fbdev", "evdev"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []
 ## Every driver and interface (CI, documentation, host tests).
 all = [
-    "spi", "i2c", "i80", "qspi", "mipi-dcs",
+    "spi", "spi-dma", "i2c", "i80", "qspi", "mipi-dcs",
     "ili9341", "ili9342", "ili9488", "st7789", "st7735", "st7796", "gc9a01", "jd9853",
     "co5300", "sh8601", "rm67162", "ssd1306", "sh1106",
     "xpt2046", "ft6x36", "gt911", "cst816s", "stmpe811", "axs5106l",
@@ -37,6 +37,9 @@ log = ["twine-core/log", "twine-hal/log"]
 #! ### Bus interfaces
 ## 4-wire SPI with a DC pin (`SpiInterface`).
 spi = []
+## 4-wire SPI whose pixel transfers run by DMA while the engine renders (`DmaSpiInterface` over
+## a chip-specific `DmaSpiBus`), for the blocking runtime (`Ui`, `twine::run::blocking`).
+spi-dma = []
 ## I2C with control bytes (`I2cInterface`, OLEDs).
 i2c = []
 ## Intel 8080 parallel bus bit-banged on GPIOs (`I80Interface8`/`I80Interface16`).
@@ -47,11 +50,11 @@ qspi = []
 mipi-dcs = []
 
 #! ### Displays
-# NOTE(R3.S06): a panel feature cannot enable the `color-*` feature its format needs: the
-# drivers depend only on `twine-hal`, not on the renderer. Until the setup helpers of R3.S06,
-# the application enables it (`twine/color-rgb565-swapped` for RGB565 MIPI DCS panels,
-# `twine/color-rgb888` for RGB666/RGB888 ones, `twine/color-i1` for SSD1306/SH1106);
-# otherwise `Engine::add_display` returns `EngineError::FormatDisabled`.
+#! Each panel draws in one pixel format, which the renderer must be compiled for (a `color-*`
+#! feature of `twine`; without it `Engine::add_display` returns `EngineError::FormatDisabled`).
+#! This crate depends only on `twine-hal`, so a feature here cannot enable it: enable the panel
+#! through the `twine` facade instead (`twine/drivers-<panel>`, which enables both), or enable
+#! the `color-*` feature listed in `[package.metadata.twine.panel-color]` below yourself.
 ## ILI9341 240 × 320 (SPI).
 ili9341 = ["mipi-dcs", "spi"]
 ## ILI9342C 320 × 240 (SPI).
@@ -97,6 +100,35 @@ encoder = []
 ## Key matrix on GPIOs.
 keypad = []
 
+#! ### Hosted (Linux)
+#! Not part of `all` (they need `std`). They use only portable Unix file I/O (no `ioctl`, no
+#! `unsafe`), so they build on any Unix host; their devices are Linux's.
+## Linux framebuffer display `FbDev` (`/dev/fbN`, geometry from sysfs).
+fbdev = ["std"]
+## Linux input events `Evdev` (`/dev/input/eventN`, read on a thread; touchscreens and mice).
+evdev = ["std"]
+## The standard library (enabled by the hosted drivers).
+std = ["twine-core/std"]
+
+# The `twine` renderer feature each display feature needs (its `info().format`). Every feature of
+# the "Displays" group above has an entry; the `twine` facade's `drivers-<panel>` features enable
+# the panel and this colour feature together. Checked against the drivers' formats by
+# `tests/panel_formats.rs` and against the facade by `cargo xtask layers`.
+[package.metadata.twine.panel-color]
+ili9341 = "color-rgb565-swapped"
+ili9342 = "color-rgb565-swapped"
+ili9488 = "color-rgb888"
+st7789 = "color-rgb565-swapped"
+st7735 = "color-rgb565-swapped"
+st7796 = "color-rgb565-swapped"
+gc9a01 = "color-rgb565-swapped"
+jd9853 = "color-rgb565-swapped"
+co5300 = "color-rgb565-swapped"
+sh8601 = "color-rgb565-swapped"
+rm67162 = "color-rgb565-swapped"
+ssd1306 = "color-i1"
+sh1106 = "color-i1"
+
 [dependencies]
 twine-core = { path = "../twine-core" }
 twine-hal = { path = "../twine-hal" }
@@ -108,7 +140,7 @@ defmt = { version = "1", optional = true }
 
 [dev-dependencies]
 # Unit tests, doc-tests and integration tests always see the async code and the recorders.
-twine-drivers = { path = ".", features = ["all", "async", "testkit"] }
+twine-drivers = { path = ".", features = ["all", "async", "testkit", "fbdev", "evdev"] }
 critical-section = { version = "1", features = ["std"] }
 proptest = "1"
 twine-render = { path = "../twine-render" }

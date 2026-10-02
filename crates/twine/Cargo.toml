@@ -10,9 +10,18 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[package.metadata.docs.rs]
+# Everything a user can enable that builds on the docs.rs host (Linux): the hosted drivers and
+# platforms included; feature-gated items are labelled with their feature.
+features = ["full", "std", "embassy", "platform-std", "platform-embassy", "drivers-fbdev", "drivers-evdev", "drivers-spi", "drivers-spi-dma", "drivers-i2c", "drivers-i80", "drivers-qspi", "drivers-mipi-dcs", "drivers-ili9341", "drivers-xpt2046", "drivers-ft6x36", "drivers-encoder", "drivers-keypad", "log"]
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = ["color-rgb565", "color-rgb565-swapped", "img-qoi", "perf-monitor", "log"]
-## std-only conveniences (thread-local reactive runtime).
+#! Every feature of a Twine crate that the facade offers under the same name (`std`, `log`,
+#! `defmt`, `async`, …) is forwarded to **every** crate of the facade that has it, directly;
+#! `cargo xtask layers` checks this (`feature_forwarding`), so no crate is left without it.
+## std-only conveniences (thread-local reactive runtime), for hosts, simulators and tests.
 std = [
     "twine-core/std",
     "twine-reactive/std",
@@ -25,29 +34,159 @@ std = [
     "twine-engine/std",
     "twine-theme/std",
     "twine-widgets/std",
+    "twine-widgets-ext/std",
     "twine-view/std",
+    "twine-fs?/std",
+    "twine-vector?/std",
+    "twine-drivers?/std",
 ]
-## The async runtime (`AsyncUi`, `Ui::builder_async`) and the async HAL traits.
-async = ["twine-hal/async", "twine-view/async"]
+## The async runtime (`AsyncUi`, `Ui::builder_async`), the async HAL traits, async drivers and
+## `Outbox::recv`.
+async = ["twine-hal/async", "twine-reactive/async", "twine-view/async", "twine-drivers?/async"]
 ## Log through the `log` crate.
-log = ["twine-view/log", "twine-layout/log"]
+log = [
+    "twine-core/log",
+    "twine-hal/log",
+    "twine-reactive/log",
+    "twine-anim/log",
+    "twine-render/log",
+    "twine-text/log",
+    "twine-image/log",
+    "twine-style/log",
+    "twine-layout/log",
+    "twine-engine/log",
+    "twine-theme/log",
+    "twine-widgets/log",
+    "twine-widgets-ext/log",
+    "twine-view/log",
+    "twine-fs?/log",
+    "twine-vector?/log",
+    "twine-drivers?/log",
+    "twine-embassy?/log",
+]
 ## Log through `defmt`.
-defmt = ["twine-view/defmt", "twine-layout/defmt"]
+defmt = [
+    "twine-core/defmt",
+    "twine-hal/defmt",
+    "twine-reactive/defmt",
+    "twine-anim/defmt",
+    "twine-render/defmt",
+    "twine-text/defmt",
+    "twine-image/defmt",
+    "twine-style/defmt",
+    "twine-layout/defmt",
+    "twine-engine/defmt",
+    "twine-theme/defmt",
+    "twine-widgets/defmt",
+    "twine-widgets-ext/defmt",
+    "twine-view/defmt",
+    "twine-fs?/defmt",
+    "twine-vector?/defmt",
+    "twine-drivers?/defmt",
+    "twine-embassy?/defmt",
+]
 ## On-screen performance overlay.
 perf-monitor = ["twine-engine/perf-monitor"]
-## Expensive engine invariant checks.
-debug-checks = ["twine-engine/debug-checks"]
+## Expensive engine invariant checks, and the reactive runtime's interrupt-context assertion.
+debug-checks = ["twine-engine/debug-checks", "twine-reactive/debug-checks"]
 ## Keep test ids in release builds.
 test-ids = ["twine-engine/test-ids"]
 ## Pixel formats the renderer is compiled for.
-color-rgb565 = ["twine-engine/color-rgb565"]
-color-rgb565-swapped = ["twine-engine/color-rgb565-swapped"]
-color-rgb888 = ["twine-engine/color-rgb888"]
-color-xrgb8888 = ["twine-engine/color-xrgb8888"]
-color-argb8888 = ["twine-engine/color-argb8888"]
-color-l8 = ["twine-engine/color-l8"]
+color-rgb565 = ["twine-engine/color-rgb565", "twine-render/color-rgb565"]
+color-rgb565-swapped = ["twine-engine/color-rgb565-swapped", "twine-render/color-rgb565-swapped"]
+color-rgb888 = ["twine-engine/color-rgb888", "twine-render/color-rgb888"]
+color-xrgb8888 = ["twine-engine/color-xrgb8888", "twine-render/color-xrgb8888"]
+color-argb8888 = ["twine-engine/color-argb8888", "twine-render/color-argb8888"]
+color-l8 = ["twine-engine/color-l8", "twine-render/color-l8"]
 ## Monochrome `I1` displays (also compiles `L8`: partial `I1` panels are drawn in `L8`).
-color-i1 = ["twine-engine/color-i1"]
+color-i1 = ["twine-engine/color-i1", "twine-render/color-i1"]
+
+#! ### Platforms
+#! Ready-made [`Platform`](twine_hal::Platform) implementations in `twine::platform` (none is
+#! enabled by default: the application chooses or writes its own).
+## `CortexMPlatform`: `WFE`/`SEV` sleep, `SCB::vect_active` (adds `cortex-m`).
+platform-cortex-m = ["twine-hal/platform-cortex-m"]
+## `RiscvPlatform`: `WFI` sleep (adds `riscv` and `critical-section`).
+platform-riscv = ["twine-hal/platform-riscv"]
+## `StdPlatform`: a condition variable on a host thread (implies `std`).
+platform-std = ["std", "twine-hal/platform-std"]
+## `EmbassyPlatform`: an `AsyncPlatform` over `embassy-time` (implies `async`).
+platform-embassy = ["async", "twine-hal/platform-embassy"]
+## `twine::embassy` (the `twine-embassy` crate): the embassy run loop and `EmbassyPlatform`
+## builder helpers (implies `async` and `platform-embassy`).
+embassy = ["async", "platform-embassy", "dep:twine-embassy"]
+
+#! ### Display drivers
+#! `twine::drivers` (the `twine-drivers` crate). Enable drivers here rather than on
+#! `twine-drivers` directly: `drivers-<panel>` also compiles the renderer for the pixel format
+#! the panel draws in (a panel without its `color-*` feature is refused with
+#! `EngineError::FormatDisabled`). The format of every panel is listed in `twine-drivers`'
+#! `[package.metadata.twine.panel-color]`; `cargo xtask layers` checks that each
+#! `drivers-<panel>` feature enables it, and that every driver, bus and input feature of
+#! `twine-drivers` has its `drivers-<name>` feature here.
+## The `twine::drivers` module (no driver, bus or panel by itself).
+drivers = ["dep:twine-drivers"]
+## 4-wire SPI display bus with a DC pin (`SpiInterface`).
+drivers-spi = ["drivers", "twine-drivers/spi"]
+## 4-wire SPI whose pixel transfers run by DMA while the engine renders (`DmaSpiInterface` over
+## a chip-specific `DmaSpiBus`).
+drivers-spi-dma = ["drivers", "twine-drivers/spi-dma"]
+## I2C with control bytes (`I2cInterface`, OLEDs).
+drivers-i2c = ["drivers", "twine-drivers/i2c"]
+## Intel 8080 parallel bus bit-banged on GPIOs (`I80Interface8` / `I80Interface16`).
+drivers-i80 = ["drivers", "twine-drivers/i80"]
+## Quad SPI of AMOLED controllers (`QspiInterface`, `QspiBus`).
+drivers-qspi = ["drivers", "twine-drivers/qspi"]
+## The generic MIPI DCS panel driver for your own `PanelSpec` (enable the `color-*` feature of its format yourself).
+drivers-mipi-dcs = ["drivers", "twine-drivers/mipi-dcs"]
+## ILI9341 240 × 320 SPI panel (RGB565).
+drivers-ili9341 = ["drivers", "twine-drivers/ili9341", "color-rgb565-swapped"]
+## ILI9342C 320 × 240 SPI panel (RGB565).
+drivers-ili9342 = ["drivers", "twine-drivers/ili9342", "color-rgb565-swapped"]
+## ILI9488 320 × 480 SPI panel (RGB666, drawn as RGB888).
+drivers-ili9488 = ["drivers", "twine-drivers/ili9488", "color-rgb888"]
+## ST7789 SPI panels (RGB565).
+drivers-st7789 = ["drivers", "twine-drivers/st7789", "color-rgb565-swapped"]
+## ST7735R/S SPI panels (RGB565).
+drivers-st7735 = ["drivers", "twine-drivers/st7735", "color-rgb565-swapped"]
+## ST7796S 320 × 480 SPI panel (RGB565).
+drivers-st7796 = ["drivers", "twine-drivers/st7796", "color-rgb565-swapped"]
+## GC9A01 240 × 240 round SPI panel (RGB565).
+drivers-gc9a01 = ["drivers", "twine-drivers/gc9a01", "color-rgb565-swapped"]
+## JD9853 172 × 320 SPI panel (RGB565).
+drivers-jd9853 = ["drivers", "twine-drivers/jd9853", "color-rgb565-swapped"]
+## CO5300 QSPI AMOLED (RGB565).
+drivers-co5300 = ["drivers", "twine-drivers/co5300", "color-rgb565-swapped"]
+## SH8601 QSPI AMOLED (RGB565).
+drivers-sh8601 = ["drivers", "twine-drivers/sh8601", "color-rgb565-swapped"]
+## RM67162 QSPI AMOLED (RGB565).
+drivers-rm67162 = ["drivers", "twine-drivers/rm67162", "color-rgb565-swapped"]
+## SSD1306 monochrome OLED (`I1`).
+drivers-ssd1306 = ["drivers", "twine-drivers/ssd1306", "color-i1"]
+## SH1106 monochrome OLED (`I1`).
+drivers-sh1106 = ["drivers", "twine-drivers/sh1106", "color-i1"]
+## XPT2046 / ADS7843 resistive touch (SPI).
+drivers-xpt2046 = ["drivers", "twine-drivers/xpt2046"]
+## FocalTech FT6x36, FT5x06 and FT3168 capacitive touch (I2C).
+drivers-ft6x36 = ["drivers", "twine-drivers/ft6x36"]
+## Goodix GT911 capacitive touch (I2C).
+drivers-gt911 = ["drivers", "twine-drivers/gt911"]
+## Hynitron CST816S capacitive touch (I2C).
+drivers-cst816s = ["drivers", "twine-drivers/cst816s"]
+## AXS5106L capacitive touch (I2C).
+drivers-axs5106l = ["drivers", "twine-drivers/axs5106l"]
+## ST STMPE811 resistive touch controller (I2C).
+drivers-stmpe811 = ["drivers", "twine-drivers/stmpe811"]
+## Rotary encoder on GPIOs (quadrature decoder + button).
+drivers-encoder = ["drivers", "twine-drivers/encoder"]
+## Key matrix on GPIOs.
+drivers-keypad = ["drivers", "twine-drivers/keypad"]
+## Linux framebuffer display (`FbDev`, Unix hosts; implies `std`).
+drivers-fbdev = ["drivers", "std", "twine-drivers/fbdev"]
+## Linux input events (`Evdev`, Unix hosts; implies `std`).
+drivers-evdev = ["drivers", "std", "twine-drivers/evdev"]
+
+#! ### Images, text and graphics
 ## Image decoders.
 img-qoi = ["twine-image/img-qoi"]
 img-png = ["twine-image/img-png"]
@@ -56,18 +195,36 @@ img-gif = ["twine-image/img-gif"]
 img-bmp = ["twine-image/img-bmp"]
 img-lz4 = ["twine-image/img-lz4"]
 ## Bidirectional (mixed LTR/RTL) text in every widget.
-bidi = ["twine-widgets/bidi", "twine-widgets-ext/bidi"]
+bidi = ["twine-text/bidi", "twine-widgets/bidi", "twine-widgets-ext/bidi"]
 ## Arabic/Persian contextual forms in labels.
-arabic-shaping = ["twine-widgets/arabic-shaping", "twine-widgets-ext/arabic-shaping"]
+arabic-shaping = ["twine-text/arabic-shaping", "twine-widgets/arabic-shaping", "twine-widgets-ext/arabic-shaping"]
 ## Vector graphics: `vector_canvas`, `twine::vector` (paths, fills, strokes, gradients).
-vector = ["dep:twine-vector", "twine-view/vector"]
+vector = ["dep:twine-vector", "twine-view/vector", "twine-widgets-ext/vector"]
 ## SVG images: `image(ImageSource::Svg(include_bytes!(..)))` drawn as vectors.
-svg = ["vector", "twine-view/svg"]
+svg = ["vector", "twine-vector/svg", "twine-engine/svg", "twine-widgets/svg", "twine-view/svg"]
 ## Runtime TrueType fonts (`twine::text::TtfFont`).
 ttf = ["twine-text/ttf"]
 ## File system (`twine::fs`) and file images (`Engine::set_vfs`).
 fs = ["dep:twine-fs", "twine-engine/fs"]
-## Built-in fonts (`twine::fonts`).
+
+#! ### Fonts
+#! The built-in fonts of `twine::fonts`. Bundles for the common cases (they only add fonts and
+#! combine freely; flash sizes in `twine-assets`' README), and one feature per font for precise
+#! budgets.
+## Montserrat 12, 14, 16 px (small displays; ~59 KB).
+fonts-latin-small = ["twine-assets/fonts-latin-small"]
+## `fonts-latin-small` + Montserrat 18–24 px (medium displays; ~150 KB).
+fonts-latin-medium = ["twine-assets/fonts-latin-medium"]
+## Every Montserrat size, the subpixel 14 px and the Latin Extended 16 px fallback (~683 KB).
+fonts-latin-all = ["twine-assets/fonts-latin-all"]
+## unscii 8 and 16 px bitmap fonts (monochrome displays; ~4 KB).
+fonts-mono = ["twine-assets/fonts-mono"]
+## DejaVu Sans 16 px with Hebrew and Arabic/Persian (~38 KB).
+fonts-rtl = ["twine-assets/fonts-rtl"]
+## Source Han Sans SC 14 and 16 px: common Chinese characters and Japanese kana (~305 KB).
+fonts-cjk = ["twine-assets/fonts-cjk"]
+## Every built-in font.
+fonts-all = ["twine-assets/fonts-all"]
 montserrat-8 = ["twine-assets/montserrat-8"]
 montserrat-10 = ["twine-assets/montserrat-10"]
 montserrat-12 = ["twine-assets/montserrat-12"]
@@ -96,12 +253,14 @@ montserrat-16-latin-ext = ["twine-assets/montserrat-16-latin-ext"]
 dejavu-16-persian-hebrew = ["twine-assets/dejavu-16-persian-hebrew"]
 source-han-sans-sc-14-cjk = ["twine-assets/source-han-sans-sc-14-cjk"]
 source-han-sans-sc-16-cjk = ["twine-assets/source-han-sans-sc-16-cjk"]
-all-fonts = ["twine-assets/all-fonts"]
+
+#! ### Everything
 ## Every optional, platform-neutral part of the facade: all pixel formats, image decoders, vector
 ## graphics and SVG, runtime TrueType fonts, the file system, bidirectional text and Arabic shaping,
 ## the async runtime and every built-in font. For hosts, simulators, tests and documentation;
-## firmware picks only what it uses. Logging backends (`log`/`defmt`), `std` and the debugging aids
-## (`debug-checks`, `test-ids`) are not included: they are platform or build choices.
+## firmware picks only what it uses. Logging backends (`log`/`defmt`), `std`, platforms, drivers
+## and the debugging aids (`debug-checks`, `test-ids`) are not included: they are platform or
+## build choices.
 full = [
     "async",
     "perf-monitor",
@@ -124,9 +283,8 @@ full = [
     "svg",
     "ttf",
     "fs",
-    "all-fonts",
+    "fonts-all",
 ]
-
 
 [dependencies]
 twine-core = { path = "../twine-core" }
@@ -146,12 +304,16 @@ twine-view = { path = "../twine-view" }
 twine-assets = { path = "../twine-assets" }
 twine-fs = { path = "../twine-fs", optional = true }
 twine-vector = { path = "../twine-vector", optional = true }
+twine-drivers = { path = "../twine-drivers", optional = true }
+twine-embassy = { path = "../twine-embassy", optional = true }
 
 # Tests and the simulator examples (`examples/`, run with `cargo run -p twine --example <name>`
 # or `cargo xtask sim <name>`). Dev-dependencies only: they never reach firmware builds.
 [dev-dependencies]
-# Every optional part of the facade (the examples show all of them), on the host.
-twine = { path = ".", features = ["std", "full"] }
+# Every optional part of the facade (the examples show all of them), on the host, plus what
+# the hosted Linux example (`linux_fbdev`) uses: framebuffer and input-event drivers and
+# `StdPlatform`.
+twine = { path = ".", features = ["std", "full", "drivers-fbdev", "drivers-evdev", "platform-std"] }
 # `StdFs` (a host directory as a drive) for the file-system examples.
 twine-fs = { path = "../twine-fs", features = ["fs-std"] }
 twine-sim = { path = "../twine-sim" }

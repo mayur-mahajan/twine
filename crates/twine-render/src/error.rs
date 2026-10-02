@@ -28,6 +28,10 @@ pub enum RenderError {
     /// The color format cannot be used here.
     #[error("unsupported color format {0}")]
     UnsupportedFormat(ColorFormat),
+    /// The color format is a draw format, but its renderer is not compiled in (enable the
+    /// matching `color-*` feature of `twine-render`); see [`is_format_enabled`](crate::is_format_enabled).
+    #[error("drawing into {0} is disabled (enable the matching `color-*` feature)")]
+    FormatDisabled(ColorFormat),
     /// The area is empty, the stride is too small, or a sub-byte format is not byte-aligned.
     #[error("invalid area or stride")]
     InvalidArea,

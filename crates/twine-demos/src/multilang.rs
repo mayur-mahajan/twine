@@ -312,8 +312,8 @@ fn heading_font() -> &'static Font {
 // ---- Views ---------------------------------------------------------------------------------
 
 /// Mounts the memory file system as `A:` and sizes the image cache (once per engine).
-fn setup_engine() {
-    let done = EngineAccess::with(|e| {
+fn setup_engine(cx: Scope) {
+    let done = EngineAccess::with(cx, |e| {
         let mut vfs = Vfs::new();
         if let Err(err) = vfs.mount('A', alloc::boxed::Box::new(MemoryFs::new(FILES))) {
             twine::core::warn!(target: "twine::demo", "multilang: mount A: failed: {}", err);
@@ -376,7 +376,7 @@ fn card(i: usize) -> impl View {
 /// assert_eq!(t.find(by_id("title")).text(), "Twine spricht deine Sprache");
 /// ```
 pub fn app(cx: Scope) -> impl View {
-    setup_engine();
+    setup_engine(cx);
     let i18n = provide_i18n(cx, &TEXTS, CODES[0]);
     let lang = cx.signal(0usize);
     let list = cx.node_ref::<twine::engine::Obj>();

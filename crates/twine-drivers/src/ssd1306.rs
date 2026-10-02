@@ -54,8 +54,11 @@
 //! assert!(oled.poll_flush().is_some());
 //! ```
 //!
-//! Pair it with the monochrome theme (`MonoTheme`) of the `twine` crate, e.g.
-//! `Ui::builder(oled).theme(MonoTheme::builder().mode(ThemeMode::Dark).build())`, and enable `I1` rendering (feature `color-i1`).
+//! Pair it with the monochrome theme (`MonoTheme`) of the `twine` crate and draw buffers that
+//! hold the whole 1 KiB frame (`twine::draw_buffers!(static BUFS: 2 x 64 rows x 128 px @ I1)`),
+//! e.g. `Ui::builder(oled).runtime(rt).buffers(BufferMode::partial_double_from(BUFS.take().unwrap()))
+//! .theme(MonoTheme::builder().mode(ThemeMode::Dark).build())`, and enable `I1` rendering
+//! (feature `color-i1`).
 
 use heapless::{Deque, Vec};
 use twine_core::log::{error, trace, warn};
@@ -263,6 +266,23 @@ impl<I: DcsInterface> Ssd1306<I> {
 impl<I: DcsInterface> DisplayDriver for Ssd1306<I> {
     type Error = OledError<I::Error>;
 
+    /// The contrast (`0x81`), which is the brightness of an OLED (`Fraction::ONE` = 255).
+    fn set_brightness(
+        &mut self,
+        level: twine_core::Fraction,
+    ) -> Result<(), twine_hal::ControlError<Self::Error>> {
+        self.commands(&[0x81, level.raw()])
+            .map_err(twine_hal::ControlError::Driver)
+    }
+
+    /// Display off (`0xAE`, the controller's sleep mode; display RAM kept) or on (`0xAF`); no
+    /// settle time.
+    fn sleep(&mut self, sleep: bool) -> Result<twine_core::Duration, twine_hal::ControlError<Self::Error>> {
+        self.commands(&[if sleep { 0xAE } else { 0xAF }])
+            .map_err(twine_hal::ControlError::Driver)?;
+        Ok(twine_core::Duration::ZERO)
+    }
+
     fn info(&self) -> DisplayInfo {
         oled_info(self.size.dimensions(), self.rotation, OLED_DPI)
     }
@@ -357,6 +377,27 @@ mod asynch {
 
     impl<I: AsyncDcsInterface> AsyncDisplayDriver for AsyncSsd1306<I> {
         type Error = OledError<I::Error>;
+
+        /// The contrast (`0x81`), as the blocking driver.
+        async fn set_brightness(
+            &mut self,
+            level: twine_core::Fraction,
+        ) -> Result<(), twine_hal::ControlError<Self::Error>> {
+            self.commands(&[0x81, level.raw()])
+                .await
+                .map_err(twine_hal::ControlError::Driver)
+        }
+
+        /// Display off (`0xAE`) or on (`0xAF`), as the blocking driver.
+        async fn sleep(
+            &mut self,
+            sleep: bool,
+        ) -> Result<twine_core::Duration, twine_hal::ControlError<Self::Error>> {
+            self.commands(&[if sleep { 0xAE } else { 0xAF }])
+                .await
+                .map_err(twine_hal::ControlError::Driver)?;
+            Ok(twine_core::Duration::ZERO)
+        }
 
         fn info(&self) -> DisplayInfo {
             oled_info(self.size.dimensions(), self.rotation, OLED_DPI)
@@ -539,6 +580,25 @@ mod tests {
                 BusOp::Cmd(0xAE),
                 BusOp::Cmd(0xA7)
             ]
+        );
+        // The display controls of the trait: contrast as brightness, AE/AF as sleep.
+        let _ = rec.take_ops();
+        DisplayDriver::set_brightness(&mut d, twine_core::Fraction::from_raw(0x20)).unwrap();
+        assert_eq!(DisplayDriver::sleep(&mut d, true), Ok(twine_core::Duration::ZERO));
+        DisplayDriver::sleep(&mut d, false).unwrap();
+        assert_eq!(
+            rec.ops(),
+            [
+                BusOp::Cmd(0x81),
+                BusOp::Cmd(0x20),
+                BusOp::Cmd(0xAE),
+                BusOp::Cmd(0xAF)
+            ]
+        );
+        assert_eq!(
+            d.set_rotation(Rotation::Deg90),
+            Err(twine_hal::ControlError::Unsupported),
+            "rotated in software by the engine"
         );
         let _ = d.release();
     }

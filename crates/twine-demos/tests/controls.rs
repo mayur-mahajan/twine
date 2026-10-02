@@ -26,7 +26,9 @@ fn checked(t: &TestUi, s: &'static str) -> bool {
 
 #[test]
 fn slider_drives_bar_arc_and_label() {
-    let mut t = TestUi::new(320, 240).mount(app_static);
+    let mut t = TestUi::new(320, 240)
+        .app_config(twine_demos::config())
+        .mount(app_static);
     t.run_until_idle();
     let c = t.find(by_id("slider")).coords();
     let knob = Point::new(c.x0 + c.width() * 40 / 100, c.center().y);
@@ -46,7 +48,9 @@ fn slider_drives_bar_arc_and_label() {
 
 #[test]
 fn switch_checkbox_and_power_button_stay_in_sync() {
-    let mut t = TestUi::new(320, 240).mount(app_static);
+    let mut t = TestUi::new(320, 240)
+        .app_config(twine_demos::config())
+        .mount(app_static);
     t.run_until_idle();
     t.find(by_id("switch")).click();
     t.run_until_idle();
@@ -60,7 +64,9 @@ fn switch_checkbox_and_power_button_stay_in_sync() {
 
 #[test]
 fn keypad_reaches_every_control() {
-    let mut t = TestUi::new(320, 240).mount(app_static);
+    let mut t = TestUi::new(320, 240)
+        .app_config(twine_demos::config())
+        .mount(app_static);
     t.run_until_idle();
     let g = t.engine().default_group().unwrap();
     let mut seen = Vec::new();
@@ -90,22 +96,25 @@ fn keypad_reaches_every_control() {
 
 #[test]
 fn animated_variant_runs_and_idle_variant_is_idle() {
-    let mut t = TestUi::new(320, 240).mount(app);
+    let mut t = TestUi::new(320, 240).app_config(twine_demos::config()).mount(app);
     t.advance(Duration::ms(500));
     assert!(t.engine().anim_count() > 0, "spinner and animation run");
-    let mut s = TestUi::new(240, 320).mount(app_static);
+    let mut s = TestUi::new(240, 320)
+        .app_config(twine_demos::config())
+        .mount(app_static);
     s.run_until_idle();
     s.assert_idle();
 }
 
 #[test]
 fn snapshots_initial() {
-    use std::rc::Rc;
-    let mut t = TestUi::new(320, 240).mount(app_static);
+    let mut t = TestUi::new(320, 240)
+        .app_config(twine_demos::config())
+        .mount(app_static);
     t.run_until_idle();
     t.assert_snapshot("controls_initial_light");
     let mut t = TestUi::new(320, 240)
-        .theme(Rc::new(DefaultTheme::dark()))
+        .theme(DefaultTheme::dark())
         .mount(app_static);
     t.run_until_idle();
     t.assert_snapshot("controls_initial_dark");
@@ -115,7 +124,9 @@ fn snapshots_initial() {
 /// the default theme, switched at run time; the keypad focus ring is shown on the slider.
 #[test]
 fn snapshots_theme_modes() {
-    let mut t = TestUi::new(320, 240).mount(app_static);
+    let mut t = TestUi::new(320, 240)
+        .app_config(twine_demos::config())
+        .mount(app_static);
     t.run_until_idle();
     let slider = id(&t, "slider");
     t.engine_mut().focus(slider);
@@ -141,14 +152,15 @@ fn snapshots_theme_modes() {
 /// theme draws.
 #[test]
 fn mode_switch_draws_like_the_dark_theme() {
-    use std::rc::Rc;
-    let mut switched = TestUi::new(320, 240).mount(app_static);
+    let mut switched = TestUi::new(320, 240)
+        .app_config(twine_demos::config())
+        .mount(app_static);
     switched.run_until_idle();
     use_theme(switched.root_scope()).set_mode(ThemeMode::Dark);
     switched.run_until_idle();
     switched.harness_mut().render_full();
     let mut dark = TestUi::new(320, 240)
-        .theme(Rc::new(DefaultTheme::dark()))
+        .theme(DefaultTheme::dark())
         .mount(app_static);
     dark.run_until_idle();
     dark.harness_mut().render_full();

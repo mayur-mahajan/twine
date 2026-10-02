@@ -2,11 +2,16 @@
 
 use std::rc::Rc;
 
-use twine_reactive::{create_root, reset, runtime_stats};
+use twine_reactive::Runtime;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 #[test]
 fn signal_get_set_roundtrip() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let s = cx.signal(1u32);
     assert_eq!(s.get(), 1);
     s.set(42);
@@ -17,7 +22,7 @@ fn signal_get_set_roundtrip() {
 
 #[test]
 fn signal_update_mutates_in_place() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let v = cx.signal(vec![1, 2]);
     let ptr_before = v.with(Vec::as_ptr);
     v.update(|v| v[0] = 9);
@@ -28,7 +33,7 @@ fn signal_update_mutates_in_place() {
 #[test]
 fn signal_with_borrows_without_clone() {
     struct NoClone(u32);
-    let cx = create_root();
+    let cx = rt().create_root();
     let s = cx.signal(NoClone(7));
     assert_eq!(s.with(|v| v.0), 7);
     assert_eq!(s.with_untracked(|v| v.0 + 1), 8);
@@ -40,7 +45,7 @@ fn signal_with_borrows_without_clone() {
 
 #[test]
 fn signal_split_handles_share_value() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let s = cx.signal(String::from("a"));
     let (r, w) = s.split();
     w.set("b".into());
@@ -56,26 +61,26 @@ fn signal_split_handles_share_value() {
 
 #[test]
 fn signal_set_if_changed_equal_value_is_noop() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let s = cx.signal(3);
-    let w0 = runtime_stats().writes;
+    let w0 = rt().stats().writes;
     s.set_if_changed(3);
-    assert_eq!(runtime_stats().writes, w0);
+    assert_eq!(rt().stats().writes, w0);
     s.write_only().set_if_changed(3);
-    assert_eq!(runtime_stats().writes, w0);
+    assert_eq!(rt().stats().writes, w0);
     s.set_if_changed(4);
-    assert_eq!(runtime_stats().writes, w0 + 1);
+    assert_eq!(rt().stats().writes, w0 + 1);
     assert_eq!(s.get(), 4);
     s.set(4); // `set` always notifies
-    assert_eq!(runtime_stats().writes, w0 + 2);
+    assert_eq!(rt().stats().writes, w0 + 2);
 }
 
 #[test]
 fn signal_try_get_after_reset_is_none() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let s = cx.signal(1);
     let r = s.read_only();
-    reset();
+    rt().reset();
     assert_eq!(s.try_get(), None);
     assert_eq!(r.try_get(), None);
     assert!(!s.is_alive());
@@ -85,7 +90,7 @@ fn signal_try_get_after_reset_is_none() {
 #[test]
 #[should_panic(expected = "disposed")]
 fn signal_use_after_dispose_panics_with_location() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let s = cx.signal(1);
     cx.dispose();
     let _ = s.get();
@@ -94,7 +99,7 @@ fn signal_use_after_dispose_panics_with_location() {
 #[cfg(debug_assertions)]
 #[test]
 fn signal_use_after_dispose_message_names_creation_site() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let s = cx.signal(1);
     let line = line!() - 1;
     cx.dispose();
@@ -110,7 +115,7 @@ fn signals_of_different_types_coexist() {
     struct P {
         x: i32,
     }
-    let cx = create_root();
+    let cx = rt().create_root();
     let a = cx.signal(1u8);
     let b = cx.signal("str");
     let c = cx.signal(P { x: 3 });
@@ -123,13 +128,13 @@ fn signals_of_different_types_coexist() {
     assert_eq!(c.get(), P { x: 4 });
     assert_eq!(d.with(Vec::len), 1);
     e.set(());
-    assert_eq!(runtime_stats().nodes, 5);
+    assert_eq!(rt().stats().nodes, 5);
 }
 
 #[test]
 #[should_panic(expected = "already")]
 fn signal_set_inside_with_of_same_signal_panics() {
-    let cx = create_root();
+    let cx = rt().create_root();
     let s = cx.signal(1);
     s.with(|_| s.set(2));
 }
@@ -145,7 +150,7 @@ fn signal_drop_of_old_value_can_touch_runtime() {
             }
         }
     }
-    let cx = create_root();
+    let cx = rt().create_root();
     let counter = cx.signal(0u32);
     let s = cx.signal(Touch(Some(counter)));
     s.set(Touch(None));

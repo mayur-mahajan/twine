@@ -7,7 +7,9 @@ use twine_testing::{TestUi, by_id, capture_logs};
 #[test]
 fn multilang_smoke() {
     let ((), logs) = capture_logs(|| {
-        let mut t = TestUi::new(480, 320).mount(multilang::app);
+        let mut t = TestUi::new(480, 320)
+            .app_config(twine_demos::config())
+            .mount(multilang::app);
         t.run_until_idle();
         for (i, code) in CODES.iter().enumerate() {
             if i > 0 {
@@ -34,7 +36,9 @@ fn multilang_smoke() {
 #[test]
 fn multilang_cards_scroll_without_warnings() {
     let ((), logs) = capture_logs(|| {
-        let mut t = TestUi::new(480, 320).mount(multilang::app);
+        let mut t = TestUi::new(480, 320)
+            .app_config(twine_demos::config())
+            .mount(multilang::app);
         t.run_until_idle();
         // Scroll the list to the end: the RTL and CJK cards are built and drawn.
         for _ in 0..4 {
@@ -56,7 +60,9 @@ fn multilang_cards_scroll_without_warnings() {
 
 #[test]
 fn multilang_snapshots_per_language() {
-    let mut t = TestUi::new(480, 320).mount(multilang::app);
+    let mut t = TestUi::new(480, 320)
+        .app_config(twine_demos::config())
+        .mount(multilang::app);
     t.run_until_idle();
     for (i, code) in CODES.iter().enumerate() {
         if i > 0 {
@@ -70,7 +76,9 @@ fn multilang_snapshots_per_language() {
 #[test]
 fn multilang_language_list_draws_every_script() {
     let ((), logs) = capture_logs(|| {
-        let mut t = TestUi::new(480, 320).mount(multilang::app);
+        let mut t = TestUi::new(480, 320)
+            .app_config(twine_demos::config())
+            .mount(multilang::app);
         t.run_until_idle();
         let dd = t.find(by_id("language"));
         let c = dd.coords();

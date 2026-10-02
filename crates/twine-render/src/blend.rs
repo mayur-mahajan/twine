@@ -518,7 +518,7 @@ pub(crate) fn blend_row(
         #[cfg(not(feature = "color-i1"))]
         {
             let _ = (y, n, src, mask, opa, mode);
-            crate::dispatch::report_format_disabled(format);
+            crate::dispatch::format_not_compiled(format);
         }
         return;
     }

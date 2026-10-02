@@ -155,6 +155,7 @@ impl WidgetView<Button> {
     #[must_use]
     pub fn on_change(self, mut f: impl FnMut(bool) + 'static) -> Self {
         self.op(move |cx, node| {
+            let rt = cx.runtime();
             cx.engine().add_event_handler(
                 node,
                 EventFilter::Code(EventCode::ValueChanged),
@@ -165,7 +166,7 @@ impl WidgetView<Button> {
                             .tree()
                             .node(ev.target)
                             .is_some_and(|x| x.state().contains(State::CHECKED));
-                        EngineAccess::provide(ecx.engine_mut(), || f(on));
+                        EngineAccess::provide(rt, ecx.engine_mut(), || f(on));
                     }
                     EventResult::Continue
                 },

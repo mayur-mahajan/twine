@@ -16,6 +16,13 @@ use twine_widgets::textarea::Textarea;
 use twine_widgets_ext::dropdown::Dropdown;
 use twine_widgets_ext::roller::Roller;
 
+use twine_reactive::Runtime;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
+
 #[global_allocator]
 static ALLOC: CountingAllocator = CountingAllocator;
 
@@ -64,7 +71,7 @@ impl From<Brand> for ColorValue {
 
 #[test]
 fn user_type_converts_through_from_only() {
-    let cx = twine_reactive::create_root();
+    let cx = rt().create_root();
     let s = cx.signal(Brand::Primary);
     let m = cx.memo(move || s.get());
     assert!(matches!(
@@ -334,7 +341,7 @@ fn option_lists_from_any_iterable_and_reactive_lists() {
 
 #[test]
 fn texts_from_static_closures_signals_and_references() {
-    let cx = twine_reactive::create_root();
+    let cx = rt().create_root();
     let on = cx.signal(true);
     let word = cx.signal("Hi");
     let owned = String::from("copied");
@@ -372,7 +379,7 @@ fn texts_from_static_closures_signals_and_references() {
 
 #[test]
 fn constants_allocate_nothing_and_dynamic_values_one_box() {
-    let cx = twine_reactive::create_root();
+    let cx = rt().create_root();
     let s = cx.signal(3i32);
     let ((), stats) = count_allocs(|| {
         assert!(matches!(take::<Length, _>(4), Prop::Static(_)));

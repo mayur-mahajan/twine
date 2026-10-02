@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use twine_core::{Fraction, Point, Rect};
 use twine_hal::Key;
-use twine_reactive::runtime_stats;
+use twine_reactive::Runtime;
 use twine_testing::{TestUi, by_id};
 use twine_view::prelude::*;
 use twine_widgets::animimg::AnimImg;
@@ -17,6 +17,11 @@ use twine_widgets::led::{LED_BRIGHT_MAX, LED_BRIGHT_MIN, Led};
 use twine_widgets::line::Line;
 use twine_widgets::slider::Slider;
 use twine_widgets::spinner::Spinner;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
 
 /// Reads widget `W` of the node with test id `id`.
 fn read<W: Widget, R>(t: &TestUi, id: &'static str, f: impl FnOnce(&W) -> R) -> R {
@@ -45,10 +50,10 @@ fn focus(t: &mut TestUi, id: &'static str) {
 fn assert_one_binding_local<T: 'static>(t: &mut TestUi, sig: Signal<T>, v: T, id: &'static str) {
     let area = draw_area(t, id);
     sig.set(v); // outside the Ui: deferred to the next update
-    let runs = runtime_stats().effect_runs;
+    let runs = rt().stats().effect_runs;
     let period = t.engine().config().refr_period;
     t.advance(period);
-    assert_eq!(runtime_stats().effect_runs - runs, 1, "one binding run");
+    assert_eq!(rt().stats().effect_runs - runs, 1, "one binding run");
     let area = area.union(&draw_area(t, id));
     let inv: Vec<Rect> = t.invalidations().iter().map(|(r, _)| *r).collect();
     assert!(!inv.is_empty(), "the change is drawn");
@@ -119,9 +124,7 @@ fn slider_view_two_way() {
     assert!((70..=80).contains(&v), "{v}");
     assert_eq!(level.get_untracked(), v, "the drag wrote the value back");
     assert_eq!(
-        runtime_stats()
-            .faults
-            .get(twine_reactive::FaultKind::EffectLoopCut),
+        rt().stats().faults.get(twine_reactive::FaultKind::EffectLoopCut),
         0
     );
     t.assert_idle();
@@ -206,18 +209,16 @@ fn switch_checkbox_led_share_one_signal() {
     assert!(!on.get_untracked());
     assert!(!t.find(by_id("sw")).state().contains(State::CHECKED));
     assert_eq!(
-        runtime_stats()
-            .faults
-            .get(twine_reactive::FaultKind::EffectLoopCut),
+        rt().stats().faults.get(twine_reactive::FaultKind::EffectLoopCut),
         0
     );
     t.assert_idle();
     // Signal → switch: one binding per widget reading it.
     on.set(true);
-    let runs = runtime_stats().effect_runs;
+    let runs = rt().stats().effect_runs;
     t.run_until_idle();
     assert_eq!(
-        runtime_stats().effect_runs - runs,
+        rt().stats().effect_runs - runs,
         3,
         "switch, checkbox and LED bindings"
     );

@@ -111,6 +111,7 @@ pub static GC9A01: PanelSpec = PanelSpec {
     colmod: 0x55,
     align: 1,
     sw_rotation: false,
+    brightness: false,
     invert: true,
     init: &GC9A01_INIT,
 };

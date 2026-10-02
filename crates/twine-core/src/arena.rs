@@ -446,6 +446,27 @@ impl<T> Arena<T> {
         self.slots.len()
     }
 
+    /// Heap bytes the arena's own storage reserves: the slot vector (each slot holds a `T`
+    /// inline plus its generation) and the two free-index lists, by capacity. Memory a `T`
+    /// owns elsewhere (a `Box` inside it) is not included, nor is allocator overhead: this is
+    /// what the arena asked the allocator for.
+    ///
+    /// Allocates nothing; never panics; O(1).
+    ///
+    /// ```
+    /// use twine_core::Arena;
+    /// let mut a: Arena<u64> = Arena::with_capacity(10);
+    /// let reserved = a.bytes_reserved();
+    /// assert!(reserved >= 10 * core::mem::size_of::<u64>());
+    /// a.insert(1).unwrap();
+    /// assert_eq!(a.bytes_reserved(), reserved); // within capacity: unchanged
+    /// ```
+    #[must_use]
+    pub fn bytes_reserved(&self) -> usize {
+        self.slots.capacity() * core::mem::size_of::<Slot<T>>()
+            + (self.free.capacity() + self.reserve.capacity()) * core::mem::size_of::<u16>()
+    }
+
     /// Number of **retired** slots: slots that served all 65 535 generations and are never
     /// reused (see the [generation budget](Self#generation-budget)). Each one is dead memory
     /// until the arena is dropped; a non-zero value on a device means the arena's working set

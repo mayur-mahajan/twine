@@ -10,6 +10,8 @@ use core::fmt;
 
 use twine_core::Point;
 
+use crate::DisplayInfo;
+
 /// The kind of an input device, which decides how the engine processes its data.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -330,6 +332,46 @@ pub trait InputDevice {
     /// See [`DeviceHealth`] for what the engine does with it.
     fn health(&self) -> DeviceHealth {
         DeviceHealth::Ok
+    }
+
+    /// Fits the device to the display it is registered for. The engine calls it once when the
+    /// device is added (`Engine::add_input`, hence `UiBuilder::input`), before the first
+    /// [`read`](Self::read), with that display's [`DisplayInfo`]. Default: no-op (keypads,
+    /// encoders, buttons, and pointers that already report logical coordinates).
+    ///
+    /// Touch drivers derive their coordinate mapping here — capacitive controllers a
+    /// [`TouchTransform::for_display`](crate::TouchTransform::for_display) composed with their
+    /// [`TouchMount`](crate::TouchMount), resistive ones the clamp size of their calibrated
+    /// points — so applications never derive native sizes or rotation tables by hand. Wrappers
+    /// forward it to the device they wrap, unless they deliberately want raw coordinates.
+    ///
+    /// Not on any per-frame path: it may take its time, but must not block on the bus.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Point, Rotation};
+    /// use twine_hal::{DisplayInfo, InputData, InputDevice, InputKind, PointerData, TouchTransform};
+    ///
+    /// /// A touch panel reporting native panel coordinates.
+    /// struct Touch { raw: (i32, i32), transform: TouchTransform }
+    /// impl InputDevice for Touch {
+    ///     fn kind(&self) -> InputKind { InputKind::Pointer }
+    ///     fn read(&mut self) -> InputData {
+    ///         let point = self.transform.apply(self.raw.0, self.raw.1);
+    ///         InputData::Pointer(PointerData { point, pressed: true })
+    ///     }
+    ///     fn fit_to_display(&mut self, info: &DisplayInfo) {
+    ///         self.transform = TouchTransform::for_display(info);
+    ///     }
+    /// }
+    ///
+    /// let mut t = Touch { raw: (10, 20), transform: TouchTransform::PASS_THROUGH };
+    /// // What the engine does when the device is added for a landscape 320 × 240 display:
+    /// t.fit_to_display(&DisplayInfo::new(320, 240, ColorFormat::Rgb565).with_rotation(Rotation::Deg90));
+    /// assert!(matches!(t.read(), InputData::Pointer(p) if p.point == Point::new(299, 10)));
+    /// ```
+    #[doc(alias = "lv_indev_set_display")]
+    fn fit_to_display(&mut self, info: &DisplayInfo) {
+        let _ = info;
     }
 }
 

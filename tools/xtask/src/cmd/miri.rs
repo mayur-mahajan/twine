@@ -22,11 +22,11 @@ pub const DEFAULT_CRATES: &[&str] = &["twine-reactive"];
 pub const DEFAULT_TESTS: &[(&str, &str)] = &[("twine-testing", "alloc_count")];
 
 /// Unit-test subsets also checked when no crates are given: `(crate, test name filter)`, run as
-/// `cargo miri test -p <crate> --lib -- <filter>` (an empty filter runs every unit test).
-/// `twine-view`'s `unsafe` is the `bind_to_current_context` forwarding of `twine-reactive`'s
-/// contract; its unit tests are light enough for Miri, its integration tests (rendering) are not.
-// NOTE(R3.S02): the safe runtime token removes that `unsafe`; `twine-view` then forbids it.
-pub const DEFAULT_FILTERED: &[(&str, &str)] = &[("twine-view", "")];
+/// `cargo miri test -p <crate> --lib -- <filter>` (an empty filter runs every unit test), for a
+/// crate whose `unsafe` is covered by light unit tests while its integration tests are too
+/// heavy for Miri. None at present: `twine-view` forbids `unsafe` since the safe runtime token
+/// (R3.S02) replaced its `bind_to_current_context` forwarding.
+pub const DEFAULT_FILTERED: &[(&str, &str)] = &[];
 
 /// Proptest cases per property under Miri (it is ~1000× slower than native).
 pub const PROPTEST_CASES: &str = "8";

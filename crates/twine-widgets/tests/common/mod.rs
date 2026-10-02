@@ -1,8 +1,6 @@
 //! Helpers shared by the widget tests.
 #![allow(dead_code)] // each test binary uses a subset
 
-use std::rc::Rc;
-
 use twine_engine::{NodeId, Widget, WidgetCx};
 use twine_testing::EngineHarness;
 use twine_theme::DefaultTheme;
@@ -31,7 +29,7 @@ pub fn harness(w: u16, h: u16, mode: Mode) -> EngineHarness {
         Mode::Light => DefaultTheme::light(),
         Mode::Dark => DefaultTheme::dark(),
     };
-    EngineHarness::new(w, h).theme(Rc::new(t))
+    EngineHarness::new(w, h).theme(t)
 }
 
 /// Calls a widget setter.

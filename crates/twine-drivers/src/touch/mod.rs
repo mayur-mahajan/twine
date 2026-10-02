@@ -32,9 +32,36 @@
 //!
 //! # Coordinates
 //!
-//! Capacitive controllers report panel coordinates; [`TouchTransform`] maps them to the logical
-//! screen (swap / mirror / clamp). Resistive controllers ([`Xpt2046`], [`Stmpe811`]) need a
-//! per-module [`Calibration`] instead.
+//! Capacitive controllers report panel coordinates; a [`TouchTransform`] maps them to the
+//! logical screen (swap / mirror / clamp). Every driver derives it **itself** from the display
+//! it is registered for ([`InputDevice::fit_to_display`](twine_hal::InputDevice::fit_to_display),
+//! called by the engine — `Ui::builder(..).input(touch)` — before the first read): the display's
+//! rotation and native size select the axes, so firmware never derives native sizes or rotation
+//! tables by hand. A touch panel glued with its axes swapped or mirrored relative to the display
+//! is described once with [`with_mount`](Ft6x36::with_mount) ([`TouchMount`]); it is composed
+//! with the display's transform at every fit. Drivers used without the engine call
+//! [`for_display`](Ft6x36::for_display) themselves; until fitted, a driver reports raw panel
+//! coordinates ([`TouchTransform::PASS_THROUGH`]).
+//!
+//! ```
+//! use twine_core::{ColorFormat, Rotation};
+//! use twine_drivers::NoPin;
+//! use twine_drivers::testkit::Recorder;
+//! use twine_drivers::touch::{Ft6x36, TouchMount, TouchTransform};
+//! use twine_hal::DisplayInfo;
+//!
+//! let rec = Recorder::new();
+//! let info = DisplayInfo::new(320, 240, ColorFormat::Rgb565Swapped).with_rotation(Rotation::Deg90);
+//! let touch = Ft6x36::new(rec.i2c(), None::<NoPin>)
+//!     .with_mount(TouchMount { mirror_x: true, ..TouchMount::ALIGNED })
+//!     .with_fail_after(5)
+//!     .for_display(&info); // what the engine does when the touch is added
+//! assert_eq!(touch.transform(), TouchTransform::for_display(&info).with_mount(TouchMount { mirror_x: true, ..TouchMount::ALIGNED }));
+//! ```
+//!
+//! Resistive controllers ([`Xpt2046`], [`Stmpe811`]) need a per-module [`Calibration`] (raw
+//! readings to logical screen coordinates) instead; fitting them to the display sets the screen
+//! size their points are clamped to.
 
 #[cfg(feature = "axs5106l")]
 #[cfg_attr(docsrs, doc(cfg(feature = "axs5106l")))]
@@ -58,8 +85,21 @@ pub mod stmpe811;
 #[cfg_attr(docsrs, doc(cfg(feature = "xpt2046")))]
 pub mod xpt2046;
 
+#[cfg(any(
+    feature = "ft6x36",
+    feature = "gt911",
+    feature = "stmpe811",
+    feature = "cst816s",
+    feature = "axs5106l"
+))]
 use twine_core::Point;
-use twine_hal::Rotation;
+#[cfg(any(
+    feature = "ft6x36",
+    feature = "gt911",
+    feature = "cst816s",
+    feature = "axs5106l"
+))]
+use twine_hal::DisplayInfo;
 #[cfg(any(
     feature = "ft6x36",
     feature = "gt911",
@@ -85,124 +125,125 @@ pub use ft6x36::{Ft6x36, FtModel};
 pub use gt911::Gt911;
 #[cfg(feature = "stmpe811")]
 pub use stmpe811::Stmpe811;
-pub use twine_hal::Calibration;
+pub use twine_hal::{Calibration, TouchMount, TouchTransform};
 #[cfg(feature = "xpt2046")]
 pub use xpt2046::Xpt2046;
 
-/// Maps raw panel coordinates of a capacitive controller to logical screen coordinates.
-///
-/// Applied in this order: swap X/Y, mirror X (`width − 1 − x`), mirror Y, clamp to
-/// `width × height` (the **logical** screen size).
-///
-/// ```
-/// use twine_core::Point;
-/// use twine_drivers::touch::TouchTransform;
-///
-/// let t = TouchTransform { swap_xy: true, invert_x: true, invert_y: false, width: 320, height: 240 };
-/// // Panel point (10, 20) → swap (20, 10) → mirror x (299, 10).
-/// assert_eq!(t.apply(10, 20), Point::new(299, 10));
-/// assert_eq!(t.apply(-5, 1000), Point::new(0, 0)); // clamped
-/// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct TouchTransform {
-    /// Swap the raw X and Y axes.
-    pub swap_xy: bool,
-    /// Mirror X after the swap.
-    pub invert_x: bool,
-    /// Mirror Y after the swap.
-    pub invert_y: bool,
-    /// Logical screen width.
-    pub width: u16,
-    /// Logical screen height.
-    pub height: u16,
+/// The coordinate mapping of a capacitive touch driver: the display's transform (set when the
+/// driver is fitted) composed with the panel's [`TouchMount`].
+#[cfg(any(
+    feature = "ft6x36",
+    feature = "gt911",
+    feature = "cst816s",
+    feature = "axs5106l"
+))]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PanelMap {
+    /// The aligned panel's transform of the display last fitted to (`None`: not fitted yet).
+    display: Option<TouchTransform>,
+    mount: TouchMount,
+    /// `display` composed with `mount`; the only field read per sample.
+    transform: TouchTransform,
 }
 
-impl TouchTransform {
-    /// No swap or mirroring, clamped to `width × height`.
-    #[must_use]
-    pub const fn identity(width: u16, height: u16) -> Self {
+#[cfg(any(
+    feature = "ft6x36",
+    feature = "gt911",
+    feature = "cst816s",
+    feature = "axs5106l"
+))]
+impl PanelMap {
+    pub const fn new() -> Self {
         Self {
-            swap_xy: false,
-            invert_x: false,
-            invert_y: false,
-            width,
-            height,
+            display: None,
+            mount: TouchMount::ALIGNED,
+            transform: TouchTransform::PASS_THROUGH,
         }
     }
 
-    /// The transform matching the display rotation for a touch panel aligned with a
-    /// `native_w × native_h` display. Software rotation and the `MADCTL` tables of this crate
-    /// turn the picture the same way, so this holds for both. (A touch panel mounted mirrored
-    /// relative to the display needs `invert_x`/`invert_y` flipped.)
-    #[must_use]
-    pub const fn for_rotation(rotation: Rotation, native_w: u16, native_h: u16) -> Self {
-        match rotation {
-            Rotation::Deg0 => Self::identity(native_w, native_h),
-            Rotation::Deg90 => Self {
-                swap_xy: true,
-                invert_x: true,
-                invert_y: false,
-                width: native_h,
-                height: native_w,
-            },
-            Rotation::Deg180 => Self {
-                swap_xy: false,
-                invert_x: true,
-                invert_y: true,
-                width: native_w,
-                height: native_h,
-            },
-            Rotation::Deg270 => Self {
-                swap_xy: true,
-                invert_x: false,
-                invert_y: true,
-                width: native_h,
-                height: native_w,
-            },
-        }
+    /// Fits the mapping to `info` (keeps the mount).
+    pub fn fit(&mut self, info: &DisplayInfo) {
+        self.display = Some(TouchTransform::for_display(info));
+        self.update();
     }
 
-    /// The same transform for a touch panel whose raw X axis runs opposite to the display's
-    /// native columns (raw `x` becomes `native_w − 1 − x` before the rotation). Use it after
-    /// [`for_rotation`](Self::for_rotation) or [`identity`](Self::identity): it flips whichever
-    /// logical mirror the raw X axis ends up on (`invert_x`, or `invert_y` when the axes are
-    /// swapped).
-    ///
-    /// ```
-    /// use twine_core::Point;
-    /// use twine_hal::Rotation;
-    /// use twine_drivers::touch::TouchTransform;
-    ///
-    /// let t = TouchTransform::for_rotation(Rotation::Deg0, 172, 320).with_raw_mirror_x();
-    /// assert_eq!(t.apply(0, 5), Point::new(171, 5));
-    /// let t = TouchTransform::for_rotation(Rotation::Deg270, 172, 320).with_raw_mirror_x();
-    /// assert_eq!(t.apply(10, 20), Point::new(20, 10)); // swap only
-    /// ```
-    #[must_use]
-    pub const fn with_raw_mirror_x(mut self) -> Self {
-        if self.swap_xy {
-            self.invert_y = !self.invert_y;
-        } else {
-            self.invert_x = !self.invert_x;
-        }
-        self
+    /// Sets the mount (applied now if already fitted, else at the fit).
+    pub fn set_mount(&mut self, mount: TouchMount) {
+        self.mount = mount;
+        self.update();
     }
 
-    /// Transforms a raw point.
-    #[must_use]
-    pub fn apply(&self, x: i32, y: i32) -> Point {
-        let (mut x, mut y) = if self.swap_xy { (y, x) } else { (x, y) };
-        let (w, h) = (i32::from(self.width.max(1)), i32::from(self.height.max(1)));
-        if self.invert_x {
-            x = w - 1 - x;
-        }
-        if self.invert_y {
-            y = h - 1 - y;
-        }
-        Point::new(x.clamp(0, w - 1), y.clamp(0, h - 1))
+    fn update(&mut self) {
+        self.transform = match self.display {
+            Some(d) => d.with_mount(self.mount),
+            None => TouchTransform::PASS_THROUGH,
+        };
+    }
+
+    pub const fn transform(&self) -> TouchTransform {
+        self.transform
+    }
+
+    #[inline]
+    pub fn apply(&self, x: u16, y: u16) -> Point {
+        self.transform.apply(i32::from(x), i32::from(y))
     }
 }
+
+/// The builder methods of the coordinate mapping, for a capacitive driver with a
+/// `map: PanelMap` field (`$ty`: the driver's name, for the examples).
+#[cfg(any(
+    feature = "ft6x36",
+    feature = "gt911",
+    feature = "cst816s",
+    feature = "axs5106l"
+))]
+macro_rules! panel_map_methods {
+    ($ty:ident) => {
+        /// Describes how the touch panel's raw axes sit on the display's native axes (default
+        /// [`TouchMount::ALIGNED`](twine_hal::TouchMount::ALIGNED)). Composed with the display's
+        /// rotation whenever the driver is fitted, so set it once, in any order with
+        /// [`for_display`](Self::for_display). Never panics.
+        ///
+        #[doc = concat!("```\nuse twine_core::{ColorFormat, Point};\nuse twine_drivers::NoPin;\nuse twine_drivers::testkit::Recorder;\nuse twine_drivers::touch::{", stringify!($ty), ", TouchMount};\nuse twine_hal::DisplayInfo;\n\nlet rec = Recorder::new();\nlet info = DisplayInfo::new(172, 320, ColorFormat::Rgb565Swapped);\nlet touch = ", stringify!($ty), "::new(rec.i2c(), None::<NoPin>)\n    .with_mount(TouchMount { mirror_x: true, ..TouchMount::ALIGNED })\n    .for_display(&info);\nassert_eq!(touch.transform().apply(0, 5), Point::new(171, 5)); // raw X runs right to left\n```")]
+        #[must_use]
+        pub fn with_mount(mut self, mount: ::twine_hal::TouchMount) -> Self {
+            self.map.set_mount(mount);
+            self
+        }
+
+        /// Fits the coordinate mapping to the display described by `info` (its rotation, native
+        /// and logical size), composed with the [`with_mount`](Self::with_mount) mount. The
+        /// engine does this when the driver is added (`Ui::builder(..).input(touch)`,
+        /// `Engine::add_input`) through
+        /// [`InputDevice::fit_to_display`](twine_hal::InputDevice::fit_to_display); call it
+        /// yourself only when you read the driver without the engine. Never panics.
+        ///
+        #[doc = concat!("```\nuse twine_core::{ColorFormat, Point, Rotation};\nuse twine_drivers::NoPin;\nuse twine_drivers::testkit::Recorder;\nuse twine_drivers::touch::", stringify!($ty), ";\nuse twine_hal::DisplayInfo;\n\nlet rec = Recorder::new();\n// A 240 × 320 panel turned to landscape.\nlet info = DisplayInfo::new(320, 240, ColorFormat::Rgb565Swapped).with_rotation(Rotation::Deg90);\nlet touch = ", stringify!($ty), "::new(rec.i2c(), None::<NoPin>).for_display(&info);\nassert_eq!(touch.transform().apply(10, 20), Point::new(299, 10));\n```")]
+        #[must_use]
+        pub fn for_display(mut self, info: &::twine_hal::DisplayInfo) -> Self {
+            self.map.fit(info);
+            self
+        }
+
+        /// The current mapping of raw panel coordinates to the logical screen
+        /// ([`TouchTransform::PASS_THROUGH`](twine_hal::TouchTransform::PASS_THROUGH) until the
+        /// driver is fitted to a display).
+        ///
+        #[doc = concat!("```\nuse twine_drivers::NoPin;\nuse twine_drivers::testkit::Recorder;\nuse twine_drivers::touch::{", stringify!($ty), ", TouchTransform};\n\nlet rec = Recorder::new();\nlet touch = ", stringify!($ty), "::new(rec.i2c(), None::<NoPin>);\nassert_eq!(touch.transform(), TouchTransform::PASS_THROUGH);\n```")]
+        #[must_use]
+        pub fn transform(&self) -> ::twine_hal::TouchTransform {
+            self.map.transform()
+        }
+    };
+}
+#[cfg(any(
+    feature = "ft6x36",
+    feature = "gt911",
+    feature = "cst816s",
+    feature = "axs5106l"
+))]
+pub(crate) use panel_map_methods;
 
 /// Noise filter of resistive controllers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -395,7 +436,13 @@ pub(crate) mod test_util {
     use core::cell::RefCell;
 
     use crate::mock::Recorder;
-    use twine_hal::{DeviceHealth, InputData, InputDevice, PointerData};
+    use twine_core::ColorFormat;
+    use twine_hal::{DeviceHealth, DisplayInfo, InputData, InputDevice, PointerData};
+
+    /// An unrotated `w × h` display to fit a driver to (identity transform clamped to it).
+    pub fn display(w: u16, h: u16) -> DisplayInfo {
+        DisplayInfo::new(w, h, ColorFormat::Rgb565Swapped)
+    }
 
     /// Takes a touch driver that reads pressed from `rec` through a dead bus and back:
     /// the last good sample is held while degraded, released once failed (and while it stays
@@ -468,70 +515,6 @@ pub(crate) mod test_util {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn transform_swap_invert() {
-        let id = TouchTransform::identity(100, 50);
-        assert_eq!(id.apply(10, 20), Point::new(10, 20));
-        assert_eq!(id.apply(200, 60), Point::new(99, 49));
-        let t = TouchTransform {
-            swap_xy: false,
-            invert_x: true,
-            invert_y: true,
-            width: 100,
-            height: 50,
-        };
-        assert_eq!(t.apply(0, 0), Point::new(99, 49));
-        let t = TouchTransform {
-            swap_xy: true,
-            invert_x: false,
-            invert_y: true,
-            width: 50,
-            height: 100,
-        };
-        assert_eq!(t.apply(10, 20), Point::new(20, 89));
-    }
-
-    #[test]
-    fn for_rotation_matches_software_rotation() {
-        // The engine maps logical (x, y) to physical (y, w − 1 − x) for 90° (w = logical width).
-        let (nw, nh) = (240u16, 320u16);
-        for rot in [
-            Rotation::Deg0,
-            Rotation::Deg90,
-            Rotation::Deg180,
-            Rotation::Deg270,
-        ] {
-            let t = TouchTransform::for_rotation(rot, nw, nh);
-            let (lw, lh) = (i32::from(t.width), i32::from(t.height));
-            for (x, y) in [(0, 0), (5, 7), (lw - 1, lh - 1), (lw / 2, 3)] {
-                let phys = twine_core::Rect::from_xywh(x, y, 1, 1).rotate_in(rot, lw, lh);
-                assert_eq!(t.apply(phys.x0, phys.y0), Point::new(x, y), "{rot:?} ({x}, {y})");
-            }
-        }
-    }
-
-    #[test]
-    fn raw_mirror_x_matches_mirrored_panel() {
-        // A panel whose raw x is mirrored: raw (x, y) is native (nw − 1 − x, y).
-        let (nw, nh) = (172u16, 320u16);
-        for rot in [
-            Rotation::Deg0,
-            Rotation::Deg90,
-            Rotation::Deg180,
-            Rotation::Deg270,
-        ] {
-            let straight = TouchTransform::for_rotation(rot, nw, nh);
-            let mirrored = straight.with_raw_mirror_x();
-            for (x, y) in [(0, 0), (5, 7), (171, 319), (86, 3)] {
-                assert_eq!(
-                    mirrored.apply(i32::from(nw) - 1 - x, y),
-                    straight.apply(x, y),
-                    "{rot:?} ({x}, {y})"
-                );
-            }
-        }
-    }
 
     #[test]
     fn median3_values() {

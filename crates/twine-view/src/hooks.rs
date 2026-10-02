@@ -9,11 +9,9 @@ use core::cell::{Cell, RefCell};
 use twine_anim::{Anim, AnimId, AnimSpec, EASING_ONE, Interpolate, Motion, TimerId};
 use twine_core::Duration;
 use twine_engine::{
-    DisplayId, Engine, EventCode, EventFilter, EventResult, NodeId, ThemeHook, ThemeMode, Widget,
+    DisplayId, Engine, EventCode, EventFilter, EventResult, IntoTheme, NodeId, ThemeHook, ThemeMode, Widget,
 };
-use twine_reactive::{
-    ReadSignal, Scope, Signal, StoredValue, batch, defer_current_effect, dispose_current_effect, untrack,
-};
+use twine_reactive::{ReadSignal, Scope, Signal, StoredValue};
 use twine_style::design::{Element, ElementType};
 
 use crate::access::{EngineAccess, no_engine};
@@ -106,20 +104,21 @@ pub(crate) fn display_of(cx: Scope, e: &Engine) -> Option<DisplayId> {
 /// the `Ui` builds or runs), else at the next effect flush of the `Ui`. Nothing happens if
 /// `cx` is disposed before.
 pub(crate) fn with_engine_once(cx: Scope, f: impl FnOnce(&mut Engine) + 'static) {
+    let rt = cx.runtime();
     let mut f = Some(f);
     cx.effect_with_cx(move |_: &mut dyn Any| {
         let Some(g) = f.take() else { return };
         let mut g = Some(g);
-        let ran = EngineAccess::with(|e| {
+        let ran = EngineAccess::with(rt, |e| {
             if let Some(g) = g.take() {
                 g(e);
             }
         });
         if ran.is_some() {
-            dispose_current_effect();
+            rt.dispose_current_effect();
         } else {
             f = g.take();
-            defer_current_effect();
+            rt.defer_current_effect();
         }
     });
 }
@@ -181,7 +180,7 @@ impl core::fmt::Debug for AnimController {
 impl AnimController {
     /// Runs `op` now with the engine, or queues it for the next update of the `Ui`.
     fn control(self, op: AnimOp) {
-        if EngineAccess::with(|e| self.apply(e, op)).is_none() {
+        if EngineAccess::with(self.state.runtime(), |e| self.apply(e, op)).is_none() {
             if let Some(cx) = self.state.try_with(|s| s.cx) {
                 defer(cx, EngineCmd::anim(self, op));
             }
@@ -274,7 +273,9 @@ impl AnimController {
     #[cfg_attr(debug_assertions, track_caller)]
     pub fn is_playing(&self) -> bool {
         let id = self.id();
-        let playing = EngineAccess::with(|e| id.is_some_and(|id| e.anim_exists(id) && !e.anim_is_paused(id)));
+        let playing = EngineAccess::with(self.state.runtime(), |e| {
+            id.is_some_and(|id| e.anim_exists(id) && !e.anim_is_paused(id))
+        });
         if let Some(p) = playing {
             p
         } else {
@@ -299,28 +300,14 @@ pub struct ThemeHandle {
 }
 
 impl ThemeHandle {
-    /// Installs `theme` (every node is re-styled; the display is redrawn once). At once inside
-    /// handlers, effects and timers run by the `Ui`; called elsewhere (between updates) it is
-    /// queued and takes effect at the start of the next `Ui::update`.
+    /// Installs `theme` — a theme value or a shared one ([`IntoTheme`]: e.g. an
+    /// `Rc<dyn ThemeHook>` kept to switch back to) — on the scope's display (every node is
+    /// re-styled; the display is redrawn once). At once inside handlers, effects and timers
+    /// run by the `Ui`; called elsewhere (between updates) it is queued and takes effect at
+    /// the start of the next `Ui::update`.
     /// Never panics. Cost: O(nodes of the display) (see
     /// [`Engine::set_theme`](twine_engine::Engine::set_theme)); for light/dark switching prefer
     /// [`set_mode`](Self::set_mode).
-    ///
-    /// ```
-    /// use twine_view::prelude::*;
-    ///
-    /// fn app(cx: Scope) -> impl View {
-    ///     let theme = use_theme(cx);
-    ///     button(label("Simple")).on_click(move || theme.set(SimpleTheme::builder().build()))
-    /// }
-    /// # let _ = app;
-    /// ```
-    pub fn set(&self, theme: impl ThemeHook + 'static) {
-        self.set_rc(Rc::new(theme));
-    }
-
-    /// [`set`](Self::set) with the theme already shared.
-    /// For a theme shared with other displays or kept to switch back to. Never panics.
     ///
     /// ```
     /// use std::rc::Rc;
@@ -328,16 +315,24 @@ impl ThemeHandle {
     /// use twine_view::prelude::*;
     ///
     /// fn app(cx: Scope) -> impl View {
-    ///     let dark: Rc<dyn ThemeHook> = Rc::new(DefaultTheme::dark());
     ///     let theme = use_theme(cx);
-    ///     button(label("Dark")).on_click(move || theme.set_rc(dark.clone()))
+    ///     let dark: Rc<dyn ThemeHook> = Rc::new(DefaultTheme::dark()); // shared, reused
+    ///     row((
+    ///         button(label("Simple")).on_click(move || theme.set(SimpleTheme::builder().build())),
+    ///         button(label("Dark")).on_click(move || theme.set(dark.clone())),
+    ///     ))
     /// }
     /// # let _ = app;
     /// ```
-    pub fn set_rc(&self, theme: Rc<dyn ThemeHook>) {
+    pub fn set(&self, theme: impl IntoTheme) {
+        self.set_shared(theme.into_theme());
+    }
+
+    /// [`set`](Self::set) after the conversion (one copy of the body in the binary).
+    fn set_shared(self, theme: Rc<dyn ThemeHook>) {
         let cx = self.cx;
         let mut theme = Some(theme);
-        EngineAccess::with(|e| {
+        EngineAccess::with(self.cx, |e| {
             if let (Some(d), Some(t)) = (display_of(cx, e), theme.take()) {
                 e.set_theme(d, t);
             }
@@ -370,7 +365,7 @@ impl ThemeHandle {
     /// ```
     pub fn set_mode(&self, mode: ThemeMode) {
         let cx = self.cx;
-        let applied = EngineAccess::with(|e| {
+        let applied = EngineAccess::with(self.cx, |e| {
             if let Some(d) = display_of(cx, e) {
                 e.set_theme_mode(d, mode);
             }
@@ -399,7 +394,7 @@ impl ThemeHandle {
         if let Some(ui) = self.cx.use_context::<UiContext>() {
             return ui.theme.with(|s| s.mode);
         }
-        EngineAccess::with(|e| e.default_display().map(|d| e.theme_mode(d)))
+        EngineAccess::with(self.cx, |e| e.default_display().map(|d| e.theme_mode(d)))
             .flatten()
             .unwrap_or_default()
     }
@@ -423,7 +418,7 @@ impl ThemeHandle {
         if let Some(ui) = self.cx.use_context::<UiContext>() {
             return ui.theme.with(|s| s.modes);
         }
-        EngineAccess::with(|e| e.default_display().map(|d| e.theme_modes(d)))
+        EngineAccess::with(self.cx, |e| e.default_display().map(|d| e.theme_modes(d)))
             .flatten()
             .unwrap_or(&[])
     }
@@ -452,7 +447,10 @@ impl ThemeHandle {
         if let Some(ui) = cx.use_context::<UiContext>() {
             ui.theme.with(|_| ());
         }
-        EngineAccess::with(|e| display_of(cx, e).and_then(|d| e.design_value(d, element))).flatten()
+        EngineAccess::with(self.cx, |e| {
+            display_of(cx, e).and_then(|d| e.design_value(d, element))
+        })
+        .flatten()
     }
 }
 
@@ -494,7 +492,7 @@ impl MotionHandle {
         if let Some(ui) = self.cx.use_context::<UiContext>() {
             return ui.motion.get();
         }
-        EngineAccess::with(|e| e.motion()).unwrap_or_default()
+        EngineAccess::with(self.cx, |e| e.motion()).unwrap_or_default()
     }
 
     /// Sets the motion preference ([`Engine::set_motion`]): animations started from now on
@@ -519,7 +517,7 @@ impl MotionHandle {
         if let Some(ui) = cx.use_context::<UiContext>() {
             ui.motion.set_if_changed(motion);
         }
-        if EngineAccess::with(|e| e.set_motion(motion)).is_none() {
+        if EngineAccess::with(self.cx, |e| e.set_motion(motion)).is_none() {
             defer(cx, EngineCmd::set_motion(motion));
         }
     }
@@ -695,7 +693,8 @@ impl ScopeExt for Scope {
         spec: impl Into<AnimSpec>,
     ) -> ReadSignal<T> {
         let spec = spec.into();
-        let init = untrack(&source);
+        let rt = self.runtime();
+        let init = rt.untrack(&source);
         let out = self.signal(init);
         let st = Rc::new(RefCell::new(Tween {
             anim: None,
@@ -722,7 +721,7 @@ impl ScopeExt for Scope {
             }
             let from = out.get_untracked();
             let st2 = st.clone();
-            let started = EngineAccess::with(|e| {
+            let started = EngineAccess::with(rt, |e| {
                 {
                     let mut s = st.borrow_mut();
                     s.from = from;
@@ -749,14 +748,14 @@ impl ScopeExt for Scope {
                         let s = st2.borrow();
                         (s.from, s.to)
                     };
-                    EngineAccess::provide(e, || out.set_if_changed(T::lerp(a, b, v)));
+                    EngineAccess::provide(rt, e, || out.set_if_changed(T::lerp(a, b, v)));
                 });
                 let mut s = st.borrow_mut();
                 s.anim = Some(id);
                 s.motion = e.motion();
             });
             if started.is_none() {
-                defer_current_effect();
+                rt.defer_current_effect();
             }
         });
         out.read_only()
@@ -768,10 +767,11 @@ impl ScopeExt for Scope {
         to: T,
         spec: impl Into<AnimSpec>,
     ) -> (ReadSignal<T>, AnimController) {
+        let rt = self.runtime();
         let out = self.signal(from);
         let apply: ApplyFn = Rc::new(move |e: &mut Engine, v: i32| {
             if out.is_alive() {
-                EngineAccess::provide(e, || out.set_if_changed(T::lerp(from, to, v)));
+                EngineAccess::provide(rt, e, || out.set_if_changed(T::lerp(from, to, v)));
             }
         });
         let ctl = AnimController {
@@ -831,6 +831,7 @@ impl ScopeExt for Scope {
 /// An engine timer calling `f` (inside a batch, with the engine lent) while `cx` lives;
 /// `repeat`: number of runs (`None`: forever).
 fn add_timer(cx: Scope, period: Duration, repeat: Option<u32>, f: Box<dyn FnMut()>) {
+    let rt = cx.runtime();
     let id: Rc<Cell<Option<TimerId>>> = Rc::default();
     let id2 = id.clone();
     let f = Rc::new(RefCell::new(f));
@@ -841,7 +842,7 @@ fn add_timer(cx: Scope, period: Duration, repeat: Option<u32>, f: Box<dyn FnMut(
                 return;
             }
             let f = f.clone();
-            EngineAccess::provide(e, || batch(|| (f.borrow_mut())()));
+            EngineAccess::provide(rt, e, || rt.batch(|| (f.borrow_mut())()));
         });
         if repeat.is_some() {
             e.timer_set_repeat_count(t, repeat);
@@ -850,7 +851,7 @@ fn add_timer(cx: Scope, period: Duration, repeat: Option<u32>, f: Box<dyn FnMut(
     });
     cx.on_cleanup(move || {
         if let Some(t) = id.take() {
-            if EngineAccess::with(|e| e.timer_remove(t)).is_none() {
+            if EngineAccess::with(rt, |e| e.timer_remove(t)).is_none() {
                 defer(cx, EngineCmd::timer_remove(t));
             }
         }
@@ -869,7 +870,8 @@ fn forward(spec: AnimSpec) -> AnimSpec {
 /// Stops animation `id` of scope `cx` now, or at the next update of the `Ui` when the engine
 /// is not lent (a scope disposed outside `Ui::update`).
 fn stop_anim(cx: Scope, id: AnimId) {
-    if EngineAccess::with(|e| e.anim_stop(id)).is_none() {
+    let rt = cx.runtime();
+    if EngineAccess::with(rt, |e| e.anim_stop(id)).is_none() {
         defer(cx, EngineCmd::anim_stop(id));
     }
 }

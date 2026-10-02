@@ -9,12 +9,19 @@ use twine_view::EngineAccess;
 use twine_view::prelude::*;
 use twine_widgets::label::Label;
 
+use twine_reactive::Runtime;
+
+/// The calling thread's reactive runtime.
+fn rt() -> Runtime {
+    Runtime::current_thread()
+}
+
 /// Builds `seq` under the screen of a fresh harness; returns the harness and the texts of the
 /// screen's children in order.
 fn build_seq(seq: impl ViewSeq) -> (EngineHarness, Vec<String>) {
     let mut h = EngineHarness::new(200, 100);
     let screen = h.screen();
-    let scope = twine_reactive::create_root();
+    let scope = rt().create_root();
     let mut cx = BuildCx::new(h.engine_mut(), screen, scope);
     cx.build_seq(seq);
     let texts = texts(h.engine(), screen);
@@ -106,7 +113,7 @@ fn ops_run_after_create_before_children() {
 fn on_delete_runs_when_node_deleted() {
     let mut h = EngineHarness::new(100, 100);
     let screen = h.screen();
-    let scope = twine_reactive::create_root();
+    let scope = rt().create_root();
     let ran = Rc::new(RefCell::new(0));
     let node = {
         let mut cx = BuildCx::new(h.engine_mut(), screen, scope);
@@ -115,7 +122,7 @@ fn on_delete_runs_when_node_deleted() {
         cx.on_delete(n, move || {
             *r.borrow_mut() += 1;
             // The engine is lent to the callback.
-            assert!(EngineAccess::available());
+            assert!(EngineAccess::available(Runtime::current_thread()));
         });
         n
     };

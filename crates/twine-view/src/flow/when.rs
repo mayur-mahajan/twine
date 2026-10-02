@@ -5,7 +5,7 @@ use alloc::rc::Rc;
 use core::cell::{Cell, RefCell};
 
 use twine_engine::{NodeId, fmt_node_id};
-use twine_reactive::{Scope, defer_current_effect, dispose_current_effect, untrack};
+use twine_reactive::Scope;
 
 use super::{WHEN_CLASS, Wrapper, delete_children, dispose_with};
 use crate::access::EngineAccess;
@@ -108,6 +108,7 @@ fn build_switch(
         return wrapper; // not created (reported); nothing to keep up to date
     }
     let scope = cx.scope();
+    let rt = scope.runtime();
     let memo = scope.memo(cond);
     let content: Rc<RefCell<Option<Scope>>> = Rc::default();
     let c = content.clone();
@@ -123,16 +124,16 @@ fn build_switch(
             if last.get() == Some(on) {
                 return;
             }
-            match EngineAccess::with(|e| e.tree().contains(wrapper)) {
-                None => return defer_current_effect(),
-                Some(false) => return dispose_current_effect(),
+            match EngineAccess::with(rt, |e| e.tree().contains(wrapper)) {
+                None => return rt.defer_current_effect(),
+                Some(false) => return rt.dispose_current_effect(),
                 Some(true) => {}
             }
             last.set(Some(on));
             twine_core::debug!(target: "twine::view", "when {}: branch {}", fmt_node_id(wrapper), on);
-            untrack(|| {
+            rt.untrack(|| {
                 let old = content.borrow_mut().take();
-                EngineAccess::with(|e| {
+                EngineAccess::with(rt, |e| {
                     if let Some(s) = old {
                         dispose_with(e, s);
                     }
@@ -141,7 +142,7 @@ fn build_switch(
                 let child = scope.child();
                 *content.borrow_mut() = Some(child);
                 if let Some(view) = make(child, on) {
-                    EngineAccess::with(|e| {
+                    EngineAccess::with(rt, |e| {
                         let mut bcx = BuildCx::new(e, wrapper, child);
                         view.build(&mut bcx);
                     });

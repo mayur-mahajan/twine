@@ -52,6 +52,7 @@ pub static ILI9342C: PanelSpec = PanelSpec {
     colmod: 0x55,
     align: 1,
     sw_rotation: false,
+    brightness: false,
     invert: true,
     init: &ILI9342_INIT,
 };

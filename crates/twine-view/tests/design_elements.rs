@@ -240,7 +240,7 @@ fn switching_modes_allocates_nothing_after_warm_up() {
 fn unsupported_mode_is_ignored() {
     // The simple theme has no dark mode (light and high contrast only).
     let mut t = TestUi::new(100, 100)
-        .theme(Rc::new(SimpleTheme::new()))
+        .theme(SimpleTheme::new())
         .mount(|_| container(()).size(10, 10).bg(design::SURFACE).test_id("c"));
     t.run_until_idle();
     assert_eq!(

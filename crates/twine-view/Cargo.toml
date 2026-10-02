@@ -25,11 +25,12 @@ std = [
     "twine-text/std",
     "twine-image/std",
     "twine-render/std",
+    "twine-vector?/std",
 ]
 ## The async runtime `AsyncUi` (`Ui::builder_async`) for `AsyncDisplayDriver`s: frames are
 ## rendered chunk by chunk while the previous chunk is transferred (DMA). Run it with
-## `twine-embassy`.
-async = ["twine-hal/async"]
+## `twine-embassy`. Also enables `Outbox::recv` (`twine-reactive/async`).
+async = ["twine-hal/async", "twine-reactive/async"]
 ## `vector_canvas`: vector graphics redrawn from signals (`twine-vector`).
 vector = ["dep:twine-vector", "twine-widgets-ext/vector"]
 ## SVG images (`image(ImageSource::Svg(..))`, `.svg_cache`).
@@ -48,6 +49,7 @@ log = [
     "twine-text/log",
     "twine-image/log",
     "twine-render/log",
+    "twine-vector?/log",
 ]
 ## Log through `defmt`.
 defmt = [
@@ -64,6 +66,7 @@ defmt = [
     "twine-text/defmt",
     "twine-image/defmt",
     "twine-render/defmt",
+    "twine-vector?/defmt",
 ]
 
 [dependencies]
@@ -90,10 +93,16 @@ defmt = { version = "1", optional = true }
 twine-view = { path = ".", features = ["std", "log", "vector"] }
 twine-engine = { path = "../twine-engine", features = ["std", "debug-checks", "color-rgb565"] }
 twine-testing = { path = "../twine-testing", features = ["debug-checks"] }
+twine-hal = { path = "../twine-hal", features = ["platform-std"] }
+# `debug-checks`: the interrupt-context assertion of the runtime (tests/platform.rs).
+twine-reactive = { path = "../twine-reactive", features = ["std", "debug-checks"] }
 twine-theme = { path = "../twine-theme" }
 twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-20"] }
 critical-section = { version = "1", features = ["std"] }
 proptest = "1"
+# A real touch driver on a recording bus: fitted to the display by the builder, its health
+# reported through the `Ui` (tests/input_setup.rs).
+twine-drivers = { path = "../twine-drivers", features = ["ft6x36", "xpt2046", "testkit"] }
 trybuild = "1"
 log = "0.4"
 twine-vector = { path = "../twine-vector" }

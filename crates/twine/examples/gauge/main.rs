@@ -12,8 +12,6 @@
 #[allow(dead_code)]
 mod gauge;
 
-use std::rc::Rc;
-
 use gauge::{GAUGE_CLASS, INDICATOR, NEEDLE, gauge, style_gauge};
 use twine::prelude::*;
 use twine_sim::SimConfig;
@@ -60,11 +58,5 @@ fn app(cx: Scope) -> impl View {
 
 fn main() {
     let theme = DefaultTheme::builder().class(&GAUGE_CLASS, style_gauge).build();
-    twine_sim::run(
-        SimConfig::new(320, 240)
-            .title("Gauge")
-            .scale(2)
-            .theme(Rc::new(theme)),
-        app,
-    );
+    twine_sim::run(SimConfig::new(320, 240).title("Gauge").scale(2).theme(theme), app);
 }

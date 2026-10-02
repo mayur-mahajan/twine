@@ -187,7 +187,7 @@ fn application_overrides_are_checked_too() {
 /// is logged, nothing panics; supported modes switch.
 #[test]
 fn unsupported_mode_keeps_the_current_mode_and_warns() {
-    let mut h = EngineHarness::new(64, 48).theme(Rc::new(SimpleTheme::new()));
+    let mut h = EngineHarness::new(64, 48).theme(SimpleTheme::new());
     h.run_until_idle();
     let d = h.display();
     let epoch = h.engine().design_epoch(d);

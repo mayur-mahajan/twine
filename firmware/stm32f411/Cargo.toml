@@ -16,23 +16,23 @@ feature-sets = ["", "panel-st7789,touch-ft6x36,demo-controls", "panel-ili9341,to
 [features]
 default = ["panel-ili9341", "touch-xpt2046", "demo-counter"]
 ## ILI9341 240 × 320 SPI panel (turned to 320 × 240).
-panel-ili9341 = ["spi-panel", "twine-drivers/ili9341"]
+panel-ili9341 = ["spi-panel", "twine/drivers-ili9341"]
 ## ILI9342C 320 × 240 SPI panel (landscape native).
-panel-ili9342 = ["spi-panel", "twine-drivers/ili9342"]
+panel-ili9342 = ["spi-panel", "twine/drivers-ili9342"]
 ## ST7789 240 × 320 SPI panel (turned to 320 × 240).
-panel-st7789 = ["spi-panel", "twine-drivers/st7789"]
+panel-st7789 = ["spi-panel", "twine/drivers-st7789"]
 ## ST7796S 320 × 480 SPI panel (turned to 480 × 320).
-panel-st7796 = ["spi-panel", "twine-drivers/st7796"]
+panel-st7796 = ["spi-panel", "twine/drivers-st7796"]
 ## SSD1306 128 × 64 mono OLED on the I2C pins of the capacitive touch (no touch; mono theme).
-oled-ssd1306 = ["twine-drivers/ssd1306", "twine-drivers/i2c", "twine/color-i1"]
+oled-ssd1306 = ["twine/drivers-ssd1306", "twine/drivers-i2c"]
 ## XPT2046 resistive touch on its own SPI bus.
-touch-xpt2046 = ["touch", "twine-drivers/xpt2046"]
+touch-xpt2046 = ["touch", "twine/drivers-xpt2046"]
 ## FT6x36 capacitive touch on I2C.
-touch-ft6x36 = ["touch", "i2c-touch", "twine-drivers/ft6x36"]
+touch-ft6x36 = ["touch", "i2c-touch", "twine/drivers-ft6x36"]
 ## GT911 capacitive touch on I2C.
-touch-gt911 = ["touch", "i2c-touch", "twine-drivers/gt911"]
+touch-gt911 = ["touch", "i2c-touch", "twine/drivers-gt911"]
 ## CST816S capacitive touch on I2C.
-touch-cst816s = ["touch", "i2c-touch", "twine-drivers/cst816s"]
+touch-cst816s = ["touch", "i2c-touch", "twine/drivers-cst816s"]
 ## The counter demo.
 demo-counter = []
 ## The controls demo (sliders, switches, arcs, spinner).
@@ -47,9 +47,7 @@ touch = []
 i2c-touch = []
 
 [dependencies]
-twine = { path = "../../crates/twine", default-features = false, features = ["defmt", "color-rgb565-swapped", "perf-monitor", "montserrat-20"] }
-twine-drivers = { path = "../../crates/twine-drivers", features = ["async", "defmt"] }
-twine-embassy = { path = "../../crates/twine-embassy", features = ["defmt"] }
+twine = { path = "../../crates/twine", default-features = false, features = ["defmt", "perf-monitor", "montserrat-20", "embassy"] }
 twine-demos = { path = "../../crates/twine-demos", features = ["async", "defmt"] }
 
 embassy-stm32 = { version = "0.6", features = ["stm32f411ce", "time-driver-any", "memory-x", "exti", "unstable-pac", "defmt"] }

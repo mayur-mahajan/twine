@@ -19,11 +19,11 @@ barcode = ["dep:twine-render", "dep:thiserror"]
 ## Translations (`i18n::Translations`, `provide_i18n`, `tr!`, `translations!`).
 i18n = ["dep:twine-view", "dep:twine-reactive", "dep:critical-section", "dep:heapless"]
 ## std-only conveniences.
-std = ["twine-core/std"]
+std = ["twine-core/std", "twine-reactive?/std", "twine-render?/std", "twine-view?/std"]
 ## Log through the `log` crate.
-log = ["twine-core/log", "twine-render?/log", "twine-view?/log"]
+log = ["twine-core/log", "twine-render?/log", "twine-view?/log", "twine-reactive?/log"]
 ## Log through `defmt` and derive `defmt::Format` on public types.
-defmt = ["dep:defmt", "twine-core/defmt", "twine-render?/defmt", "twine-view?/defmt"]
+defmt = ["dep:defmt", "twine-core/defmt", "twine-render?/defmt", "twine-view?/defmt", "twine-reactive?/defmt"]
 
 [dependencies]
 twine-core = { path = "../twine-core" }

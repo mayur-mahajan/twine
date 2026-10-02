@@ -1,9 +1,10 @@
 //! Touch calibration: [`Calibration`], a 3-point affine mapping from raw touch-controller
-//! coordinates to screen pixels.
+//! coordinates to the display's native (unrotated) pixels.
 
 /// A 3-point affine touch calibration.
 ///
-/// Maps raw controller coordinates `(x, y)` to screen coordinates:
+/// Maps raw controller coordinates `(x, y)` to **native panel coordinates** — the pixels of the
+/// display at [`Rotation::Deg0`](crate::Rotation::Deg0), whatever rotation it runs in:
 ///
 /// ```text
 /// x' = (a·x + b·y + c) / div
@@ -15,7 +16,12 @@
 /// raw values (they are products of three coordinates).
 ///
 /// Resistive panels (XPT2046, STMPE811) need a calibration per module: show three targets, read
-/// the raw coordinates and call [`from_points`](Self::from_points).
+/// the raw coordinates and call [`from_points`](Self::from_points) with the targets' **native**
+/// positions (a target drawn at a logical point `p` of a rotated display is at
+/// `TouchTransform::for_display(&info).inverse().apply(p)`). The drivers map the calibrated
+/// native point to the logical screen with the display's
+/// [`TouchTransform`](crate::TouchTransform) when they are fitted to it, so one calibration
+/// stays valid in every rotation, also when the display is rotated at run time.
 ///
 /// ```
 /// use twine_hal::Calibration;
@@ -61,19 +67,30 @@ impl Calibration {
         div: 1,
     };
 
-    /// A typical calibration of the common 2.8" ILI9341 + XPT2046 module in landscape
-    /// (`Rotation::Deg90`, 320 × 240): raw Y (≈ 3900…200) runs along the screen's x axis, raw
-    /// X (≈ 3900…200) along its y axis.
+    /// A typical calibration of the common 2.8" ILI9341 + XPT2046 module, in the panel's
+    /// native 240 × 320 portrait coordinates: raw X (≈ 3900…200) runs along the native x
+    /// axis (reversed), raw Y (≈ 200…3900) along the native y axis. Valid in every rotation
+    /// (landscape `Rotation::Deg90` is the usual one).
     ///
     /// Every module differs by tens of pixels (and some mount the touch film mirrored);
     /// calibrate each device with [`from_points`](Self::from_points) for accurate touch.
-    pub const DEFAULT_320X240_ROT90: Self = Self {
-        a: 0,
-        b: -320,
-        c: 320 * 3900,
-        d: -240,
-        e: 0,
-        f: 240 * 3900,
+    ///
+    /// A constant: [`apply`](Self::apply) with it never panics (its coefficients cannot
+    /// overflow the `i64` arithmetic for any `i32` raw point).
+    ///
+    /// ```
+    /// use twine_hal::Calibration;
+    /// let c = Calibration::DEFAULT_240X320;
+    /// assert_eq!(c.apply(3900, 200), (0, 0)); // the native top-left corner
+    /// assert_eq!(c.apply(200, 3900), (240, 320));
+    /// ```
+    pub const DEFAULT_240X320: Self = Self {
+        a: -240,
+        b: 0,
+        c: 240 * 3900,
+        d: 0,
+        e: 320,
+        f: -320 * 200,
         div: 3700,
     };
 
@@ -149,10 +166,16 @@ mod tests {
     }
 
     #[test]
-    fn default_rot90_maps_corners_roughly() {
-        let c = Calibration::DEFAULT_320X240_ROT90;
-        assert_eq!(c.apply(3900, 3900), (0, 0));
-        assert_eq!(c.apply(200, 200), (320, 240));
+    fn default_maps_native_corners() {
+        let c = Calibration::DEFAULT_240X320;
+        assert_eq!(c.apply(3900, 200), (0, 0));
+        assert_eq!(c.apply(200, 3900), (240, 320));
+        // In landscape (Deg90) the raw corners land on the logical corners, as on the module.
+        let t = crate::TouchTransform::for_rotation(crate::Rotation::Deg90, 240, 320);
+        let (x, y) = c.apply(3900, 3900);
+        assert_eq!(t.apply(x, y), twine_core::Point::new(0, 0));
+        let (x, y) = c.apply(200, 200);
+        assert_eq!(t.apply(x, y), twine_core::Point::new(319, 239));
     }
 
     #[test]

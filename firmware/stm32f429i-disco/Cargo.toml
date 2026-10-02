@@ -42,16 +42,13 @@ no-dma2d = []
 # NOTE(P20.S10): `demo-data-widgets` is added once the data_widgets demo exists (Phase 20).
 
 [dependencies]
-twine = { path = "../../crates/twine", default-features = false, features = ["defmt", "color-rgb565", "perf-monitor", "montserrat-20"] }
-twine-drivers = { path = "../../crates/twine-drivers", features = ["stmpe811", "defmt"] }
+twine = { path = "../../crates/twine", default-features = false, features = ["defmt", "color-rgb565", "perf-monitor", "montserrat-20", "drivers-stmpe811", "embassy"] }
 twine-accel-stm32 = { path = "../../crates/twine-accel-stm32", features = ["stm32f429zi", "defmt"] }
-twine-embassy = { path = "../../crates/twine-embassy", features = ["defmt"] }
 twine-demos = { path = "../../crates/twine-demos", features = ["defmt"] }
 
 embassy-stm32 = { version = "0.6", features = ["stm32f429zi", "time-driver-any", "exti", "unstable-pac", "defmt"] }
 embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread", "defmt"] }
 embassy-time = { version = "0.5", features = ["defmt", "defmt-timestamp-uptime"] }
-embassy-futures = "0.1"
 cortex-m = { version = "0.7", features = ["critical-section-single-core", "inline-asm"] }
 cortex-m-rt = "0.7"
 embedded-hal = "1"

@@ -99,11 +99,19 @@ pub enum FaultKind {
     /// Record: `display` set (the display whose chunk was redrawn); `code` = `0`;
     /// `occurrences` = the number of timed-out operations in that chunk.
     AccelTimeout = 9,
+    /// A display control (brightness, sleep, wake, rotation) requested from the engine was
+    /// not applied: the driver does not support it, the driver failed, or a rotation does
+    /// not fit the display's buffers. The display keeps its previous state (except that a
+    /// display put to sleep stops being drawn even when its driver cannot sleep).
+    ///
+    /// Record: `display` set; `code` = the `twine_engine::DisplayControlFault` code (which
+    /// control, and why).
+    DisplayControl = 10,
 }
 
 impl FaultKind {
     /// Every kind, in [`index`](Self::index) order.
-    pub const ALL: [FaultKind; 10] = [
+    pub const ALL: [FaultKind; 11] = [
         FaultKind::FlushError,
         FaultKind::FlushTimeout,
         FaultKind::EffectLoopCut,
@@ -114,6 +122,7 @@ impl FaultKind {
         FaultKind::InputDevice,
         FaultKind::ChannelOverflow,
         FaultKind::AccelTimeout,
+        FaultKind::DisplayControl,
     ];
 
     /// The number of kinds (the length of per-kind tables such as fault counters).
@@ -164,6 +173,7 @@ impl FaultKind {
             FaultKind::InputDevice => "InputDevice",
             FaultKind::ChannelOverflow => "ChannelOverflow",
             FaultKind::AccelTimeout => "AccelTimeout",
+            FaultKind::DisplayControl => "DisplayControl",
         }
     }
 
