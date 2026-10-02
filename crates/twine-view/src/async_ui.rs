@@ -98,6 +98,24 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> core::fmt::Debug for AsyncUiBuild
 impl Ui {
     /// A builder for an async display ([`AsyncUi`]): partial buffers (two for DMA overlap),
     /// flushed through `display` chunk by chunk.
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let ui = Ui::builder_async(Panel)
+    ///     .buffers(BufferMode::partial_double(buf(), buf())) // DMA overlap
+    ///     .clock(MockClock::new())
+    ///     .build(|_| label("hi"));
+    /// assert!(ui.display_health().is_some());
+    /// ```
     pub fn builder_async<D: AsyncDisplayDriver + 'static>(display: D) -> AsyncUiBuilder<D> {
         let info = display.info();
         AsyncUiBuilder {
@@ -112,12 +130,48 @@ impl Ui {
 impl<D: AsyncDisplayDriver + 'static, W: AsyncInputWait + 'static> AsyncUiBuilder<D, W> {
     /// The draw buffers: [`BufferMode::partial_double`] (render one chunk while the other is
     /// transferred) or [`BufferMode::partial_single`]. Required.
+    /// Without buffers, [`try_build`](Self::try_build) fails; with a buffer mode other than
+    /// `Partial` it fails with [`EngineError::BufferModeMismatch`].
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let ui = Ui::builder_async(Panel)
+    ///     .buffers(BufferMode::partial_single(buf()))
+    ///     .clock(MockClock::new())
+    ///     .build(|_| label("hi"));
+    /// # let _ = ui;
+    /// ```
     pub fn buffers(mut self, m: BufferMode) -> Self {
         self.buffers = Some(m);
         self
     }
 
     /// Adds an input device read by the engine (see [`UiBuilder::input`]).
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// use twine_testing::MockPointer;
+    /// let ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).input(MockPointer::new()).build(|_| label("hi"));
+    /// assert_eq!(ui.engine().inputs().count(), 1);
+    /// ```
     pub fn input(mut self, d: impl InputDevice + 'static) -> Self {
         self.inner = self.inner.input(d);
         self
@@ -125,6 +179,41 @@ impl<D: AsyncDisplayDriver + 'static, W: AsyncInputWait + 'static> AsyncUiBuilde
 
     /// Adds the input device whose interrupt wakes the sleeping UI (e.g. a touch controller
     /// with its IRQ pin); it is also read by the engine like [`input`](Self::input).
+    /// The device implements both [`InputDevice`] and [`AsyncInputWait`]; the `AsyncUi` waits
+    /// for its interrupt in [`AsyncUi::wait_input`].
+    ///
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// use twine_hal::{AsyncInputWait, InputData, InputDevice, InputKind};
+    /// use twine_testing::MockPointer;
+    ///
+    /// /// A touch controller whose interrupt line wakes the UI.
+    /// struct Touch(MockPointer);
+    /// impl InputDevice for Touch {
+    ///     fn kind(&self) -> InputKind { self.0.kind() }
+    ///     fn read(&mut self) -> InputData { self.0.read() }
+    /// }
+    /// impl AsyncInputWait for Touch {
+    ///     async fn wait_for_interrupt(&mut self) { /* await the IRQ pin */ }
+    /// }
+    ///
+    /// let ui = Ui::builder_async(Panel)
+    ///     .buffers(BufferMode::partial_single(buf()))
+    ///     .clock(MockClock::new())
+    ///     .input_wait(Touch(MockPointer::new()))
+    ///     .build(|_| label("hi"));
+    /// assert_eq!(ui.engine().inputs().count(), 1);
+    /// ```
     pub fn input_wait<T: InputDevice + AsyncInputWait + 'static>(self, d: T) -> AsyncUiBuilder<D, T> {
         let shared = Rc::new(RefCell::new(d));
         AsyncUiBuilder {
@@ -136,18 +225,70 @@ impl<D: AsyncDisplayDriver + 'static, W: AsyncInputWait + 'static> AsyncUiBuilde
     }
 
     /// The clock (required).
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let clock = MockClock::new();
+    /// let ui = Ui::builder_async(Panel)
+    ///     .buffers(BufferMode::partial_single(buf()))
+    ///     .clock(clock.clone())
+    ///     .build(|_| label("hi"));
+    /// clock.advance(Duration::ms(5));
+    /// assert_eq!(ui.now(), Instant::from_millis(5));
+    /// ```
     pub fn clock(mut self, c: impl Clock + 'static) -> Self {
         self.inner = self.inner.clock(c);
         self
     }
 
     /// The theme of the display.
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).theme(DefaultTheme::dark()).build(|_| label("hi"));
+    /// # let _ = ui;
+    /// ```
     pub fn theme(mut self, t: impl ThemeHook + 'static) -> Self {
         self.inner = self.inner.theme(t);
         self
     }
 
     /// The engine configuration.
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// use twine_engine::EngineConfig;
+    /// let config = EngineConfig { max_nodes: 256, ..EngineConfig::default() };
+    /// let ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).config(config).build(|_| label("hi"));
+    /// assert_eq!(ui.engine().config().max_nodes, 256);
+    /// ```
     pub fn config(mut self, c: EngineConfig) -> Self {
         self.inner = self.inner.config(c);
         self
@@ -155,14 +296,94 @@ impl<D: AsyncDisplayDriver + 'static, W: AsyncInputWait + 'static> AsyncUiBuilde
 
     /// The `AsyncUi`'s waker, the application's own instead of a pooled one (see
     /// [`UiBuilder::waker`]).
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// static WAKER: UiWaker = UiWaker::new();
+    /// let ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).waker(&WAKER).build(|_| label("hi"));
+    /// assert!(core::ptr::eq(ui.waker(), &WAKER));
+    /// ```
     pub fn waker(mut self, waker: &'static UiWaker) -> Self {
         self.inner = self.inner.waker(waker);
         self
     }
 
     /// The function called for every fault (see [`UiBuilder::fault_hook`]).
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// fn on_fault(r: &FaultRecord) {
+    ///     let _ = r; // e.g. count it, or signal a supervisor through a `static`
+    /// }
+    /// let ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).fault_hook(on_fault).build(|_| label("hi"));
+    /// # let _ = ui;
+    /// ```
     pub fn fault_hook(mut self, hook: FaultHook) -> Self {
         self.inner = self.inner.fault_hook(hook);
+        self
+    }
+
+    /// How many engine commands the `AsyncUi` can queue while the engine is not lent (see
+    /// [`UiBuilder::engine_queue_capacity`]): a full queue drops the command and raises a
+    /// [`FaultKind::Capacity`] fault with code
+    /// [`CapacityFault::EngineQueue`](crate::CapacityFault::EngineQueue); `0` drops (and
+    /// reports) every such command.
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).engine_queue_capacity(64).build(|_| label("hi"));
+    /// # let _ = ui;
+    /// ```
+    pub fn engine_queue_capacity(mut self, capacity: usize) -> Self {
+        self.inner = self.inner.engine_queue_capacity(capacity);
+        self
+    }
+
+    /// The initial motion preference (see [`UiBuilder::motion`]).
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).motion(Motion::Reduced).build(|_| label("hi"));
+    /// assert_eq!(ui.engine().motion(), Motion::Reduced);
+    /// ```
+    pub fn motion(mut self, motion: twine_anim::Motion) -> Self {
+        self.inner = self.inner.motion(motion);
         self
     }
 
@@ -188,6 +409,22 @@ impl<D: AsyncDisplayDriver + 'static, W: AsyncInputWait + 'static> AsyncUiBuilde
     /// [`EngineError::BufferModeMismatch`] for non-partial buffers; the engine's errors for the
     /// display and inputs. [`UiError::Build`]: a widget of `app` could not be created (see
     /// [`UiBuilder::try_build`](crate::UiBuilder::try_build)).
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let no_buffers = Ui::builder_async(Panel).clock(MockClock::new()).try_build(|_| label("hi"));
+    /// assert!(no_buffers.is_err());
+    /// assert!(Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).try_build(|_| label("hi")).is_ok());
+    /// ```
     pub fn try_build<V: View>(mut self, app: impl FnOnce(Scope) -> V) -> Result<AsyncUi<D, W>, UiError> {
         let (a, b) = match self.buffers.take() {
             Some(BufferMode::Partial { a, b }) => (a, b),
@@ -221,6 +458,21 @@ impl<D: AsyncDisplayDriver + 'static, W: AsyncInputWait + 'static> AsyncUiBuilde
     /// # Panics
     /// Without a clock or buffers, when the engine rejects the display or inputs, or when a
     /// widget of `app` cannot be created.
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).build(|_| label("hi"));
+    /// # let _ = ui;
+    /// ```
     pub fn build<V: View>(self, app: impl FnOnce(Scope) -> V) -> AsyncUi<D, W> {
         match self.try_build(app) {
             Ok(ui) => ui,
@@ -253,10 +505,7 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> core::fmt::Debug for AsyncUi<D, W
 
 impl<D: AsyncDisplayDriver, W: AsyncInputWait> Drop for AsyncUi<D, W> {
     fn drop(&mut self) {
-        let root = self.core.root_scope();
-        if root.is_alive() {
-            crate::access::EngineAccess::provide(&mut self.engine, || root.dispose());
-        }
+        self.core.shut_down(&mut self.engine);
     }
 }
 
@@ -275,6 +524,27 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
     /// One update (see [`UiCore::update`]), then the frame, if one is due: rendered chunk by
     /// chunk, each chunk's flush started before the next chunk renders. Returns when to run
     /// again.
+    /// Never panics; a failed flush is reported to the engine ([`FaultKind::FlushError`],
+    /// [`Engine::report_flush`]) and its area redrawn later.
+    ///
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let mut ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).build(|_| label("hi"));
+    /// let mut update = core::pin::pin!(ui.update_async());
+    /// // Any executor works; this panel's flush completes at once, so one poll finishes the frame.
+    /// let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+    /// assert!(update.as_mut().poll(&mut cx).is_ready());
+    /// ```
     pub async fn update_async(&mut self) -> Wake {
         let now = self.clock.now();
         let wake = self.core.update(&mut self.engine, now);
@@ -361,6 +631,27 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
     /// interrupt (never without one, and never while the engine is still polling it — e.g. a
     /// pressed touch screen, which the engine reads on its own deadline); tells the next update
     /// to read the inputs.
+    /// ```no_run
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// async fn run(mut ui: AsyncUi<Panel>) -> ! {
+    ///     loop {
+    ///         let _wake = ui.update_async().await;
+    ///         // A real loop races this with a timer for `_wake` and with `ui.waker()`
+    ///         // (`twine-embassy` implements it); here it sleeps until the next interrupt.
+    ///         ui.wait_input().await;
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// (`no_run`: it needs an executor and an interrupt-driven input.)
     #[allow(clippy::await_holding_refcell_ref)] // see below: the borrow never overlaps a read
     pub async fn wait_input(&mut self) {
         match &self.wait {
@@ -376,51 +667,193 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
 
     /// The waker, set by channel sends and input notifications (`'static`, usable from
     /// interrupts and other tasks).
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).build(|_| label("hi"));
+    /// let waker: &'static UiWaker = ui.waker(); // e.g. handed to an interrupt handler
+    /// waker.wake();
+    /// ```
     #[must_use]
     pub fn waker(&self) -> &'static UiWaker {
         self.core.waker()
     }
 
     /// Tells the next update that an input device changed.
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).build(|_| label("hi"));
+    /// ui.notify_input(); // e.g. from the input task, after a touch interrupt
+    /// ```
     pub fn notify_input(&self) {
         self.core.notify_input();
     }
 
     /// The current time of the UI clock.
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).build(|_| label("hi"));
+    /// assert_eq!(ui.now(), Instant::from_millis(0));
+    /// ```
     #[must_use]
     pub fn now(&self) -> Instant {
         self.clock.now()
     }
 
     /// The engine.
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).build(|_| label("hi"));
+    /// assert!(ui.engine().default_display().is_some());
+    /// ```
     #[must_use]
     pub fn engine(&self) -> &Engine {
         &self.engine
     }
 
     /// The engine, mutably.
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let mut ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).build(|_| label("hi"));
+    /// ui.engine_mut().set_motion(Motion::Reduced);
+    /// ```
     pub fn engine_mut(&mut self) -> &mut Engine {
         &mut self.engine
     }
 
     /// The faults raised since the last call, clearing them (see [`Ui::take_faults`]).
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let mut ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).build(|_| label("hi"));
+    /// ui.engine_mut().raise_fault(FaultRecord::new(FaultKind::Capacity));
+    /// assert!(ui.take_faults().contains(FaultKind::Capacity));
+    /// assert!(ui.take_faults().is_empty());
+    /// ```
     pub fn take_faults(&mut self) -> Faults {
         self.core.take_faults(&mut self.engine)
     }
 
     /// Occurrences of every fault kind since start-up (see [`Ui::fault_counts`]).
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let mut ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).build(|_| label("hi"));
+    /// ui.engine_mut().raise_fault(FaultRecord::new(FaultKind::Capacity).occurrences(2));
+    /// assert_eq!(ui.fault_counts().get(FaultKind::Capacity), 2);
+    /// ```
     #[must_use]
     pub fn fault_counts(&self) -> FaultCounts {
         self.engine.fault_counts()
     }
 
     /// The last record of `kind` (see [`Ui::last_fault`]).
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let mut ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).build(|_| label("hi"));
+    /// ui.engine_mut().raise_fault(FaultRecord::new(FaultKind::FlushTimeout).code(500));
+    /// assert_eq!(ui.last_fault(FaultKind::FlushTimeout).map(|r| r.code), Some(500));
+    /// ```
     #[must_use]
     pub fn last_fault(&self, kind: FaultKind) -> Option<&FaultRecord> {
         self.engine.last_fault(kind)
     }
 
     /// Sets the function called for every fault (see [`Ui::set_fault_hook`]).
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockClock;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// fn on_fault(_: &FaultRecord) {}
+    /// let mut ui = Ui::builder_async(Panel).buffers(BufferMode::partial_single(buf())).clock(MockClock::new()).build(|_| label("hi"));
+    /// ui.set_fault_hook(Some(on_fault));
+    /// ui.set_fault_hook(None); // removed
+    /// ```
     pub fn set_fault_hook(&mut self, hook: Option<FaultHook>) {
         self.engine.set_fault_hook(hook);
     }

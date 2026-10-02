@@ -18,9 +18,12 @@
 //! | [`init_test_logging`], [`capture_logs`] | `env_logger` for tests, capturing log records |
 //!
 //! Harness tiers selected by features (so lower crates can test before higher crates exist):
-//! `render` ([`RenderHarness`] over the renderer), `engine` (`EngineHarness` over a bare
-//! engine, plus `MockDmaDisplay` and `MockFramebufferDisplay`), `ui` (default, `TestUi` over
-//! the declarative UI).
+//!
+//! | Feature | Items |
+//! |---------|-------|
+//! | `render` | [`RenderHarness`] over the renderer; [`gallery`]: the renderer's reference drawings (pages of the `render_gallery` example and the renderer snapshot tests) |
+//! | `engine` | [`EngineHarness`] over a bare engine, [`MockDmaDisplay`], [`MockFramebufferDisplay`]; [`scenes`]: reference engine scenes (`engine_boxes`, `scroll_list`, …) shared by tests, benchmarks and examples |
+//! | `ui` (default) | [`TestUi`] over the declarative UI |
 //!
 //! ```
 //! use twine_core::{Color, ColorFormat, Rect};
@@ -42,6 +45,8 @@ pub mod clock;
 pub mod convert;
 #[cfg(feature = "engine")]
 pub mod engine_harness;
+#[cfg(feature = "render")]
+pub mod gallery;
 pub mod logging;
 pub mod memory_display;
 #[cfg(feature = "engine")]
@@ -69,7 +74,7 @@ pub mod logs {
 
 pub use clock::MockClock;
 #[cfg(feature = "engine")]
-pub use engine_harness::{EngineHarness, FbMode, Query, StepFn, by_class, by_id, by_text};
+pub use engine_harness::{EngineHarness, FbMode, Query, StepFn, TeardownFn, by_class, by_id, by_text};
 pub use logging::{CapturedLog, capture_logs, init_test_logging};
 pub use memory_display::{FlushRecord, MemoryDisplay, MemoryDisplayError, leak_buffer};
 #[cfg(feature = "engine")]

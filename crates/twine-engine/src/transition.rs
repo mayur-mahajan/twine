@@ -3,29 +3,36 @@
 //! `trans_anim_completed_cb`, `remove_trans_styles`; LVGL 9.6).
 //!
 //! When a rendered node changes state, every style entry that applies in the new state and
-//! sets the `Transition` property contributes its [`TransitionDsc`] (for equal properties of
-//! the same part, the entry with the higher or equal state weight found first wins). For each
-//! property whose value differs between the old and the new state (transitions ignored), the
+//! sets the `transition` property contributes its [`Transition`]: its [`Props`], or — for
+//! [`Transition::all`] — the interpolable properties set by the entries of the part that start
+//! or stop applying with the change (bitsets: O(properties) per state change). For a property
+//! of a part covered by several transitions, the entry with the higher state weight wins (the
+//! first found among equal weights). For each property whose value differs between the old and
+//! the new state (transitions ignored), the
 //! current value (transitions included, so a running transition continues smoothly) is written
 //! into the node's transition style of that part — one [`EntryKind::Transition`] entry per
-//! part, consulted before every other style — and an animation `0 → 255` (the descriptor's
-//! duration, delay and easing, no early apply) mixes it towards the new value with
+//! part, consulted before every other style — and an animation `0 → 255` (the transition's
+//! [`AnimSpec`](twine_anim::AnimSpec) forward play, adjusted to the engine's
+//! [`Motion`](twine_anim::Motion) preference like every animation; with `Motion::None` no
+//! transition is created) mixes it towards the new value with
 //! [`interpolate`]. When the animation starts (after its delay) it re-reads the current value
 //! and cancels older transitions of the same property; when it completes the property leaves
 //! the transition style, whose entry is removed once empty.
 //!
 //! Steady state allocates nothing (P4): the animations carry the transition's serial as an
 //! [`AnimTarget::Custom`] target (no boxed closures or callbacks; the start is noticed at the
-//! first value, the end when the animation has left the timeline), and the emptied
-//! transition style buffers go to a small pool that the next transition reuses.
+//! first value, the end when the animation has left the timeline), the emptied transition
+//! style buffers go to a small pool that the next transition reuses, and a transition built at
+//! run time (`.transition(Transition::all(..))` on a view) was created once at build time and
+//! is only read here.
 
 use alloc::rc::Rc;
 use alloc::vec::Vec;
 
-use twine_anim::{Anim, AnimId, AnimTarget};
+use twine_anim::{Anim, AnimId, AnimSpec, AnimTarget, Motion, Repeat};
 use twine_style::{
-    EntryKind, Part, PropId, ResolveOptions, Selector, State, StyleBuf, StyleEntry, StyleProp, StyleRef,
-    StyleValue, TransitionDsc, interpolate, resolve_with,
+    EntryKind, Part, PropId, Props, ResolveOptions, Selector, State, StyleBuf, StyleEntry, StyleProp,
+    StyleRef, StyleValue, TracksRef, Transition, interpolate, resolve_with,
 };
 
 use crate::{Engine, NodeId, fmt_node_id};
@@ -37,9 +44,37 @@ const STYLE_TRANSITION_MAX: usize = 32;
 /// Emptied transition style buffers kept for reuse (more are freed).
 const TRANS_POOL_MAX: usize = 8;
 
+/// Maximum number of style entries with a `transition` property considered in one state
+/// change (more are ignored with a warning; a theme uses two, a view adds one or two).
+const TRANSITION_ENTRIES_MAX: usize = 8;
+
+/// Maximum number of parts tracked in one state change.
+const PARTS_MAX: usize = 8;
+
+/// A set of properties per part (no allocation; at most [`PARTS_MAX`] parts).
+#[derive(Default)]
+struct PartProps(heapless::Vec<(Part, Props), PARTS_MAX>);
+
+impl PartProps {
+    fn get(&self, part: Part) -> Props {
+        self.0
+            .iter()
+            .find(|(p, _)| *p == part)
+            .map_or(Props::EMPTY, |(_, s)| *s)
+    }
+
+    fn add(&mut self, part: Part, props: Props) {
+        if let Some((_, s)) = self.0.iter_mut().find(|(p, _)| *p == part) {
+            *s |= props;
+        } else if self.0.push((part, props)).is_err() {
+            twine_core::warn!(target: "twine::style", "transition: more than {} parts in one state change", PARTS_MAX);
+        }
+    }
+}
+
 /// A running transition (LVGL `trans_t`).
 #[derive(Clone, Copy, Debug)]
-struct Transition {
+struct Running {
     /// Creation order (newer transitions have larger serials).
     serial: u32,
     node: NodeId,
@@ -55,7 +90,7 @@ struct Transition {
 /// The engine's running transitions.
 #[derive(Debug, Default)]
 pub(crate) struct TransState {
-    list: Vec<Transition>,
+    list: Vec<Running>,
     next_serial: u32,
     /// Empty transition style buffers for reuse (no allocation per state change).
     pool: Vec<Rc<StyleBuf>>,
@@ -71,38 +106,85 @@ impl Engine {
         }
         // Items are drawn in their own states without transitions.
         let items = n.class().item_parts;
-        let mut ts: heapless::Vec<(Part, State, PropId, &'static TransitionDsc), STYLE_TRANSITION_MAX> =
-            heapless::Vec::new();
-        'entries: for e in n.styles.entries() {
-            if e.kind == EntryKind::Transition
-                || e.selector.state.bits() & !new.bits() != 0
-                || items.contains(&e.selector.part)
-            {
+        let applies = |e: &StyleEntry, s: State| e.selector.state_matches(s);
+        // The entries with a transition that apply in the new state: (part, selector weight =
+        // state precedence, style). The style is shared (a reference count), so its transition stays readable
+        // while the transitions are created.
+        let mut cands: heapless::Vec<(Part, u16, StyleRef), TRANSITION_ENTRIES_MAX> = heapless::Vec::new();
+        let mut derived = false;
+        for e in n.styles.entries() {
+            if e.kind == EntryKind::Transition || !applies(e, new) || items.contains(&e.selector.part) {
                 continue;
             }
-            let Some(StyleValue::Transition(tr)) = e.style.get(PropId::Transition) else {
+            let Some(t) = e.style.get_transition() else {
                 continue;
             };
-            let (part, state) = (e.selector.part, e.selector.state);
-            for &p in tr.props {
-                // A property of the same part from an entry with a higher or equal state
-                // weight is already there (LVGL keeps the first such entry).
-                if ts.iter().any(|&(tp, ts_state, tprop, _)| {
-                    tprop == p && tp == part && ts_state.bits() >= state.bits()
-                }) {
-                    continue;
-                }
-                if ts.push((part, state, p, tr)).is_err() {
-                    break 'entries;
+            derived |= t.props.is_none();
+            if cands
+                .push((e.selector.part, e.selector.weight(), e.style.clone()))
+                .is_err()
+            {
+                twine_core::warn!(
+                    target: "twine::style",
+                    "{}: more than {} transitions in one state change, the rest ignored",
+                    fmt_node_id(id),
+                    TRANSITION_ENTRIES_MAX
+                );
+                break;
+            }
+        }
+        if cands.is_empty() {
+            return;
+        }
+        // What the change alters, per part: the keys of the entries that start or stop
+        // applying (only needed for `Transition::all`).
+        let mut changed = PartProps::default();
+        if derived {
+            for e in n.styles.entries() {
+                if e.kind != EntryKind::Transition
+                    && applies(e, prev) != applies(e, new)
+                    && !items.contains(&e.selector.part)
+                {
+                    changed.add(e.selector.part, e.style.keys());
                 }
             }
         }
-        for (part, _, prop, dsc) in ts {
-            self.create_transition(id, part, prev, new, prop, dsc);
+        // Higher state precedence first; equal weights keep the entries' order (insertion sort:
+        // a handful of entries, stable, no allocation).
+        for i in 1..cands.len() {
+            let mut j = i;
+            while j > 0 && cands[j - 1].1 < cands[j].1 {
+                cands.swap(j - 1, j);
+                j -= 1;
+            }
+        }
+        let motion = self.anim.motion;
+        let mut claimed = PartProps::default();
+        let mut started = 0;
+        for (part, _, style) in &cands {
+            let Some(t) = style.get_transition() else { continue };
+            let props = t.animated(changed.get(*part)) - claimed.get(*part);
+            claimed.add(*part, props);
+            // No motion: the new values apply at once (essential transitions still run).
+            if motion == Motion::None && !t.spec.essential {
+                continue;
+            }
+            for prop in props.iter() {
+                if prop == PropId::Transition {
+                    continue;
+                }
+                if started == STYLE_TRANSITION_MAX {
+                    return;
+                }
+                if self.create_transition(id, *part, prev, new, prop, t) {
+                    started += 1;
+                }
+            }
         }
     }
 
-    /// LVGL `lv_obj_style_create_transition`.
+    /// LVGL `lv_obj_style_create_transition`. Returns whether a transition was started (the
+    /// value changes).
     fn create_transition(
         &mut self,
         id: NodeId,
@@ -110,30 +192,22 @@ impl Engine {
         prev: State,
         new: State,
         prop: PropId,
-        dsc: &'static TransitionDsc,
-    ) {
+        t: &Transition,
+    ) -> bool {
         let defaults = self.style_defaults();
         let at = |state, skip_transitions| ResolveOptions {
             state: Some(state),
             skip_transitions,
         };
-        // Density-independent lengths are converted first, so a transition interpolates pixels.
-        let v1 = self.dp_to_px(
-            id,
-            resolve_with(&self.tree, id, part, prop, &defaults, at(prev, true)),
-        );
-        let mut v2 = self.dp_to_px(
-            id,
-            resolve_with(&self.tree, id, part, prop, &defaults, at(new, true)),
-        );
+        // The resolver converts density-independent lengths, so a transition interpolates
+        // pixels.
+        let v1 = resolve_with(&*self, id, part, prop, &defaults, at(prev, true));
+        let mut v2 = resolve_with(&*self, id, part, prop, &defaults, at(new, true));
         if v1 == v2 {
-            return;
+            return false;
         }
         // The value shown right now (a running transition included): no jump.
-        let mut v1 = self.dp_to_px(
-            id,
-            resolve_with(&self.tree, id, part, prop, &defaults, at(prev, false)),
-        );
+        let mut v1 = resolve_with(&*self, id, part, prop, &defaults, at(prev, false));
         self.trans_style_set(id, part, prop, v1);
         self.refresh_style(id, part, Some(prop));
         if prop == PropId::Radius {
@@ -151,10 +225,13 @@ impl Engine {
         }
         let serial = self.trans.next_serial;
         self.trans.next_serial = serial.wrapping_add(1);
-        let anim = Anim::new(0, 255)
-            .duration(dsc.duration)
-            .delay(dsc.delay)
-            .easing(dsc.easing)
+        // A transition plays its forward play once.
+        let spec = AnimSpec {
+            repeat: Repeat::ONCE,
+            playback: None,
+            ..t.spec
+        };
+        let anim = Anim::with_spec(0, 255, spec)
             .early_apply(false)
             .target(AnimTarget::Custom(serial));
         let aid = self.anim_start_target(anim);
@@ -166,9 +243,9 @@ impl Engine {
             prop,
             v1,
             v2,
-            dsc.duration
+            spec.duration
         );
-        self.trans.list.push(Transition {
+        self.trans.list.push(Running {
             serial,
             node: id,
             part,
@@ -178,6 +255,7 @@ impl Engine {
             anim: aid,
             started: false,
         });
+        true
     }
 
     /// Applies progress `v` (`0..=255`) of transition `serial` (ignored when it was cancelled
@@ -286,6 +364,9 @@ impl Engine {
     /// Sets `prop = value` in the transition style of `part` of `id` (created when missing).
     /// Returns whether the style changed.
     fn trans_style_set(&mut self, id: NodeId, part: Part, prop: PropId, value: StyleValue) -> bool {
+        if let Some(r @ TracksRef::Local(_)) = value.as_grid_tracks() {
+            return self.trans_tracks_set(id, part, prop, r);
+        }
         let Some(p) = StyleProp::from_value(prop, value) else {
             twine_core::warn!(target: "twine::style", "transition: {:?} cannot hold {:?}", prop, value);
             return false;
@@ -294,6 +375,31 @@ impl Engine {
             return false;
         };
         let changed = n.styles.transition_mut(part, &mut self.trans.pool).set(p);
+        if changed {
+            n.style_cache.invalidate();
+        }
+        changed
+    }
+
+    /// [`trans_style_set`](Self::trans_style_set) of a run-time grid template `r`: the
+    /// transition style takes its own reference to the template from the style of `id` that
+    /// holds it, so the template stays alive while the transition shows it.
+    #[cold]
+    #[inline(never)]
+    fn trans_tracks_set(&mut self, id: NodeId, part: Part, prop: PropId, r: TracksRef) -> bool {
+        let Some(n) = self.tree.node_mut(id) else {
+            return false;
+        };
+        let src = n.styles.entries().iter().find_map(|e| match &e.style {
+            StyleRef::Shared(b) if b.holds_tracks(prop, r) => Some(b.clone()),
+            _ => None,
+        });
+        // The value was resolved from one of the node's styles, so one of them holds it.
+        let Some(src) = src else {
+            debug_assert!(false, "transition: {prop:?} template not found");
+            return false;
+        };
+        let changed = src.copy_tracks_to(prop, n.styles.transition_mut(part, &mut self.trans.pool));
         if changed {
             n.style_cache.invalidate();
         }

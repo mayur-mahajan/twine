@@ -16,9 +16,9 @@ use twine_widgets_ext::window::{self, Window};
 use crate::access::EngineAccess;
 use crate::bind::{bind_node, bind_prop};
 use crate::build::{WidgetView, widget_view};
-use crate::modifiers::ViewExt;
 use crate::nav::ModalHandle;
 use crate::prop::{IntoProp, Prop};
+use crate::style_ext::StyleExt;
 use crate::text::{IntoText, TextProp, bind_label_text};
 use crate::view::ViewSeq;
 
@@ -36,8 +36,8 @@ use crate::view::ViewSeq;
 ///     column((label("Volume"), slider(50))),
 /// );
 /// ```
-pub fn window(
-    title: impl IntoText,
+pub fn window<MT>(
+    title: impl IntoText<MT>,
     header_buttons: impl ViewSeq,
     content: impl ViewSeq,
 ) -> WidgetView<Window> {
@@ -61,14 +61,14 @@ pub fn window(
 impl WidgetView<Window> {
     /// The header height (default: the display's DPI / 2).
     #[must_use]
-    pub fn header_height(self, h: impl IntoProp<i32>) -> Self {
+    pub fn header_height<M>(self, h: impl IntoProp<i32, M>) -> Self {
         self.bind(h, |w: &mut Window, cx, h| w.set_header_height(cx, h))
     }
 
     /// The padding of the content area on all sides (the theme's by default), e.g. 0 for a
     /// tabview filling the window.
     #[must_use]
-    pub fn content_padding(self, pad: impl IntoProp<i32>) -> Self {
+    pub fn content_padding<M>(self, pad: impl IntoProp<i32, M>) -> Self {
         let pad = pad.into_prop();
         self.op(move |cx, node| {
             let Some(c) = cx.engine().widget::<Window>(node).map(Window::content) else {
@@ -76,10 +76,10 @@ impl WidgetView<Window> {
             };
             bind_node(cx, c, pad, |e, c, pad| {
                 for p in [
-                    StyleProp::PaddingTop(Length::Px(pad)),
-                    StyleProp::PaddingBottom(Length::Px(pad)),
-                    StyleProp::PaddingLeft(Length::Px(pad)),
-                    StyleProp::PaddingRight(Length::Px(pad)),
+                    StyleProp::PaddingTop(Length::Px(pad).into()),
+                    StyleProp::PaddingBottom(Length::Px(pad).into()),
+                    StyleProp::PaddingLeft(Length::Px(pad).into()),
+                    StyleProp::PaddingRight(Length::Px(pad).into()),
                 ] {
                     e.set_local_prop(c, Selector::MAIN, p);
                 }
@@ -90,13 +90,27 @@ impl WidgetView<Window> {
 
 /// A header button of a [`window()`]: `width` px wide, as high as the header, `icon` (a
 /// [`Symbol`] or an image) centered.
-pub fn window_button(icon: impl IntoProp<ImageSource>, width: impl IntoProp<i32>) -> WidgetView<Button> {
+/// Unlike the other icon setters (which take any [`Icon`](crate::Icon), so also `()` for
+/// none), `icon` is an [`ImageSource`]: a header button always shows one.
+///
+/// ```
+/// use twine_view::prelude::*;
+/// let _v = window(
+///     "Settings",
+///     (window_button(Symbol::Close, 40).on_click(|| {}),),
+///     label("content"),
+/// );
+/// ```
+pub fn window_button<M1, M2>(
+    icon: impl IntoProp<ImageSource, M1>,
+    width: impl IntoProp<i32, M2>,
+) -> WidgetView<Button> {
     let icon = icon.into_prop();
     widget_view(Button::new)
-        .style_prop(width, |w: i32| StyleProp::Width(Length::Px(w)))
+        .style_prop(width, |w: i32| StyleProp::Width(Length::Px(w).into()))
         .op(move |cx, b| {
             cx.engine()
-                .set_local_prop(b, Selector::MAIN, StyleProp::Height(Length::pct(100)));
+                .set_local_prop(b, Selector::MAIN, StyleProp::Height(Length::pct(100).into()));
             let img = cx.with_parent(b, |cx| cx.create(Image::new()));
             cx.engine().align(img, Align::Center, 0, 0);
             bind_prop(cx, img, icon, |i: &mut Image, wcx, src| i.set_src(wcx, src));
@@ -138,9 +152,12 @@ struct MsgboxSettings {
 /// }
 /// # let _ = app;
 /// ```
-pub fn msgbox(title: impl IntoText, text: impl IntoText) -> WidgetView<Msgbox> {
-    let title = title.into_text();
-    let text = text.into_text();
+pub fn msgbox<MT1, MT2>(title: impl IntoText<MT1>, text: impl IntoText<MT2>) -> WidgetView<Msgbox> {
+    msgbox_view(title.into_text(), text.into_text())
+}
+
+/// [`msgbox`] after the conversions (not generic: one copy whatever the argument types).
+fn msgbox_view(title: TextProp, text: TextProp) -> WidgetView<Msgbox> {
     let mut v = widget_view(Msgbox::new);
     let settings = v.shared::<MsgboxSettings>();
     v.after_children(move |cx, node| {
@@ -227,7 +244,7 @@ pub fn msgbox(title: impl IntoText, text: impl IntoText) -> WidgetView<Msgbox> {
 impl WidgetView<Msgbox> {
     /// The footer buttons' texts (each any [`IntoText`], e.g. a translation).
     #[must_use]
-    pub fn buttons<T: IntoText>(mut self, texts: impl IntoIterator<Item = T>) -> Self {
+    pub fn buttons<T: IntoText<MT>, MT>(mut self, texts: impl IntoIterator<Item = T>) -> Self {
         *self.shared::<MsgboxSettings>().buttons.borrow_mut() =
             texts.into_iter().map(IntoText::into_text).collect();
         self
@@ -236,7 +253,7 @@ impl WidgetView<Msgbox> {
     /// A close button in the header (a dynamic value creates the button and hides it while
     /// `false`).
     #[must_use]
-    pub fn close_button(mut self, on: impl IntoProp<bool>) -> Self {
+    pub fn close_button<M>(mut self, on: impl IntoProp<bool, M>) -> Self {
         *self.shared::<MsgboxSettings>().close_button.borrow_mut() = Some(on.into_prop());
         self
     }

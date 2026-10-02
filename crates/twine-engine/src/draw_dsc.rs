@@ -108,19 +108,16 @@ impl Props<'_> {
     fn get(&self, part: Part, p: PropId) -> StyleValue {
         match self.state {
             None => self.e.style_prop(self.id, part, p),
-            Some(state) => self.e.dp_to_px(
+            Some(state) => resolve_with(
+                self.e,
                 self.id,
-                resolve_with(
-                    &self.e.tree,
-                    self.id,
-                    part,
-                    p,
-                    &self.e.style_defaults(),
-                    ResolveOptions {
-                        state: Some(state),
-                        skip_transitions: true,
-                    },
-                ),
+                part,
+                p,
+                &self.e.style_defaults(),
+                ResolveOptions {
+                    state: Some(state),
+                    skip_transitions: true,
+                },
             ),
         }
     }
@@ -297,7 +294,7 @@ impl Engine {
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let n = e.create_root(Box::new(Obj)).unwrap();
     /// let pressed = Selector::part(Part::Items).with_state(State::PRESSED);
-    /// e.set_local_prop(n, pressed, StyleProp::BgColor(Color::RED));
+    /// e.set_local_prop(n, pressed, StyleProp::BgColor(Color::RED.into()));
     /// let d = e.rect_dsc_for_state(n, Part::Items, State::PRESSED, Opa::COVER);
     /// assert_eq!(d.base.bg_color, Color::RED);
     /// assert_ne!(e.rect_dsc(n, Part::Items, Opa::COVER).base.bg_color, Color::RED);

@@ -28,16 +28,20 @@
 //! |------|------|
 //! | [`View`], [`ViewSeq`], [`AnyView`] | descriptions consumed once by [`View::build`] |
 //! | [`BuildCx`], [`WidgetView`], [`widget_view`] | building nodes; the generic widget builder every widget view wraps |
-//! | [`IntoProp`], [`Prop`], [`PropValue`] ([`prop_value!`]), [`IntoText`], [`text!`], [`IntoModel`], [`ModelValue`] | constant, signal, memo or closure property values (your own types with one line); zero-allocation text; two-way bindings |
-//! | [`ViewExt`] | every style, flag, event and identity modifier |
-//! | [`column()`], [`row`], [`grid`], [`container`], [`stack`], [`spacer`], [`scroll_view`] | layout containers |
+//! | [`WidgetView::bind_after_children`], [`bind_model`], [`on_value_changed`], [`event_value`] | the pieces of a value widget's view: a value applied after its other settings, two-way binding, `.on_change` (the built-in views use them; so can custom widget views outside this crate) |
+//! | [`IntoProp`], [`Prop`], [`Icon`], [`IntoText`], [`text!`], [`IntoModel`] | constant, signal, memo or closure property values (any type, converted with `From`); zero-allocation text; two-way bindings |
+//! | [`ViewExt`] | flag, per-part / per-state style ([`ViewExt::part`], [`ViewExt::on_state`]), style, event and identity modifiers |
+//! | [`StyleExt`], [`StyleScope`] | one modifier per style property and shorthand (generated from the property table), on every view and in part/state scopes; colors, lengths, radii, opacities and fonts also take [design elements](twine_style::design) (`design::SURFACE`) |
+//! | [`use_theme`], [`ThemeHandle`] | switch the theme or its mode (`set_mode`: light ↔ dark without rebuilding), read the mode and design element values (tracked) |
+//! | [`use_motion`], [`MotionHandle`], [`UiBuilder::motion`] | the global motion preference ([`Motion`](twine_anim::Motion): full, reduced, none), honoured by tweens, animations, style transitions, screen loads and scroll animations |
+//! | [`column()`], [`row`], [`grid`], [`container`], [`card`], [`stack`], [`spacer`], [`scroll_view`], [`Layout`] | layout containers |
 //! | [`label`], [`button`], [`image`], [`image_button`], [`animimg`] | core widget views |
 //! | [`bar`], [`slider`], [`switch`], [`checkbox`], [`arc`], [`led`], [`line()`], [`spinner`] | basic controls (value widgets take an [`IntoModel`]: two-way with a signal) |
 //! | [`textarea`], [`keyboard`], [`spinbox`], [`buttonmatrix`], [`spangroup`] + [`span`] | text and number entry, rich text |
 //! | [`dropdown`], [`roller`] (options: [`IntoOptions`]) | selection widgets (`twine-widgets-ext`) |
 //! | [`list`], [`menu`], [`tabview`], [`tileview`], [`window`], [`msgbox`] | containers (`twine-widgets-ext`) |
 //! | [`when`], [`dynamic`], [`for_each`], [`virtual_list`] | structural reactivity limited to one region |
-//! | [`NodeRef`], [`ScopeExt`] | the imperative escape hatch, tweens, animations, timers, modals |
+//! | [`NodeRef`], [`ScopeExt`] | the imperative escape hatch, tweens and animations of any [`Interpolate`](twine_anim::Interpolate) value (timed by an [`AnimSpec`](twine_anim::AnimSpec)), timers, modals |
 //! | [`Ui`], [`UiBuilder`], [`UiCore`] | the runtime: the update cycle and [`Wake`] |
 //! | [`Navigator`], [`navigator`], [`ScreenAnim`] | a stack of screens with LVGL screen-load animations |
 //!
@@ -52,9 +56,17 @@
 //! **The rule:** the engine is available inside event handlers, effects, timers (and
 //! animation and channel-message callbacks) and while building; elsewhere use the [`Ui`]
 //! methods or post a message. Hooks that create something (timers, tweens, animations,
-//! modals) and navigation defer their engine work to the next update, which is always
-//! correct. Calls that need the engine *now* — [`NodeRef::with_mut`], the [`AnimController`]
-//! methods, [`ThemeHandle::set`] — return `None` / do nothing without it and, in debug builds
+//! modals) and navigation defer their engine work to the next update. Engine side effects —
+//! the cleanups of a scope disposed outside an update (stopping its animations, removing its
+//! timers, closing its modals), the [`AnimController`] methods, [`ThemeHandle::set`],
+//! [`ThemeHandle::set_mode`] and [`MotionHandle::set`] — are
+//! queued on the `Ui` that owns the scope and applied at the start of its next update (a
+//! bounded, allocation-free queue: see [`UiCore`] § Engine commands). The queue is bounded:
+//! when it is full a command is dropped and the next update raises a
+//! [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity) record with code
+//! [`CapacityFault::EngineQueue`] (see [`Ui::take_faults`]); it never panics. Calls
+//! that must return what the engine holds — [`NodeRef::with_mut`],
+//! [`AnimController::is_playing`] — return `None` / `false` without it and, in debug builds
 //! (`debug_assertions`), log `warn!` once per call site (compiled out in release builds; see
 //! [`EngineAccess`] § Diagnostics).
 //!
@@ -103,6 +115,7 @@ mod async_ui;
 mod bind;
 mod build;
 mod containers;
+mod engine_queue;
 mod error;
 pub mod flow;
 mod hooks;
@@ -112,6 +125,7 @@ mod nav;
 mod node_ref;
 pub mod prelude;
 mod prop;
+mod style_ext;
 pub mod text;
 mod ui;
 mod view;
@@ -121,15 +135,19 @@ pub use access::{EffectCx, EngineAccess};
 #[cfg(feature = "async")]
 pub use async_ui::{AsyncUi, AsyncUiBuilder, NoInputWait};
 pub use build::{BuildCx, BuildOp, WidgetView, widget_view};
-pub use containers::{Container, Flex, Grid, column, container, flex, grid, row, scroll_view, spacer, stack};
-pub use error::{BuildError, BuildFailure, UiError};
+pub use containers::{
+    Container, Flex, Grid, Layout, card, column, container, flex, grid, row, scroll_view, spacer, stack,
+};
+pub use engine_queue::DEFAULT_ENGINE_QUEUE_CAPACITY;
+pub use error::{BuildError, BuildFailure, CapacityFault, UiError};
 pub use flow::{Dynamic, ForEach, VirtualList, When, WhenElse, dynamic, for_each, virtual_list, when};
-pub use hooks::{AnimController, ScopeExt, ThemeHandle, use_theme};
-pub use model::{IntoModel, Model, ModelValue, bind_model, event_value};
+pub use hooks::{AnimController, MotionHandle, ScopeExt, ThemeHandle, use_motion, use_theme};
+pub use model::{IntoModel, Model, bind_model, event_value, on_value_changed};
 pub use modifiers::ViewExt;
 pub use nav::{ModalHandle, Navigator, navigator, use_navigator};
 pub use node_ref::NodeRef;
-pub use prop::{IntoGridSpan, IntoIcon, IntoProp, Prop, PropValue};
+pub use prop::{Icon, IntoProp, Prop, marker};
+pub use style_ext::{StyleExt, StyleScope};
 pub use text::{IntoOptions, IntoText, TextFn, TextProp};
 pub use ui::{DisplaySetup, Framebuffer, Partial, Ui, UiBuilder, UiCore};
 pub use view::{AnyView, IntoAnyView, View, ViewSeq};

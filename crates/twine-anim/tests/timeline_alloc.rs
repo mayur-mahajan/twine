@@ -2,7 +2,7 @@
 
 use core::any::Any;
 
-use twine_anim::{Anim, AnimProp, AnimTarget, Easing, Repeat, TickSink, Timeline, Timers};
+use twine_anim::{Anim, AnimTarget, Easing, Repeat, TickSink, Timeline, Timers};
 use twine_core::{Duration, Instant};
 use twine_testing::alloc::{CountingAllocator, count_allocs};
 
@@ -35,8 +35,8 @@ fn tick_is_allocation_free_in_steady_state() {
                 Easing::Overshoot
             })
             .playback(Duration::ms(200))
-            .repeat(Repeat::Infinite)
-            .target(AnimTarget::Node(k, AnimProp::X));
+            .repeat(Repeat::Forever)
+            .target(AnimTarget::Node(k, 0));
         tl.add(a, t0);
     }
     let mut sink = Sink { applied: 0 };
@@ -61,7 +61,7 @@ fn slot_reuse_is_allocation_free() {
             tl.add(
                 Anim::new(0, 10)
                     .duration(Duration::ms(10))
-                    .target(AnimTarget::Node(k, AnimProp::Opa)),
+                    .target(AnimTarget::Node(k, 4)),
                 t,
             );
         }

@@ -119,12 +119,12 @@ mod with_svg {
         h.engine_mut().set_local_prop(
             i,
             twine_style::Selector::MAIN,
-            twine_style::StyleProp::ImageRecolor(twine_core::Color::hex(0x0000_00FF)),
+            twine_style::StyleProp::ImageRecolor(twine_core::Color::hex(0x0000_00FF).into()),
         );
         h.engine_mut().set_local_prop(
             i,
             twine_style::Selector::MAIN,
-            twine_style::StyleProp::ImageRecolorOpacity(twine_core::Opa::COVER),
+            twine_style::StyleProp::ImageRecolorOpacity(twine_core::Opa::COVER.into()),
         );
         h.run_until_idle();
         let after = h.pixel(x, y);

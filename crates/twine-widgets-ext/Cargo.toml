@@ -58,7 +58,6 @@ twine-text = { path = "../twine-text" }
 twine-image = { path = "../twine-image" }
 twine-anim = { path = "../twine-anim" }
 twine-render = { path = "../twine-render" }
-twine-theme = { path = "../twine-theme" }
 twine-widgets = { path = "../twine-widgets" }
 twine-vector = { path = "../twine-vector", optional = true }
 defmt = { version = "1", optional = true }

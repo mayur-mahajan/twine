@@ -57,7 +57,16 @@ pub struct FaultRecord {
 }
 
 impl FaultRecord {
-    /// A record of one occurrence of `kind`, with no display, node or code.
+    /// A record of one occurrence of `kind`, with no display, node, input or code (`at` is
+    /// set by [`Engine::raise_fault`]).
+    ///
+    /// ```
+    /// use twine_core::fault::FaultKind;
+    /// use twine_engine::FaultRecord;
+    ///
+    /// let r = FaultRecord::new(FaultKind::Capacity);
+    /// assert_eq!((r.kind, r.occurrences, r.code), (FaultKind::Capacity, 1, 0));
+    /// ```
     #[must_use]
     pub const fn new(kind: FaultKind) -> FaultRecord {
         FaultRecord {
@@ -72,6 +81,17 @@ impl FaultRecord {
     }
 
     /// Sets the display concerned.
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_core::fault::FaultKind;
+    /// use twine_engine::{Engine, EngineConfig, FaultRecord};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64).unwrap();
+    /// assert_eq!(FaultRecord::new(FaultKind::FlushError).display(d).display, Some(d));
+    /// ```
     #[must_use]
     pub const fn display(mut self, d: DisplayId) -> FaultRecord {
         self.display = Some(d);
@@ -79,27 +99,64 @@ impl FaultRecord {
     }
 
     /// Sets the node concerned.
+    ///
+    /// ```
+    /// use twine_core::fault::FaultKind;
+    /// use twine_engine::{Engine, EngineConfig, FaultRecord, Obj};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let parent = e.create_root(Box::new(Obj)).unwrap();
+    /// assert_eq!(FaultRecord::new(FaultKind::BuildFailed).node(parent).node, Some(parent));
+    /// ```
     #[must_use]
     pub const fn node(mut self, n: NodeId) -> FaultRecord {
         self.node = Some(n);
         self
     }
 
-    /// Sets the input device concerned.
+    /// Sets the input device concerned (input ids come from
+    /// [`Engine::add_input`]).
+    ///
+    /// ```
+    /// use twine_core::fault::FaultKind;
+    /// use twine_engine::{FaultRecord, InputId};
+    ///
+    /// fn input_failed(input: InputId) -> FaultRecord {
+    ///     FaultRecord::new(FaultKind::InputDevice).input(input).code(2)
+    /// }
+    /// # let _ = input_failed;
+    /// ```
     #[must_use]
     pub const fn input(mut self, i: InputId) -> FaultRecord {
         self.input = Some(i);
         self
     }
 
-    /// Sets the number of occurrences (at least 1).
+    /// Sets the number of occurrences (`0` is stored as `1`: a record always stands for at least
+    /// one occurrence).
+    ///
+    /// ```
+    /// use twine_core::fault::FaultKind;
+    /// use twine_engine::FaultRecord;
+    ///
+    /// assert_eq!(FaultRecord::new(FaultKind::ChannelOverflow).occurrences(4).occurrences, 4);
+    /// assert_eq!(FaultRecord::new(FaultKind::ChannelOverflow).occurrences(0).occurrences, 1);
+    /// ```
     #[must_use]
     pub const fn occurrences(mut self, n: u32) -> FaultRecord {
         self.occurrences = if n == 0 { 1 } else { n };
         self
     }
 
-    /// Sets the detail code.
+    /// Sets the detail code (its meaning per kind is documented on each
+    /// [`FaultKind`] variant).
+    ///
+    /// ```
+    /// use twine_core::fault::FaultKind;
+    /// use twine_engine::FaultRecord;
+    ///
+    /// assert_eq!(FaultRecord::new(FaultKind::FlushTimeout).code(500).code, 500);
+    /// ```
     #[must_use]
     pub const fn code(mut self, code: u32) -> FaultRecord {
         self.code = code;
@@ -209,25 +266,82 @@ impl Engine {
     }
 
     /// The kinds raised since the last [`take_faults`](Self::take_faults), without clearing
-    /// them.
+    /// them. Never panics; O(1).
+    ///
+    /// ```
+    /// use twine_core::fault::FaultKind;
+    /// use twine_engine::{Engine, EngineConfig, FaultRecord};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// assert!(e.pending_faults().is_empty());
+    /// e.raise_fault(FaultRecord::new(FaultKind::Capacity));
+    /// assert!(e.pending_faults().contains(FaultKind::Capacity));
+    /// assert!(e.pending_faults().contains(FaultKind::Capacity)); // not cleared
+    /// ```
     #[must_use]
     pub fn pending_faults(&self) -> Faults {
         self.faults.pending
     }
 
-    /// Occurrences of every kind since the engine was created (saturating).
+    /// Occurrences of every kind since the engine was created (saturating at `u32::MAX`,
+    /// never reset; [`take_faults`](Self::take_faults) does not clear them). Never panics.
+    ///
+    /// ```
+    /// use twine_core::fault::FaultKind;
+    /// use twine_engine::{Engine, EngineConfig, FaultRecord};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// e.raise_fault(FaultRecord::new(FaultKind::ChannelOverflow).occurrences(3));
+    /// e.raise_fault(FaultRecord::new(FaultKind::ChannelOverflow));
+    /// let _ = e.take_faults();
+    /// assert_eq!(e.fault_counts().get(FaultKind::ChannelOverflow), 4);
+    /// ```
     #[must_use]
     pub fn fault_counts(&self) -> FaultCounts {
         self.faults.counts
     }
 
-    /// The last record raised of `kind` (kept until another one of that kind replaces it).
+    /// The last record raised of `kind` (kept until another one of that kind replaces it;
+    /// [`take_faults`](Self::take_faults) does not clear it). Never panics.
+    ///
+    /// ```
+    /// use twine_core::fault::FaultKind;
+    /// use twine_engine::{Engine, EngineConfig, FaultRecord};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// assert!(e.last_fault(FaultKind::FlushTimeout).is_none());
+    /// e.raise_fault(FaultRecord::new(FaultKind::FlushTimeout).code(500));
+    /// e.raise_fault(FaultRecord::new(FaultKind::FlushTimeout).code(750));
+    /// assert_eq!(e.last_fault(FaultKind::FlushTimeout).map(|r| r.code), Some(750));
+    /// ```
     #[must_use]
     pub fn last_fault(&self, kind: FaultKind) -> Option<&FaultRecord> {
         self.faults.last[kind.index()].as_ref()
     }
 
-    /// Sets the function called for every raised fault (`None` removes it).
+    /// Sets the function called for every raised fault (`None` removes it; a new hook
+    /// replaces the previous one). The hook runs synchronously inside
+    /// [`raise_fault`](Self::raise_fault), wherever the fault is detected (see
+    /// [`FaultHook`]); it receives no engine, so it cannot re-enter this engine. Never
+    /// panics, allocates nothing.
+    ///
+    /// ```
+    /// use core::sync::atomic::{AtomicU32, Ordering};
+    /// use twine_core::fault::FaultKind;
+    /// use twine_engine::{Engine, EngineConfig, FaultRecord};
+    ///
+    /// static FLUSH_ERRORS: AtomicU32 = AtomicU32::new(0);
+    /// fn on_fault(r: &FaultRecord) {
+    ///     if r.kind == FaultKind::FlushError {
+    ///         FLUSH_ERRORS.fetch_add(r.occurrences, Ordering::Relaxed);
+    ///     }
+    /// }
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// e.set_fault_hook(Some(on_fault));
+    /// e.raise_fault(FaultRecord::new(FaultKind::FlushError).occurrences(2));
+    /// assert_eq!(FLUSH_ERRORS.load(Ordering::Relaxed), 2);
+    /// ```
     pub fn set_fault_hook(&mut self, hook: Option<FaultHook>) {
         self.faults.hook = hook;
     }

@@ -95,7 +95,10 @@ fn text_hash(s: &str) -> u32 {
 /// - **Long modes** ([`LongMode`]): `Wrap` (default, grows in height), `Dots` (cut with
 ///   "..."; the stored text is not modified), `Scroll` (back and forth, 40 px/s, 300 ms
 ///   pauses), `ScrollCircular` (endless, the text drawn twice) and `Clip` (single line,
-///   clipped) — LVGL's `lv_label_refr_text`.
+///   clipped) — LVGL's `lv_label_refr_text`. The scroll animations are *essential*
+///   ([`Anim::essential`](twine_engine::Anim::essential)): scrolling is how a long text can be
+///   read, so the [`Motion`](twine_engine::Motion) preference does not stop or shorten them
+///   (choose `Wrap` or `Dots` for a "reduce motion" setting).
 /// - **Selection** of a byte range is drawn with the `Selected` part's text and background
 ///   colors.
 ///

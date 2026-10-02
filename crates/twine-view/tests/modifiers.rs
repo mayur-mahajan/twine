@@ -15,7 +15,8 @@
 //! - Flags (`hidden`, `disabled`, `clickable`, `checkable`, `scrollable`, `scroll_*`,
 //!   `scrollbar`, `focusable`, `floating`, `ignore_layout`, `event_bubble`,
 //!   `overflow_visible`): `flag_modifiers_apply`.
-//! - Style (`style`, `style_for`, `style_ref`, `class_style`): `style_list_modifiers`.
+//! - Style (`style` with static, heap and shared styles, in scopes too; `class_style`):
+//!   `style_list_modifiers`, `style_accepts_static_heap_and_shared_styles`.
 //! - Layout as child (`flex_grow`, `grid_col`, `grid_row`, `grid_align`): `grid_places_cells`,
 //!   `spacer_grows`, `style_modifiers_resolve`.
 //! - Events (`on_click` … `on_event`): `event_modifiers_fire`.
@@ -51,7 +52,7 @@ static GRAD: Gradient = Gradient::new(
 );
 const MONT20: &twine_text::Font = &twine_assets::fonts::MONTSERRAT_20;
 static BG_IMG: ImageSource = ImageSource::Symbol("x");
-static SMOOTH: TransitionDsc = TransitionDsc::new(&[PropId::BgColor], Duration::ms(100), Easing::Linear);
+static SMOOTH: Transition = Transition::of(Props::of(PropId::BgColor), Duration::ms(100));
 static STYLE_A: Style = style! { radius: 5 };
 static STYLE_B: Style = style! { bg_color: Color::GREEN };
 
@@ -850,14 +851,51 @@ fn flag_modifiers_apply() {
     );
 }
 
+/// `.style()` takes a static style (also one composed with `..BASE`), an owned heap style and
+/// a shared one, on views and in scopes, with one method (R2.S05).
+#[test]
+fn style_accepts_static_heap_and_shared_styles() {
+    static BASE: Style = style! { radius: 5, bg_color: Color::GREEN };
+    static PRESSED: Style = style! { ..BASE, bg_color: Color::RED };
+    let shared = Rc::new(StyleBuf::from(&BASE).width(33));
+    let (s1, s2) = (shared.clone(), shared.clone());
+    let mut t = TestUi::new(200, 150).mount(move |_| {
+        column((
+            label("a")
+                .style(&BASE)
+                .on_state(State::PRESSED, |s| s.style(&PRESSED))
+                .test_id("n"),
+            label("b").style(StyleBuf::new().radius(7)).test_id("heap"),
+            label("c").style(s1).test_id("s1"),
+            label("d")
+                .part(Part::Main, move |s| s.style(StyleRef::from(s2)))
+                .test_id("s2"),
+        ))
+        .into_any()
+    });
+    t.run_until_idle();
+    assert_eq!(prop(&t, PropId::BgColor), StyleValue::Color(Color::GREEN));
+    let n = node(&t);
+    t.engine_mut().set_state(n, State::PRESSED, true);
+    t.run_until_idle();
+    assert_eq!(prop(&t, PropId::BgColor), StyleValue::Color(Color::RED));
+    assert_eq!(prop(&t, PropId::Radius), StyleValue::Length(Length::Px(5)));
+    let get = |id: &'static str, p| t.engine().style_prop(t.find(by_id(id)).id(), Part::Main, p);
+    assert_eq!(get("heap", PropId::Radius), StyleValue::Length(Length::Px(7)));
+    assert_eq!(get("s1", PropId::Width), StyleValue::Length(Length::Px(33)));
+    assert_eq!(get("s2", PropId::Width), StyleValue::Length(Length::Px(33)));
+    // One heap style shared by both nodes (not copied).
+    assert_eq!(Rc::strong_count(&shared), 3);
+}
+
 #[test]
 fn style_list_modifiers() {
     let t = mount(|_| {
         label("x")
             .style(&STYLE_A)
-            .style_for(Selector::state(State::PRESSED), &STYLE_B)
-            .style_ref(Selector::MAIN, StyleRef::Static(&STYLE_B))
-            .class_style(Selector::MAIN, &STYLE_A)
+            .on_state(State::PRESSED, |s| s.style(&STYLE_B))
+            .style(StyleRef::Static(&STYLE_B))
+            .class_style(&STYLE_A)
             .test_id("n")
             .into_any()
     });

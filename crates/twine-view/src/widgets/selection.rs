@@ -8,19 +8,18 @@ use twine_widgets_ext::roller::{Roller, RollerMode};
 
 use crate::bind::bind_prop;
 use crate::build::{WidgetView, widget_view};
-use crate::model::{IntoModel, bind_model, event_value, on_value_changed};
-use crate::prop::{IntoIcon, IntoProp, Prop};
-use crate::text::{IntoOptions, IntoText, bind_str};
+use crate::model::{IntoModel, Model, bind_model, event_value, on_value_changed};
+use crate::prop::{Icon, IntoProp, Prop};
+use crate::text::{IntoOptions, IntoText, TextProp, TextRef, bind_str};
 
 /// Wires the selected index of a dropdown or roller: shown after the other settings, read
 /// back from `ValueChanged`'s `EventParam::Value`.
 fn bind_selected<W: twine_engine::Widget>(
     v: WidgetView<W>,
-    selected: impl IntoModel<usize>,
+    model: Model<usize>,
     set: fn(&mut W, &mut twine_engine::WidgetCx<'_>, usize),
     get: fn(&W) -> usize,
 ) -> WidgetView<W> {
-    let model = selected.into_model();
     v.after_children(move |cx, node| {
         bind_model(
             cx,
@@ -59,28 +58,23 @@ fn bind_selected<W: twine_engine::Widget>(
 /// }
 /// # let _ = picker;
 /// ```
-pub fn dropdown(options: impl IntoOptions, selected: impl IntoModel<usize>) -> WidgetView<Dropdown> {
-    let options = options.into_options();
+pub fn dropdown<MO>(options: impl IntoOptions<MO>, selected: impl IntoModel<usize>) -> WidgetView<Dropdown> {
+    dropdown_view(options.into_options(), selected.into_model())
+}
+
+/// [`dropdown`] after the conversions (not generic: one copy whatever the argument types).
+fn dropdown_view(options: TextProp, selected: Model<usize>) -> WidgetView<Dropdown> {
     let v = widget_view(Dropdown::new).op(move |cx, node| {
-        bind_str(
-            cx,
-            node,
-            options,
-            |e, n, s| {
-                e.with_widget_mut(n, |d: &mut Dropdown, wcx| {
-                    let keep = d.selected();
-                    d.set_options_static(wcx, s);
-                    d.set_selected(wcx, keep);
-                });
-            },
-            |e, n, s| {
-                e.with_widget_mut(n, |d: &mut Dropdown, wcx| {
-                    let keep = d.selected();
-                    d.set_options(wcx, s);
-                    d.set_selected(wcx, keep);
-                });
-            },
-        );
+        bind_str(cx, node, options, |e, n, s| {
+            e.with_widget_mut(n, |d: &mut Dropdown, wcx| {
+                let keep = d.selected();
+                match s {
+                    TextRef::Static(s) => d.set_options_static(wcx, s),
+                    TextRef::Borrowed(s) => d.set_options(wcx, s),
+                }
+                d.set_selected(wcx, keep);
+            });
+        });
     });
     bind_selected(v, selected, set_dropdown_selected, |d| usize::from(d.selected()))
 }
@@ -93,40 +87,44 @@ impl WidgetView<Dropdown> {
     /// The side the list opens to ([`Side::Bottom`] by default). It flips to the opposite
     /// side when that has more room.
     #[must_use]
-    pub fn dir(self, dir: impl IntoProp<Side>) -> Self {
+    pub fn dir<M>(self, dir: impl IntoProp<Side, M>) -> Self {
         self.bind(dir, |d: &mut Dropdown, cx, dir| d.set_dir(cx, dir))
     }
 
     /// The symbol at the side ([`Symbol::Down`](twine_text::Symbol::Down) by default): a
-    /// [`Symbol`](twine_text::Symbol), an image, or `()` for none (any [`IntoIcon`]).
+    /// [`Symbol`](twine_text::Symbol), an image, or `()` for none (any [`Icon`]).
+    /// ```
+    /// use twine_view::prelude::*;
+    /// let _a = dropdown(["Low", "High"], 0).symbol(Symbol::Up);
+    /// let _b = dropdown(["Low", "High"], 0).symbol(()); // no symbol
+    /// ```
     #[must_use]
-    pub fn symbol(self, icon: impl IntoIcon) -> Self {
-        self.bind(icon.into_icon(), |d: &mut Dropdown, cx, s| d.set_symbol(cx, s))
+    pub fn symbol<M>(self, icon: impl IntoProp<Icon, M>) -> Self {
+        self.bind(icon, |d: &mut Dropdown, cx, Icon(s): Icon| d.set_symbol(cx, s))
     }
 
     /// A fixed text on the button instead of the selected option (e.g. a menu title; any
     /// [`IntoText`]).
     #[must_use]
-    pub fn text(self, text: impl IntoText) -> Self {
-        let text = text.into_text();
+    pub fn text<MT>(self, text: impl IntoText<MT>) -> Self {
+        self.text_prop(text.into_text())
+    }
+
+    /// [`text`](Self::text) after the conversion (not generic).
+    fn text_prop(self, text: TextProp) -> Self {
         self.op(move |cx, node| {
-            bind_str(
-                cx,
-                node,
-                text,
-                |e, n, s| {
-                    e.with_widget_mut(n, |d: &mut Dropdown, wcx| d.set_text_static(wcx, Some(s)));
-                },
-                |e, n, s| {
-                    e.with_widget_mut(n, |d: &mut Dropdown, wcx| d.set_text(wcx, Some(s)));
-                },
-            );
+            bind_str(cx, node, text, |e, n, s| {
+                e.with_widget_mut(n, |d: &mut Dropdown, wcx| match s {
+                    TextRef::Static(s) => d.set_text_static(wcx, Some(s)),
+                    TextRef::Borrowed(s) => d.set_text(wcx, Some(s)),
+                });
+            });
         })
     }
 
     /// Highlights the selected option in the open list (on by default).
     #[must_use]
-    pub fn highlight(self, on: impl IntoProp<bool>) -> Self {
+    pub fn highlight<M>(self, on: impl IntoProp<bool, M>) -> Self {
         self.bind(on, |d: &mut Dropdown, cx, on| d.set_selected_highlight(cx, on))
     }
 
@@ -165,8 +163,12 @@ struct RollerSettings {
 /// }
 /// # let _ = hours;
 /// ```
-pub fn roller(options: impl IntoOptions, selected: impl IntoModel<usize>) -> WidgetView<Roller> {
-    let options = options.into_options();
+pub fn roller<MO>(options: impl IntoOptions<MO>, selected: impl IntoModel<usize>) -> WidgetView<Roller> {
+    roller_view(options.into_options(), selected.into_model())
+}
+
+/// [`roller`] after the conversions (not generic: one copy whatever the argument types).
+fn roller_view(options: TextProp, selected: Model<usize>) -> WidgetView<Roller> {
     let mut v = widget_view(Roller::new);
     let settings = v.shared::<RollerSettings>();
     let v = v.op(move |cx, node| {
@@ -175,27 +177,17 @@ pub fn roller(options: impl IntoOptions, selected: impl IntoModel<usize>) -> Wid
         if let Some(mode) = settings.mode.borrow_mut().take() {
             bind_prop(cx, node, mode, |r: &mut Roller, wcx, m| r.set_mode(wcx, m));
         }
-        bind_str(
-            cx,
-            node,
-            options,
-            |e, n, s| {
-                e.with_widget_mut(n, |r: &mut Roller, wcx| {
-                    let keep = r.selected();
-                    let mode = r.mode();
-                    r.set_options_static(wcx, s, mode);
-                    r.set_selected(wcx, keep, false);
-                });
-            },
-            |e, n, s| {
-                e.with_widget_mut(n, |r: &mut Roller, wcx| {
-                    let keep = r.selected();
-                    let mode = r.mode();
-                    r.set_options(wcx, s, mode);
-                    r.set_selected(wcx, keep, false);
-                });
-            },
-        );
+        bind_str(cx, node, options, |e, n, s| {
+            e.with_widget_mut(n, |r: &mut Roller, wcx| {
+                let keep = r.selected();
+                let mode = r.mode();
+                match s {
+                    TextRef::Static(s) => r.set_options_static(wcx, s, mode),
+                    TextRef::Borrowed(s) => r.set_options(wcx, s, mode),
+                }
+                r.set_selected(wcx, keep, false);
+            });
+        });
     });
     bind_selected(v, selected, set_roller_selected, |r| usize::from(r.selected()))
 }
@@ -210,14 +202,14 @@ fn set_roller_selected(r: &mut Roller, cx: &mut twine_engine::WidgetCx<'_>, idx:
 impl WidgetView<Roller> {
     /// Normal (ends at the first and last option) or infinite (the options repeat).
     #[must_use]
-    pub fn mode(mut self, mode: impl IntoProp<RollerMode>) -> Self {
+    pub fn mode<M>(mut self, mode: impl IntoProp<RollerMode, M>) -> Self {
         *self.shared::<RollerSettings>().mode.borrow_mut() = Some(mode.into_prop());
         self
     }
 
     /// The height in rows (LVGL `lv_roller_set_visible_row_count`).
     #[must_use]
-    pub fn visible_rows(self, rows: impl IntoProp<u8>) -> Self {
+    pub fn visible_rows<M>(self, rows: impl IntoProp<u8, M>) -> Self {
         self.bind(rows, |r: &mut Roller, cx, n| r.set_visible_row_count(cx, n))
     }
 

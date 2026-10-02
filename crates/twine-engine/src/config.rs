@@ -90,7 +90,7 @@ pub struct EngineConfig {
     pub gradient_cache_entries: u8,
     /// Blurred shadow corner cache entries (default 1).
     pub shadow_cache_entries: u8,
-    /// The default `TextFont` when no style sets one (the engine cannot depend on the built-in
+    /// The default `Font` when no style sets one (the engine cannot depend on the built-in
     /// fonts; `None` = `twine_text::EMPTY_FONT`, which draws nothing).
     pub default_font: Option<&'static Font>,
     /// Period of the `twine::perf` log line (default 5 s).
@@ -164,7 +164,18 @@ impl Default for EngineConfig {
 impl EngineConfig {
     /// Checks the values: `refr_period > 0`, `max_dirty_areas` in `1..=32`,
     /// `layer_buf_bytes ≥ 4096`, `max_nodes ≥ 1`, `max_consecutive_flush_errors ≥ 1`,
-    /// `flush_timeout > 0` (when set).
+    /// `flush_timeout > 0` (when set). [`Engine::new`](crate::Engine::new) calls it.
+    ///
+    /// # Errors
+    /// [`EngineError::InvalidConfig`] naming the first value out of range. Never panics.
+    ///
+    /// ```
+    /// use twine_engine::{EngineConfig, EngineError};
+    ///
+    /// assert!(EngineConfig::default().validate().is_ok());
+    /// let c = EngineConfig { max_nodes: 0, ..EngineConfig::default() };
+    /// assert!(matches!(c.validate(), Err(EngineError::InvalidConfig(_))));
+    /// ```
     pub fn validate(&self) -> Result<(), EngineError> {
         if self.refr_period.as_micros() == 0 {
             return Err(EngineError::InvalidConfig("refr_period must be > 0"));
@@ -189,7 +200,16 @@ impl EngineConfig {
         Ok(())
     }
 
-    /// The renderer's cache budgets derived from this configuration.
+    /// The renderer's cache budgets derived from this configuration (the cache entry counts
+    /// and `layer_buf_bytes`, saturated to `u32::MAX`; the other fields keep the renderer's
+    /// defaults).
+    ///
+    /// ```
+    /// use twine_engine::EngineConfig;
+    ///
+    /// let c = EngineConfig { layer_buf_bytes: 8 * 1024, ..EngineConfig::default() };
+    /// assert_eq!(c.render_config().layer_buf_bytes, 8 * 1024);
+    /// ```
     #[must_use]
     pub fn render_config(&self) -> RenderConfig {
         RenderConfig {

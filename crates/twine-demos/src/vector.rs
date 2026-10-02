@@ -283,17 +283,14 @@ fn canvas(draw: fn(&mut VectorScene)) -> impl View {
 /// ```
 pub fn app(cx: Scope) -> impl View {
     let selected = cx.signal(0usize);
-    let (angle, _spin) = cx.animation(
-        Anim::new(0, 3600)
-            .duration(Duration::secs(6))
-            .repeat(Repeat::Infinite),
-    );
+    let (angle, _spin) = cx.animation(0, 3600, AnimSpec::new(Duration::secs(6)).forever());
     let (pulse, _beat) = cx.animation(
-        Anim::new(0, 1000)
-            .duration(Duration::ms(800))
-            .easing(Easing::EaseInOut)
+        0,
+        1000,
+        AnimSpec::new(Duration::ms(800))
+            .ease_in_out()
             .playback(Duration::ms(800))
-            .repeat(Repeat::Infinite),
+            .forever(),
     );
     tabview(
         selected,
@@ -331,5 +328,5 @@ pub fn app(cx: Scope) -> impl View {
             ),
         ),
     )
-    .size(Length::pct(100), Length::pct(100))
+    .fill()
 }

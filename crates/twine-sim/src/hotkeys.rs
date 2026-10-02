@@ -1,7 +1,7 @@
 //! Simulator hotkeys (F1…F12).
 //!
 //! Hotkeys are consumed by the simulator and never forwarded to the keypad. `F1`, `F5`–`F7`
-//! (time control), `F9` and `F10` are handled by the simulator itself, `F2`, `F3`, `F4` and `F8` by engine apps; every hotkey
+//! (time control), `F9` and `F10` are handled by the simulator itself, `F2`, `F3`, `F4`, `F8` and `F12` by engine apps; every hotkey
 //! is also dispatched to callbacks registered with [`HotkeyRegistry::on`], and one that nothing
 //! handles logs a hint.
 
@@ -33,8 +33,9 @@ pub enum Hotkey {
     Screenshot,
     /// F10: start / stop recording frames.
     Record,
-    /// F12: toggle light / dark theme.
-    ThemeToggle,
+    /// F12: switch the theme to its next mode (light → dark → night → high contrast → light,
+    /// as far as the installed theme supports them; `Engine::set_theme_mode`).
+    CycleThemeMode,
 }
 
 impl Hotkey {
@@ -50,7 +51,7 @@ impl Hotkey {
         Hotkey::DumpTree,
         Hotkey::Screenshot,
         Hotkey::Record,
-        Hotkey::ThemeToggle,
+        Hotkey::CycleThemeMode,
     ];
 
     /// The hotkey of function key `F<n>` (F11 has none).
@@ -67,7 +68,7 @@ impl Hotkey {
             8 => Hotkey::DumpTree,
             9 => Hotkey::Screenshot,
             10 => Hotkey::Record,
-            12 => Hotkey::ThemeToggle,
+            12 => Hotkey::CycleThemeMode,
             _ => return None,
         })
     }
@@ -86,7 +87,7 @@ impl Hotkey {
             Hotkey::DumpTree => 8,
             Hotkey::Screenshot => 9,
             Hotkey::Record => 10,
-            Hotkey::ThemeToggle => 12,
+            Hotkey::CycleThemeMode => 12,
         }
     }
 
@@ -131,7 +132,9 @@ impl Hotkey {
             Hotkey::DumpTree => "dump widget tree to stdout",
             Hotkey::Screenshot => "screenshot to target/twine-sim/shot-<n>.png",
             Hotkey::Record => "start/stop recording to target/twine-sim/rec-<n>/",
-            Hotkey::ThemeToggle => "toggle light/dark theme",
+            Hotkey::CycleThemeMode => {
+                "next theme mode (light/dark/night/high contrast, as the theme supports)"
+            }
         }
     }
 }
@@ -154,8 +157,8 @@ pub fn help_text() -> String {
 }
 
 /// Callbacks for hotkeys, registered by the engine runners (engine apps handle F2, F3, F4, F8
-/// and F12 (with [`SimConfig::theme_toggle`](crate::SimConfig::theme_toggle)) themselves;
-/// registered callbacks run in addition).
+/// and F12 (when the display's theme has more than one mode) themselves; registered callbacks
+/// run in addition).
 #[derive(Default)]
 pub struct HotkeyRegistry {
     handlers: Vec<(Hotkey, Box<dyn FnMut()>)>,
@@ -234,6 +237,7 @@ mod tests {
         assert_eq!(Hotkey::from_winit(NamedKey::F11), None);
         assert_eq!(Hotkey::from_winit(NamedKey::Enter), None);
         assert!(help_text().contains("F9"));
+        assert!(help_text().contains("F12  next theme mode (light/dark/night/high contrast"));
     }
 
     #[test]

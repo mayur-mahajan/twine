@@ -334,6 +334,17 @@ impl View for NavigatorView {
 ///
 /// # Panics
 /// If `cx` is not inside a navigator (with the type name, like `expect_context`).
+/// ```
+/// use twine_view::prelude::*;
+///
+/// fn details(cx: Scope) -> impl View {
+///     let nav = use_navigator(cx); // inside the `navigator`'s pages
+///     button(label("Back")).on_click(move || {
+///         nav.pop(ScreenAnim::MoveRight(Duration::ms(300)));
+///     })
+/// }
+/// # let _ = details;
+/// ```
 #[must_use]
 pub fn use_navigator(cx: Scope) -> Navigator {
     cx.expect_context::<Navigator>()
@@ -428,14 +439,17 @@ pub(crate) fn show_modal<V: View>(
     let mut view = Some(view);
     cx.on_cleanup(move || {
         // Cleanups run before the scope's stored values are dropped.
+        // Without the engine (disposed outside `Ui::update`): at the next update.
         if let Some((node, grp)) = state.try_with_mut(ModalState::take) {
-            EngineAccess::with(|e| close_modal(e, node, grp));
+            if EngineAccess::with(|e| close_modal(e, node, grp)).is_none() {
+                crate::engine_queue::defer(cx, crate::engine_queue::EngineCmd::close_modal(node, grp));
+            }
         }
     });
     cx.effect_with_cx(move |_| {
         let is_open = open.get();
-        if !EngineAccess::available() {
-            return defer_current_effect();
+        if !crate::access::engine_ready() {
+            return;
         }
         if is_open {
             let Some(v) = view.take() else { return };
@@ -450,16 +464,16 @@ pub(crate) fn show_modal<V: View>(
                     return;
                 };
                 for p in [
-                    StyleProp::Width(Length::pct(100)),
-                    StyleProp::Height(Length::pct(100)),
-                    StyleProp::BgColor(Color::BLACK),
-                    StyleProp::BgOpacity(Opa::P50),
-                    StyleProp::BorderWidth(Length::Px(0)),
-                    StyleProp::Radius(Radius::Px(0)),
-                    StyleProp::PaddingTop(Length::Px(0)),
-                    StyleProp::PaddingBottom(Length::Px(0)),
-                    StyleProp::PaddingLeft(Length::Px(0)),
-                    StyleProp::PaddingRight(Length::Px(0)),
+                    StyleProp::Width(Length::pct(100).into()),
+                    StyleProp::Height(Length::pct(100).into()),
+                    StyleProp::BgColor(Color::BLACK.into()),
+                    StyleProp::BgOpacity(Opa::P50.into()),
+                    StyleProp::BorderWidth(Length::Px(0).into()),
+                    StyleProp::Radius(Radius::Px(0).into()),
+                    StyleProp::PaddingTop(Length::Px(0).into()),
+                    StyleProp::PaddingBottom(Length::Px(0).into()),
+                    StyleProp::PaddingLeft(Length::Px(0).into()),
+                    StyleProp::PaddingRight(Length::Px(0).into()),
                     StyleProp::ShadowWidth(0),
                 ] {
                     e.set_local_prop(backdrop, Selector::MAIN, p);
@@ -504,7 +518,7 @@ pub(crate) fn show_modal<V: View>(
 
 /// Deletes the backdrop and the modal's focus group, re-attaching the inputs to the previous
 /// group.
-fn close_modal(e: &mut Engine, node: Option<NodeId>, groups: Option<(GroupId, Option<GroupId>)>) {
+pub(crate) fn close_modal(e: &mut Engine, node: Option<NodeId>, groups: Option<(GroupId, Option<GroupId>)>) {
     if let Some((g, prev)) = groups {
         move_inputs(e, Some(g), prev);
         if e.default_group() == Some(g) {

@@ -48,7 +48,8 @@ enum Cmd {
     },
     /// Run a simulator example.
     Sim {
-        /// Example name (`examples/src/bin/<example>.rs`).
+        /// Example name (a Cargo example of `twine`: `crates/twine/examples/<example>.rs` or
+        /// `<example>/main.rs`; or `eg_simulator`).
         example: String,
         /// Build in release mode.
         #[arg(long)]
@@ -64,7 +65,8 @@ enum Cmd {
         #[arg(last = true)]
         args: Vec<String>,
     },
-    /// Run every simulator example headless (with `examples/scripts/<name>.twinescript` if present).
+    /// Run every simulator example headless (with
+    /// `crates/twine/examples/scripts/<name>.twinescript` if present).
     SimSmoke,
     /// Build the example firmware in `firmware/` (all, or one) and print flash/RAM sizes.
     Firmware {
@@ -101,7 +103,7 @@ enum Cmd {
         #[arg(long)]
         check: bool,
     },
-    /// Convert the images of `assets/images/images.toml` into `examples/src/assets/`.
+    /// Convert the images of `assets/images/images.toml` into `crates/twine/examples/assets/`.
     Images {
         /// Only verify that the generated files are up to date.
         #[arg(long)]

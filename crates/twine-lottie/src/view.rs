@@ -3,8 +3,8 @@
 use twine_core::Scale;
 use twine_engine::{EventCode, EventFilter, EventResult, NodeId};
 use twine_view::{
-    BuildCx, BuildOp, EngineAccess, IntoModel, IntoProp, View, ViewExt, WidgetView, bind_model, event_value,
-    widget_view,
+    BuildCx, BuildOp, EngineAccess, IntoModel, IntoProp, StyleExt, View, ViewExt, WidgetView, bind_model,
+    event_value, widget_view,
 };
 
 use crate::widget::Lottie;
@@ -49,7 +49,23 @@ pub struct LottieView(WidgetView<Lottie>);
 
 impl LottieView {
     /// Plays (`true`) or pauses (`false`); default paused.
-    pub fn playing(self, on: impl IntoProp<bool>) -> Self {
+    /// Never panics. Playback is an essential animation: the motion preference does not stop it
+    /// (see [`Lottie`]).
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    /// use twine_lottie::view::lottie;
+    ///
+    /// static LOADER: &[u8] = br#"{"fr":30,"ip":0,"op":60,"w":100,"h":100,"layers":[]}"#;
+    ///
+    /// fn app(cx: Scope) -> impl View {
+    ///     let motion = use_motion(cx);
+    ///     // Respect "reduce motion" by not playing (a still first frame).
+    ///     lottie(LOADER, 100, 100).playing(move || motion.get() == Motion::Full)
+    /// }
+    /// # let _ = app;
+    /// ```
+    pub fn playing<M>(self, on: impl IntoProp<bool, M>) -> Self {
         Self(self.0.bind(on, |l: &mut Lottie, cx, on| {
             if on {
                 l.play(cx);
@@ -60,7 +76,16 @@ impl LottieView {
     }
 
     /// Loops (default) or stops at the last frame. (`loop` is a Rust keyword.)
-    pub fn looping(self, on: impl IntoProp<bool>) -> Self {
+    /// Never panics.
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    /// use twine_lottie::view::lottie;
+    ///
+    /// static LOADER: &[u8] = br#"{"fr":30,"ip":0,"op":60,"w":100,"h":100,"layers":[]}"#;
+    /// let _v = lottie(LOADER, 100, 100).playing(true).looping(false).on_complete(|| {});
+    /// ```
+    pub fn looping<M>(self, on: impl IntoProp<bool, M>) -> Self {
         Self(self.0.bind(on, |l: &mut Lottie, cx, on| l.set_loop(cx, on)))
     }
 
@@ -86,7 +111,21 @@ impl LottieView {
     }
 
     /// The playback speed (256 = 1×).
-    pub fn speed(self, s: impl IntoProp<Scale>) -> Self {
+    /// Range: any non-zero [`Scale`] — `Scale::pct(50)` half speed, `Scale::pct(200)` twice as fast,
+    /// up to `u16::MAX / 256` ≈ 256× (a playback lasts at least 1 ms whatever the speed). `0`
+    /// is ignored with a warning (use [`playing(false)`](Self::playing) to stop). While
+    /// playing, a new speed restarts the playback animation from the current frame. Never
+    /// panics.
+    ///
+    /// ```
+    /// use twine_core::Scale;
+    /// use twine_view::prelude::*;
+    /// use twine_lottie::view::lottie;
+    ///
+    /// static LOADER: &[u8] = br#"{"fr":30,"ip":0,"op":60,"w":100,"h":100,"layers":[]}"#;
+    /// let _v = lottie(LOADER, 100, 100).playing(true).speed(Scale::pct(200));
+    /// ```
+    pub fn speed<M>(self, s: impl IntoProp<Scale, M>) -> Self {
         Self(self.0.bind(s, |l: &mut Lottie, cx, s| l.set_speed(cx, s)))
     }
 

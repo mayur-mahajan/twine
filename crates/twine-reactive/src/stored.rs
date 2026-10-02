@@ -68,7 +68,11 @@ impl<T: 'static> StoredValue<T> {
     ///
     /// # Panics
     ///
-    /// If the value's scope was disposed.
+    /// If the value's scope was disposed (use [`try_with`](Self::try_with) to get `None`
+    /// instead), or on a re-entrant mutable access: `f` (or code it calls) calling
+    /// [`with_mut`](Self::with_mut) or [`set`](Self::set) on the same stored value (a
+    /// `RefCell` borrow error). Nested shared accesses (`with` / [`get`](Self::get) inside
+    /// `with`) are fine.
     #[inline]
     #[track_caller]
     pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
@@ -87,7 +91,11 @@ impl<T: 'static> StoredValue<T> {
     ///
     /// # Panics
     ///
-    /// If the value's scope was disposed, or if `f` accesses the same stored value.
+    /// If the value's scope was disposed (use [`try_with_mut`](Self::try_with_mut) to get
+    /// `None` instead), or on a re-entrant access: `f` (or code it calls) accessing the same
+    /// stored value in any way ([`with`](Self::with), [`get`](Self::get),
+    /// [`set`](Self::set), `with_mut`: a `RefCell` borrow error), or this call made inside
+    /// a [`with`](Self::with) of the same value.
     #[inline]
     #[track_caller]
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
@@ -104,7 +112,8 @@ impl<T: 'static> StoredValue<T> {
     ///
     /// # Panics
     ///
-    /// If the value's scope was disposed.
+    /// If the value's scope was disposed (use [`try_get`](Self::try_get) to get `None`
+    /// instead), or if called inside [`with_mut`](Self::with_mut) on the same stored value.
     #[inline]
     #[track_caller]
     pub fn get(&self) -> T
@@ -144,6 +153,12 @@ impl<T: 'static> StoredValue<T> {
     /// cx.dispose();
     /// assert_eq!(v.try_with(|n| n * 2), None);
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Never for a disposed scope (that is `None`); like [`with`](Self::with), on a
+    /// re-entrant mutable access of the same stored value from `f`, or if called inside
+    /// [`with_mut`](Self::with_mut) on it (a `RefCell` borrow error).
     #[inline]
     pub fn try_with<R>(&self, f: impl FnOnce(&T) -> R) -> Option<R> {
         let rc = with_runtime(|rt| rt.read_node(self.h.key, false))?;
@@ -160,6 +175,12 @@ impl<T: 'static> StoredValue<T> {
     /// cx.dispose();
     /// assert_eq!(v.try_with_mut(|n| *n), None);
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Never for a disposed scope (that is `None`); like [`with_mut`](Self::with_mut), on a
+    /// re-entrant access of the same stored value from `f`, or if called inside
+    /// [`with`](Self::with) / `with_mut` on it (a `RefCell` borrow error).
     #[inline]
     pub fn try_with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
         let rc = with_runtime(|rt| rt.read_node(self.h.key, false))?;

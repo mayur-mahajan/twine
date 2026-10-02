@@ -94,6 +94,19 @@ pub fn by_class(s: &'static str) -> Query {
 /// Replaces `Engine::step` in [`EngineHarness::update`] (e.g. the declarative `Ui` cycle).
 pub type StepFn = Box<dyn FnMut(&mut Engine, Instant) -> Wake>;
 
+/// Runs once with the engine when the harness is dropped (see
+/// [`EngineHarness::set_teardown_fn`]).
+///
+/// ```
+/// use twine_testing::TeardownFn;
+///
+/// let teardown: TeardownFn = Box::new(|engine| {
+///     assert!(engine.take_faults().is_empty()); // e.g. check no fault was left behind
+/// });
+/// # let _ = teardown;
+/// ```
+pub type TeardownFn = Box<dyn FnOnce(&mut Engine)>;
+
 /// An [`Engine`] with one display on an in-memory panel, a [`MockClock`] and helpers to step
 /// time, inspect flushes and invalidations, find nodes and compare snapshots.
 ///
@@ -112,8 +125,8 @@ pub type StepFn = Box<dyn FnMut(&mut Engine, Instant) -> Wake>;
 ///     let b = e.create(screen, Box::new(Obj)).unwrap();
 ///     e.set_pos(b, 4, 4);
 ///     e.set_size(b, 10, 10);
-///     e.set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::RED));
-///     e.set_local_prop(b, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
+///     e.set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::RED.into()));
+///     e.set_local_prop(b, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER.into()));
 /// });
 /// h.run_until_idle();
 /// assert_eq!(h.pixel(5, 5), Color::RED);
@@ -128,6 +141,18 @@ pub struct EngineHarness {
     invalidations: Vec<(Rect, InvalidateReason)>,
     inputs: HarnessInputs,
     stepper: Option<StepFn>,
+    teardown: Option<TeardownFn>,
+}
+
+impl Drop for EngineHarness {
+    fn drop(&mut self) {
+        // Not while a failing test unwinds: a second panic would abort and hide the first.
+        if !std::thread::panicking() {
+            if let Some(f) = self.teardown.take() {
+                f(&mut self.engine);
+            }
+        }
+    }
 }
 
 /// The mock devices the input helpers drive (registered on first use).
@@ -245,6 +270,7 @@ impl EngineHarness {
             invalidations: Vec::new(),
             inputs: HarnessInputs::default(),
             stepper: None,
+            teardown: None,
         }
     }
 
@@ -256,12 +282,37 @@ impl EngineHarness {
         self.invalidations.clear();
         self.inputs = HarnessInputs::default();
         self.stepper = None;
+        self.teardown = None;
     }
 
     /// Runs `f` instead of `Engine::step` in every [`update`](Self::update) (and every helper
     /// that updates): the declarative `Ui` installs its update cycle here.
     pub fn set_step_fn(&mut self, f: StepFn) {
         self.stepper = Some(f);
+    }
+
+    /// Runs `f` with the engine when the harness is dropped, before the engine (the
+    /// declarative `Ui` disposes its scopes here, with the engine lent).
+    ///
+    /// `f` runs at most once. A second call replaces the previous function. The builder
+    /// methods that rebuild the engine (e.g. [`theme`](Self::theme)) discard it, so set it
+    /// after them. It is skipped when the harness is dropped while a panic unwinds (a failing
+    /// test), so that a second panic cannot abort the test run and hide the first.
+    ///
+    /// ```
+    /// use std::cell::Cell;
+    /// use std::rc::Rc;
+    /// use twine_testing::EngineHarness;
+    ///
+    /// let mut h = EngineHarness::new(64, 32);
+    /// let ran = Rc::new(Cell::new(false));
+    /// let r = ran.clone();
+    /// h.set_teardown_fn(Box::new(move |_engine| r.set(true)));
+    /// drop(h);
+    /// assert!(ran.get());
+    /// ```
+    pub fn set_teardown_fn(&mut self, f: TeardownFn) {
+        self.teardown = Some(f);
     }
 
     /// Installs `theme` on the display instead of the default light theme (rebuilds the

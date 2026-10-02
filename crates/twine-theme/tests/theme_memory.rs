@@ -3,6 +3,7 @@
 
 use twine_core::Size;
 use twine_testing::alloc::{CountingAllocator, count_allocs};
+use twine_theme::ThemeMode;
 use twine_theme::{DefaultTheme, MonoTheme, SimpleTheme};
 
 #[global_allocator]
@@ -12,13 +13,22 @@ static A: CountingAllocator = CountingAllocator;
 fn theme_construction_memory_bounded() {
     let ((), stats) = count_allocs(|| {
         for i in 0..100u16 {
-            let t = DefaultTheme::light().with_dpi(100 + i);
+            let t = DefaultTheme::builder().dpi(100 + i).build();
             // Build the style sets of two display classes.
             let _ = t.styles(130, Size::new(240, 160));
             let _ = t.styles(130, Size::new(800, 480));
             drop(t);
             drop(SimpleTheme::new());
-            drop(MonoTheme::new(i % 2 == 0, &twine_assets::fonts::MONTSERRAT_14));
+            drop(
+                MonoTheme::builder()
+                    .mode(if i % 2 == 0 {
+                        ThemeMode::Dark
+                    } else {
+                        ThemeMode::Light
+                    })
+                    .font(&twine_assets::fonts::MONTSERRAT_14)
+                    .build(),
+            );
         }
     });
     assert!(stats.allocs > 0);

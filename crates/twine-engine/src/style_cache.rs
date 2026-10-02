@@ -25,7 +25,7 @@ pub struct MainStyle {
     pub pad: Insets,
     /// `TextColor` (inherited).
     pub text_color: Color,
-    /// `TextFont` (inherited).
+    /// `Font` (inherited).
     pub font: &'static Font,
     /// `Recolor`.
     pub recolor: Color,

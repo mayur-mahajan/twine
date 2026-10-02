@@ -9,17 +9,16 @@ use twine_image::ImageSource;
 use twine_widgets::animimg::AnimImg;
 use twine_widgets::image_button::{ImageButton, ImageButtonState};
 
-use crate::bind::bind_prop;
 use crate::build::{WidgetView, widget_view};
 use crate::model::{IntoModel, bind_model, on_value_changed};
-use crate::prop::{IntoIcon, IntoProp};
+use crate::prop::{Icon, IntoProp};
 use crate::widgets::controls::is_checked;
 
 /// Sets the image (the middle slice) of `state`.
-fn set_mid(
+fn set_mid<M>(
     v: WidgetView<ImageButton>,
     state: ImageButtonState,
-    src: impl IntoProp<ImageSource>,
+    src: impl IntoProp<ImageSource, M>,
 ) -> WidgetView<ImageButton> {
     v.bind(src, move |b: &mut ImageButton, wcx, src| {
         b.set_src(wcx, state, None, Some(src), None);
@@ -56,9 +55,9 @@ fn set_slice(
 ///     .checked(on);
 /// cx.dispose();
 /// ```
-pub fn image_button(
-    released: impl IntoProp<ImageSource>,
-    pressed: impl IntoProp<ImageSource>,
+pub fn image_button<M1, M2>(
+    released: impl IntoProp<ImageSource, M1>,
+    pressed: impl IntoProp<ImageSource, M2>,
 ) -> WidgetView<ImageButton> {
     let v = set_mid(
         widget_view(ImageButton::new),
@@ -71,10 +70,10 @@ pub fn image_button(
 impl WidgetView<ImageButton> {
     /// The images of the checked state (released and pressed).
     #[must_use]
-    pub fn checked_images(
+    pub fn checked_images<M1, M2>(
         self,
-        released: impl IntoProp<ImageSource>,
-        pressed: impl IntoProp<ImageSource>,
+        released: impl IntoProp<ImageSource, M1>,
+        pressed: impl IntoProp<ImageSource, M2>,
     ) -> Self {
         let v = set_mid(self, ImageButtonState::CheckedReleased, released);
         set_mid(v, ImageButtonState::CheckedPressed, pressed)
@@ -82,28 +81,35 @@ impl WidgetView<ImageButton> {
 
     /// The image of the disabled state.
     #[must_use]
-    pub fn disabled_image(self, src: impl IntoProp<ImageSource>) -> Self {
+    pub fn disabled_image<M>(self, src: impl IntoProp<ImageSource, M>) -> Self {
         set_mid(self, ImageButtonState::Disabled, src)
     }
 
     /// Three-slice images of `state`: `left` and `right` at the ends (optional: `()` for none,
-    /// any [`IntoIcon`]), `mid` tiled between them to fill the width.
+    /// any [`Icon`]), `mid` tiled between them to fill the width.
+    /// ```
+    /// use twine_view::prelude::*;
+    /// // A stretchable button: rounded caps at the ends (any `Icon`), the middle tiled.
+    /// let _v = image_button(Symbol::Minus, Symbol::Minus)
+    ///     .three_slice(ImageButtonState::Released, Symbol::Left, Symbol::Minus, Symbol::Right)
+    ///     .three_slice(ImageButtonState::Pressed, (), Symbol::Minus, ()); // no caps
+    /// ```
     #[must_use]
-    pub fn three_slice(
+    pub fn three_slice<ML, M, MR>(
         self,
         state: ImageButtonState,
-        left: impl IntoIcon,
-        mid: impl IntoProp<ImageSource>,
-        right: impl IntoIcon,
+        left: impl IntoProp<Icon, ML>,
+        mid: impl IntoProp<ImageSource, M>,
+        right: impl IntoProp<Icon, MR>,
     ) -> Self {
         self.bind(mid, move |b: &mut ImageButton, wcx, src| {
             set_slice(b, wcx, state, 1, Some(src));
         })
-        .bind(left.into_icon(), move |b: &mut ImageButton, wcx, src| {
-            set_slice(b, wcx, state, 0, src);
+        .bind(left, move |b: &mut ImageButton, wcx, icon: Icon| {
+            set_slice(b, wcx, state, 0, icon.0);
         })
-        .bind(right.into_icon(), move |b: &mut ImageButton, wcx, src| {
-            set_slice(b, wcx, state, 2, src);
+        .bind(right, move |b: &mut ImageButton, wcx, icon: Icon| {
+            set_slice(b, wcx, state, 2, icon.0);
         })
     }
 
@@ -159,17 +165,17 @@ struct AnimImgCfg {
 /// static FRAMES: [ImageSource; 2] = [ImageSource::symbol(Symbol::Play), ImageSource::symbol(Symbol::Pause)];
 /// let cx = twine_reactive::create_root();
 /// let run = cx.signal(true);
-/// let _v = animimg(&FRAMES, Duration::ms(400)).repeat(Repeat::Infinite).playing(run);
+/// let _v = animimg(&FRAMES, Duration::ms(400)).repeat(Repeat::Forever).playing(run);
 /// cx.dispose();
 /// ```
-pub fn animimg(
-    frames: impl IntoProp<&'static [ImageSource]>,
-    period: impl IntoProp<Duration>,
+pub fn animimg<M1, M2>(
+    frames: impl IntoProp<&'static [ImageSource], M1>,
+    period: impl IntoProp<Duration, M2>,
 ) -> WidgetView<AnimImg> {
     let mut v = widget_view(AnimImg::new)
         .op(move |cx, node| {
             cx.engine()
-                .with_widget_mut(node, |a: &mut AnimImg, wcx| a.set_repeat(wcx, Repeat::Infinite));
+                .with_widget_mut(node, |a: &mut AnimImg, wcx| a.set_repeat(wcx, Repeat::Forever));
         })
         .bind(frames, |a: &mut AnimImg, wcx, f| a.set_frames(wcx, f))
         .bind(period, |a: &mut AnimImg, wcx, p| a.set_period(wcx, p));
@@ -185,26 +191,23 @@ pub fn animimg(
 impl WidgetView<AnimImg> {
     /// How often the frames play (default: forever).
     #[must_use]
-    pub fn repeat(self, r: impl IntoProp<Repeat>) -> Self {
+    pub fn repeat<M>(self, r: impl IntoProp<Repeat, M>) -> Self {
         self.bind(r, |a: &mut AnimImg, cx, r| a.set_repeat(cx, r))
     }
 
     /// Plays while `true` (from the first frame each time it turns `true`), stops at the
     /// frame shown when `false`.
     #[must_use]
-    pub fn playing(mut self, on: impl IntoProp<bool>) -> Self {
+    pub fn playing<M>(mut self, on: impl IntoProp<bool, M>) -> Self {
         self.shared::<AnimImgCfg>().controlled.set(true);
-        let on = on.into_prop();
-        self.after_children(move |cx, node| {
-            bind_prop(cx, node, on, |a: &mut AnimImg, wcx, on| {
-                if a.is_playing(&wcx.measure()) != on {
-                    if on {
-                        a.start(wcx);
-                    } else {
-                        a.stop(wcx);
-                    }
+        self.bind_after_children(on, |a: &mut AnimImg, wcx, on| {
+            if a.is_playing(&wcx.measure()) != on {
+                if on {
+                    a.start(wcx);
+                } else {
+                    a.stop(wcx);
                 }
-            });
+            }
         })
     }
 }

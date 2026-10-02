@@ -61,7 +61,7 @@ fn animimg_defaults() {
     let w = get::<AnimImg>(&h, a);
     assert_eq!(
         (w.period(), w.repeat()),
-        (ANIMIMG_DEFAULT_PERIOD, Repeat::Infinite)
+        (ANIMIMG_DEFAULT_PERIOD, Repeat::Forever)
     );
     assert!(w.frames().is_empty());
     assert!(!playing(&h, a), "LVGL: nothing plays before start");
@@ -70,11 +70,11 @@ fn animimg_defaults() {
 
 #[test]
 fn animimg_setters_same_value_no_invalidate() {
-    let (mut h, a) = scene(Mode::Light, 400, Repeat::Infinite);
+    let (mut h, a) = scene(Mode::Light, 400, Repeat::Forever);
     with(&mut h, a, |w: &mut AnimImg, cx| {
         w.set_frames(cx, frames());
         w.set_period(cx, Duration::ms(400));
-        w.set_repeat(cx, Repeat::Infinite);
+        w.set_repeat(cx, Repeat::Forever);
     });
     assert!(h.engine().invalidation_log().is_empty());
     assert_eq!(
@@ -87,7 +87,7 @@ fn animimg_setters_same_value_no_invalidate() {
 
 #[test]
 fn animimg_advances_frames() {
-    let (mut h, a) = scene(Mode::Light, 400, Repeat::Infinite);
+    let (mut h, a) = scene(Mode::Light, 400, Repeat::Forever);
     with(&mut h, a, |w: &mut AnimImg, cx| w.start(cx));
     h.update();
     assert_eq!(idx(&h, a), 0);
@@ -116,7 +116,7 @@ fn animimg_advances_frames() {
 
 #[test]
 fn animimg_stops_after_repeat_count_and_idles() {
-    let (mut h, a) = scene(Mode::Light, 200, Repeat::Count(1));
+    let (mut h, a) = scene(Mode::Light, 200, Repeat::Times(2));
     with(&mut h, a, |w: &mut AnimImg, cx| w.start(cx));
     h.update();
     assert!(playing(&h, a));
@@ -176,7 +176,7 @@ fn animimg_gif_uses_frame_delays() {
 #[test]
 fn snapshot_animimg_frames() {
     for (name, ms) in [("0", 0u64), ("3", 330)] {
-        let (mut h, a) = scene(Mode::Light, 400, Repeat::Infinite);
+        let (mut h, a) = scene(Mode::Light, 400, Repeat::Forever);
         with(&mut h, a, |w: &mut AnimImg, cx| w.start(cx));
         h.update();
         if ms > 0 {

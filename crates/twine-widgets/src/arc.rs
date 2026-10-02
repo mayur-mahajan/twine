@@ -76,7 +76,9 @@ impl DragClock {
         let node = cx.node();
         let a = Anim::new(0, CLOCK_WRAP)
             .duration(Duration::ms(CLOCK_WRAP.unsigned_abs().into()))
-            .repeat(Repeat::Infinite);
+            .repeat(Repeat::Forever)
+            // A clock, not motion: the motion preference must not stop it.
+            .essential();
         self.id = Some(cx.engine_mut().anim_start(node, AnimProp::Custom(ANIM_CLOCK), a));
     }
 

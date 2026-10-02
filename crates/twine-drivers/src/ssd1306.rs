@@ -55,7 +55,7 @@
 //! ```
 //!
 //! Pair it with the monochrome theme (`MonoTheme`) of the `twine` crate, e.g.
-//! `Ui::builder(oled).theme(MonoTheme::new())`, and enable `I1` rendering (feature `color-i1`).
+//! `Ui::builder(oled).theme(MonoTheme::builder().mode(ThemeMode::Dark).build())`, and enable `I1` rendering (feature `color-i1`).
 
 use heapless::{Deque, Vec};
 use twine_core::log::{error, trace, warn};

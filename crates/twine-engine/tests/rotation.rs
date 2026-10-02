@@ -24,8 +24,8 @@ fn scene(e: &mut Engine) {
         e,
         r,
         &[
-            StyleProp::Radius(Radius::Px(10)),
-            StyleProp::BorderWidth(Length::Px(3)),
+            StyleProp::Radius(Radius::Px(10).into()),
+            StyleProp::BorderWidth(Length::Px(3).into()),
         ],
     );
 }
@@ -197,10 +197,13 @@ fn i1_output_thresholds_and_aligns() {
             style(
                 e,
                 s,
-                &[StyleProp::BgColor(Color::BLACK), StyleProp::BgOpacity(Opa::COVER)],
+                &[
+                    StyleProp::BgColor(Color::BLACK.into()),
+                    StyleProp::BgOpacity(Opa::COVER.into()),
+                ],
             );
             let a = boxed(e, s, Rect::from_xywh(6, 6, 40, 24), Color::WHITE);
-            style(e, a, &[StyleProp::Radius(Radius::Px(8))]);
+            style(e, a, &[StyleProp::Radius(Radius::Px(8).into())]);
             boxed(e, s, Rect::from_xywh(60, 10, 30, 30), Color::hex(0x80_80_80)); // luminance 128: white
             boxed(e, s, Rect::from_xywh(95, 10, 20, 30), Color::hex(0x7E_7E_7E)); // below: black
             let b = boxed(e, s, Rect::from_xywh(20, 38, 90, 20), Color::WHITE);
@@ -208,9 +211,9 @@ fn i1_output_thresholds_and_aligns() {
                 e,
                 b,
                 &[
-                    StyleProp::BorderWidth(Length::Px(4)),
-                    StyleProp::BorderColor(Color::BLACK),
-                    StyleProp::Radius(Radius::Px(10)),
+                    StyleProp::BorderWidth(Length::Px(4).into()),
+                    StyleProp::BorderColor(Color::BLACK.into()),
+                    StyleProp::Radius(Radius::Px(10).into()),
                 ],
             );
         });
@@ -242,7 +245,10 @@ fn i1_output_thresholds_and_aligns() {
             style(
                 e,
                 s,
-                &[StyleProp::BgColor(Color::BLACK), StyleProp::BgOpacity(Opa::COVER)],
+                &[
+                    StyleProp::BgColor(Color::BLACK.into()),
+                    StyleProp::BgOpacity(Opa::COVER.into()),
+                ],
             );
             boxed(e, s, Rect::from_xywh(8, 8, 16, 8), Color::WHITE);
         });

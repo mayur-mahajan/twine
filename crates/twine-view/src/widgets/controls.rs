@@ -6,8 +6,9 @@ use core::ops::RangeInclusive;
 
 use alloc::vec::Vec;
 
-use twine_core::{Angle, AngularSpeed, Color, Duration, Fraction, Point};
+use twine_core::{Angle, AngularSpeed, Duration, Fraction, Point};
 use twine_engine::{Engine, NodeId, ObjFlags, State};
+use twine_style::design::ColorValue;
 use twine_style::{EntryKind, Part, Selector, StyleEntry, StyleProp};
 use twine_widgets::Orientation;
 use twine_widgets::arc::{Arc, ArcMode};
@@ -19,12 +20,12 @@ use twine_widgets::slider::{Slider, SliderMode};
 use twine_widgets::spinner::Spinner;
 use twine_widgets::switch::Switch;
 
-use crate::bind::{bind_node, bind_prop};
+use crate::bind::bind_node;
 use crate::build::{WidgetView, widget_view};
-use crate::model::{IntoModel, bind_model, bind_model_synced, event_value, on_value_changed};
-use crate::modifiers::ViewExt;
+use crate::model::{IntoModel, Model, bind_model, bind_model_synced, event_value, on_value_changed};
 use crate::prop::{IntoProp, Prop};
-use crate::text::{IntoText, bind_str};
+use crate::style_ext::StyleExt;
+use crate::text::{IntoText, TextProp, TextRef, bind_str};
 
 /// Whether the `CHECKED` state of `n` is set.
 pub(crate) fn is_checked(e: &Engine, n: NodeId) -> bool {
@@ -60,22 +61,18 @@ struct BarCfg {
 /// let _v = bar(progress).range(0..=200).animated(Duration::ms(300)).width(160);
 /// cx.dispose();
 /// ```
-pub fn bar(value: impl IntoProp<i32>) -> WidgetView<Bar> {
-    let value = value.into_prop();
+pub fn bar<M>(value: impl IntoProp<i32, M>) -> WidgetView<Bar> {
     let mut v = widget_view(Bar::new);
     let cfg = v.shared::<BarCfg>();
-    v.after_children(move |cx, node| {
-        let anim = cfg.animated.get();
-        bind_prop(cx, node, value, move |b: &mut Bar, wcx, v| {
-            b.set_value(wcx, v, anim);
-        });
+    v.bind_after_children(value, move |b: &mut Bar, wcx, v| {
+        b.set_value(wcx, v, cfg.animated.get());
     })
 }
 
 impl WidgetView<Bar> {
     /// The value range (`min..=max`; a reversed range draws from the other end, as LVGL).
     #[must_use]
-    pub fn range(self, r: impl IntoProp<RangeInclusive<i32>>) -> Self {
+    pub fn range<M>(self, r: impl IntoProp<RangeInclusive<i32>, M>) -> Self {
         self.bind(r, |b: &mut Bar, cx, r| {
             let (lo, hi) = bounds(&r);
             b.set_range(cx, lo, hi);
@@ -84,33 +81,29 @@ impl WidgetView<Bar> {
 
     /// Normal, symmetrical (from zero) or range (from [`start_value`](Self::start_value)).
     #[must_use]
-    pub fn mode(self, m: impl IntoProp<BarMode>) -> Self {
+    pub fn mode<M>(self, m: impl IntoProp<BarMode, M>) -> Self {
         self.bind(m, |b: &mut Bar, cx, m| b.set_mode(cx, m))
     }
 
     /// The start value in [`BarMode::Range`] (applied with the value, after the range).
     #[must_use]
-    pub fn start_value(mut self, v: impl IntoProp<i32>) -> Self {
-        let v = v.into_prop();
+    pub fn start_value<M>(mut self, v: impl IntoProp<i32, M>) -> Self {
         let cfg = self.shared::<BarCfg>();
-        self.after_children(move |cx, node| {
-            let anim = cfg.animated.get();
-            bind_prop(cx, node, v, move |b: &mut Bar, wcx, v| {
-                b.set_start_value(wcx, v, anim);
-            });
+        self.bind_after_children(v, move |b: &mut Bar, wcx, v| {
+            b.set_start_value(wcx, v, cfg.animated.get());
         })
     }
 
     /// Horizontal, vertical or automatic (vertical when taller than wide).
     #[must_use]
-    pub fn orientation(self, o: impl IntoProp<Orientation>) -> Self {
+    pub fn orientation<M>(self, o: impl IntoProp<Orientation, M>) -> Self {
         self.bind(o, |b: &mut Bar, cx, o| b.set_orientation(cx, o))
     }
 
     /// Animates value changes over `d` (sets the local `anim_duration` style, and the value
     /// bindings call `set_value(v, anim = true)`).
     #[must_use]
-    pub fn animated(mut self, d: impl IntoProp<Duration>) -> Self {
+    pub fn animated<M>(mut self, d: impl IntoProp<Duration, M>) -> Self {
         self.shared::<BarCfg>().animated.set(true);
         self.style_prop(d, |d: Duration| StyleProp::AnimDuration(d.into()))
     }
@@ -150,7 +143,7 @@ pub fn slider(value: impl IntoModel<i32>) -> WidgetView<Slider> {
 impl WidgetView<Slider> {
     /// The value range.
     #[must_use]
-    pub fn range(self, r: impl IntoProp<RangeInclusive<i32>>) -> Self {
+    pub fn range<M>(self, r: impl IntoProp<RangeInclusive<i32>, M>) -> Self {
         self.bind(r, |s: &mut Slider, cx, r| {
             let (lo, hi) = bounds(&r);
             s.set_range(cx, lo, hi);
@@ -159,7 +152,7 @@ impl WidgetView<Slider> {
 
     /// Normal, symmetrical or range (two knobs; see [`left_value`](Self::left_value)).
     #[must_use]
-    pub fn mode(self, m: impl IntoProp<SliderMode>) -> Self {
+    pub fn mode<M>(self, m: impl IntoProp<SliderMode, M>) -> Self {
         self.bind(m, |s: &mut Slider, cx, m| s.set_mode(cx, m))
     }
 
@@ -182,7 +175,7 @@ impl WidgetView<Slider> {
 
     /// Horizontal, vertical or automatic.
     #[must_use]
-    pub fn orientation(self, o: impl IntoProp<Orientation>) -> Self {
+    pub fn orientation<M>(self, o: impl IntoProp<Orientation, M>) -> Self {
         self.bind(o, |s: &mut Slider, cx, o| s.set_orientation(cx, o))
     }
 
@@ -226,7 +219,7 @@ pub fn switch(on: impl IntoModel<bool>) -> WidgetView<Switch> {
 impl WidgetView<Switch> {
     /// Horizontal, vertical or automatic.
     #[must_use]
-    pub fn orientation(self, o: impl IntoProp<Orientation>) -> Self {
+    pub fn orientation<M>(self, o: impl IntoProp<Orientation, M>) -> Self {
         self.bind(o, |s: &mut Switch, cx, o| s.set_orientation(cx, o))
     }
 
@@ -250,22 +243,20 @@ impl WidgetView<Switch> {
 /// let _v = checkbox("I agree", agree);
 /// cx.dispose();
 /// ```
-pub fn checkbox(text: impl IntoText, checked: impl IntoModel<bool>) -> WidgetView<Checkbox> {
-    let text = text.into_text();
-    let model = checked.into_model();
+pub fn checkbox<MT>(text: impl IntoText<MT>, checked: impl IntoModel<bool>) -> WidgetView<Checkbox> {
+    checkbox_view(text.into_text(), checked.into_model())
+}
+
+/// [`checkbox`] after the conversions (not generic: one copy whatever the argument types).
+fn checkbox_view(text: TextProp, model: Model<bool>) -> WidgetView<Checkbox> {
     widget_view(|| Checkbox::new(""))
         .op(move |cx, node| {
-            bind_str(
-                cx,
-                node,
-                text,
-                |e, n, s| {
-                    e.with_widget_mut(n, |c: &mut Checkbox, wcx| c.set_text_static(wcx, s));
-                },
-                |e, n, s| {
-                    e.with_widget_mut(n, |c: &mut Checkbox, wcx| c.set_text(wcx, s));
-                },
-            );
+            bind_str(cx, node, text, |e, n, s| {
+                e.with_widget_mut(n, |c: &mut Checkbox, wcx| match s {
+                    TextRef::Static(s) => c.set_text_static(wcx, s),
+                    TextRef::Borrowed(s) => c.set_text(wcx, s),
+                });
+            });
         })
         .after_children(move |cx, node| {
             bind_model(
@@ -322,7 +313,7 @@ pub fn arc(value: impl IntoModel<i32>) -> WidgetView<Arc> {
 impl WidgetView<Arc> {
     /// The value range.
     #[must_use]
-    pub fn range(self, r: impl IntoProp<RangeInclusive<i32>>) -> Self {
+    pub fn range<M>(self, r: impl IntoProp<RangeInclusive<i32>, M>) -> Self {
         self.bind(r, |a: &mut Arc, cx, r| {
             let (lo, hi) = bounds(&r);
             a.set_range(cx, lo, hi);
@@ -332,7 +323,7 @@ impl WidgetView<Arc> {
     /// The indicator's start and end angles (normally set from the value; for an arc used as
     /// a plain gauge).
     #[must_use]
-    pub fn angles(self, start: impl IntoProp<Angle>, end: impl IntoProp<Angle>) -> Self {
+    pub fn angles<M1, M2>(self, start: impl IntoProp<Angle, M1>, end: impl IntoProp<Angle, M2>) -> Self {
         self.bind(start, |a: &mut Arc, cx, s| {
             let e = a.angle_end();
             a.set_angles(cx, s, e);
@@ -345,7 +336,7 @@ impl WidgetView<Arc> {
 
     /// The background arc's start and end angles.
     #[must_use]
-    pub fn bg_angles(self, start: impl IntoProp<Angle>, end: impl IntoProp<Angle>) -> Self {
+    pub fn bg_angles<M1, M2>(self, start: impl IntoProp<Angle, M1>, end: impl IntoProp<Angle, M2>) -> Self {
         self.bind(start, |a: &mut Arc, cx, s| {
             let e = a.bg_angle_end();
             a.set_bg_angles(cx, s, e);
@@ -358,13 +349,13 @@ impl WidgetView<Arc> {
 
     /// Normal, symmetrical or reverse (the value grows counter-clockwise).
     #[must_use]
-    pub fn mode(self, m: impl IntoProp<ArcMode>) -> Self {
+    pub fn mode<M>(self, m: impl IntoProp<ArcMode, M>) -> Self {
         self.bind(m, |a: &mut Arc, cx, m| a.set_mode(cx, m))
     }
 
     /// The rotation of the whole arc (0° = 3 o'clock, clockwise).
     #[must_use]
-    pub fn rotation(self, r: impl IntoProp<Angle>) -> Self {
+    pub fn rotation<M>(self, r: impl IntoProp<Angle, M>) -> Self {
         self.bind(r, |a: &mut Arc, cx, r| a.set_rotation(cx, r))
     }
 
@@ -372,7 +363,7 @@ impl WidgetView<Arc> {
     /// arc, LVGL `lv_obj_remove_style(arc, NULL, LV_PART_KNOB)`); `true` (the default) puts
     /// them back.
     #[must_use]
-    pub fn knob(self, on: impl IntoProp<bool>) -> Self {
+    pub fn knob<M>(self, on: impl IntoProp<bool, M>) -> Self {
         let on = on.into_prop();
         if matches!(on, Prop::Static(true)) {
             return self;
@@ -389,7 +380,7 @@ impl WidgetView<Arc> {
     /// The maximum drag speed (LVGL default 720 °/s), e.g.
     /// `.change_rate(AngularSpeed::deg_per_s(360))`.
     #[must_use]
-    pub fn change_rate(self, speed: impl IntoProp<AngularSpeed>) -> Self {
+    pub fn change_rate<M>(self, speed: impl IntoProp<AngularSpeed, M>) -> Self {
         self.bind(speed, |a: &mut Arc, cx, r| a.set_change_rate(cx, r))
     }
 
@@ -457,33 +448,36 @@ impl Default for LedCfg {
 /// let _v = led(alarm).color(Color::RED).brightness(Fraction::pct(80));
 /// cx.dispose();
 /// ```
-pub fn led(on: impl IntoProp<bool>) -> WidgetView<Led> {
-    let on = on.into_prop();
+pub fn led<M>(on: impl IntoProp<bool, M>) -> WidgetView<Led> {
     let mut v = widget_view(Led::new);
     let cfg = v.shared::<LedCfg>();
-    v.after_children(move |cx, node| {
-        bind_prop(cx, node, on, move |l: &mut Led, wcx, on| {
-            cfg.on.set(on);
-            if on {
-                l.set_brightness(wcx, cfg.bright.get());
-            } else {
-                l.off(wcx);
-            }
-        });
+    v.bind_after_children(on, move |l: &mut Led, wcx, on| {
+        cfg.on.set(on);
+        if on {
+            l.set_brightness(wcx, cfg.bright.get());
+        } else {
+            l.off(wcx);
+        }
     })
 }
 
 impl WidgetView<Led> {
-    /// The LED's color.
+    /// The LED's color: a [`Color`](twine_core::Color) or a design element (default: the theme's
+    /// `design::PRIMARY`, which follows the theme mode), constant, signal or closure.
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    /// let _alarm = led(true).color(design::DANGER);
+    /// ```
     #[must_use]
-    pub fn color(self, c: impl IntoProp<Color>) -> Self {
+    pub fn color<M>(self, c: impl IntoProp<ColorValue, M>) -> Self {
         self.bind(c, |l: &mut Led, cx, c| l.set_color(cx, c))
     }
 
     /// The brightness while on, clamped to LVGL's `LV_LED_BRIGHT_MIN`…`MAX` (80…255 of 255,
     /// i.e. about 31 %…100 %: an LED is never fully black).
     #[must_use]
-    pub fn brightness(mut self, b: impl IntoProp<Fraction>) -> Self {
+    pub fn brightness<M>(mut self, b: impl IntoProp<Fraction, M>) -> Self {
         let cfg = self.shared::<LedCfg>();
         self.bind(b, move |l: &mut Led, cx, b| {
             cfg.bright.set(b);
@@ -500,7 +494,7 @@ impl WidgetView<Led> {
 /// For points in flash use [`line_static`].
 ///
 /// Note: on a line view [`width`](WidgetView::width) is the stroke width; size the widget
-/// with [`size`](ViewExt::size) (or let it take its content size).
+/// with [`size`](StyleExt::size) (or let it take its content size).
 ///
 /// ```
 /// use twine_view::prelude::*;
@@ -510,7 +504,7 @@ impl WidgetView<Led> {
 /// let _v = line(pts).width(3).rounded(true);
 /// cx.dispose();
 /// ```
-pub fn line(points: impl IntoProp<Vec<Point>>) -> WidgetView<Line> {
+pub fn line<M>(points: impl IntoProp<Vec<Point>, M>) -> WidgetView<Line> {
     widget_view(Line::new).bind(points, |l: &mut Line, cx, p: Vec<Point>| l.set_points(cx, &p))
 }
 
@@ -532,25 +526,25 @@ pub fn line_static(points: &'static [Point]) -> WidgetView<Line> {
 impl WidgetView<Line> {
     /// Mirrors the y coordinates (y grows upwards).
     #[must_use]
-    pub fn y_invert(self, on: impl IntoProp<bool>) -> Self {
+    pub fn y_invert<M>(self, on: impl IntoProp<bool, M>) -> Self {
         self.bind(on, |l: &mut Line, cx, on| l.set_y_invert(cx, on))
     }
 
-    /// The stroke width (`line_width`). This shadows [`ViewExt::width`] on line views.
+    /// The stroke width (`line_width`). This shadows [`StyleExt::width`] on line views.
     #[must_use]
-    pub fn width(self, w: impl IntoProp<i32>) -> Self {
+    pub fn width<M>(self, w: impl IntoProp<i32, M>) -> Self {
         self.style_prop(w, StyleProp::LineWidth)
     }
 
     /// Rounded line ends and joints (`line_rounded`).
     #[must_use]
-    pub fn rounded(self, on: impl IntoProp<bool>) -> Self {
+    pub fn rounded<M>(self, on: impl IntoProp<bool, M>) -> Self {
         self.style_prop(on, StyleProp::LineRounded)
     }
 
     /// A dashed line: `w` px dashes with `gap` px gaps.
     #[must_use]
-    pub fn dash(self, w: impl IntoProp<i32>, gap: impl IntoProp<i32>) -> Self {
+    pub fn dash<M1, M2>(self, w: impl IntoProp<i32, M1>, gap: impl IntoProp<i32, M2>) -> Self {
         self.style_prop(w, StyleProp::LineDashWidth)
             .style_prop(gap, StyleProp::LineDashGap)
     }
@@ -572,13 +566,13 @@ pub fn spinner() -> WidgetView<Spinner> {
 impl WidgetView<Spinner> {
     /// The time of one turn (default 1 s).
     #[must_use]
-    pub fn period(self, d: impl IntoProp<Duration>) -> Self {
+    pub fn period<M>(self, d: impl IntoProp<Duration, M>) -> Self {
         self.bind(d, |s: &mut Spinner, cx, d| s.set_period(cx, d))
     }
 
     /// The length of the chasing arc (default 200°).
     #[must_use]
-    pub fn arc_angle(self, a: impl IntoProp<Angle>) -> Self {
+    pub fn arc_angle<M>(self, a: impl IntoProp<Angle, M>) -> Self {
         self.bind(a, |s: &mut Spinner, cx, a| s.set_arc_sweep(cx, a))
     }
 }

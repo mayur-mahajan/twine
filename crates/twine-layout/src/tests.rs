@@ -51,7 +51,7 @@ fn items(t: &mut ToyTree, c: usize, sizes: &[(i32, i32)]) -> Vec<usize> {
 
 fn row3(place: MainAlign) -> (ToyTree, Vec<usize>) {
     let (mut t, c) = flex(300, 100, FlexFlow::ROW);
-    t.set_style(c, StyleProp::ColumnGap(Length::Px(10)));
+    t.set_style(c, StyleProp::ColumnGap(Length::Px(10).into()));
     t.set_style(c, StyleProp::FlexMainAlign(place));
     let ids = items(&mut t, c, &[(50, 20); 3]);
     run(&mut t);
@@ -168,8 +168,8 @@ mod flex {
     #[test]
     fn gap_applied_between_items() {
         let (mut t, c) = flex(300, 100, FlexFlow::COLUMN);
-        t.set_style(c, StyleProp::RowGap(Length::Px(7)));
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(99))); // not the item gap of a column
+        t.set_style(c, StyleProp::RowGap(Length::Px(7).into()));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(99).into())); // not the item gap of a column
         let ids = items(&mut t, c, &[(10, 20), (10, 30), (10, 10)]);
         run(&mut t);
         assert_eq!(ys(&t, &ids), [0, 27, 64]);
@@ -194,6 +194,28 @@ mod flex {
     }
 
     #[test]
+    fn negative_grow_warns_and_counts_as_zero() {
+        #[cfg(all(feature = "log", not(feature = "defmt")))]
+        log_capture::install();
+        let (mut t, c) = flex(300, 100, FlexFlow::ROW);
+        let a = t.add(c, StyleBuf::new().flex_grow(-2).width(40).height(10));
+        let b = t.add(c, StyleBuf::new().flex_grow(1).width(40).height(10));
+        run(&mut t);
+        assert_eq!(t.coords(a).width(), 40, "no grow");
+        assert_eq!(t.coords(b).width(), 260, "takes all the free space");
+        #[cfg(all(feature = "log", not(feature = "defmt")))]
+        {
+            let warnings = log_capture::take();
+            assert!(
+                warnings
+                    .iter()
+                    .any(|w| w.contains("flex_grow was -2, setting it to 0")),
+                "{warnings:?}"
+            );
+        }
+    }
+
+    #[test]
     fn grow_distributes_free_space_exactly() {
         let (mut t, c) = flex(301, 100, FlexFlow::ROW);
         let ids: Vec<usize> = (1..=3)
@@ -210,7 +232,7 @@ mod flex {
     #[test]
     fn grow_shares_space_left_by_fixed_items_and_gaps() {
         let (mut t, c) = flex(300, 100, FlexFlow::ROW);
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(10)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(10).into()));
         let a = t.add(c, StyleBuf::new().width(40).height(10));
         let g = t.add(c, StyleBuf::new().flex_grow(1).height(10));
         let b = t.add(c, StyleBuf::new().width(60).height(10));
@@ -257,7 +279,7 @@ mod flex {
 
         t.set_style(c, StyleProp::FlexTrackAlign(MainAlign::Start));
         t.set_style(c, StyleProp::FlexCrossAlign(CrossAlign::End));
-        t.set_style(m, StyleProp::MarginBottom(Length::Px(5)));
+        t.set_style(m, StyleProp::MarginBottom(Length::Px(5).into()));
         run(&mut t);
         // Track cross size 31 (20 + 6 + 5).
         assert_eq!(ys(&t, &ids), [11, 10]);
@@ -337,8 +359,8 @@ mod flex {
     #[test]
     fn row_wrap_places_items_on_second_track() {
         let (mut t, c) = flex(200, 100, FlexFlow::ROW.wrap(true));
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(10)));
-        t.set_style(c, StyleProp::RowGap(Length::Px(5)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(10).into()));
+        t.set_style(c, StyleProp::RowGap(Length::Px(5).into()));
         let ids = items(&mut t, c, &[(80, 20), (80, 15), (80, 20)]);
         run(&mut t);
         assert_eq!(xs(&t, &ids), [0, 90, 0]);
@@ -348,8 +370,8 @@ mod flex {
     #[test]
     fn oversized_item_gets_own_track() {
         let (mut t, c) = flex(200, 100, FlexFlow::ROW.wrap(true));
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(10)));
-        t.set_style(c, StyleProp::RowGap(Length::Px(5)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(10).into()));
+        t.set_style(c, StyleProp::RowGap(Length::Px(5).into()));
         let ids = items(&mut t, c, &[(50, 20), (250, 20), (50, 20)]);
         run(&mut t);
         assert_eq!(xs(&t, &ids), [0, 0, 0]);
@@ -359,7 +381,7 @@ mod flex {
     #[test]
     fn flex_in_new_track_forces_break() {
         let (mut t, c) = flex(300, 100, FlexFlow::ROW);
-        t.set_style(c, StyleProp::RowGap(Length::Px(5)));
+        t.set_style(c, StyleProp::RowGap(Length::Px(5).into()));
         let ids = items(&mut t, c, &[(50, 20), (50, 20), (50, 20)]);
         t.set_flags(ids[1], LayoutFlags::FLEX_IN_NEW_TRACK);
         run(&mut t);
@@ -386,7 +408,7 @@ mod flex {
     fn row_wrap_reverse_track_order() {
         // LVGL: WRAP_REVERSE = wrap + reverse item order; tracks still go top to bottom.
         let (mut t, c) = flex(200, 100, FlexFlow::ROW.wrap(true).reverse(true));
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(10)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(10).into()));
         let ids = items(&mut t, c, &[(80, 20), (80, 20), (80, 20)]);
         run(&mut t);
         assert_eq!(origin(&t, ids[2]), (0, 0));
@@ -397,8 +419,8 @@ mod flex {
     #[test]
     fn column_wrap_tracks_left_to_right() {
         let (mut t, c) = flex(200, 100, FlexFlow::COLUMN.wrap(true));
-        t.set_style(c, StyleProp::RowGap(Length::Px(10)));
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(5)));
+        t.set_style(c, StyleProp::RowGap(Length::Px(10).into()));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(5).into()));
         let ids = items(&mut t, c, &[(30, 40), (20, 40), (30, 40)]);
         run(&mut t);
         assert_eq!(xs(&t, &ids), [0, 0, 35]);
@@ -409,7 +431,7 @@ mod flex {
     fn rtl_row_mirrors_positions() {
         let (mut t, c) = flex(300, 100, FlexFlow::ROW);
         t.set_style(c, StyleProp::BaseDir(BaseDir::Rtl));
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(10)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(10).into()));
         let ids = items(&mut t, c, &[(50, 20), (60, 20)]);
         run(&mut t);
         assert_eq!(xs(&t, &ids), [250, 180]);
@@ -422,7 +444,7 @@ mod flex {
     fn rtl_column_places_tracks_from_the_right() {
         let (mut t, c) = flex(300, 100, FlexFlow::COLUMN.wrap(true));
         t.set_style(c, StyleProp::BaseDir(BaseDir::Rtl));
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(10)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(10).into()));
         let ids = items(&mut t, c, &[(50, 60), (40, 60)]);
         run(&mut t);
         // The main (vertical) axis is not mirrored; tracks start at the right (LVGL).
@@ -433,7 +455,7 @@ mod flex {
     #[test]
     fn grow_per_track() {
         let (mut t, c) = flex(200, 100, FlexFlow::ROW.wrap(true));
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(10)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(10).into()));
         let a = t.add(c, StyleBuf::new().width(80).height(10));
         let g = t.add(c, StyleBuf::new().flex_grow(1).height(10));
         let b = t.add(c, StyleBuf::new().width(150).height(10));
@@ -502,8 +524,8 @@ mod grid {
     fn documented_3x3_fr_grid() {
         use GridTrack::Fr;
         let (mut t, c) = grid(Length::Px(300), Length::Px(300), &[Fr(1); 3], &[Fr(1); 3]);
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(10)));
-        t.set_style(c, StyleProp::RowGap(Length::Px(10)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(10).into()));
+        t.set_style(c, StyleProp::RowGap(Length::Px(10).into()));
         let ids: Vec<usize> = (0..9).map(|i| cell(&mut t, c, i % 3, i / 3, stretch())).collect();
         run(&mut t);
         // free = 300 - 2 × 10 = 280 → 93, 94, 93.
@@ -521,7 +543,7 @@ mod grid {
             &[Px(60), Content, Fr(1), Fr(2)],
             &[Px(50)],
         );
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(5)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(5).into()));
         let content = cell(&mut t, c, 1, 0, StyleBuf::new().width(45).height(10));
         let ids: Vec<usize> = [0, 2, 3]
             .iter()
@@ -575,8 +597,8 @@ mod grid {
             &[Px(50), Px(50)],
             &[Px(20), Px(20)],
         );
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(10)));
-        t.set_style(c, StyleProp::RowGap(Length::Px(4)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(10).into()));
+        t.set_style(c, StyleProp::RowGap(Length::Px(4).into()));
         let b = cell(&mut t, c, 1, 1, StyleBuf::new().width(5).height(5));
         run(&mut t);
         assert_eq!(origin(&t, b), (60, 24));
@@ -586,8 +608,8 @@ mod grid {
     fn span_covers_tracks_and_inner_gaps() {
         use GridTrack::Px;
         let (mut t, c) = grid(Length::Px(300), Length::Px(300), &[Px(50); 3], &[Px(20); 3]);
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(10)));
-        t.set_style(c, StyleProp::RowGap(Length::Px(5)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(10).into()));
+        t.set_style(c, StyleProp::RowGap(Length::Px(5).into()));
         let a = cell(
             &mut t,
             c,
@@ -635,7 +657,7 @@ mod grid {
     fn column_align_center_and_space_between() {
         use GridTrack::Px;
         let (mut t, c) = grid(Length::Px(300), Length::Px(100), &[Px(50), Px(50)], &[Px(20)]);
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(10)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(10).into()));
         t.set_style(c, StyleProp::GridColumnAlign(GridAlign::Center));
         let ids: Vec<usize> = (0..2).map(|i| cell(&mut t, c, i, 0, stretch())).collect();
         run(&mut t);
@@ -658,7 +680,7 @@ mod grid {
     fn content_sized_grid_treats_fr_as_content() {
         use GridTrack::Fr;
         let (mut t, c) = grid(Length::Content, Length::Content, &[Fr(1), Fr(2)], &[Fr(1)]);
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(5)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(5).into()));
         t.set_style(c, StyleProp::GridColumnAlign(GridAlign::End)); // ignored when content-sized
         let a = cell(&mut t, c, 0, 0, StyleBuf::new().width(30).height(8));
         let b = cell(&mut t, c, 1, 0, StyleBuf::new().width(40).height(12));
@@ -751,7 +773,7 @@ mod grid {
             &[Px(20)],
         );
         t.set_style(c, StyleProp::BaseDir(BaseDir::Rtl));
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(10)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(10).into()));
         let ids: Vec<usize> = (0..3).map(|i| cell(&mut t, c, i, 0, stretch())).collect();
         let span = cell(&mut t, c, 0, 0, stretch().grid_cell_column_span(2));
         // Children inherit RTL: Start of an item means the right edge of its cell.
@@ -771,10 +793,10 @@ mod grid {
             &[Px(30), Content, Px(10)],
             &[Px(20), Content],
         );
-        t.set_style(c, StyleProp::ColumnGap(Length::Px(4)));
-        t.set_style(c, StyleProp::RowGap(Length::Px(6)));
-        t.set_style(c, StyleProp::PaddingLeft(Length::Px(1)));
-        t.set_style(c, StyleProp::BorderWidth(Length::Px(2)));
+        t.set_style(c, StyleProp::ColumnGap(Length::Px(4).into()));
+        t.set_style(c, StyleProp::RowGap(Length::Px(6).into()));
+        t.set_style(c, StyleProp::PaddingLeft(Length::Px(1).into()));
+        t.set_style(c, StyleProp::BorderWidth(Length::Px(2).into()));
         cell(&mut t, c, 1, 1, StyleBuf::new().width(25).height(15));
         run(&mut t);
         // x: 30 + 25 + 10 + 2 × 4 + 1 + 2 × 2 = 78; y: 20 + 15 + 6 + 2 × 2 = 45.
@@ -876,11 +898,11 @@ mod flex_grid_props {
         ) {
             let flow = FLOWS[flow];
             let (mut t, c) = flex(w + 2 * pad, h + 2 * pad, flow);
-            for p in [StyleProp::PaddingLeft(Length::Px(pad)), StyleProp::PaddingRight(Length::Px(pad)), StyleProp::PaddingTop(Length::Px(pad)), StyleProp::PaddingBottom(Length::Px(pad))] {
+            for p in [StyleProp::PaddingLeft(Length::Px(pad).into()), StyleProp::PaddingRight(Length::Px(pad).into()), StyleProp::PaddingTop(Length::Px(pad).into()), StyleProp::PaddingBottom(Length::Px(pad).into())] {
                 t.set_style(c, p);
             }
-            t.set_style(c, StyleProp::ColumnGap(Length::Px(item_gap)));
-            t.set_style(c, StyleProp::RowGap(Length::Px(track_gap)));
+            t.set_style(c, StyleProp::ColumnGap(Length::Px(item_gap).into()));
+            t.set_style(c, StyleProp::RowGap(Length::Px(track_gap).into()));
             t.set_style(c, StyleProp::FlexMainAlign(PLACES[main]));
             t.set_style(c, StyleProp::FlexCrossAlign(CROSSES[cross]));
             t.set_style(c, StyleProp::FlexTrackAlign(PLACES[track]));
@@ -940,8 +962,8 @@ mod flex_grid_props {
             };
             let (ct, rt) = (mk(&cols, 0), mk(&rows, 4));
             let (mut t, c) = grid(Length::Px(w), Length::Px(h), &ct, &rt);
-            t.set_style(c, StyleProp::ColumnGap(Length::Px(gap_c)));
-            t.set_style(c, StyleProp::RowGap(Length::Px(gap_r)));
+            t.set_style(c, StyleProp::ColumnGap(Length::Px(gap_c).into()));
+            t.set_style(c, StyleProp::RowGap(Length::Px(gap_r).into()));
             t.set_style(c, StyleProp::GridColumnAlign(TRACK_ALIGNS[col_align]));
             t.set_style(c, StyleProp::GridRowAlign(TRACK_ALIGNS[row_align]));
             if rtl {
@@ -968,8 +990,8 @@ mod flex_grid_props {
             run(&mut t);
             // Cells measured with stretched probes in an identical grid.
             let (mut probe, pc) = grid(Length::Px(w), Length::Px(h), &ct, &rt);
-            probe.set_style(pc, StyleProp::ColumnGap(Length::Px(gap_c)));
-            probe.set_style(pc, StyleProp::RowGap(Length::Px(gap_r)));
+            probe.set_style(pc, StyleProp::ColumnGap(Length::Px(gap_c).into()));
+            probe.set_style(pc, StyleProp::RowGap(Length::Px(gap_r).into()));
             probe.set_style(pc, StyleProp::GridColumnAlign(TRACK_ALIGNS[col_align]));
             probe.set_style(pc, StyleProp::GridRowAlign(TRACK_ALIGNS[row_align]));
             if rtl {

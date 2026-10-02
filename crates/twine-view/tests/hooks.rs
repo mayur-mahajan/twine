@@ -61,8 +61,7 @@ fn tween_reaches_target_and_idles() {
         cx.provide(open);
         let h = cx.tween(
             move || if open.get() { 80 } else { 20 },
-            Duration::ms(250),
-            Easing::EaseInOut,
+            AnimSpec::new(Duration::ms(250)).ease_in_out(),
         );
         cx.provide(h);
         container(()).height(h).width(50).test_id("c")
@@ -85,7 +84,7 @@ fn tween_retarget_midflight_is_continuous() {
     let mut t = TestUi::new(200, 100).mount(|cx| {
         let target = cx.signal(0);
         cx.provide(target);
-        let v = cx.tween(move || target.get(), Duration::ms(300), Easing::Linear);
+        let v = cx.tween(move || target.get(), Duration::ms(300));
         cx.provide(v);
         label(text!("{}", v.get()))
     });
@@ -118,7 +117,7 @@ fn tween_retarget_midflight_is_continuous() {
 #[test]
 fn animation_controller_pause_resume() {
     let mut t = TestUi::new(200, 100).mount(|cx| {
-        let (a, ctl) = cx.animation(Anim::new(0, 1000).duration(Duration::ms(1000)));
+        let (a, ctl) = cx.animation(0, 1000, AnimSpec::new(Duration::ms(1000)));
         cx.provide((a, ctl));
         // `Copy`: the same controller moves into every handler.
         column((

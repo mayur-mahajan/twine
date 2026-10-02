@@ -93,7 +93,7 @@ impl AnimImg {
             frames: &[],
             cur: 0,
             period: ANIMIMG_DEFAULT_PERIOD,
-            repeat: Repeat::Infinite,
+            repeat: Repeat::Forever,
             anim: None,
             #[cfg(feature = "gif")]
             gif: None,
@@ -210,7 +210,9 @@ impl AnimImg {
         let node = cx.node();
         let a = Anim::new(0, i32::try_from(n).unwrap_or(i32::MAX))
             .duration(self.period)
-            .repeat(self.repeat);
+            .repeat(self.repeat)
+            // The frames are the content: essential under a reduced motion preference.
+            .essential();
         self.anim = Some(cx.engine_mut().anim_start(node, AnimProp::Custom(ANIM_FRAME), a));
         self.show(cx, 0);
     }

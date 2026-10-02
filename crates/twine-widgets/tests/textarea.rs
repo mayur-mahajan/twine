@@ -395,7 +395,7 @@ fn textarea_defaults() {
             Part::Scrollbar,
             Part::Selected,
             Part::Cursor,
-            Part::CustomFirst
+            textarea::PLACEHOLDER
         ]
     );
     let c = h.engine().coords(ta);
@@ -660,7 +660,7 @@ fn placeholder_shown_when_empty() {
     let c = h
         .engine()
         .style_color(ta, textarea::PLACEHOLDER, PropId::TextColor);
-    assert_eq!(c, twine_theme::Palette::Grey.lighten(1));
+    assert_eq!(c, twine_theme::Palette::Grey.tone(twine_theme::Tone::L1));
     with(&mut h, ta, |t: &mut Textarea, cx| t.add_char(cx, ' '));
     h.run_until_idle();
     assert!(!has_text(&h), "a space hides the placeholder");

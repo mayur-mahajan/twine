@@ -85,11 +85,23 @@ impl Flex {
     }
 }
 
-/// `FlexGrow` (weight) of a node.
+/// `FlexGrow` (weight) of a node. An out-of-range weight (negative, or above `u16::MAX`) is
+/// warned about and clamped (P7); the in-range case costs one comparison.
 pub(crate) fn grow_of<T: LayoutTree + ?Sized>(t: &T, id: T::Id) -> u16 {
-    t.style_prop(id, PropId::FlexGrow)
-        .get::<u16>()
-        .unwrap_or_else(|| t.style_i32(id, PropId::FlexGrow).clamp(0, i32::from(u16::MAX)) as u16)
+    let w = t.style_i32(id, PropId::FlexGrow);
+    match u16::try_from(w) {
+        Ok(g) => g,
+        Err(_) => clamp_grow(w),
+    }
+}
+
+/// The out-of-range path of [`grow_of`].
+#[cold]
+#[inline(never)]
+fn clamp_grow(w: i32) -> u16 {
+    let g = if w < 0 { 0 } else { u16::MAX };
+    twine_core::warn!(target: "twine::layout", "flex_grow was {}, setting it to {}", w, g);
+    g
 }
 
 /// LVGL `div_round_closest` (in `i64`, so `free × grow` cannot overflow).

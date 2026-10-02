@@ -23,6 +23,10 @@ use crate::{EngineHarness, FlushRecord, Query};
 /// Defaults: LVGL's light default theme with Montserrat 14, two 40-row partial buffers, the
 /// default engine configuration. Builder methods come before [`mount`](Self::mount).
 ///
+/// Dropping a `TestUi` disposes the mounted application with the engine lent (its scopes'
+/// cleanups run: animations stopped, timers removed, modals closed), then drops the engine —
+/// except while a failing test unwinds, when the disposal is skipped.
+///
 /// ```
 /// use twine_testing::{TestUi, by_id, by_text};
 /// use twine_view::prelude::*;
@@ -43,7 +47,9 @@ use crate::{EngineHarness, FlushRecord, Query};
 /// ```
 pub struct TestUi {
     h: RefCell<EngineHarness>,
-    core: Option<Rc<RefCell<UiCore>>>,
+    /// The mounted application, shared with the harness's step and teardown functions
+    /// (taken by the teardown, which disposes it with the engine).
+    core: Option<Rc<RefCell<Option<UiCore>>>>,
     /// The statistics of the application's last frame, kept while a snapshot re-renders the
     /// whole screen (cleared by the next update).
     pinned_frame: std::cell::Cell<Option<RefreshStats>>,
@@ -137,9 +143,19 @@ impl TestUi {
                 e.set_default_group(Some(g));
             }
         }
-        let core = Rc::new(RefCell::new(UiCore::mount(e, display, app)?));
+        let core = Rc::new(RefCell::new(Some(UiCore::mount(e, display, app)?)));
         let c = core.clone();
-        h.set_step_fn(Box::new(move |e, now| c.borrow_mut().update(e, now)));
+        h.set_step_fn(Box::new(move |e, now| match c.borrow_mut().as_mut() {
+            Some(ui) => ui.update(e, now),
+            None => e.step(now),
+        }));
+        let c = core.clone();
+        h.set_teardown_fn(Box::new(move |e| {
+            let ui = c.borrow_mut().take();
+            if let Some(ui) = ui {
+                ui.dispose(e);
+            }
+        }));
         self.core = Some(core);
         Ok(self)
     }
@@ -157,11 +173,7 @@ impl TestUi {
     /// Before [`mount`](Self::mount).
     #[must_use]
     pub fn root_scope(&self) -> Scope {
-        self.core
-            .as_ref()
-            .expect("TestUi::mount first")
-            .borrow()
-            .root_scope()
+        self.ui(UiCore::root_scope)
     }
 
     /// The `Ui`'s waker (set by channel sends).
@@ -170,7 +182,13 @@ impl TestUi {
     /// Before [`mount`](Self::mount).
     #[must_use]
     pub fn waker(&self) -> &'static twine_reactive::UiWaker {
-        self.core.as_ref().expect("TestUi::mount first").borrow().waker()
+        self.ui(UiCore::waker)
+    }
+
+    /// `f` of the mounted application.
+    fn ui<R>(&self, f: impl FnOnce(&UiCore) -> R) -> R {
+        let core = self.core.as_ref().expect("TestUi::mount first").borrow();
+        f(core.as_ref().expect("TestUi::mount first"))
     }
 
     fn harness(&self) -> RefMut<'_, EngineHarness> {
@@ -501,7 +519,7 @@ impl NodeHandle<'_> {
         if let Some(s) = n.widget().text() {
             return s.to_owned();
         }
-        if n.class().name == BUTTON_CLASS.name {
+        if n.class().is_a(&BUTTON_CLASS) {
             for c in t.children(self.id) {
                 if let Some(s) = t.node(c).and_then(|c| c.widget().text()) {
                     return s.to_owned();

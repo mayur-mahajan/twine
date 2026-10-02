@@ -14,21 +14,21 @@ use twine_testing::EngineHarness;
 fn scrollbar_style(e: &mut Engine, id: NodeId) {
     let sb = Selector::part(Part::Scrollbar);
     for p in [
-        StyleProp::Width(Length::Px(6)),
-        StyleProp::BgColor(Color::hex(0x0055_5555)),
-        StyleProp::BgOpacity(Opa::COVER),
-        StyleProp::Radius(Radius::Px(3)),
-        StyleProp::PaddingRight(Length::Px(2)),
-        StyleProp::PaddingBottom(Length::Px(2)),
-        StyleProp::PaddingTop(Length::Px(2)),
-        StyleProp::PaddingLeft(Length::Px(2)),
+        StyleProp::Width(Length::Px(6).into()),
+        StyleProp::BgColor(Color::hex(0x0055_5555).into()),
+        StyleProp::BgOpacity(Opa::COVER.into()),
+        StyleProp::Radius(Radius::Px(3).into()),
+        StyleProp::PaddingRight(Length::Px(2).into()),
+        StyleProp::PaddingBottom(Length::Px(2).into()),
+        StyleProp::PaddingTop(Length::Px(2).into()),
+        StyleProp::PaddingLeft(Length::Px(2).into()),
     ] {
         e.set_local_prop(id, sb, p);
     }
     e.set_local_prop(
         id,
         sb.with_state(State::SCROLLED),
-        StyleProp::BgColor(Color::hex(0x0020_60FF)),
+        StyleProp::BgColor(Color::hex(0x0020_60FF).into()),
     );
 }
 
@@ -204,8 +204,8 @@ fn scrollbar_redrawn_when_content_grows() {
             cont,
             Rect::from_xywh(0, i * 40, 100, 40),
             &[
-                StyleProp::BgColor(Color::hex(0x0030_60C0)),
-                StyleProp::BgOpacity(Opa::COVER),
+                StyleProp::BgColor(Color::hex(0x0030_60C0).into()),
+                StyleProp::BgOpacity(Opa::COVER.into()),
             ],
         );
     }

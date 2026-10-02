@@ -97,6 +97,35 @@ dejavu-16-persian-hebrew = ["twine-assets/dejavu-16-persian-hebrew"]
 source-han-sans-sc-14-cjk = ["twine-assets/source-han-sans-sc-14-cjk"]
 source-han-sans-sc-16-cjk = ["twine-assets/source-han-sans-sc-16-cjk"]
 all-fonts = ["twine-assets/all-fonts"]
+## Every optional, platform-neutral part of the facade: all pixel formats, image decoders, vector
+## graphics and SVG, runtime TrueType fonts, the file system, bidirectional text and Arabic shaping,
+## the async runtime and every built-in font. For hosts, simulators, tests and documentation;
+## firmware picks only what it uses. Logging backends (`log`/`defmt`), `std` and the debugging aids
+## (`debug-checks`, `test-ids`) are not included: they are platform or build choices.
+full = [
+    "async",
+    "perf-monitor",
+    "color-rgb565",
+    "color-rgb565-swapped",
+    "color-rgb888",
+    "color-xrgb8888",
+    "color-argb8888",
+    "color-l8",
+    "color-i1",
+    "img-qoi",
+    "img-png",
+    "img-jpeg",
+    "img-gif",
+    "img-bmp",
+    "img-lz4",
+    "bidi",
+    "arabic-shaping",
+    "vector",
+    "svg",
+    "ttf",
+    "fs",
+    "all-fonts",
+]
 
 
 [dependencies]
@@ -118,7 +147,16 @@ twine-assets = { path = "../twine-assets" }
 twine-fs = { path = "../twine-fs", optional = true }
 twine-vector = { path = "../twine-vector", optional = true }
 
+# Tests and the simulator examples (`examples/`, run with `cargo run -p twine --example <name>`
+# or `cargo xtask sim <name>`). Dev-dependencies only: they never reach firmware builds.
 [dev-dependencies]
-twine = { path = ".", features = ["std", "montserrat-20"] }
+# Every optional part of the facade (the examples show all of them), on the host.
+twine = { path = ".", features = ["std", "full"] }
+# `StdFs` (a host directory as a drive) for the file-system examples.
+twine-fs = { path = "../twine-fs", features = ["fs-std"] }
+twine-sim = { path = "../twine-sim" }
 twine-testing = { path = "../twine-testing" }
+twine-demos = { path = "../twine-demos", features = ["multilang-cjk", "ttf", "vector", "lottie"] }
+# Host implementation for `critical-section` (used by `twine_reactive::Channel`).
 critical-section = { version = "1", features = ["std"] }
+env_logger = "0.11"

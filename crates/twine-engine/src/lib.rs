@@ -41,14 +41,15 @@
 //! | Module concept | Items |
 //! |----------------|-------|
 //! | tree | [`Tree`], [`Node`], [`NodeId`], iterators, [`Tree::check_invariants`] |
-//! | widgets | [`Widget`], [`WidgetClass`], [`Obj`], [`MeasureCx`], [`WidgetCx`], [`DrawCx`] |
-//! | styles | [`Engine::add_style`], [`Engine::set_local_prop`], [`Engine::style_prop`], [`MainStyle`] |
+//! | widgets | [`Widget`], [`WidgetClass`] (identity, [`WidgetClass::base`], [`WidgetClass::is_a`], [`WidgetClass::lineage`], [`Lineage`], [`MAX_CLASS_DEPTH`]), [`Obj`], [`MeasureCx`], [`WidgetCx`], [`DrawCx`] |
+//! | styles | [`Engine::add_style`], [`Engine::set_local_prop`], [`Engine::set_local_transition`], [`Engine::style_prop`], [`Engine::finish_style_value`], [`MainStyle`] |
+//! | themes | [`ThemeHook`], [`Engine::set_theme`], [`Engine::set_theme_mode`], [`Engine::theme_mode`], [`Engine::theme_modes`], [`Engine::design_value`], [`Engine::resolve_design_value`], [`Engine::design_table`], [`Engine::design_epoch`] ([design elements](twine_style::design)) |
 //! | displays | [`Engine::add_display`], [`Engine::add_framebuffer_display`], [`BufferMode`], [`DisplayId`] |
 //! | refresh | [`Engine::step`], [`Wake`], [`RefreshStats`], [`PerfMonitor`], [`InvalidateReason`] |
 //! | events | [`Engine::send_event`], [`Engine::add_event_handler`], [`Event`], [`EventCode`], [`EventCx`] |
 //! | input | [`Engine::add_input`], [`Engine::notify_input`], [`Engine::read_inputs`], [`InputId`] |
-//! | layout | [`Engine::set_size`], [`Engine::set_pos`], [`Engine::align`], [`Engine::align_to`], [`Engine::set_flex_flow`], [`Engine::set_grid_cell`], [`Engine::update_layout`], [`LayoutStats`] |
-//! | animation | [`Engine::anim_start`], [`Engine::anim_start_fn`], [`Engine::timer_add`], [`Engine::load_screen_anim`], [`ScreenAnim`], [`Deferred`] |
+//! | layout | [`Engine::set_size`], [`Engine::set_pos`], [`Engine::align`], [`Engine::align_to`], [`Engine::set_flex_flow`], [`Engine::set_grid_tracks`], [`Engine::set_local_grid_tracks`] (grid tracks: [`GridTracks`](twine_style::GridTracks)), [`Engine::set_grid_cell`], [`Engine::update_layout`], [`LayoutStats`] |
+//! | animation | [`Engine::anim_start`], [`Engine::anim_start_fn`], [`Engine::timer_add`], [`Engine::load_screen_anim`], [`Engine::set_motion`], [`Engine::motion`], [`Motion`], [`AnimProp`], [`AnimSpec`], [`ScreenAnim`], [`Deferred`] |
 //! | focus | [`Engine::create_group`], [`Engine::group_add`], [`Engine::focus_next`], [`gridnav`] |
 //! | faults | [`Engine::raise_fault`], [`Engine::take_faults`], [`Engine::set_fault_hook`], [`FaultRecord`], [`FaultKind`](twine_core::fault::FaultKind) |
 //! | scrolling | [`Engine::scroll_by`], [`Engine::scroll_to`], [`Engine::scroll_to_view`], [`Engine::scroll_top`], [`Engine::set_scroll_snap_x`], [`Engine::update_snap`], [`Engine::scrollbar_areas`], [`ScrollbarMode`] |
@@ -85,8 +86,8 @@
 //! let boxed = engine.create(screen, Box::new(Obj)).unwrap();
 //! engine.set_pos(boxed, 8, 8); // laid out by the next `step`
 //! engine.set_size(boxed, 20, 10);
-//! engine.set_local_prop(boxed, Selector::MAIN, StyleProp::BgColor(Color::RED));
-//! engine.set_local_prop(boxed, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
+//! engine.set_local_prop(boxed, Selector::MAIN, StyleProp::BgColor(Color::RED.into()));
+//! engine.set_local_prop(boxed, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER.into()));
 //! assert!(matches!(engine.step(Instant::from_millis(0)), Wake::Idle)); // rendered, nothing left
 //! assert_eq!(engine.step(Instant::from_millis(100)), Wake::Idle);      // idle: no work at all
 //! ```
@@ -139,7 +140,7 @@ mod tree;
 mod wake;
 mod widget;
 
-pub use anim::{Deferred, defer};
+pub use anim::{AnimProp, Deferred, defer};
 pub use config::EngineConfig;
 pub use display::{BufferMode, MAX_DISPLAYS};
 pub use draw_cx::DrawCx;
@@ -168,13 +169,14 @@ pub use scroll::{SCROLL_ANIM_TIME_MAX, SCROLL_ANIM_TIME_MIN, SCROLL_ELASTIC_FACT
 pub use stats::{MemInfo, PerfMonitor, RefreshStats};
 pub use style_cache::MainStyle;
 pub use style_list::StyleList;
-pub use theme_hook::{DEFAULT_COLOR_PRIMARY, DEFAULT_COLOR_SECONDARY, ThemeCx, ThemeHook};
+pub use theme_hook::{ThemeCx, ThemeHook};
 pub use tree::{Ancestors, Children, ChildrenRev, Descendants, Node, Tree};
-pub use twine_anim::{Anim, AnimId, AnimProp, Easing, Repeat, TimerId};
+pub use twine_anim::{Anim, AnimId, AnimSpec, Easing, Motion, Repeat, TimerId};
 pub use twine_hal::{InputKind, Key};
-pub use twine_style::State;
 pub use twine_style::{Axis, ScrollSnap, ScrollbarMode, Side, Sides};
+pub use twine_style::{State, ThemeMode};
 pub use wake::Wake;
 pub use widget::{
-    AsAny, Editable, GroupDef, MeasureCx, Widget, WidgetClass, WidgetCx, default_covers, default_hit_test,
+    AsAny, Editable, GroupDef, Lineage, MAX_CLASS_DEPTH, MeasureCx, Widget, WidgetClass, WidgetCx,
+    default_covers, default_hit_test,
 };

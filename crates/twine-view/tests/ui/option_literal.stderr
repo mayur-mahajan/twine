@@ -1,0 +1,21 @@
+error[E0277]: `Option<{integer}>` cannot be used as a property of type `Option<twine_view::prelude::Length>`
+  --> tests/ui/option_literal.rs:11:21
+   |
+11 |     let _ = opt_len(Some(5));
+   |             ------- ^^^^^^^ not convertible into `Option<twine_view::prelude::Length>`, nor a closure, signal or memo of a value convertible into `Option<twine_view::prelude::Length>`
+   |             |
+   |             required by a bound introduced by this call
+   |
+   = help: the trait `twine_view::IntoProp<Option<twine_view::prelude::Length>, _>` is not implemented for `Option<{integer}>`
+   = note: a property of type `Option<twine_view::prelude::Length>` accepts every value `V` with `impl From<V> for Option<twine_view::prelude::Length>`, as a constant, a closure result or a signal value
+   = help: the following other types implement trait `twine_view::IntoProp<T, M>`:
+             `&'static [T; N]` implements `twine_view::IntoProp<&'static [T], twine_view::marker::Slice>`
+             `Memo<U>` implements `twine_view::IntoProp<T, Reactive<U>>`
+             `ReadSignal<U>` implements `twine_view::IntoProp<T, Reactive<U>>`
+             `Signal<U>` implements `twine_view::IntoProp<T, Reactive<U>>`
+             `twine_view::Prop<T>` implements `twine_view::IntoProp<T, twine_view::marker::Prop>`
+note: required by a bound in `opt_len`
+  --> tests/ui/option_literal.rs:4:23
+   |
+ 4 | fn opt_len<M>(w: impl IntoProp<Option<Length>, M>) -> Prop<Option<Length>> {
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `opt_len`

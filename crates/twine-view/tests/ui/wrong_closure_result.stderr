@@ -1,0 +1,30 @@
+error[E0277]: `{closure@$DIR/tests/ui/wrong_closure_result.rs:4:32: 4:34}` cannot be used as a property of type `DesignValue<twine_view::prelude::Length>`
+ --> tests/ui/wrong_closure_result.rs:4:32
+  |
+4 |     let _ = label("x").padding(|| "wide");
+  |                        ------- ^^^^^^^^^ not convertible into `DesignValue<twine_view::prelude::Length>`, nor a closure, signal or memo of a value convertible into `DesignValue<twine_view::prelude::Length>`
+  |                        |
+  |                        required by a bound introduced by this call
+  |
+  = help: the trait `IntoProp<DesignValue<twine_view::prelude::Length>, _>` is not implemented for closure `{closure@$DIR/tests/ui/wrong_closure_result.rs:4:32: 4:34}`
+  = note: a property of type `DesignValue<twine_view::prelude::Length>` accepts every value `V` with `impl From<V> for DesignValue<twine_view::prelude::Length>`, as a constant, a closure result or a signal value
+  = help: the following other types implement trait `IntoProp<T, M>`:
+            `&'static [T; N]` implements `IntoProp<&'static [T], twine_view::marker::Slice>`
+            `Memo<U>` implements `IntoProp<T, Reactive<U>>`
+            `ReadSignal<U>` implements `IntoProp<T, Reactive<U>>`
+            `Signal<U>` implements `IntoProp<T, Reactive<U>>`
+            `twine_view::Prop<T>` implements `IntoProp<T, twine_view::marker::Prop>`
+note: required by a bound in `padding`
+ --> src/style_ext.rs
+  |
+  |                 $( $p: impl IntoProp<::twine_style::__prop_ty!($($pty)+), $g> ),+
+  |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `StyleExt::padding`
+...
+  |     ::twine_style::__shorthand_table!(shorthand_modifiers);
+  |     ------------------------------------------------------ in this macro invocation
+  |
+ ::: $WORKSPACE/crates/twine-style/src/table.rs
+  |
+  |             padding(v: len<V> [LengthValue] => PaddingTop, PaddingBottom, PaddingLeft, PaddingRight) ["pad_all"] {
+  |             ------- required by a bound in this associated function
+  = note: this error originates in the macro `shorthand_modifiers` which comes from the expansion of the macro `::twine_style::__shorthand_table` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -7,9 +7,8 @@ use twine_testing::{TestUi, by_id};
 use twine_view::prelude::*;
 use twine_widgets::label::Label;
 
-/// Accepts any property value (the coherence check of `IntoProp`: constants, signals, memos
-/// and closures of the same `T` all work).
-fn take<T: 'static>(p: impl IntoProp<T>) -> Prop<T> {
+/// Accepts any property value of type `T` (the forms are told apart by the inferred marker `M`).
+fn take<T: 'static, M>(p: impl IntoProp<T, M>) -> Prop<T> {
     p.into_prop()
 }
 
@@ -22,20 +21,21 @@ fn prop_coherence() {
     let cx = twine_reactive::create_root();
     let s = cx.signal(1i32);
     let m = cx.memo(move || s.get() * 2);
-    assert!(is_static(&take(5i32)));
-    assert!(is_static(&take(true)));
-    assert!(is_static(&take(Color::RED)));
-    assert!(is_static(&take(Opa::COVER)));
-    assert!(is_static(&take(Length::Pct(50))));
-    assert!(is_static(&take("text")));
-    assert!(is_static(&take(String::from("owned"))));
-    assert!(is_static(&take(Some(3u8))));
-    assert!(!is_static(&take(s)));
-    assert!(!is_static(&take(s.read_only())));
-    assert!(!is_static(&take(m)));
-    assert!(!is_static(&take(move || s.get() + 1)));
-    assert!(!is_static(&take(move || Color::BLUE)));
-    let Prop::Dynamic(f) = take::<i32>(move || s.get() * 10) else {
+    assert!(is_static(&take::<i32, _>(5)));
+    assert!(is_static(&take::<bool, _>(true)));
+    assert!(is_static(&take::<Color, _>(Color::RED)));
+    assert!(is_static(&take::<Opa, _>(Opa::COVER)));
+    assert!(is_static(&take::<Length, _>(Length::Pct(50))));
+    assert!(is_static(&take::<&str, _>("text")));
+    assert!(is_static(&take::<String, _>(String::from("owned"))));
+    assert!(is_static(&take::<String, _>("converted")));
+    assert!(is_static(&take::<Option<u8>, _>(Some(3u8))));
+    assert!(!is_static(&take::<i32, _>(s)));
+    assert!(!is_static(&take::<i32, _>(s.read_only())));
+    assert!(!is_static(&take::<i32, _>(m)));
+    assert!(!is_static(&take::<i32, _>(move || s.get() + 1)));
+    assert!(!is_static(&take::<Color, _>(move || Color::BLUE)));
+    let Prop::Dynamic(f) = take::<i32, _>(move || s.get() * 10) else {
         unreachable!()
     };
     s.set(4);
@@ -155,35 +155,30 @@ fn handler_writes_run_bindings_in_the_same_update() {
     assert_eq!(t.find(by_id("l")).text(), "1");
 }
 
-/// A user property type (R1.S03): one line makes it a constant property; signals, memos and
-/// closures of it work like for the built-in types.
+/// A user property type: no declaration, it is a property of its own type; signals, memos
+/// and closures of it work like for the built-in types.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Gauge(u8);
-twine_view::prop_value!(Gauge);
 
-/// A user model type: a one-line `impl` makes it a plain (owned) model value.
+/// A user model type: no declaration either.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Level(u8);
-impl ModelValue for Level {}
 
 fn take_model<T: 'static>(m: impl IntoModel<T>) -> Model<T> {
     m.into_model()
 }
 
 #[test]
-fn user_type_as_prop_via_prop_value() {
-    fn assert_prop_value<T: PropValue>() {}
-    assert_prop_value::<Gauge>();
-    assert_prop_value::<Option<Gauge>>();
-    assert_prop_value::<Vec<Gauge>>();
-    assert_prop_value::<(Gauge, i32)>();
+fn user_type_as_prop_without_declaration() {
     let cx = twine_reactive::create_root();
     let g = cx.signal(Gauge(1));
-    assert!(matches!(take(Gauge(3)), Prop::Static(Gauge(3))));
-    assert!(is_static(&take(vec![Gauge(1), Gauge(2)])));
-    assert!(is_static(&take(Some(Gauge(1)))));
-    assert!(!is_static(&take(g)));
-    assert!(!is_static(&take(move || Gauge(g.get().0 + 1))));
+    assert!(matches!(take::<Gauge, _>(Gauge(3)), Prop::Static(Gauge(3))));
+    assert!(is_static(&take::<Vec<Gauge>, _>(vec![Gauge(1), Gauge(2)])));
+    assert!(is_static(&take::<Option<Gauge>, _>(Some(Gauge(1)))));
+    assert!(is_static(&take::<Option<Gauge>, _>(Gauge(1)))); // `From<T> for Option<T>`
+    assert!(is_static(&take::<(Gauge, i32), _>((Gauge(1), 2))));
+    assert!(!is_static(&take::<Gauge, _>(g)));
+    assert!(!is_static(&take::<Gauge, _>(move || Gauge(g.get().0 + 1))));
     // Bound to a widget through `bind`: constants apply once, signals re-run.
     cx.dispose();
     let mut t = TestUi::new(200, 100).mount(|cx| {
@@ -209,13 +204,16 @@ fn user_type_as_prop_via_prop_value() {
 }
 
 #[test]
-fn user_type_as_model_via_model_value() {
+fn user_type_as_model_without_declaration() {
     let cx = twine_reactive::create_root();
     let s = cx.signal(Level(1));
     assert!(matches!(take_model(Level(2)), Model::Owned(Level(2))));
-    assert!(matches!(take_model(s), Model::Bound(_)));
+    assert!(matches!(take_model::<Level>(s), Model::Bound(_)));
     assert!(matches!(take_model(Some(Level(1))), Model::Owned(Some(Level(1)))));
     assert!(matches!(take_model((Level(1), 5u8)), Model::Owned(_)));
+    // Integer literals infer for every integer type (no conversion in models).
+    assert!(matches!(take_model::<usize>(3), Model::Owned(3)));
+    assert!(matches!(take_model::<u32>(7), Model::Owned(7)));
     cx.dispose();
 }
 

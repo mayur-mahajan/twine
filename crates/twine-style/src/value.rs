@@ -2,17 +2,19 @@
 
 use core::fmt;
 
-use twine_anim::AnimTemplate;
+use twine_anim::AnimSpec;
 use twine_core::{Angle, Color, Duration, Fraction, Opa, Scale};
 use twine_image::ImageSource;
 use twine_render::Gradient;
 use twine_text::Font;
 
-use crate::transition::TransitionDsc;
+use crate::design::ElementRef;
+use crate::tracks::TracksRef;
+use crate::transition::TransitionRef;
 use crate::value_types::{
     Align, BaseDir, BlendMode, BlurQuality, BorderSide, ColorFilter, CrossAlign, DurationMs, FlexFlow,
-    GradDir, GridAlign, GridTrack, ImageColorkey, LayoutKind, Length, MainAlign, Radius, ScrollSnap,
-    ScrollbarMode, StyleEnum, TextAlign, TextDecor, TextLeadingTrim,
+    GradDir, GridAlign, ImageColorkey, LayoutKind, Length, MainAlign, Radius, ScrollSnap, ScrollbarMode,
+    StyleEnum, TextAlign, TextDecor, TextLeadingTrim,
 };
 
 /// The value of a style property as returned by lookups and resolution: one variant per value
@@ -22,6 +24,11 @@ use crate::value_types::{
 /// them with [`StyleValue::get`] or the typed accessors (`as_align`, `as_flex_flow`, …).
 /// References are compared by address (fonts, transitions, color filters) or by address and
 /// then content (images, gradients, grid templates, templates, color keys).
+///
+/// A property set to a [design element](crate::design) reads back as
+/// [`StyleValue::Element`] from a style ([`Style::get`](crate::Style::get)); resolution
+/// ([`resolve`](crate::resolve)) replaces it with the theme's value, so a resolved value is
+/// never an element.
 ///
 /// ```
 /// use twine_core::Color;
@@ -55,20 +62,27 @@ pub enum StyleValue {
     Image(&'static ImageSource),
     /// A gradient descriptor.
     Grad(&'static Gradient),
-    /// A transition descriptor.
-    Transition(&'static TransitionDsc),
-    /// A grid column or row template.
-    GridTracks(&'static [GridTrack]),
+    /// A transition: a `'static` one, or the run-time one its container holds (see
+    /// [`TransitionRef`]; read it through the container, e.g.
+    /// [`StyleRef::get_transition`](crate::StyleRef::get_transition)).
+    Transition(TransitionRef),
+    /// A grid column or row template: a `'static` list, or the run-time template its container
+    /// holds (see [`TracksRef`]; read its tracks with
+    /// [`resolve_grid_tracks`](crate::resolve_grid_tracks)).
+    GridTracks(TracksRef),
     /// An enum or flag set, see [`StyleEnum`].
     Enum(u8),
     /// A boolean.
     Bool(bool),
-    /// An animation template.
-    AnimTemplate(&'static AnimTemplate),
+    /// An animation timing (the `Anim` property).
+    AnimSpec(&'static AnimSpec),
     /// An image color key.
     Colorkey(&'static ImageColorkey),
     /// A color filter.
     ColorFilter(&'static ColorFilter),
+    /// A [design element](crate::design) not resolved yet (the value a style stores; see
+    /// [`resolve`](crate::resolve)).
+    Element(ElementRef),
 }
 
 fn same_or_equal<T: PartialEq + ?Sized>(a: &T, b: &T) -> bool {
@@ -89,13 +103,14 @@ impl PartialEq for StyleValue {
             (V::Font(a), V::Font(b)) => core::ptr::eq(a, b),
             (V::Image(a), V::Image(b)) => same_or_equal(a, b),
             (V::Grad(a), V::Grad(b)) => same_or_equal(a, b),
-            (V::Transition(a), V::Transition(b)) => core::ptr::eq(a, b),
-            (V::GridTracks(a), V::GridTracks(b)) => same_or_equal(a, b),
+            (V::Transition(a), V::Transition(b)) => a == b,
+            (V::GridTracks(a), V::GridTracks(b)) => a == b,
             (V::Enum(a), V::Enum(b)) => a == b,
             (V::Bool(a), V::Bool(b)) => a == b,
-            (V::AnimTemplate(a), V::AnimTemplate(b)) => same_or_equal(a, b),
+            (V::AnimSpec(a), V::AnimSpec(b)) => same_or_equal(a, b),
             (V::Colorkey(a), V::Colorkey(b)) => same_or_equal(a, b),
             (V::ColorFilter(a), V::ColorFilter(b)) => core::ptr::eq(a, b),
+            (V::Element(a), V::Element(b)) => a == b,
             _ => false,
         }
     }
@@ -127,13 +142,19 @@ impl fmt::Display for StyleValue {
             StyleValue::Font(font) => write!(f, "font@{:p} ({} px lines)", font, font.line_height),
             StyleValue::Image(i) => write!(f, "image {i}"),
             StyleValue::Grad(g) => write!(f, "gradient ({} stops)", g.stops().len()),
-            StyleValue::Transition(t) => write!(f, "transition ({} props)", t.props.len()),
-            StyleValue::GridTracks(t) => write!(f, "{} tracks", t.len()),
+            StyleValue::Transition(TransitionRef::Static(t)) => match t.props {
+                Some(p) => write!(f, "transition ({} props)", p.len()),
+                None => f.write_str("transition (changed props)"),
+            },
+            StyleValue::Transition(TransitionRef::Local(_)) => f.write_str("run-time transition"),
+            StyleValue::GridTracks(TracksRef::Static(t)) => write!(f, "{} tracks", t.len()),
+            StyleValue::GridTracks(TracksRef::Local(_)) => f.write_str("run-time tracks"),
             StyleValue::Enum(e) => write!(f, "enum {e}"),
             StyleValue::Bool(b) => write!(f, "{b}"),
-            StyleValue::AnimTemplate(a) => write!(f, "anim {}", a.duration),
+            StyleValue::AnimSpec(a) => write!(f, "anim {}", a.duration),
             StyleValue::Colorkey(k) => write!(f, "colorkey {}..{}", k.low, k.high),
             StyleValue::ColorFilter(_) => f.write_str("color filter"),
+            StyleValue::Element(e) => write!(f, "{e}"),
         }
     }
 }
@@ -151,6 +172,7 @@ impl defmt::Format for StyleValue {
             StyleValue::Enum(e) => defmt::write!(f, "Enum({})", e),
             StyleValue::Bool(b) => defmt::write!(f, "Bool({})", b),
             StyleValue::None => defmt::write!(f, "None"),
+            StyleValue::Element(e) => defmt::write!(f, "{}", e),
             _ => defmt::write!(f, "Ref"),
         }
     }
@@ -158,9 +180,14 @@ impl defmt::Format for StyleValue {
 
 /// A Rust type that can be the payload of a [`StyleProp`](crate::StyleProp) variant and be
 /// converted to and from [`StyleValue`].
-pub trait PropValue: Copy {
+pub trait PropValue: Sized {
+    /// The value as a [`StyleValue`].
+    fn to_value(&self) -> StyleValue;
     /// Wraps the value.
-    fn into_value(self) -> StyleValue;
+    #[inline]
+    fn into_value(self) -> StyleValue {
+        self.to_value()
+    }
     /// Unwraps a value of the matching variant (`None` for any other variant or an
     /// out-of-range code).
     fn from_value(v: StyleValue) -> Option<Self>;
@@ -170,8 +197,8 @@ macro_rules! prop_value {
     ($t:ty, $variant:ident) => {
         impl PropValue for $t {
             #[inline]
-            fn into_value(self) -> StyleValue {
-                StyleValue::$variant(self)
+            fn to_value(&self) -> StyleValue {
+                StyleValue::$variant(*self)
             }
             #[inline]
             fn from_value(v: StyleValue) -> Option<Self> {
@@ -194,9 +221,7 @@ prop_value!(bool, Bool);
 prop_value!(&'static Font, Font);
 prop_value!(&'static ImageSource, Image);
 prop_value!(&'static Gradient, Grad);
-prop_value!(&'static TransitionDsc, Transition);
-prop_value!(&'static [GridTrack], GridTracks);
-prop_value!(&'static AnimTemplate, AnimTemplate);
+prop_value!(&'static AnimSpec, AnimSpec);
 prop_value!(&'static ImageColorkey, Colorkey);
 prop_value!(&'static ColorFilter, ColorFilter);
 
@@ -204,8 +229,8 @@ macro_rules! prop_value_int {
     ($($t:ty),*) => {$(
         impl PropValue for $t {
             #[inline]
-            fn into_value(self) -> StyleValue {
-                StyleValue::Int(i32::try_from(self).unwrap_or(i32::MAX))
+            fn to_value(&self) -> StyleValue {
+                StyleValue::Int(i32::try_from(*self).unwrap_or(i32::MAX))
             }
             #[inline]
             fn from_value(v: StyleValue) -> Option<Self> {
@@ -224,7 +249,7 @@ prop_value_int!(u8, u16, u32);
 /// readers of the property see an ordinary length and the engine resolves `Dp` like any other.
 impl PropValue for Radius {
     #[inline]
-    fn into_value(self) -> StyleValue {
+    fn to_value(&self) -> StyleValue {
         StyleValue::Length(self.to_length())
     }
     #[inline]
@@ -240,7 +265,7 @@ impl PropValue for Radius {
 /// 24 days), the representation widgets read (LVGL `anim_duration` is in ms).
 impl PropValue for Duration {
     #[inline]
-    fn into_value(self) -> StyleValue {
+    fn to_value(&self) -> StyleValue {
         StyleValue::Int(i32::try_from(self.as_millis()).unwrap_or(i32::MAX))
     }
     #[inline]
@@ -255,7 +280,7 @@ impl PropValue for Duration {
 /// A style duration is stored as whole milliseconds in an `Int` (like [`Duration`]).
 impl PropValue for DurationMs {
     #[inline]
-    fn into_value(self) -> StyleValue {
+    fn to_value(&self) -> StyleValue {
         StyleValue::Int(i32::try_from(self.as_millis()).unwrap_or(i32::MAX))
     }
     #[inline]
@@ -268,7 +293,7 @@ impl PropValue for DurationMs {
 /// renderer reads (LVGL gradient stops).
 impl PropValue for Fraction {
     #[inline]
-    fn into_value(self) -> StyleValue {
+    fn to_value(&self) -> StyleValue {
         StyleValue::Int(i32::from(self.raw()))
     }
     #[inline]
@@ -284,7 +309,7 @@ macro_rules! prop_value_enum {
     ($($t:ty),* $(,)?) => {$(
         impl PropValue for $t {
             #[inline]
-            fn into_value(self) -> StyleValue {
+            fn to_value(&self) -> StyleValue {
                 StyleValue::Enum(self.to_code())
             }
             #[inline]
@@ -335,6 +360,17 @@ macro_rules! accessors {
 }
 
 impl StyleValue {
+    /// The `GridTracks` payload: a `'static` template, or a container's run-time template (its
+    /// tracks are read through the container, see [`TracksRef`]).
+    #[inline]
+    #[must_use]
+    pub fn as_grid_tracks(self) -> Option<TracksRef> {
+        match self {
+            StyleValue::GridTracks(t) => Some(t),
+            _ => None,
+        }
+    }
+
     /// The payload as `T` if the variant (and, for enums, the code) matches.
     #[inline]
     #[must_use]
@@ -343,7 +379,8 @@ impl StyleValue {
     }
 
     /// The value in pixels of an `Int` or a `Length::Px` (spacing properties such as padding
-    /// are pixel lengths; the engine has converted `Dp` by the time a resolved value is read).
+    /// are pixel lengths; [`resolve`](crate::resolve) has converted `Dp` by the time a
+    /// resolved value is read).
     /// `None` for anything else.
     #[inline]
     #[must_use]
@@ -374,6 +411,30 @@ impl StyleValue {
         matches!(self, StyleValue::Length(Length::Dp(_)))
     }
 
+    /// Whether this is an unresolved [design element](crate::design).
+    #[inline]
+    #[must_use]
+    pub const fn is_element(&self) -> bool {
+        matches!(self, StyleValue::Element(_))
+    }
+
+    /// The unresolved design element (`None` for any other value).
+    #[inline]
+    #[must_use]
+    pub const fn as_element(self) -> Option<ElementRef> {
+        match self {
+            StyleValue::Element(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Whether resolution must finish this value with the source: a design element or a
+    /// density-independent length. The resolver's only test on the common path (inlined).
+    #[inline(always)]
+    pub(crate) const fn needs_source(&self) -> bool {
+        matches!(self, StyleValue::Element(_) | StyleValue::Length(Length::Dp(_)))
+    }
+
     /// Whether this is [`StyleValue::None`].
     #[must_use]
     pub const fn is_none(&self) -> bool {
@@ -401,12 +462,10 @@ impl StyleValue {
         as_image -> &'static ImageSource;
         /// `Grad` payload.
         as_gradient -> &'static Gradient;
-        /// `Transition` payload.
-        as_transition -> &'static TransitionDsc;
-        /// `GridTracks` payload.
-        as_grid_tracks -> &'static [GridTrack];
-        /// `AnimTemplate` payload.
-        as_anim_template -> &'static AnimTemplate;
+        /// `Transition` payload (a `'static` transition or a container's run-time one).
+        as_transition -> TransitionRef;
+        /// `AnimSpec` payload.
+        as_anim_spec -> &'static AnimSpec;
         /// `Colorkey` payload.
         as_colorkey -> &'static ImageColorkey;
         /// `ColorFilter` payload.
@@ -453,16 +512,20 @@ mod tests {
         static I1: ImageSource = ImageSource::Symbol("x");
         static I2: ImageSource = ImageSource::Symbol("x");
         static I3: ImageSource = ImageSource::Symbol("y");
-        static T1: TransitionDsc =
-            TransitionDsc::new(&[], twine_core::Duration::ZERO, twine_anim::Easing::Linear);
-        static T2: TransitionDsc =
-            TransitionDsc::new(&[], twine_core::Duration::ZERO, twine_anim::Easing::Linear);
+        static T1: crate::Transition = crate::Transition::all(twine_core::Duration::ZERO);
+        static T2: crate::Transition = crate::Transition::all(twine_core::Duration::ms(1));
         assert_eq!(StyleValue::Font(&A), StyleValue::Font(&A));
         assert_ne!(StyleValue::Font(&A), StyleValue::Font(&B)); // same content, other font
         assert_eq!(StyleValue::Image(&I1), StyleValue::Image(&I2)); // same source
         assert_ne!(StyleValue::Image(&I1), StyleValue::Image(&I3));
-        assert_eq!(StyleValue::Transition(&T1), StyleValue::Transition(&T1));
-        assert_ne!(StyleValue::Transition(&T1), StyleValue::Transition(&T2));
+        assert_eq!(
+            StyleValue::Transition((&T1).into()),
+            StyleValue::Transition((&T1).into())
+        );
+        assert_ne!(
+            StyleValue::Transition((&T1).into()),
+            StyleValue::Transition((&T2).into())
+        );
         assert_ne!(StyleValue::Int(1), StyleValue::Bool(true));
         assert_eq!(StyleValue::None, StyleValue::default());
     }
@@ -494,5 +557,9 @@ mod tests {
         assert_eq!(StyleValue::Angle(Angle::deci_deg(-15)).to_string(), "-1.5°");
         assert_eq!(StyleValue::Angle(Angle::deci_deg(-5)).to_string(), "-0.5°");
         assert_eq!(StyleValue::None.to_string(), "none");
+        assert_eq!(
+            StyleValue::Element(crate::design::PRIMARY.erase()).to_string(),
+            "color element #6"
+        );
     }
 }

@@ -1,12 +1,8 @@
 //! Snapshots of the gallery pages (one source of truth for the gallery drawing code).
 #![allow(clippy::manual_assert_eq)] // `assert!(a == b)` avoids dumping whole images on failure
 
-#[path = "../../../examples/src/gallery/mod.rs"]
-#[allow(dead_code)]
-mod gallery;
-
 use twine_core::{Color, ColorFormat, Opa, Rect};
-use twine_testing::{RenderHarness, assert_render_snapshot};
+use twine_testing::{RenderHarness, assert_render_snapshot, gallery};
 
 fn page(n: usize, frame: u32) -> RenderHarness {
     let mut h = RenderHarness::new(gallery::W as u16, gallery::H as u16, ColorFormat::Rgb565);

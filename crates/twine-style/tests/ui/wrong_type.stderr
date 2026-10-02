@@ -1,20 +1,22 @@
 error[E0308]: mismatched types
- --> tests/ui/wrong_type.rs:3:38
+ --> tests/ui/wrong_type.rs:3:19
   |
 3 | static S: Style = style! { bg_color: 5 };
-  |                   -------------------^--
-  |                   |                  |
-  |                   |                  expected `Color`, found integer
+  |                   ^^^^^^^^^^^^^^^^^^^^^^
+  |                   |
+  |                   expected `DesignValue<Color>`, found `i32`
   |                   arguments to this enum variant are incorrect
   |
+  = note: expected enum `DesignValue<twine_style::__private::Color>`
+             found type `i32`
 note: tuple variant defined here
  --> src/table.rs
   |
-  |             BgColor(bg_color): val [Color] [] WHITE ["LV_STYLE_BG_COLOR"];
-  |             ^^^^^^^
+  |                 BgColor(bg_color): elem [ColorValue] [] WHITE ["LV_STYLE_BG_COLOR"];
+  |                 ^^^^^^^
   |
  ::: src/prop.rs
   |
   | crate::__prop_table!(define_props $);
   | ------------------------------------ in this macro invocation
-  = note: this error originates in the macro `crate::__prop_table` (in Nightly builds, run with -Z macro-backtrace for more info)
+  = note: this error originates in the macro `$crate::__style_prop` which comes from the expansion of the macro `crate::__prop_table` (in Nightly builds, run with -Z macro-backtrace for more info)

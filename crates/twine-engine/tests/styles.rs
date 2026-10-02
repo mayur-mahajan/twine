@@ -13,9 +13,15 @@ use twine_style::{
 };
 use twine_testing::EngineHarness;
 
-static BLUE_BG: Style = Style::new(&[StyleProp::BgColor(Color::BLUE)]);
-static RED_BG: Style = Style::new(&[StyleProp::BgColor(Color::RED)]);
-static GREEN_BG: Style = Style::new(&[StyleProp::BgColor(Color::GREEN)]);
+static BLUE_BG: Style = Style::new(&[StyleProp::BgColor(::twine_style::design::DesignValue::Fixed(
+    Color::BLUE,
+))]);
+static RED_BG: Style = Style::new(&[StyleProp::BgColor(::twine_style::design::DesignValue::Fixed(
+    Color::RED,
+))]);
+static GREEN_BG: Style = Style::new(&[StyleProp::BgColor(::twine_style::design::DesignValue::Fixed(
+    Color::GREEN,
+))]);
 
 fn engine_with_node() -> (Engine, NodeId) {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
@@ -50,7 +56,7 @@ fn precedence_later_added_normal_wins_on_tie() {
 #[test]
 fn local_beats_normal() {
     let (mut e, n) = engine_with_node();
-    e.set_local_prop(n, Selector::MAIN, StyleProp::BgColor(Color::GREEN));
+    e.set_local_prop(n, Selector::MAIN, StyleProp::BgColor(Color::GREEN.into()));
     e.add_style(n, &BLUE_BG, Selector::MAIN);
     assert_eq!(bg(&e, n), Color::GREEN);
 }
@@ -79,7 +85,7 @@ fn part_selectors_are_independent() {
 fn inherited_prop_comes_from_parent_main() {
     let (mut e, parent) = engine_with_node();
     let child = e.create(parent, Box::new(Obj)).unwrap();
-    e.set_local_prop(parent, Selector::MAIN, StyleProp::TextColor(Color::RED));
+    e.set_local_prop(parent, Selector::MAIN, StyleProp::TextColor(Color::RED.into()));
     assert_eq!(e.style_color(child, Part::Main, PropId::TextColor), Color::RED);
     assert_eq!(
         e.style_color(child, Part::Indicator, PropId::TextColor),
@@ -91,7 +97,7 @@ fn inherited_prop_comes_from_parent_main() {
 fn non_inherited_prop_uses_default() {
     let (mut e, parent) = engine_with_node();
     let child = e.create(parent, Box::new(Obj)).unwrap();
-    e.set_local_prop(parent, Selector::MAIN, StyleProp::BgColor(Color::RED));
+    e.set_local_prop(parent, Selector::MAIN, StyleProp::BgColor(Color::RED.into()));
     assert_eq!(bg(&e, child), Color::WHITE);
     assert_eq!(e.style_opa(child, Part::Main, PropId::BgOpacity), Opa::TRANSP);
 }
@@ -130,7 +136,7 @@ fn set_local_prop_same_value_is_noop() {
     let _ = h.engine().cached_main(b);
     assert!(h.engine().style_cache_valid(b));
     h.engine_mut()
-        .set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::RED));
+        .set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::RED.into()));
     assert!(
         h.engine().invalidation_log().is_empty(),
         "{:?}",
@@ -140,7 +146,7 @@ fn set_local_prop_same_value_is_noop() {
     h.assert_idle();
     // A different value invalidates exactly the box.
     h.engine_mut()
-        .set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::BLUE));
+        .set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::BLUE.into()));
     assert!(
         h.engine()
             .invalidation_log()
@@ -174,12 +180,12 @@ fn inherited_change_bumps_epoch_and_children_see_new_value() {
     let before = e.cached_main(child).text_color;
     assert_eq!(before, Color::BLACK);
     let epoch = e.tree().style_epoch();
-    e.set_local_prop(parent, Selector::MAIN, StyleProp::TextColor(Color::RED));
+    e.set_local_prop(parent, Selector::MAIN, StyleProp::TextColor(Color::RED.into()));
     assert_ne!(e.tree().style_epoch(), epoch);
     assert_eq!(e.cached_main(child).text_color, Color::RED);
     // A non-inherited change does not bump the epoch.
     let epoch = e.tree().style_epoch();
-    e.set_local_prop(parent, Selector::MAIN, StyleProp::BgColor(Color::RED));
+    e.set_local_prop(parent, Selector::MAIN, StyleProp::BgColor(Color::RED.into()));
     assert_eq!(e.tree().style_epoch(), epoch);
 }
 
@@ -214,22 +220,22 @@ fn report_style_change_refreshes_users_only() {
 fn random_style(bits: u8, color: u32) -> StyleBuf {
     let mut s = StyleBuf::new();
     if bits & 1 != 0 {
-        s.set(StyleProp::BgColor(Color::hex(color)));
+        s.set(StyleProp::BgColor(Color::hex(color).into()));
     }
     if bits & 2 != 0 {
-        s.set(StyleProp::Radius(Radius::Px(i32::from(bits))));
+        s.set(StyleProp::Radius(Radius::Px(i32::from(bits)).into()));
     }
     if bits & 4 != 0 {
-        s.set(StyleProp::PaddingTop(Length::Px(i32::from(bits) + 1)));
+        s.set(StyleProp::PaddingTop(Length::Px(i32::from(bits) + 1).into()));
     }
     if bits & 8 != 0 {
-        s.set(StyleProp::TextColor(Color::hex(color ^ 0xFF)));
+        s.set(StyleProp::TextColor(Color::hex(color ^ 0xFF).into()));
     }
     if bits & 16 != 0 {
-        s.set(StyleProp::PartOpacity(Opa::from_raw(color as u8)));
+        s.set(StyleProp::PartOpacity(Opa::from_raw(color as u8).into()));
     }
     if bits & 32 != 0 {
-        s.set(StyleProp::BorderWidth(Length::Px(3)));
+        s.set(StyleProp::BorderWidth(Length::Px(3).into()));
     }
     s
 }
@@ -250,7 +256,7 @@ proptest! {
         }
         for (bits, c, st, local) in &entries {
             if *local {
-                e.set_local_prop(child, Selector::state(STATES[*st]), StyleProp::BgColor(Color::hex(*c)));
+                e.set_local_prop(child, Selector::state(STATES[*st]), StyleProp::BgColor(Color::hex(*c).into()));
             } else {
                 e.add_style(child, random_style(*bits, *c), Selector::state(STATES[*st]));
             }
@@ -303,8 +309,8 @@ fn style_parent_link_inherits_from_owner() {
     let popup_root = e.create_root(Box::new(Obj)).unwrap();
     let popup = e.create(popup_root, Box::new(Obj)).unwrap();
     let inner = e.create(popup, Box::new(Obj)).unwrap();
-    e.set_local_prop(root, Selector::MAIN, StyleProp::TextColor(Color::RED));
-    e.set_local_prop(root, Selector::MAIN, StyleProp::BgColor(Color::GREEN));
+    e.set_local_prop(root, Selector::MAIN, StyleProp::TextColor(Color::RED.into()));
+    e.set_local_prop(root, Selector::MAIN, StyleProp::BgColor(Color::GREEN.into()));
     assert_eq!(text_color(&e, inner), Color::BLACK);
 
     e.set_style_parent(popup, Some(owner));
@@ -324,7 +330,7 @@ fn style_parent_link_inherits_from_owner() {
     );
 
     // A change above the owner reaches the popup.
-    e.set_local_prop(root, Selector::MAIN, StyleProp::TextColor(Color::BLUE));
+    e.set_local_prop(root, Selector::MAIN, StyleProp::TextColor(Color::BLUE.into()));
     assert_eq!(e.cached_main(inner).text_color, Color::BLUE);
 
     e.set_style_parent(popup, None);
@@ -355,7 +361,7 @@ fn inherited_change_on_owner_redraws_linked_popup() {
     h.engine_mut().set_style_parent(popup, Some(owner));
     h.run_until_idle();
     h.engine_mut()
-        .set_local_prop(owner, Selector::MAIN, StyleProp::TextColor(Color::RED));
+        .set_local_prop(owner, Selector::MAIN, StyleProp::TextColor(Color::RED.into()));
     let log = h.engine().invalidation_log();
     assert!(
         log.iter().any(|(r, _)| *r == Rect::from_xywh(40, 40, 10, 10)),
@@ -365,7 +371,7 @@ fn inherited_change_on_owner_redraws_linked_popup() {
     // A non-inherited change does not touch the popup.
     h.run_until_idle();
     h.engine_mut()
-        .set_local_prop(owner, Selector::MAIN, StyleProp::BgColor(Color::GREEN));
+        .set_local_prop(owner, Selector::MAIN, StyleProp::BgColor(Color::GREEN.into()));
     let log = h.engine().invalidation_log();
     assert!(
         log.iter().all(|(r, _)| *r == Rect::from_xywh(10, 10, 20, 20)),
@@ -375,7 +381,9 @@ fn inherited_change_on_owner_redraws_linked_popup() {
 
 #[test]
 fn inherited_state_change_on_owner_reaches_linked_popup() {
-    static RED_TEXT: Style = Style::new(&[StyleProp::TextColor(Color::RED)]);
+    static RED_TEXT: Style = Style::new(&[StyleProp::TextColor(::twine_style::design::DesignValue::Fixed(
+        Color::RED,
+    ))]);
     let (mut h, owner, popup) = harness_popup();
     h.engine_mut().set_style_parent(popup, Some(owner));
     h.engine_mut()
@@ -398,8 +406,12 @@ fn style_link_ends_when_a_node_is_deleted() {
     let owner = e.create(root, Box::new(Obj)).unwrap();
     let popup_root = e.create_root(Box::new(Obj)).unwrap();
     let popup = e.create(popup_root, Box::new(Obj)).unwrap();
-    e.set_local_prop(owner, Selector::MAIN, StyleProp::TextColor(Color::RED));
-    e.set_local_prop(popup_root, Selector::MAIN, StyleProp::TextColor(Color::GREEN));
+    e.set_local_prop(owner, Selector::MAIN, StyleProp::TextColor(Color::RED.into()));
+    e.set_local_prop(
+        popup_root,
+        Selector::MAIN,
+        StyleProp::TextColor(Color::GREEN.into()),
+    );
     e.set_style_parent(popup, Some(owner));
     assert_eq!(text_color(&e, popup), Color::RED);
     e.delete(owner).unwrap();

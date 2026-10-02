@@ -5,15 +5,17 @@
 use std::rc::Rc;
 
 use twine_core::{Color, Opa};
-use twine_engine::{Engine, NodeId, Obj, ObjFlags, ThemeCx, ThemeHook, Widget, WidgetClass};
+use twine_engine::{Engine, NodeId, OBJ_CLASS, Obj, ObjFlags, ThemeCx, ThemeHook, Widget, WidgetClass};
 use twine_style::{Part, PropId, Selector, State, StyleBuf};
 use twine_testing::EngineHarness;
 use twine_text::Font;
 use twine_theme::{DefaultTheme, DisplaySize, Palette, Theme, ThemeMode};
 
-/// A stand-in for the button widget (the theme styles classes by name).
+/// A stand-in for the button widget: a class of its own, themed like a button (its base).
 struct FakeButton;
-static FAKE_BUTTON_CLASS: WidgetClass = WidgetClass::new("button").default_flags(ObjFlags::CLICKABLE);
+static FAKE_BUTTON_CLASS: WidgetClass = WidgetClass::new("fake_button")
+    .default_flags(ObjFlags::CLICKABLE)
+    .base(&twine_widgets::button::BUTTON_CLASS);
 impl Widget for FakeButton {
     fn class(&self) -> &'static WidgetClass {
         &FAKE_BUTTON_CLASS
@@ -100,9 +102,10 @@ fn card_matches_lvgl_small_display() {
 #[test]
 fn card_radius_scales_with_dpi() {
     for (dpi, r) in [(130, 10), (260, 20)] {
-        let t = DefaultTheme::light()
-            .with_dpi(dpi)
-            .with_display_size(DisplaySize::Large);
+        let t = DefaultTheme::builder()
+            .dpi(dpi)
+            .display_size(DisplaySize::Large)
+            .build();
         let (h, card) = card_scene(EngineHarness::new(240, 160).theme(Rc::new(t)));
         // RADIUS_DEFAULT = LV_DPX_CALC(dpi, 12) on large displays.
         assert_eq!(
@@ -171,27 +174,26 @@ fn dark_buttons_have_no_shadow() {
     let s = screen(h.engine());
     let e = h.engine_mut();
     let b = e.create(s, Box::new(FakeButton)).unwrap();
-    // The `btn` style sets no shadow in dark mode (width stays 0).
-    assert_eq!(e.style_i32(b, Part::Main, PropId::ShadowWidth), 0);
-    assert_eq!(e.style_i32(b, Part::Main, PropId::ShadowOffsetY), 0);
+    // LVGL sets no button shadow in dark mode: the `btn` style's shadow opacity is the
+    // `SHADOW_OPACITY` design element, transparent in dark mode, so nothing is drawn and the
+    // node has no extra draw area.
+    assert_eq!(e.style_opa(b, Part::Main, PropId::ShadowOpacity), Opa::TRANSP);
+    assert_eq!(e.compute_ext_draw(b), 0);
+    e.set_theme_mode(e.default_display().unwrap(), ThemeMode::Light);
+    assert_eq!(e.style_opa(b, Part::Main, PropId::ShadowOpacity), Opa::P50);
+    assert!(e.compute_ext_draw(b) > 0);
 }
 
 /// A theme that makes every container red and counts its calls.
 struct RedCards(Rc<StyleBuf>);
 impl ThemeHook for RedCards {
     fn apply(&self, cx: &mut ThemeCx<'_>, class: &'static WidgetClass) {
-        if class.name == "obj" && cx.parent().is_some() {
+        if class.is(&OBJ_CLASS) && cx.parent().is_some() {
             cx.add_style(Selector::MAIN, self.0.clone());
         }
     }
     fn font_normal(&self) -> &'static Font {
         &twine_assets::fonts::MONTSERRAT_14
-    }
-    fn color_primary(&self) -> Color {
-        Color::RED
-    }
-    fn color_secondary(&self) -> Color {
-        Color::RED
     }
 }
 impl Theme for RedCards {
@@ -208,7 +210,7 @@ fn parent_theme_applied_first() {
     let parent = Rc::new(RedCards(Rc::new(
         StyleBuf::new().bg_color(Color::RED).shadow_width(9),
     )));
-    let t = DefaultTheme::light().with_parent(parent);
+    let t = DefaultTheme::builder().parent(parent).build();
     let (h, card) = card_scene(EngineHarness::new(240, 160).theme(Rc::new(t)));
     let e = h.engine();
     // The child theme (default) wins where both set a property...
@@ -234,27 +236,55 @@ struct RedChild(Rc<DefaultTheme>, Rc<StyleBuf>);
 impl ThemeHook for RedChild {
     fn apply(&self, cx: &mut ThemeCx<'_>, class: &'static WidgetClass) {
         self.0.apply(cx, class);
-        if class.name == "obj" && cx.parent().is_some() {
+        if class.is(&OBJ_CLASS) && cx.parent().is_some() {
             cx.add_style(Selector::MAIN, self.1.clone());
         }
     }
     fn font_normal(&self) -> &'static Font {
         self.0.font_normal()
     }
+    // A wrapping theme forwards the modes and the design elements of the theme it extends.
+    fn mode(&self) -> ThemeMode {
+        ThemeHook::mode(&*self.0)
+    }
+    fn modes(&self) -> &'static [ThemeMode] {
+        self.0.modes()
+    }
+    fn design(
+        &self,
+        mode: ThemeMode,
+        dpi: u16,
+        resolution: twine_core::Size,
+    ) -> Option<Rc<twine_style::design::ElementTable>> {
+        self.0.design(mode, dpi, resolution)
+    }
 }
 
 #[test]
 fn theme_mode_and_colors() {
-    let t = DefaultTheme::new(
-        Palette::Teal,
-        Palette::Amber,
-        ThemeMode::Dark,
-        &twine_assets::fonts::MONTSERRAT_14,
-    );
+    let t = DefaultTheme::builder()
+        .primary(Palette::Teal)
+        .secondary(Palette::Amber)
+        .mode(ThemeMode::Dark)
+        .fonts(twine_theme::FontScale::uniform(
+            &twine_assets::fonts::MONTSERRAT_14,
+        ))
+        .build();
     assert_eq!(t.mode(), ThemeMode::Dark);
-    assert_eq!(t.color_primary(), Palette::Teal.main());
-    assert_eq!(t.color_secondary(), Palette::Amber.main());
-    assert_eq!(t.name(), "default-dark");
+    assert_eq!(t.primary(), Palette::Teal.main());
+    assert_eq!(t.secondary(), Palette::Amber.main());
+    let table = t
+        .design(ThemeMode::Dark, 130, twine_core::Size::new(240, 160))
+        .unwrap();
+    assert_eq!(
+        table.get(twine_style::design::PRIMARY),
+        Some(Palette::Teal.main())
+    );
+    assert_eq!(
+        table.get(twine_style::design::SECONDARY),
+        Some(Palette::Amber.main())
+    );
+    assert_eq!(t.name(), "default");
     // Style sets are cached per (dpi, size).
     let a = t.styles(130, twine_core::Size::new(240, 160));
     let b = t.styles(130, twine_core::Size::new(240, 160));

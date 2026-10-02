@@ -15,9 +15,25 @@ default = ["assets"]
 ## The ready-made constructors (`DefaultTheme::light()` …) with the built-in Montserrat 14 font.
 assets = ["dep:twine-assets"]
 ## std-only conveniences.
-std = ["twine-core/std", "twine-engine/std", "twine-style/std", "twine-text/std", "twine-image/std"]
+std = [
+    "twine-core/std",
+    "twine-engine/std",
+    "twine-style/std",
+    "twine-text/std",
+    "twine-image/std",
+    "twine-widgets/std",
+    "twine-widgets-ext/std",
+]
 ## Log through the `log` crate.
-log = ["twine-core/log", "twine-engine/log", "twine-style/log", "twine-text/log", "twine-image/log"]
+log = [
+    "twine-core/log",
+    "twine-engine/log",
+    "twine-style/log",
+    "twine-text/log",
+    "twine-image/log",
+    "twine-widgets/log",
+    "twine-widgets-ext/log",
+]
 ## Log through `defmt` and derive `defmt::Format` on public types.
 defmt = [
     "dep:defmt",
@@ -26,6 +42,8 @@ defmt = [
     "twine-style/defmt",
     "twine-text/defmt",
     "twine-image/defmt",
+    "twine-widgets/defmt",
+    "twine-widgets-ext/defmt",
 ]
 
 [dependencies]
@@ -34,6 +52,9 @@ twine-engine = { path = "../twine-engine" }
 twine-style = { path = "../twine-style" }
 twine-text = { path = "../twine-text" }
 twine-image = { path = "../twine-image" }
+# The class statics of the built-in widgets: themes recognise classes by identity.
+twine-widgets = { path = "../twine-widgets" }
+twine-widgets-ext = { path = "../twine-widgets-ext" }
 twine-assets = { path = "../twine-assets", optional = true, features = ["montserrat-14"] }
 defmt = { version = "1", optional = true }
 

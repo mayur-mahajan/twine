@@ -195,6 +195,17 @@ pub fn take_faults() -> FaultCounts {
 /// kind and the number of occurrences. It runs where the fault is detected — possibly in the
 /// middle of an effect flush — so keep it short: record, count or signal a supervisor.
 ///
+/// - **Per runtime:** the hook belongs to the current runtime — with the `std` feature one per
+///   thread (set it on the UI thread), without it the single bound runtime. A new hook
+///   replaces the previous one.
+/// - **Re-entry:** the hook is called after the runtime's fault bookkeeping is released, so it
+///   may call [`take_faults`], [`runtime_stats`] or `set_fault_hook` itself without
+///   panicking. Since it can run in the middle of an effect flush, it should not write signals
+///   or create reactive nodes: defer such work (e.g. through a `static` flag the main loop
+///   reads).
+/// - Allocates nothing; never panics (like every runtime function without `std`, it requires
+///   the runtime to be bound: see [`bind_to_current_context`](crate::bind_to_current_context)).
+///
 /// ```
 /// use core::sync::atomic::{AtomicU32, Ordering};
 /// use twine_core::fault::FaultKind;

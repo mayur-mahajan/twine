@@ -14,7 +14,7 @@ artwork is used; the files are covered by the repository license (MIT OR Apache-
 The SVG icons in `svg/` (`home.svg`, `star.svg`, `badge.svg`, `chart.svg`) are hand-written for
 Twine (paths, gradients, strokes, dashes) and covered by the repository license.
 
-`images.toml` lists the conversions `cargo xtask images` writes into `examples/src/assets/`.
+`images.toml` lists the conversions `cargo xtask images` writes into `crates/twine/examples/assets/`.
 
 Decoder tests in `crates/twine-image/tests/` generate their test images at run time (procedural
 patterns encoded with the `image`, `png` and `jpeg-encoder` crates), so no image test suites are

@@ -1,23 +1,25 @@
 error[E0308]: mismatched types
- --> tests/ui/bare_int_units.rs:5:46
+ --> tests/ui/bare_int_units.rs:5:25
   |
 5 | static OPACITY: Style = style! { bg_opacity: 128 };
-  |                         ---------------------^^^--
-  |                         |                    |
-  |                         |                    expected `Opa`, found integer
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |                         |
+  |                         expected `DesignValue<Opa>`, found `i32`
   |                         arguments to this enum variant are incorrect
   |
+  = note: expected enum `DesignValue<twine_style::__private::Opa>`
+             found type `i32`
 note: tuple variant defined here
  --> src/table.rs
   |
-  |             BgOpacity(bg_opacity): val [Opa] [] TRANSP ["bg_opa" "LV_STYLE_BG_OPA"];
-  |             ^^^^^^^^^
+  |                 BgOpacity(bg_opacity): elem [OpacityValue] [] TRANSP ["bg_opa" "LV_STYLE_BG_OPA"];
+  |                 ^^^^^^^^^
   |
  ::: src/prop.rs
   |
   | crate::__prop_table!(define_props $);
   | ------------------------------------ in this macro invocation
-  = note: this error originates in the macro `crate::__prop_table` (in Nightly builds, run with -Z macro-backtrace for more info)
+  = note: this error originates in the macro `$crate::__style_prop` which comes from the expansion of the macro `crate::__prop_table` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0308]: mismatched types
  --> tests/ui/bare_int_units.rs:6:55
@@ -31,8 +33,8 @@ error[E0308]: mismatched types
 note: tuple variant defined here
  --> src/table.rs
   |
-  |             TransformRotation(transform_rotation): val [Angle] [EXT_DRAW LAYER TRANSFORM] ANGLE0 ["LV_STYLE_TRANSFORM_ROTATION"];
-  |             ^^^^^^^^^^^^^^^^^
+  |                 TransformRotation(transform_rotation): val [Angle] [EXT_DRAW LAYER TRANSFORM] ANGLE0 ["LV_STYLE_TRANSFORM_ROTATION"];
+  |                 ^^^^^^^^^^^^^^^^^
   |
  ::: src/prop.rs
   |
@@ -52,8 +54,8 @@ error[E0308]: mismatched types
 note: tuple variant defined here
  --> src/table.rs
   |
-  |             TransformScaleX(transform_scale_x): val [Scale] [EXT_DRAW LAYER TRANSFORM] SCALE_ONE ["LV_STYLE_TRANSFORM_SCALE_X"];
-  |             ^^^^^^^^^^^^^^^
+  |                 TransformScaleX(transform_scale_x): val [Scale] [EXT_DRAW LAYER TRANSFORM] SCALE_ONE ["LV_STYLE_TRANSFORM_SCALE_X"];
+  |                 ^^^^^^^^^^^^^^^
   |
  ::: src/prop.rs
   |
@@ -73,8 +75,8 @@ error[E0308]: mismatched types
 note: tuple variant defined here
  --> src/table.rs
   |
-  |             TransformScaleX(transform_scale_x): val [Scale] [EXT_DRAW LAYER TRANSFORM] SCALE_ONE ["LV_STYLE_TRANSFORM_SCALE_X"];
-  |             ^^^^^^^^^^^^^^^
+  |                 TransformScaleX(transform_scale_x): val [Scale] [EXT_DRAW LAYER TRANSFORM] SCALE_ONE ["LV_STYLE_TRANSFORM_SCALE_X"];
+  |                 ^^^^^^^^^^^^^^^
   |
  ::: src/prop.rs
   |
@@ -94,8 +96,8 @@ error[E0308]: mismatched types
 note: tuple variant defined here
  --> src/table.rs
   |
-  |             TransformScaleY(transform_scale_y): val [Scale] [EXT_DRAW LAYER TRANSFORM] SCALE_ONE ["LV_STYLE_TRANSFORM_SCALE_Y"];
-  |             ^^^^^^^^^^^^^^^
+  |                 TransformScaleY(transform_scale_y): val [Scale] [EXT_DRAW LAYER TRANSFORM] SCALE_ONE ["LV_STYLE_TRANSFORM_SCALE_Y"];
+  |                 ^^^^^^^^^^^^^^^
   |
  ::: src/prop.rs
   |

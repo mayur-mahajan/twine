@@ -14,7 +14,9 @@
 //! `scroll_by(id, 0, 10, false)` moves the content **down** by 10 pixels and reduces the offset
 //! by 10.
 
-use twine_anim::{Anim, AnimProp, AnimTarget, Easing};
+use twine_anim::{Anim, AnimTarget, Easing};
+
+use crate::AnimProp;
 use twine_core::{Duration, Point, Rect};
 use twine_style::{BaseDir, Part, PropId, ScrollSnap, ScrollbarMode, Sides};
 
@@ -167,8 +169,8 @@ impl Engine {
         let key = id.to_raw();
         for (_, a) in self.anim.timeline.iter() {
             match a.target {
-                AnimTarget::Node(k, AnimProp::ScrollX) if k == key => p.x = a.end,
-                AnimTarget::Node(k, AnimProp::ScrollY) if k == key => p.y = a.end,
+                AnimTarget::Node(k, c) if k == key && c == AnimProp::ScrollX.key() => p.x = a.end,
+                AnimTarget::Node(k, c) if k == key && c == AnimProp::ScrollY.key() => p.y = a.end,
                 _ => {}
             }
         }
@@ -476,7 +478,7 @@ impl Engine {
 
     /// Stops the scroll animation of `prop` on `id`, sending `ScrollEnd` if one ran.
     fn stop_scroll_anim_axis(&mut self, id: NodeId, prop: AnimProp) {
-        if self.anim.timeline.remove_target_prop(id.to_raw(), prop) > 0 && self.tree.contains(id) {
+        if self.anim.timeline.remove_target_prop(id.to_raw(), prop.key()) > 0 && self.tree.contains(id) {
             self.send_event(id, EventCode::ScrollEnd, EventParam::None);
         }
     }
@@ -698,7 +700,7 @@ impl Engine {
         }
         let key = id.to_raw();
         self.anim.timeline.iter().any(|(_, a)| {
-            matches!(a.target, AnimTarget::Node(k, AnimProp::ScrollX | AnimProp::ScrollY) if k == key)
+            a.target == AnimProp::ScrollX.target(key) || a.target == AnimProp::ScrollY.target(key)
         })
     }
 

@@ -22,7 +22,9 @@ API, `no_std` + `alloc`). Low compute/power is the top priority.
 
 ## Commands
 - `cargo xtask ci` — everything CI runs (fmt, clippy, tests, no_std builds, docs, todo-check, layers).
-- `cargo xtask sim <example>` — run a simulator example (`examples/src/bin/<example>.rs`).
+- `cargo xtask sim <example>` — run a simulator example (Cargo examples of `twine`:
+  `crates/twine/examples/<example>.rs` or `<example>/main.rs`; = `cargo run -p twine --example <example>`).
+- `cargo xtask sim-smoke` — run every simulator example headless.
 - `cargo xtask snapshots [--update]` — run/refresh snapshot tests (review diffs before updating).
 - `cargo xtask nostd` — build no_std crates for all embedded targets.
 - `cargo xtask firmware [board]` — build firmware crates.

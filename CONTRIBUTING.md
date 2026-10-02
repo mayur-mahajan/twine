@@ -15,6 +15,8 @@ well tested. Please read them before opening a pull request.
     (`espup install`); `cargo xtask firmware` builds the example firmware in `firmware/` and
     skips examples whose toolchain or target is missing
 - **Simulator**: `cargo xtask sim <example>` opens a desktop window (pure Rust, no SDL needed).
+  The examples are Cargo examples of the facade crate (`crates/twine/examples/`, also run with
+  `cargo run -p twine --example <example>`); `cargo test` compiles them without running them.
   Set `TWINE_SIM_HEADLESS=1` to run without a window and write PNG screenshots instead.
 - **Logs**: `RUST_LOG=twine=debug` (or e.g. `twine::refresh=trace`) in the simulator and tests.
 
@@ -93,7 +95,11 @@ These keep Twine usable on small, battery-powered devices. CI or review will rej
   violations, `warn!` for invalid input, `info!` for lifecycle, `debug!` for per-frame summaries,
   `trace!` for per-event detail.
 - **Modules** stay focused and reasonably small; unit tests live next to the code, integration
-  tests in `tests/`.
+  tests in `tests/` of the crate whose behaviour they check.
+- **Standard Cargo layout**: runnable examples are Cargo examples (`examples/<name>.rs`, or
+  `examples/<name>/main.rs` with helper modules; helpers shared by several examples in
+  `examples/common/`) and contain no tests; `src/bin/` is only for real binaries; crates used
+  only by tests or examples (`twine-sim`, `twine-testing`, …) are dev-dependencies.
 
 ## Testing
 

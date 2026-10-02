@@ -43,7 +43,7 @@ pub const CLIPPY_ALL_FEATURES_EXCLUDE: &[(&str, &str)] = &[
     ("twine-accel-stm32", "stm32f746ng"),
     ("twine-accel-stm32", "stm32h743zi"),
     // Needs SDL2; checked by the `eg-sim` stage when it is installed.
-    ("twine-examples", "eg-sim"),
+    ("twine-embedded-graphics", "eg-sim"),
 ];
 
 /// Outcome of one stage.
@@ -186,14 +186,21 @@ fn miri_check() -> Result<Outcome, Box<dyn std::error::Error>> {
     ok(miri::run(&[]))
 }
 
+/// Features of the `doc` stage (see [`doc`]).
+pub const DOC_FEATURES: &str = "twine/full,twine/std,\
+twine-drivers/all,twine-drivers/async,twine-drivers/testkit,\
+twine-fs/fs-std,twine-fs/fs-fat,\
+twine-demos/multilang-cjk,twine-demos/ttf,twine-demos/vector,twine-demos/lottie";
+
 fn doc() -> Result<Outcome, Box<dyn std::error::Error>> {
-    // Every driver of twine-drivers is behind its own feature: document all of them.
+    // Document (and link-check) every feature-gated API: the facade's `full` set, every driver of
+    // twine-drivers, and the optional parts of crates the facade does not re-export.
     ok(run_cmd(cargo_ci().env("RUSTDOCFLAGS", "-D warnings").args([
         "doc",
         "--workspace",
         "--no-deps",
         "--features",
-        "twine-drivers/all,twine-drivers/async,twine-drivers/testkit",
+        DOC_FEATURES,
     ])))
 }
 
@@ -209,13 +216,13 @@ fn eg_sim() -> Result<Outcome, Box<dyn std::error::Error>> {
             "SDL2 not found (`brew install sdl2` / `apt install libsdl2-dev`)".into(),
         ));
     };
-    for (example, feature) in sim::FEATURE_EXAMPLES {
+    for (example, package, feature) in sim::FEATURE_EXAMPLES {
         let mut build = cargo_ci();
         build.args([
             "build",
             "-p",
-            "twine-examples",
-            "--bin",
+            package,
+            "--example",
             example,
             "--features",
             feature,
@@ -226,8 +233,8 @@ fn eg_sim() -> Result<Outcome, Box<dyn std::error::Error>> {
         lint.args([
             "clippy",
             "-p",
-            "twine-examples",
-            "--bin",
+            package,
+            "--example",
             example,
             "--features",
             feature,

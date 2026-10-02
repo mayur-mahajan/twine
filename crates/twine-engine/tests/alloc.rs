@@ -43,21 +43,27 @@ fn steady_state_frame_allocates_nothing() {
         for i in 0..50 {
             let (x, y) = ((i % 10) * 30 + 5, (i / 10) * 45 + 5);
             let mut props = vec![
-                StyleProp::BgColor(Color::hex(0x20_40_80 + i as u32 * 0x0003_0107)),
-                StyleProp::BgOpacity(Opa::COVER),
-                StyleProp::Radius(Radius::Px(6)),
+                StyleProp::BgColor(Color::hex(0x20_40_80 + i as u32 * 0x0003_0107).into()),
+                StyleProp::BgOpacity(Opa::COVER.into()),
+                StyleProp::Radius(Radius::Px(6).into()),
             ];
             if i % 3 == 0 {
-                props.extend([StyleProp::ShadowWidth(10), StyleProp::ShadowOpacity(Opa::P50)]);
+                props.extend([
+                    StyleProp::ShadowWidth(10),
+                    StyleProp::ShadowOpacity(Opa::P50.into()),
+                ]);
             }
             if i % 4 == 1 {
                 props.extend([
-                    StyleProp::BgGradientColor(Color::WHITE),
+                    StyleProp::BgGradientColor(Color::WHITE.into()),
                     StyleProp::BgGradientDir(GradDir::Ver),
                 ]);
             }
             if i % 5 == 2 {
-                props.extend([StyleProp::BorderWidth(Length::Px(2)), StyleProp::OutlineWidth(1)]);
+                props.extend([
+                    StyleProp::BorderWidth(Length::Px(2).into()),
+                    StyleProp::OutlineWidth(1),
+                ]);
             }
             styled_box(e, s, Rect::from_xywh(x, y, 24, 36), &props);
         }
@@ -86,7 +92,8 @@ fn steady_state_frame_allocates_nothing() {
 
 #[test]
 fn anim_frame_allocates_nothing() {
-    use twine_anim::{Anim, AnimProp, Repeat};
+    use twine_anim::{Anim, Repeat};
+    use twine_engine::AnimProp;
     let mut boxes = Vec::new();
     let mut h = EngineHarness::new(320, 240).no_theme().mount_engine(|e| {
         let s = common::white_screen(e);
@@ -113,7 +120,7 @@ fn anim_frame_allocates_nothing() {
             Anim::new(from, to)
                 .duration(Duration::ms(700))
                 .playback(Duration::ms(700))
-                .repeat(Repeat::Infinite),
+                .repeat(Repeat::Forever),
         );
     }
     // Warm-up: every queue, dirty set and layout buffer reaches its steady size.
@@ -186,4 +193,52 @@ fn input_reads_and_health_transitions_allocate_nothing() {
         (0, 0, 0),
         "{stats:?}"
     );
+}
+
+/// R2.S06: starting style transitions — an inline (run-time) transition deriving its
+/// properties from the state change, and a `static` one with a property set — allocates
+/// nothing once the timeline, the transition list and the transition style pool are warm.
+#[test]
+fn transition_start_allocates_nothing_after_warm_up() {
+    use twine_engine::State;
+    use twine_style::{Props, Selector, Transition, TransitionRef};
+    static GROUPS: Transition = Transition::of(Props::BG.union(Props::TRANSFORM), Duration::ms(40));
+    let mut ids = Vec::new();
+    let mut h = EngineHarness::new(200, 100).no_theme().mount_engine(|e| {
+        let s = common::white_screen(e);
+        for i in 0..2 {
+            let n = common::boxed(e, s, Rect::from_xywh(10 + i * 60, 10, 40, 40), Color::RED);
+            let pressed = Selector::state(State::PRESSED);
+            e.set_local_prop(n, pressed, StyleProp::BgColor(Color::BLUE.into()));
+            e.set_local_prop(n, pressed, StyleProp::TransformScaleX(twine_core::Scale::pct(90)));
+            if i == 0 {
+                e.set_local_transition(n, Selector::MAIN, Transition::all(Duration::ms(40)).ease_out());
+            } else {
+                e.set_local_prop(
+                    n,
+                    Selector::MAIN,
+                    StyleProp::Transition(TransitionRef::Static(&GROUPS)),
+                );
+            }
+            ids.push(n);
+        }
+    });
+    h.run_until_idle();
+    let cycle = |h: &mut EngineHarness| {
+        for &n in &ids {
+            h.engine_mut().add_state(n, State::PRESSED);
+        }
+        h.advance(Duration::ms(16));
+        assert_eq!(h.engine().transition_count(), 4);
+        h.run_until_idle();
+        for &n in &ids {
+            h.engine_mut().clear_state(n, State::PRESSED);
+        }
+        h.run_until_idle();
+    };
+    // Warm-up: press and release twice (pool, list, timeline slots, render buffers).
+    cycle(&mut h);
+    cycle(&mut h);
+    let ((), stats) = count_allocs(|| cycle(&mut h));
+    assert_eq!((stats.allocs, stats.reallocs), (0, 0), "{stats:?}");
 }

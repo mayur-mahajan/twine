@@ -36,7 +36,7 @@ pub fn app(cx: Scope) -> impl View {
     cx.on_message(&SENSOR, move |m: SensorMsg| {
         current.set((m.celsius * 10.0) as i32);
     });
-    let shown = cx.tween(move || current.get(), Duration::ms(400), Easing::EaseOut);
+    let shown = cx.tween(move || current.get(), AnimSpec::new(Duration::ms(400)).ease_out());
     let heating = cx.memo(move || current.get() < target.get());
 
     column((
@@ -51,11 +51,12 @@ pub fn app(cx: Scope) -> impl View {
         .gap(8)
         .align_items(CrossAlign::Center),
         label(text!("{}", if heating.get() { "Heating" } else { "Idle" }))
+            // Design elements: the colors follow the theme and its mode.
             .text_color(move || {
                 if heating.get() {
-                    Color::hex(0xE5_39_35)
+                    design::DANGER
                 } else {
-                    Color::hex(0x75_75_75)
+                    design::ON_SURFACE_MUTED
                 }
             })
             .test_id("state"),
@@ -63,5 +64,5 @@ pub fn app(cx: Scope) -> impl View {
     .gap(12)
     .padding(16)
     .align_items(CrossAlign::Center)
-    .size(Length::Pct(100), Length::Pct(100))
+    .fill()
 }

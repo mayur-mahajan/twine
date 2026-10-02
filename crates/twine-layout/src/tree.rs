@@ -141,14 +141,20 @@ pub trait LayoutTree {
     }
 
     /// The grid column ([`Axis::X`]) or row ([`Axis::Y`]) template of `id`. The default
-    /// implementation reads the `GridColumnTracks`/`GridRowTracks` style properties; a tree may
-    /// also keep templates it owns (the engine does, for templates built at run time).
+    /// implementation reads the `GridColumnTracks`/`GridRowTracks` style properties and knows
+    /// only `'static` templates ([`TracksRef::Static`](twine_style::TracksRef::Static)): a
+    /// resolved value carries only the identity of a shared template, so a tree with shared
+    /// templates (the engine) borrows them from the style that holds them here, typically
+    /// with [`twine_style::resolve_grid_tracks`] (the cascade lookup that returns the
+    /// template's slice for any [`TracksRef`](twine_style::TracksRef)).
     fn grid_tracks(&self, id: Self::Id, axis: Axis) -> Option<&[GridTrack]> {
         let prop = match axis {
             Axis::X => PropId::GridColumnTracks,
             Axis::Y => PropId::GridRowTracks,
         };
-        self.style_prop(id, prop).as_grid_tracks()
+        self.style_prop(id, prop)
+            .as_grid_tracks()
+            .and_then(twine_style::TracksRef::as_static)
     }
 
     /// How far the content of `id` is scrolled: children (except `FLOATING` ones) are placed

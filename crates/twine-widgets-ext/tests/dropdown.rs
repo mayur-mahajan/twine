@@ -336,7 +336,7 @@ fn dd_list_inherits_text_style_of_dropdown_ancestors() {
     let e = h.engine_mut();
     let cont = e.create(screen, Box::new(twine_engine::Obj)).unwrap();
     e.set_size(cont, 320, 240);
-    e.set_local_prop(cont, Selector::MAIN, StyleProp::Font(&MONTSERRAT_20));
+    e.set_local_prop(cont, Selector::MAIN, StyleProp::Font((&MONTSERRAT_20).into()));
     e.set_local_prop(cont, Selector::MAIN, StyleProp::BaseDir(BaseDir::Rtl));
     let d = dropdown::create(e, cont).unwrap();
     with(&mut h, d, |w: &mut Dropdown, cx| w.set_options_static(cx, CITIES));
@@ -360,7 +360,7 @@ fn dd_list_inherits_text_style_of_dropdown_ancestors() {
     // A change while open reaches the list.
     h.run_until_idle();
     h.engine_mut()
-        .set_local_prop(cont, Selector::MAIN, StyleProp::Font(&MONTSERRAT_14));
+        .set_local_prop(cont, Selector::MAIN, StyleProp::Font((&MONTSERRAT_14).into()));
     assert!(core::ptr::eq(
         h.engine().style_font(l, Part::Main),
         &raw const MONTSERRAT_14
@@ -516,7 +516,7 @@ struct FadingTheme(DefaultTheme, Rc<StyleBuf>);
 impl ThemeHook for FadingTheme {
     fn apply(&self, cx: &mut ThemeCx<'_>, class: &'static WidgetClass) {
         self.0.apply(cx, class);
-        if class.name == "dropdown_list" {
+        if class.is(&twine_widgets_ext::dropdown::DROPDOWN_LIST_CLASS) {
             cx.add_style(Selector::MAIN, self.1.clone());
         }
     }
@@ -525,6 +525,21 @@ impl ThemeHook for FadingTheme {
     }
     fn name(&self) -> &'static str {
         "fading"
+    }
+    // A wrapping theme forwards the modes and the design elements of the theme it extends.
+    fn mode(&self) -> twine_style::ThemeMode {
+        ThemeHook::mode(&self.0)
+    }
+    fn modes(&self) -> &'static [twine_style::ThemeMode] {
+        self.0.modes()
+    }
+    fn design(
+        &self,
+        mode: twine_style::ThemeMode,
+        dpi: u16,
+        resolution: twine_core::Size,
+    ) -> Option<Rc<twine_style::design::ElementTable>> {
+        self.0.design(mode, dpi, resolution)
     }
 }
 

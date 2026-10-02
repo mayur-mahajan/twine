@@ -102,11 +102,7 @@ fn star_ui() -> (TestUi, AnimController) {
     let slot: Rc<Cell<Option<AnimController>>> = Rc::default();
     let s = slot.clone();
     let mut t = TestUi::new(120, 120).mount(move |cx| {
-        let (angle, ctrl) = cx.animation(
-            Anim::new(0, 3600)
-                .duration(Duration::secs(4))
-                .repeat(Repeat::Infinite),
-        );
+        let (angle, ctrl) = cx.animation(0, 3600, AnimSpec::new(Duration::secs(4)).forever());
         s.set(Some(ctrl));
         vector_canvas(move |scene| {
             star(

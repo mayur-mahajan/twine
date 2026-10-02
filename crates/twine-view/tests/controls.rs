@@ -405,7 +405,7 @@ fn animimg_playing_binding() {
         let run = cx.signal(false);
         cx.provide(run);
         animimg(&FRAMES, Duration::ms(300))
-            .repeat(Repeat::Count(0))
+            .repeat(Repeat::ONCE)
             .playing(run)
             .test_id("a")
     });

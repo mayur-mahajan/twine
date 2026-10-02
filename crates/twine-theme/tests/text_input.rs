@@ -1,8 +1,9 @@
 //! The text input branches of the three themes (button matrix, textarea, keyboard, spinbox,
-//! a label inside a textarea) with LVGL's values. Stand-in widgets carry the class names
-//! (the themes style classes by name).
+//! a label inside a textarea) with LVGL's values. Stand-in widgets have the real classes as
+//! their base (themes style a class like its base).
 
 use std::rc::Rc;
+use twine_theme::{ThemeMode, Tone};
 
 use twine_core::{Color, Opa};
 use twine_engine::{Engine, NodeId, OBJ_FLAGS, ThemeHook, Widget, WidgetClass};
@@ -12,9 +13,11 @@ use twine_testing::EngineHarness;
 use twine_theme::{DefaultTheme, MonoTheme, Palette, SimpleTheme};
 
 macro_rules! fake {
-    ($ty:ident, $class:ident, $name:literal) => {
+    ($ty:ident, $class:ident, $name:literal, $base:path) => {
         struct $ty;
-        static $class: WidgetClass = WidgetClass::new($name).default_flags(OBJ_FLAGS);
+        static $class: WidgetClass = WidgetClass::new($name)
+            .base(&$base)
+            .default_flags(OBJ_FLAGS);
         impl Widget for $ty {
             fn class(&self) -> &'static WidgetClass {
                 &$class
@@ -23,11 +26,31 @@ macro_rules! fake {
     };
 }
 
-fake!(FakeBtnm, BTNM, "buttonmatrix");
-fake!(FakeTa, TA, "textarea");
-fake!(FakeKb, KB, "keyboard");
-fake!(FakeSpinbox, SPINBOX, "spinbox");
-fake!(FakeLabel, LABEL, "label");
+fake!(
+    FakeBtnm,
+    BTNM,
+    "fake_buttonmatrix",
+    twine_widgets::buttonmatrix::BUTTONMATRIX_CLASS
+);
+fake!(
+    FakeTa,
+    TA,
+    "fake_textarea",
+    twine_widgets::textarea::TEXTAREA_CLASS
+);
+fake!(
+    FakeKb,
+    KB,
+    "fake_keyboard",
+    twine_widgets::keyboard::KEYBOARD_CLASS
+);
+fake!(
+    FakeSpinbox,
+    SPINBOX,
+    "fake_spinbox",
+    twine_widgets::spinbox::SPINBOX_CLASS
+);
+fake!(FakeLabel, LABEL, "fake_label", twine_widgets::label::LABEL_CLASS);
 
 fn scene(theme: Rc<dyn ThemeHook>) -> (EngineHarness, [NodeId; 6]) {
     let mut h = EngineHarness::new(320, 240).theme(theme);
@@ -66,8 +89,8 @@ fn default_theme_text_input_branches() {
     // Textarea: pad_small, the placeholder grey, the cursor only while focused.
     assert_eq!(e.style_i32(ta, Part::Main, PropId::PaddingTop), dpx(10, dpi));
     assert_eq!(
-        e.style_color(ta, Part::CustomFirst, PropId::TextColor),
-        Palette::Grey.lighten(1)
+        e.style_color(ta, twine_widgets::textarea::PLACEHOLDER, PropId::TextColor),
+        Palette::Grey.tone(Tone::L1)
     );
     assert_eq!(e.style_i32(ta, Part::Cursor, PropId::BorderWidth), 0);
     h.engine_mut().add_state(ta, State::FOCUSED);
@@ -104,7 +127,7 @@ fn simple_and_mono_text_input_branches() {
     assert_eq!(e.style_color(btnm, Part::Main, PropId::BgColor), Color::WHITE);
     assert_eq!(
         e.style_color(btnm, Part::Items, PropId::BgColor),
-        Palette::Grey.lighten(2)
+        Palette::Grey.tone(Tone::L2)
     );
     assert_eq!(
         e.style_color(sb, Part::Cursor, PropId::BgColor),
@@ -113,10 +136,12 @@ fn simple_and_mono_text_input_branches() {
     assert_eq!(e.style_color(kb, Part::Items, PropId::BgColor), Color::WHITE);
     assert_eq!(e.style_i32(ta, Part::Cursor, PropId::BorderWidth), 0);
 
-    let (mut h, [btnm, ta, _kb, sb, ..]) = scene(Rc::new(MonoTheme::new(
-        false,
-        &twine_assets::fonts::MONTSERRAT_14,
-    )));
+    let (mut h, [btnm, ta, _kb, sb, ..]) = scene(Rc::new(
+        MonoTheme::builder()
+            .mode(ThemeMode::Light)
+            .font(&twine_assets::fonts::MONTSERRAT_14)
+            .build(),
+    ));
     let e = h.engine();
     assert_eq!(e.style_i32(btnm, Part::Items, PropId::BorderWidth), 1);
     assert_eq!(

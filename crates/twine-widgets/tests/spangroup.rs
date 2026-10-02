@@ -70,9 +70,12 @@ fn span_defaults() {
 fn span_fallback_to_group_style() {
     let (mut h, g) = scene(Mode::Light);
     let a = add(&mut h, g, "abc", &[]);
-    let b = add(&mut h, g, "def", &[StyleProp::TextColor(Color::RED)]);
-    h.engine_mut()
-        .set_local_prop(g, twine_style::Selector::MAIN, StyleProp::TextColor(Color::BLUE));
+    let b = add(&mut h, g, "def", &[StyleProp::TextColor(Color::RED.into())]);
+    h.engine_mut().set_local_prop(
+        g,
+        twine_style::Selector::MAIN,
+        StyleProp::TextColor(Color::BLUE.into()),
+    );
     let w = get::<SpanGroup>(&h, g);
     assert_eq!(
         w.span(a).unwrap().style().get(PropId::TextColor),
@@ -117,7 +120,7 @@ fn spans_wrap_across_boundaries() {
 fn mixed_fonts_baseline_aligned() {
     let (mut h, g) = scene(Mode::Light);
     add(&mut h, g, "small ", &[]);
-    add(&mut h, g, "BIG", &[StyleProp::Font(&MONTSERRAT_20)]);
+    add(&mut h, g, "BIG", &[StyleProp::Font((&MONTSERRAT_20).into())]);
     h.run_until_idle();
     let l = lines(&h, g);
     assert_eq!(l.len(), 1);
@@ -156,7 +159,12 @@ fn three_span_two_font_paragraph_layout_table() {
     type Row = (i32, i32, Vec<(SpanId, std::ops::Range<usize>, i32, i32)>);
     let (mut h, g) = scene(Mode::Light);
     let a = add(&mut h, g, "The quick ", &[]);
-    let b = add(&mut h, g, "BROWN fox ", &[StyleProp::Font(&MONTSERRAT_20)]);
+    let b = add(
+        &mut h,
+        g,
+        "BROWN fox ",
+        &[StyleProp::Font((&MONTSERRAT_20).into())],
+    );
     let c = add(&mut h, g, "jumps over the lazy dog", &[]);
     break_group(&mut h, g, 150);
     assert_eq!(
@@ -263,7 +271,7 @@ fn max_lines_limit() {
 fn span_by_point_hit() {
     let (mut h, g) = scene(Mode::Light);
     let a = add(&mut h, g, "left ", &[]);
-    let b = add(&mut h, g, "right", &[StyleProp::Font(&MONTSERRAT_20)]);
+    let b = add(&mut h, g, "right", &[StyleProp::Font((&MONTSERRAT_20).into())]);
     h.run_until_idle();
     let c = h.engine().content_area(g);
     let w = get::<SpanGroup>(&h, g);
@@ -313,8 +321,8 @@ fn snapshot_span_mixed() {
             g,
             "rich ",
             &[
-                StyleProp::Font(&MONTSERRAT_20),
-                StyleProp::TextColor(twine_theme::Palette::Blue.main()),
+                StyleProp::Font((&MONTSERRAT_20).into()),
+                StyleProp::TextColor(twine_theme::Palette::Blue.main().into()),
             ],
         );
         add(
@@ -327,7 +335,7 @@ fn snapshot_span_mixed() {
             &mut h,
             g,
             "with spans that wrap over lines",
-            &[StyleProp::TextColor(twine_theme::Palette::Red.main())],
+            &[StyleProp::TextColor(twine_theme::Palette::Red.main().into())],
         );
         break_group(&mut h, g, 200);
         h.assert_snapshot(&format!("span_mixed_{}", m.suffix()));

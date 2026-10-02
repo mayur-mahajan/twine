@@ -1,4 +1,4 @@
-//! Simulator configuration: [`SimConfig`], [`SimInputs`], [`Headless`], [`ThemeToggle`].
+//! Simulator configuration: [`SimConfig`], [`SimInputs`], [`Headless`].
 
 use std::fmt;
 use std::path::PathBuf;
@@ -9,24 +9,6 @@ use twine_engine::ThemeHook;
 use twine_hal::BufferSpec;
 
 use crate::paths;
-
-/// The two themes `F12` switches between (see [`SimConfig::theme_toggle`]).
-#[derive(Clone)]
-pub struct ThemeToggle {
-    /// The light theme (installed first).
-    pub light: Rc<dyn ThemeHook>,
-    /// The dark theme.
-    pub dark: Rc<dyn ThemeHook>,
-}
-
-impl fmt::Debug for ThemeToggle {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ThemeToggle")
-            .field("light", &self.light.name())
-            .field("dark", &self.dark.name())
-            .finish()
-    }
-}
 
 /// Callback of [`SimConfig::on_raw_key`]: receives the engine and each key pressed on the
 /// keyboard, besides the keypad device (for app-level shortcuts that must work whatever is
@@ -120,9 +102,8 @@ pub struct SimConfig {
     pub hw_rotation: bool,
     /// The theme installed on the display of engine apps before `setup` runs (any theme:
     /// `twine_theme::DefaultTheme`, `SimpleTheme`, `MonoTheme` or a custom [`ThemeHook`]).
+    /// `F12` cycles through its modes ([`ThemeHook::modes`]).
     pub theme: Option<Rc<dyn ThemeHook>>,
-    /// Themes toggled with `F12` (the light one is installed when `theme` is `None`).
-    pub theme_toggle: Option<ThemeToggle>,
     /// Registered input devices.
     pub input: SimInputs,
     /// Headless mode when `Some`.
@@ -148,6 +129,33 @@ pub const SUPPORTED_FORMATS: [ColorFormat; 7] = [
     ColorFormat::L8,
     ColorFormat::I1,
 ];
+
+/// Rows per partial buffer when `TWINE_SIM_BUFFERS` selects a partial mode while a full-screen
+/// mode is configured (the rows of [`BufferSpec::default`]).
+const DEFAULT_PARTIAL_ROWS: u16 = 40;
+
+/// Parses a buffer mode name as used by `TWINE_SIM_BUFFERS` (`single`, `double`, `full`,
+/// `direct`; case-insensitive). The partial modes get `rows` rows per buffer.
+fn parse_buffers(name: &str, rows: u16) -> Option<BufferSpec> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "single" => Some(BufferSpec::PartialSingle { rows }),
+        "double" => Some(BufferSpec::PartialDouble { rows }),
+        "full" => Some(BufferSpec::Full),
+        "direct" => Some(BufferSpec::Direct),
+        _ => None,
+    }
+}
+
+/// Parses a rotation in degrees as used by `TWINE_SIM_ROTATION` (`0`, `90`, `180`, `270`).
+fn parse_rotation(degrees: &str) -> Option<Rotation> {
+    match degrees.trim() {
+        "0" => Some(Rotation::Deg0),
+        "90" => Some(Rotation::Deg90),
+        "180" => Some(Rotation::Deg180),
+        "270" => Some(Rotation::Deg270),
+        _ => None,
+    }
+}
 
 /// Parses a format name as used by `TWINE_SIM_FORMAT` (`rgb565`, `rgb565swapped`, `rgb888`,
 /// `xrgb8888`, `argb8888`, `l8`, `i1`; case-insensitive, `_` ignored).
@@ -179,7 +187,6 @@ impl SimConfig {
             rotation: Rotation::Deg0,
             hw_rotation: true,
             theme: None,
-            theme_toggle: None,
             input: SimInputs::default(),
             headless: None,
             mono_colors: (Color::BLACK, Color::hex(0xB0_C8_A0)),
@@ -215,18 +222,12 @@ impl SimConfig {
         self
     }
 
-    /// Installs `theme` on the display of an engine app (before `setup` runs).
+    /// Installs `theme` on the display of an engine app (before `setup` runs); `F12` switches
+    /// it to its next mode (light → dark → night → high contrast, as far as the theme supports
+    /// them).
     #[must_use]
     pub fn theme(mut self, theme: Rc<dyn ThemeHook>) -> Self {
         self.theme = Some(theme);
-        self
-    }
-
-    /// `F12` switches between `light` and `dark` (`Engine::set_theme`); `light` is installed
-    /// first unless [`theme`](Self::theme) sets another one.
-    #[must_use]
-    pub fn theme_toggle(mut self, light: Rc<dyn ThemeHook>, dark: Rc<dyn ThemeHook>) -> Self {
-        self.theme_toggle = Some(ThemeToggle { light, dark });
         self
     }
 
@@ -310,7 +311,11 @@ impl SimConfig {
     }
 
     /// Applies the environment: `TWINE_SIM_SCALE`, `TWINE_SIM_HEADLESS=1`,
-    /// `TWINE_SIM_SCRIPT`, `TWINE_SIM_FRAMES`, `TWINE_SIM_BUS_HZ`, `TWINE_SIM_FORMAT`.
+    /// `TWINE_SIM_SCRIPT`, `TWINE_SIM_FRAMES`, `TWINE_SIM_BUS_HZ`, `TWINE_SIM_FORMAT`,
+    /// `TWINE_SIM_BUFFERS=single|double|full|direct` (the draw buffers of engine apps; partial
+    /// modes keep the configured rows, default 40) and `TWINE_SIM_ROTATION=0|90|180|270` (the
+    /// engine rotates in software, the window shows the physical panel: see
+    /// [`hw_rotation`](Self::hw_rotation)).
     ///
     /// Invalid values are ignored with a warning.
     #[must_use]
@@ -338,6 +343,31 @@ impl SimConfig {
             match parse_format(&v) {
                 Some(f) => self.format = f,
                 None => log::warn!(target: "twine::sim", "ignoring unknown TWINE_SIM_FORMAT={v:?}"),
+            }
+        }
+        if let Some(v) = lookup("TWINE_SIM_BUFFERS") {
+            let rows = match self.buffer_mode {
+                BufferSpec::PartialSingle { rows } | BufferSpec::PartialDouble { rows } => rows,
+                BufferSpec::Full | BufferSpec::Direct => DEFAULT_PARTIAL_ROWS,
+            };
+            match parse_buffers(&v, rows) {
+                Some(mode) => self.buffer_mode = mode,
+                None => log::warn!(
+                    target: "twine::sim",
+                    "ignoring unknown TWINE_SIM_BUFFERS={v:?} (single|double|full|direct)"
+                ),
+            }
+        }
+        if let Some(v) = lookup("TWINE_SIM_ROTATION") {
+            match parse_rotation(&v) {
+                Some(r) => {
+                    self.rotation = r;
+                    self.hw_rotation = false;
+                }
+                None => log::warn!(
+                    target: "twine::sim",
+                    "ignoring invalid TWINE_SIM_ROTATION={v:?} (0|90|180|270)"
+                ),
             }
         }
         if lookup("TWINE_SIM_HEADLESS").is_some_and(|v| matches!(v.trim(), "1" | "true" | "yes")) {
@@ -375,6 +405,8 @@ mod tests {
             ("TWINE_SIM_SCRIPT", "a/b.twinescript"),
             ("TWINE_SIM_FRAMES", "12"),
             ("TWINE_SIM_FORMAT", "rgb565swapped"),
+            ("TWINE_SIM_BUFFERS", "full"),
+            ("TWINE_SIM_ROTATION", "90"),
         ]
         .into_iter()
         .collect();
@@ -382,19 +414,61 @@ mod tests {
         assert_eq!(cfg.scale, 3);
         assert_eq!(cfg.bus_hz, Some(10_000_000));
         assert_eq!(cfg.format, ColorFormat::Rgb565Swapped);
+        assert_eq!(cfg.buffer_mode, BufferSpec::Full);
+        assert_eq!(cfg.rotation, Rotation::Deg90);
+        assert!(
+            !cfg.hw_rotation,
+            "a rotation from the environment is done by the engine"
+        );
         let h = cfg.headless.expect("headless");
         assert_eq!(h.frames, 12);
         assert_eq!(h.script, Some(PathBuf::from("a/b.twinescript")));
 
         // Invalid or absent values leave the defaults.
-        let bad: HashMap<&str, &str> = [("TWINE_SIM_SCALE", "x"), ("TWINE_SIM_HEADLESS", "0")]
-            .into_iter()
-            .collect();
+        let bad: HashMap<&str, &str> = [
+            ("TWINE_SIM_SCALE", "x"),
+            ("TWINE_SIM_HEADLESS", "0"),
+            ("TWINE_SIM_BUFFERS", "triple"),
+            ("TWINE_SIM_ROTATION", "45"),
+            ("TWINE_SIM_FORMAT", "a8"),
+        ]
+        .into_iter()
+        .collect();
         let cfg = SimConfig::new(1, 1)
             .scale(2)
             .from_lookup(|k| bad.get(k).map(ToString::to_string));
         assert_eq!(cfg.scale, 2);
         assert!(cfg.headless.is_none());
+        assert_eq!(cfg.buffer_mode, BufferSpec::default());
+        assert_eq!(cfg.rotation, Rotation::Deg0);
+        assert!(cfg.hw_rotation);
+        assert_eq!(cfg.format, ColorFormat::Rgb565);
+    }
+
+    #[test]
+    fn buffer_modes_keep_the_partial_rows() {
+        let env = |v: &'static str| move |k: &str| (k == "TWINE_SIM_BUFFERS").then(|| v.to_string());
+        let cfg = SimConfig::new(8, 8)
+            .buffers(BufferSpec::PartialDouble { rows: 10 })
+            .from_lookup(env("single"));
+        assert_eq!(cfg.buffer_mode, BufferSpec::PartialSingle { rows: 10 });
+        let cfg = SimConfig::new(8, 8)
+            .buffers(BufferSpec::Full)
+            .from_lookup(env("Double"));
+        assert_eq!(
+            cfg.buffer_mode,
+            BufferSpec::PartialDouble {
+                rows: DEFAULT_PARTIAL_ROWS
+            }
+        );
+        assert_eq!(
+            BufferSpec::default(),
+            BufferSpec::PartialDouble {
+                rows: DEFAULT_PARTIAL_ROWS
+            }
+        );
+        let cfg = SimConfig::new(8, 8).from_lookup(env("direct"));
+        assert_eq!(cfg.buffer_mode, BufferSpec::Direct);
     }
 
     #[test]

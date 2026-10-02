@@ -40,14 +40,9 @@ static CHART: [Point; 8] = [
 /// The width of a card.
 const CARD_W: i32 = 148;
 
-/// A card: the theme's container look with a title and its content in a column.
-fn card(title: &'static str, content: impl ViewSeq) -> impl View {
-    container((label(title).text_color(Color::hex(0x75_75_75)), content))
-        .op(|cx, n| {
-            let e = cx.engine();
-            e.set_local_prop(n, Selector::MAIN, StyleProp::Layout(LayoutKind::Flex));
-            e.set_local_prop(n, Selector::MAIN, StyleProp::FlexFlow(FlexFlow::COLUMN));
-        })
+/// A card with a muted title (the theme's `ON_SURFACE_MUTED`) above its content.
+fn titled_card(title: &'static str, content: impl ViewSeq) -> impl View {
+    card((label(title).text_color(design::ON_SURFACE_MUTED), content))
         .size(CARD_W, Length::Content)
         .padding(8)
         .gap(6)
@@ -75,24 +70,21 @@ fn build(cx: Scope, animated: bool) -> impl View {
     let level = cx.signal(40i32);
     let enabled = cx.signal(false);
 
-    let level_card = card(
+    let level_card = titled_card(
         "Level",
         (
             row((
                 slider(level).range(0..=100).flex_grow(1).test_id("slider"),
                 label(text!("{}%", level.get())).width(40).test_id("level"),
             ))
-            .width(Length::pct(100))
+            .fill_width()
             .gap(14)
             .padding_y(6)
             .align_items(CrossAlign::Center),
-            bar(level)
-                .animated(Duration::ms(300))
-                .width(Length::pct(100))
-                .test_id("bar"),
+            bar(level).animated(Duration::ms(300)).fill_width().test_id("bar"),
         ),
     );
-    let arc_card = card(
+    let arc_card = titled_card(
         "Dial",
         stack((
             arc(level)
@@ -107,7 +99,7 @@ fn build(cx: Scope, animated: bool) -> impl View {
         .border_width(0)
         .padding(0),
     );
-    let enabled_card = card(
+    let enabled_card = titled_card(
         "Enabled",
         (
             row((
@@ -120,14 +112,14 @@ fn build(cx: Scope, animated: bool) -> impl View {
                     .focusable(true)
                     .test_id("power"),
             ))
-            .width(Length::pct(100))
+            .fill_width()
             .justify(MainAlign::SpaceBetween)
             .align_items(CrossAlign::Center),
             checkbox("Enabled", enabled).test_id("check"),
         ),
     );
     let busy_card = animated.then(|| {
-        card(
+        titled_card(
             "Busy",
             row((
                 spinner().size(44, 44),
@@ -137,7 +129,7 @@ fn build(cx: Scope, animated: bool) -> impl View {
             .align_items(CrossAlign::Center),
         )
     });
-    let chart_card = card("Chart", line_static(&CHART).width(2).rounded(true));
+    let chart_card = titled_card("Chart", line_static(&CHART).width(2).rounded(true));
 
     scroll_view(
         Axis::Vertical,
@@ -146,10 +138,10 @@ fn build(cx: Scope, animated: bool) -> impl View {
             (level_card, arc_card, enabled_card, busy_card, chart_card),
         )
         .wrap(true)
-        .width(Length::pct(100))
+        .fill_width()
         .gap(8)
         .justify(MainAlign::Center),
     )
-    .size(Length::pct(100), Length::pct(100))
+    .fill()
     .padding(8)
 }

@@ -1,16 +1,19 @@
 //! Colors: the canonical [`Color`] (RGB888), opacity ([`Opa`]), the runtime format tag
-//! ([`ColorFormat`]) and typed pixel formats ([`PixelFormat`]).
+//! ([`ColorFormat`]), typed pixel formats ([`PixelFormat`]) and the WCAG contrast ratio
+//! ([`ContrastRatio`], [`Color::contrast_ratio`]).
 //!
 //! Every blend uses [`mix_channel`]: `udiv255(fg·a + bg·(255 − a))` — floor division by 255,
 //! exact at `a = 0` and `a = 255`. This formula is normative for deterministic rendering (P6).
 
 mod color_format;
+mod contrast;
 mod formats;
 mod opa;
 
 use core::fmt;
 
 pub use color_format::ColorFormat;
+pub use contrast::ContrastRatio;
 pub use formats::{
     A8, Argb8888, I1, L8, PixelFormat, Rgb565, Rgb565Swapped, Rgb888, Xrgb8888, expand_alpha, unpack_bits,
 };

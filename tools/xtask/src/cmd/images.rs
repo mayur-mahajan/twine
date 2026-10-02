@@ -1,6 +1,6 @@
 //! `cargo xtask gen-assets [--check]` draws the sample images in `assets/images/`
 //! procedurally; `cargo xtask images [--check]` converts the images listed in
-//! `assets/images/images.toml` into Rust sources in `examples/src/assets/` with the
+//! `assets/images/images.toml` into Rust sources in `crates/twine/examples/assets/` with the
 //! `twine image` converter (called in-process).
 //!
 //! `--check` regenerates everything in memory and fails if a file differs or is missing.
@@ -18,7 +18,7 @@ pub const IMAGES_TOML: &str = "assets/images/images.toml";
 /// Directory of the procedurally drawn source images.
 pub const ASSETS_DIR: &str = "assets/images";
 /// Directory of the generated Rust sources.
-pub const OUT_DIR: &str = "examples/src/assets";
+pub const OUT_DIR: &str = "crates/twine/examples/assets";
 
 /// One `[[image]]` entry of `images.toml`.
 #[derive(Debug, Clone, Deserialize)]

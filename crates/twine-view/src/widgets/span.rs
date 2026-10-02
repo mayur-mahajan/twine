@@ -3,17 +3,17 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use twine_core::{Color, Opa};
 use twine_engine::{Engine, NodeId, fmt_node_id};
+use twine_style::design::{ColorValue, FontValue, OpacityValue};
 use twine_style::{Selector, StyleProp};
-use twine_text::{Font, TextDecor};
+use twine_text::TextDecor;
 use twine_widgets::label::Label;
 use twine_widgets::spangroup::{SpanGroup, SpanId, SpanMode, SpanOverflow};
 
 use crate::bind::bind_node;
 use crate::build::{BuildCx, WidgetView, widget_view};
 use crate::prop::IntoProp;
-use crate::text::{IntoText, TextProp, bind_str};
+use crate::text::{IntoText, TextProp, TextRef, bind_str};
 use crate::view::{View, ViewSeq};
 
 /// A paragraph of [`span`]s with their own text styles, wrapped as one text.
@@ -40,25 +40,25 @@ impl WidgetView<SpanGroup> {
     /// Fixed size, content size on one line (`Expand`), or wrapping in a fixed width
     /// (`Break`). Sets the size styles like LVGL.
     #[must_use]
-    pub fn mode(self, m: impl IntoProp<SpanMode>) -> Self {
+    pub fn mode<M>(self, m: impl IntoProp<SpanMode, M>) -> Self {
         self.bind(m, |g: &mut SpanGroup, cx, m| g.set_mode(cx, m))
     }
 
     /// Clip the text beyond the height, or end the last line with "...".
     #[must_use]
-    pub fn overflow(self, o: impl IntoProp<SpanOverflow>) -> Self {
+    pub fn overflow<M>(self, o: impl IntoProp<SpanOverflow, M>) -> Self {
         self.bind(o, |g: &mut SpanGroup, cx, o| g.set_overflow(cx, o))
     }
 
     /// Indent of the first line in px.
     #[must_use]
-    pub fn indent(self, px: impl IntoProp<i32>) -> Self {
+    pub fn indent<M>(self, px: impl IntoProp<i32, M>) -> Self {
         self.bind(px, |g: &mut SpanGroup, cx, px| g.set_indent(cx, px))
     }
 
     /// The maximum number of lines (`Break` mode; negative = unlimited).
     #[must_use]
-    pub fn max_lines(self, n: impl IntoProp<i32>) -> Self {
+    pub fn max_lines<M>(self, n: impl IntoProp<i32, M>) -> Self {
         self.bind(n, |g: &mut SpanGroup, cx, n| g.set_max_lines(cx, n))
     }
 }
@@ -86,7 +86,7 @@ impl core::fmt::Debug for SpanView {
 /// A span showing `text` (any [`IntoText`]; dynamic texts update only this span, and the
 /// group redraws its own area). Only valid as a child of a [`spangroup`]: elsewhere it logs a
 /// warning and builds a [`label`](crate::label) instead.
-pub fn span(text: impl IntoText) -> SpanView {
+pub fn span<MT>(text: impl IntoText<MT>) -> SpanView {
     SpanView {
         text: text.into_text(),
         styles: Vec::new(),
@@ -106,9 +106,9 @@ fn apply_style(e: &mut Engine, n: NodeId, id: Option<SpanId>, p: StyleProp) {
 impl SpanView {
     /// Binds a text style property of the span.
     #[must_use]
-    pub fn style_prop<T: 'static>(
+    pub fn style_prop<T: 'static, M>(
         mut self,
-        v: impl IntoProp<T>,
+        v: impl IntoProp<T, M>,
         make: impl Fn(T) -> StyleProp + 'static,
     ) -> Self {
         let p = v.into_prop();
@@ -118,33 +118,35 @@ impl SpanView {
         self
     }
 
-    /// The span's font.
+    /// The span's font: a `&'static Font` or a [design element](twine_style::design) such as
+    /// `design::FONT_LARGE`.
     #[must_use]
-    pub fn font(self, f: impl IntoProp<&'static Font>) -> Self {
+    pub fn font<M>(self, f: impl IntoProp<FontValue, M>) -> Self {
         self.style_prop(f, StyleProp::Font)
     }
 
-    /// The span's text color.
+    /// The span's text color: a `Color` or a [design element](twine_style::design) such as
+    /// `design::PRIMARY`.
     #[must_use]
-    pub fn text_color(self, c: impl IntoProp<Color>) -> Self {
+    pub fn text_color<M>(self, c: impl IntoProp<ColorValue, M>) -> Self {
         self.style_prop(c, StyleProp::TextColor)
     }
 
-    /// The span's text opacity.
+    /// The span's text opacity: an `Opa` or an [opacity element](twine_style::design).
     #[must_use]
-    pub fn text_opacity(self, o: impl IntoProp<Opa>) -> Self {
+    pub fn text_opacity<M>(self, o: impl IntoProp<OpacityValue, M>) -> Self {
         self.style_prop(o, StyleProp::TextOpacity)
     }
 
     /// Underline and/or strikethrough.
     #[must_use]
-    pub fn text_decoration(self, d: impl IntoProp<TextDecor>) -> Self {
+    pub fn text_decoration<M>(self, d: impl IntoProp<TextDecor, M>) -> Self {
         self.style_prop(d, StyleProp::TextDecoration)
     }
 
     /// Extra space between the span's letters.
     #[must_use]
-    pub fn letter_spacing(self, px: impl IntoProp<i32>) -> Self {
+    pub fn letter_spacing<M>(self, px: impl IntoProp<i32, M>) -> Self {
         self.style_prop(px, StyleProp::LetterSpacing)
     }
 }
@@ -172,17 +174,12 @@ impl View for SpanView {
             }
             return n;
         };
-        bind_str(
-            cx,
-            group,
-            self.text,
-            move |e, n, s| {
-                e.with_widget_mut(n, |g: &mut SpanGroup, wcx| g.set_span_text_static(wcx, id, s));
-            },
-            move |e, n, s| {
-                e.with_widget_mut(n, |g: &mut SpanGroup, wcx| g.set_span_text(wcx, id, s));
-            },
-        );
+        bind_str(cx, group, self.text, move |e, n, s| {
+            e.with_widget_mut(n, |g: &mut SpanGroup, wcx| match s {
+                TextRef::Static(s) => g.set_span_text_static(wcx, id, s),
+                TextRef::Borrowed(s) => g.set_span_text(wcx, id, s),
+            });
+        });
         for op in self.styles {
             op(cx, group, Some(id));
         }

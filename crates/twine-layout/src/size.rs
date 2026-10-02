@@ -302,11 +302,11 @@ mod tests {
     fn pct_of_parent_content() {
         let mut t = ToyTree::new(300, 200);
         t.style_mut(ToyTree::ROOT)
-            .set(twine_style::StyleProp::PaddingLeft(Length::Px(10)));
+            .set(twine_style::StyleProp::PaddingLeft(Length::Px(10).into()));
         t.style_mut(ToyTree::ROOT)
-            .set(twine_style::StyleProp::PaddingRight(Length::Px(40)));
+            .set(twine_style::StyleProp::PaddingRight(Length::Px(40).into()));
         t.style_mut(ToyTree::ROOT)
-            .set(twine_style::StyleProp::BorderWidth(Length::Px(5)));
+            .set(twine_style::StyleProp::BorderWidth(Length::Px(5).into()));
         let a = t.add(
             ToyTree::ROOT,
             StyleBuf::new().width(Length::pct(50)).height(Length::pct(33)),

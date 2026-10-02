@@ -55,12 +55,12 @@ fn card(cx: Scope, i: usize) -> impl View {
             .align_items(CrossAlign::Center),
             slider(scrub)
                 .range(0..=FRAMES - 1)
-                .width(Length::pct(100))
+                .fill_width()
                 .test_id(["scrub0", "scrub1", "scrub2"][i]),
         ))
         .gap(6)
         .align_items(CrossAlign::Center)
-        .width(Length::pct(100)),
+        .fill_width(),
     )
     .width(148)
     .height(Length::Content)
@@ -80,6 +80,6 @@ pub fn app(cx: Scope) -> impl View {
     row((card(cx, 0), card(cx, 1), card(cx, 2)))
         .gap(8)
         .padding(8)
-        .size(Length::pct(100), Length::pct(100))
+        .fill()
         .align_items(CrossAlign::Start)
 }

@@ -1,9 +1,10 @@
 //! The styles the default, simple and mono themes give LVGL's basic controls (bar, slider,
 //! switch, checkbox, arc, spinner, LED, line), checked against `lv_theme_*.c`. Widgets are
-//! stood in for by classes with the same names (themes style classes by name).
+//! stood in for by classes whose base is the real class (themes style a class like its base).
 #![allow(clippy::unreadable_literal)]
 
 use std::rc::Rc;
+use twine_theme::{ThemeMode, Tone};
 
 use twine_core::{Color, Opa};
 use twine_engine::{Engine, NodeId, ObjFlags, ThemeHook, Widget, WidgetClass};
@@ -13,9 +14,11 @@ use twine_testing::EngineHarness;
 use twine_theme::{DefaultTheme, MonoTheme, Palette, SimpleTheme, default::colors};
 
 macro_rules! fake {
-    ($ty:ident, $class:ident, $name:literal) => {
+    ($ty:ident, $class:ident, $name:literal, $base:path) => {
         struct $ty;
-        static $class: WidgetClass = WidgetClass::new($name).default_flags(ObjFlags::CLICKABLE);
+        static $class: WidgetClass = WidgetClass::new($name)
+            .base(&$base)
+            .default_flags(ObjFlags::CLICKABLE);
         impl Widget for $ty {
             fn class(&self) -> &'static WidgetClass {
                 &$class
@@ -24,14 +27,24 @@ macro_rules! fake {
     };
 }
 
-fake!(Bar, BAR, "bar");
-fake!(Slider, SLIDER, "slider");
-fake!(Switch, SWITCH, "switch");
-fake!(Checkbox, CHECKBOX, "checkbox");
-fake!(Arc, ARC, "arc");
-fake!(Spinner, SPINNER, "spinner");
-fake!(Led, LED, "led");
-fake!(Line, LINE, "line");
+fake!(Bar, BAR, "fake_bar", twine_widgets::bar::BAR_CLASS);
+fake!(Slider, SLIDER, "fake_slider", twine_widgets::slider::SLIDER_CLASS);
+fake!(Switch, SWITCH, "fake_switch", twine_widgets::switch::SWITCH_CLASS);
+fake!(
+    Checkbox,
+    CHECKBOX,
+    "fake_checkbox",
+    twine_widgets::checkbox::CHECKBOX_CLASS
+);
+fake!(Arc, ARC, "fake_arc", twine_widgets::arc::ARC_CLASS);
+fake!(
+    Spinner,
+    SPINNER,
+    "fake_spinner",
+    twine_widgets::spinner::SPINNER_CLASS
+);
+fake!(Led, LED, "fake_led", twine_widgets::led::LED_CLASS);
+fake!(Line, LINE, "fake_line", twine_widgets::line::LINE_CLASS);
 
 fn node(theme: Rc<dyn ThemeHook>, w: Box<dyn Widget>) -> (EngineHarness, NodeId) {
     let mut h = EngineHarness::new(240, 160).theme(theme);
@@ -180,7 +193,7 @@ fn simple_theme_controls() {
     let e = h.engine();
     assert_eq!(
         e.style_color(n, Part::Main, PropId::BgColor),
-        Palette::Grey.lighten(2)
+        Palette::Grey.tone(Tone::L2)
     );
     assert_eq!(
         e.style_color(n, Part::Indicator, PropId::BgColor),
@@ -188,7 +201,7 @@ fn simple_theme_controls() {
     );
     assert_eq!(
         e.style_color(n, Part::Knob, PropId::BgColor),
-        Palette::Grey.darken(2)
+        Palette::Grey.tone(Tone::D2)
     );
     let (h, n) = node(t(), Box::new(Arc));
     let e = h.engine();
@@ -205,7 +218,14 @@ fn simple_theme_controls() {
 
 #[test]
 fn mono_theme_controls() {
-    let t = |dark| Rc::new(MonoTheme::new(dark, &twine_assets::fonts::MONTSERRAT_14)) as Rc<dyn ThemeHook>;
+    let t = |dark| {
+        Rc::new(
+            MonoTheme::builder()
+                .mode(if dark { ThemeMode::Dark } else { ThemeMode::Light })
+                .font(&twine_assets::fonts::MONTSERRAT_14)
+                .build(),
+        ) as Rc<dyn ThemeHook>
+    };
     let (h, n) = node(t(false), Box::new(Switch));
     let e = h.engine();
     // card + radius_circle + pad_zero; indicator inverted; knob card.

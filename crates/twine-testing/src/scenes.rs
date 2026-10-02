@@ -64,8 +64,8 @@ pub fn engine_boxes(e: &mut Engine) -> EngineBoxes {
         e,
         screen,
         &[
-            StyleProp::BgColor(Color::hex(0xE8_EC_F2)),
-            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::BgColor(Color::hex(0xE8_EC_F2).into()),
+            StyleProp::BgOpacity(Opa::COVER.into()),
         ],
     );
     let header = child_box(
@@ -73,10 +73,10 @@ pub fn engine_boxes(e: &mut Engine) -> EngineBoxes {
         screen,
         Rect::new(0, 0, 320, 36),
         &[
-            StyleProp::BgColor(Color::hex(0x3F_51_B5)),
-            StyleProp::BgGradientColor(Color::hex(0x1A_23_7E)),
+            StyleProp::BgColor(Color::hex(0x3F_51_B5).into()),
+            StyleProp::BgGradientColor(Color::hex(0x1A_23_7E).into()),
             StyleProp::BgGradientDir(GradDir::Ver),
-            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::BgOpacity(Opa::COVER.into()),
         ],
     );
     let card = child_box(
@@ -84,15 +84,15 @@ pub fn engine_boxes(e: &mut Engine) -> EngineBoxes {
         screen,
         Rect::from_xywh(16, 50, 196, 170),
         &[
-            StyleProp::BgColor(Color::WHITE),
-            StyleProp::BgOpacity(Opa::COVER),
-            StyleProp::Radius(Radius::Px(12)),
-            StyleProp::BorderWidth(Length::Px(1)),
-            StyleProp::BorderColor(Color::hex(0xC5_CD_DA)),
+            StyleProp::BgColor(Color::WHITE.into()),
+            StyleProp::BgOpacity(Opa::COVER.into()),
+            StyleProp::Radius(Radius::Px(12).into()),
+            StyleProp::BorderWidth(Length::Px(1).into()),
+            StyleProp::BorderColor(Color::hex(0xC5_CD_DA).into()),
             StyleProp::ShadowWidth(20),
             StyleProp::ShadowOffsetY(6),
-            StyleProp::ShadowColor(Color::hex(0x1A_23_7E)),
-            StyleProp::ShadowOpacity(Opa::P40),
+            StyleProp::ShadowColor(Color::hex(0x1A_23_7E).into()),
+            StyleProp::ShadowOpacity(Opa::P40.into()),
         ],
     );
     let palette = [
@@ -104,25 +104,25 @@ pub fn engine_boxes(e: &mut Engine) -> EngineBoxes {
         // Relative to the card's content area (inside its 1 px border).
         let r = Rect::from_xywh(11 + col * 60, 13 + row * 76, 52, 64);
         let mut props = vec![
-            StyleProp::BgColor(Color::hex(*c)),
-            StyleProp::BgOpacity(Opa::COVER),
-            StyleProp::Radius(Radius::Px(6)),
+            StyleProp::BgColor(Color::hex(*c).into()),
+            StyleProp::BgOpacity(Opa::COVER.into()),
+            StyleProp::Radius(Radius::Px(6).into()),
         ];
         match i {
             1 => props.extend([
-                StyleProp::BorderWidth(Length::Px(3)),
-                StyleProp::BorderColor(Color::hex(0x5D_40_37)),
+                StyleProp::BorderWidth(Length::Px(3).into()),
+                StyleProp::BorderColor(Color::hex(0x5D_40_37).into()),
             ]),
             2 => props.extend([
-                StyleProp::BgGradientColor(Color::hex(0xFF_6F_00)),
+                StyleProp::BgGradientColor(Color::hex(0xFF_6F_00).into()),
                 StyleProp::BgGradientDir(GradDir::Hor),
             ]),
             4 => props.extend([
                 StyleProp::OutlineWidth(2),
                 StyleProp::OutlineOffset(2),
-                StyleProp::OutlineColor(Color::hex(0x0D_47_A1)),
+                StyleProp::OutlineColor(Color::hex(0x0D_47_A1).into()),
             ]),
-            5 => props.push(StyleProp::Radius(Radius::Px(26))),
+            5 => props.push(StyleProp::Radius(Radius::Px(26).into())),
             _ => {}
         }
         card_boxes[i] = child_box(e, card, r, &props);
@@ -131,16 +131,16 @@ pub fn engine_boxes(e: &mut Engine) -> EngineBoxes {
         e,
         screen,
         Rect::from_xywh(228, 50, 80, 84),
-        &[StyleProp::Opacity(Opa::P50)],
+        &[StyleProp::Opacity(Opa::P50.into())],
     );
     child_box(
         e,
         group,
         Rect::from_xywh(0, 0, 56, 56),
         &[
-            StyleProp::BgColor(Color::RED),
-            StyleProp::BgOpacity(Opa::COVER),
-            StyleProp::Radius(Radius::Px(8)),
+            StyleProp::BgColor(Color::RED.into()),
+            StyleProp::BgOpacity(Opa::COVER.into()),
+            StyleProp::Radius(Radius::Px(8).into()),
         ],
     );
     child_box(
@@ -148,9 +148,9 @@ pub fn engine_boxes(e: &mut Engine) -> EngineBoxes {
         group,
         Rect::from_xywh(24, 28, 56, 56),
         &[
-            StyleProp::BgColor(Color::BLUE),
-            StyleProp::BgOpacity(Opa::COVER),
-            StyleProp::Radius(Radius::Px(8)),
+            StyleProp::BgColor(Color::BLUE.into()),
+            StyleProp::BgOpacity(Opa::COVER.into()),
+            StyleProp::Radius(Radius::Px(8).into()),
         ],
     );
     let rotated = child_box(
@@ -158,12 +158,12 @@ pub fn engine_boxes(e: &mut Engine) -> EngineBoxes {
         screen,
         Rect::from_xywh(238, 160, 56, 28),
         &[
-            StyleProp::BgColor(Color::hex(0x00_89_7B)),
-            StyleProp::BgOpacity(Opa::COVER),
-            StyleProp::Radius(Radius::Px(4)),
+            StyleProp::BgColor(Color::hex(0x00_89_7B).into()),
+            StyleProp::BgOpacity(Opa::COVER.into()),
+            StyleProp::Radius(Radius::Px(4).into()),
             StyleProp::TransformRotation(Angle::deg(25)),
-            StyleProp::TransformPivotX(Length::Pct(50)),
-            StyleProp::TransformPivotY(Length::Pct(50)),
+            StyleProp::TransformPivotX(Length::Pct(50).into()),
+            StyleProp::TransformPivotY(Length::Pct(50).into()),
         ],
     );
     let player = child_box(
@@ -171,11 +171,11 @@ pub fn engine_boxes(e: &mut Engine) -> EngineBoxes {
         screen,
         Rect::from_xywh(228, 204, 24, 24),
         &[
-            StyleProp::BgColor(Color::hex(0xF4_51_1E)),
-            StyleProp::BgOpacity(Opa::COVER),
-            StyleProp::Radius(Radius::Px(12)),
+            StyleProp::BgColor(Color::hex(0xF4_51_1E).into()),
+            StyleProp::BgOpacity(Opa::COVER.into()),
+            StyleProp::Radius(Radius::Px(12).into()),
             StyleProp::ShadowWidth(8),
-            StyleProp::ShadowOpacity(Opa::P50),
+            StyleProp::ShadowOpacity(Opa::P50.into()),
         ],
     );
     e.set_test_id(player, "player");
@@ -196,20 +196,20 @@ pub fn engine_boxes(e: &mut Engine) -> EngineBoxes {
 pub fn scrollbar_style(e: &mut Engine, id: NodeId, width: i32) {
     let sb = Selector::part(twine_style::Part::Scrollbar);
     for p in [
-        StyleProp::Width(Length::Px(width)),
-        StyleProp::BgColor(Color::hex(0x55_55_55)),
-        StyleProp::BgOpacity(Opa::P60),
-        StyleProp::Radius(Radius::Px(width / 2)),
-        StyleProp::PaddingRight(Length::Px(2)),
-        StyleProp::PaddingBottom(Length::Px(2)),
-        StyleProp::PaddingTop(Length::Px(2)),
-        StyleProp::PaddingLeft(Length::Px(2)),
+        StyleProp::Width(Length::Px(width).into()),
+        StyleProp::BgColor(Color::hex(0x55_55_55).into()),
+        StyleProp::BgOpacity(Opa::P60.into()),
+        StyleProp::Radius(Radius::Px(width / 2).into()),
+        StyleProp::PaddingRight(Length::Px(2).into()),
+        StyleProp::PaddingBottom(Length::Px(2).into()),
+        StyleProp::PaddingTop(Length::Px(2).into()),
+        StyleProp::PaddingLeft(Length::Px(2).into()),
     ] {
         e.set_local_prop(id, sb, p);
     }
     let scrolled = sb.with_state(twine_style::State::SCROLLED);
-    e.set_local_prop(id, scrolled, StyleProp::BgColor(Color::hex(0x20_60_FF)));
-    e.set_local_prop(id, scrolled, StyleProp::BgOpacity(Opa::COVER));
+    e.set_local_prop(id, scrolled, StyleProp::BgColor(Color::hex(0x20_60_FF).into()));
+    e.set_local_prop(id, scrolled, StyleProp::BgOpacity(Opa::COVER.into()));
 }
 
 /// A scrolling list: a white container under `parent` covering the absolute rectangle `r`
@@ -227,7 +227,10 @@ pub fn scroll_list(
         e,
         parent,
         r,
-        &[StyleProp::BgColor(Color::WHITE), StyleProp::BgOpacity(Opa::COVER)],
+        &[
+            StyleProp::BgColor(Color::WHITE.into()),
+            StyleProp::BgOpacity(Opa::COVER.into()),
+        ],
     );
     scrollbar_style(e, list, 4);
     let mut ids = Vec::with_capacity(rows);
@@ -241,12 +244,15 @@ pub fn scroll_list(
             e,
             list,
             Rect::from_xywh(0, i as i32 * row_h, r.width(), row_h),
-            &[StyleProp::BgColor(c), StyleProp::BgOpacity(Opa::COVER)],
+            &[
+                StyleProp::BgColor(c.into()),
+                StyleProp::BgOpacity(Opa::COVER.into()),
+            ],
         );
         e.set_local_prop(
             row,
             Selector::state(twine_style::State::PRESSED),
-            StyleProp::BgColor(Color::hex(0x1A_23_7E)),
+            StyleProp::BgColor(Color::hex(0x1A_23_7E).into()),
         );
         ids.push(row);
     }

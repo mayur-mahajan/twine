@@ -66,20 +66,20 @@ pub fn tabview(selected: impl IntoModel<usize>, tabs: impl ViewSeq) -> WidgetVie
 impl WidgetView<Tabview> {
     /// Where the bar is ([`Side::Top`] by default).
     #[must_use]
-    pub fn bar_position(self, side: impl IntoProp<Side>) -> Self {
+    pub fn bar_position<M>(self, side: impl IntoProp<Side, M>) -> Self {
         self.bind(side, |t: &mut Tabview, cx, d| t.set_tab_bar_position(cx, d))
     }
 
     /// The bar's height (top / bottom) or width (left / right).
     #[must_use]
-    pub fn bar_size(self, size: impl IntoProp<i32>) -> Self {
+    pub fn bar_size<M>(self, size: impl IntoProp<i32, M>) -> Self {
         self.bind(size, |t: &mut Tabview, cx, s| t.set_tab_bar_size(cx, s))
     }
 
     /// Whether switching tabs (by clicking or from the model) slides the pages (default on);
     /// off switches instantly.
     #[must_use]
-    pub fn animated(self, on: impl IntoProp<bool>) -> Self {
+    pub fn animated<M>(self, on: impl IntoProp<bool, M>) -> Self {
         self.bind(on, |t: &mut Tabview, cx, on| t.set_animated(cx, on))
     }
 
@@ -99,7 +99,7 @@ impl WidgetView<Tabview> {
 
 /// A tab of a [`tabview`]: a button titled `title` in the bar and a page holding `content`.
 /// Outside a tabview it logs `warn!` and builds a plain container.
-pub fn tab(title: impl IntoText, content: impl ViewSeq) -> TabView {
+pub fn tab<MT>(title: impl IntoText<MT>, content: impl ViewSeq) -> TabView {
     TabView {
         title: title.into_text(),
         content: Box::new(move |cx: &mut BuildCx<'_>| content.build_seq(cx)),
@@ -183,8 +183,6 @@ impl TilePos {
         Self { col, row }
     }
 }
-
-impl crate::model::ModelValue for TilePos {}
 
 /// A 2D grid of full-size [`tile`]s swiped in the directions each tile allows; the position
 /// of the tile in view in `active` (a plain value or a signal kept in sync both ways).

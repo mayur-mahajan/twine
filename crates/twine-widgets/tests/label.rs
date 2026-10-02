@@ -220,8 +220,12 @@ fn snapshot_label_selection() {
         let mut h = snapshot_scene(m, |h, l| {
             let sel = Selector::part(Part::Selected);
             let e = h.engine_mut();
-            e.set_local_prop(l, sel, StyleProp::BgColor(twine_theme::Palette::Blue.main()));
-            e.set_local_prop(l, sel, StyleProp::TextColor(Color::WHITE));
+            e.set_local_prop(
+                l,
+                sel,
+                StyleProp::BgColor(twine_theme::Palette::Blue.main().into()),
+            );
+            e.set_local_prop(l, sel, StyleProp::TextColor(Color::WHITE.into()));
             with(h, l, |w: &mut Label, cx| w.set_selection(cx, 6, 11));
         });
         h.assert_snapshot(&format!("label_selection_{}", m.suffix()));

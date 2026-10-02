@@ -21,7 +21,7 @@ use crate::{log_set, util};
 pub use edit::{InsertCx, InsertFilter};
 
 /// The placeholder part (LVGL `LV_PART_TEXTAREA_PLACEHOLDER` = `LV_PART_CUSTOM_FIRST`).
-pub const PLACEHOLDER: Part = Part::CustomFirst;
+pub const PLACEHOLDER: Part = Part::custom::<0>();
 
 /// [`Textarea::set_cursor_pos`] to the end of the text (LVGL `LV_TEXTAREA_CURSOR_LAST`).
 pub const CURSOR_LAST: i32 = i32::MAX;
@@ -520,11 +520,15 @@ impl Textarea {
         let e = cx.engine_mut();
         if on {
             e.set_width(label, Length::Content);
-            e.set_local_prop(label, Selector::MAIN, StyleProp::MinWidth(Length::Pct(100)));
+            e.set_local_prop(
+                label,
+                Selector::MAIN,
+                StyleProp::MinWidth(Length::Pct(100).into()),
+            );
             e.set_height(id, Length::Content);
         } else {
             e.set_width(label, Length::Pct(100));
-            e.set_local_prop(label, Selector::MAIN, StyleProp::MinWidth(Length::Px(0)));
+            e.set_local_prop(label, Selector::MAIN, StyleProp::MinWidth(Length::Px(0).into()));
             e.remove_local_prop(id, PropId::Height, Selector::MAIN);
         }
         e.scroll_to(id, 0, 0, false);

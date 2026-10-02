@@ -199,6 +199,12 @@ pub(crate) struct Display {
     pub(crate) perf_overlay: Option<NodeId>,
     /// The display's theme (LVGL `lv_display_set_theme`).
     pub(crate) theme: Option<alloc::rc::Rc<dyn crate::ThemeHook>>,
+    /// The theme's mode on this display.
+    pub(crate) theme_mode: twine_style::ThemeMode,
+    /// The theme's design element table for `theme_mode` (resolved by the style resolver).
+    pub(crate) design: Option<alloc::rc::Rc<twine_style::design::ElementTable>>,
+    /// Bumped whenever `theme`, `theme_mode` or `design` change.
+    pub(crate) design_epoch: u32,
     /// Flush health (consecutive errors, halted).
     pub(crate) health: crate::health::HealthTracker,
 }
@@ -393,6 +399,9 @@ impl Engine {
             #[cfg(feature = "perf-monitor")]
             perf_overlay: None,
             theme: None,
+            theme_mode: twine_style::ThemeMode::Light,
+            design: None,
+            design_epoch: 0,
             health: crate::health::HealthTracker::default(),
         });
         if self.default_display.is_none() {
@@ -638,11 +647,25 @@ impl Engine {
         id: NodeId,
         f: impl FnOnce(&mut W, &mut crate::WidgetCx<'_>) -> R,
     ) -> Option<R> {
+        let mut w = self.take_widget(id, core::any::TypeId::of::<W>())?;
+        let r = w
+            .downcast_mut::<W>()
+            .map(|w| f(w, &mut crate::WidgetCx::new(self, id)));
+        self.restore_widget(id, w);
+        r
+    }
+
+    /// Takes the widget of `id` out of its node (leaving a `Detached` placeholder) if it is
+    /// of type `ty`; logs `warn!` and returns `None` otherwise. The non-generic half of
+    /// [`with_widget_mut`](Self::with_widget_mut), which is instantiated once per setter
+    /// closure: the lookup and the diagnostics are shared (a direct call, no indirection).
+    #[inline(never)]
+    fn take_widget(&mut self, id: NodeId, ty: core::any::TypeId) -> Option<Box<dyn Widget>> {
         let Some(n) = self.tree.node_mut(id) else {
             twine_core::warn!(target: "twine::engine", "with_widget_mut: node {} not found", fmt_node_id(id));
             return None;
         };
-        if !n.widget.is::<W>() {
+        if Any::type_id((*n.widget).as_any()) != ty {
             twine_core::warn!(
                 target: "twine::engine",
                 "with_widget_mut: node {} is a {}, not the requested widget type",
@@ -651,12 +674,7 @@ impl Engine {
             );
             return None;
         }
-        let mut w: Box<dyn Widget> = core::mem::replace(&mut n.widget, Box::new(crate::obj::Detached));
-        let r = w
-            .downcast_mut::<W>()
-            .map(|w| f(w, &mut crate::WidgetCx::new(self, id)));
-        self.restore_widget(id, w);
-        r
+        Some(core::mem::replace(&mut n.widget, Box::new(crate::obj::Detached)))
     }
 
     fn init_widget(&mut self, id: NodeId) {
@@ -709,7 +727,6 @@ impl Engine {
         self.anims_forget_nodes(&deleted);
         self.screen_anims_forget(&deleted);
         self.forget_outside_presses();
-        self.forget_grid_templates();
         for d in &mut self.displays {
             d.screens.retain(|s| *s != id);
             if d.prev_screen == Some(id) {

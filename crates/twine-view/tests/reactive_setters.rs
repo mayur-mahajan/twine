@@ -254,7 +254,7 @@ fn images_setters_accept_signals() {
                 .three_slice(ImageButtonState::Released, s.side, s.src, s.side)
                 .test_id("ib"),
             animimg(s.frames, s.period)
-                .repeat(move || Repeat::Infinite)
+                .repeat(move || Repeat::Forever)
                 .playing(s.playing)
                 .test_id("anim"),
         ))
@@ -559,7 +559,7 @@ struct InputSig {
     mode: Signal<KeyboardMode>,
     hint: Signal<String>,
     chars: Signal<String>,
-    max: Signal<u32>,
+    max: Signal<i32>,
     range: Signal<core::ops::RangeInclusive<i32>>,
     digits: Signal<u8>,
 }
@@ -597,7 +597,7 @@ fn text_input_setters_accept_signals() {
             spinbox(5)
                 .range(s.range)
                 .digits(s.digits, move || 0u8)
-                .step(move || 1u32)
+                .step(move || 1)
                 .rollover(s.on)
                 .test_id("sb"),
         ))

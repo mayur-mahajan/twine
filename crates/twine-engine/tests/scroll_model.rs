@@ -59,19 +59,19 @@ fn extents_include_margins_and_padding() {
         e,
         cont,
         &[
-            StyleProp::PaddingLeft(Length::Px(10)),
-            StyleProp::PaddingTop(Length::Px(10)),
-            StyleProp::PaddingRight(Length::Px(10)),
-            StyleProp::PaddingBottom(Length::Px(10)),
-            StyleProp::BorderWidth(Length::Px(2)),
+            StyleProp::PaddingLeft(Length::Px(10).into()),
+            StyleProp::PaddingTop(Length::Px(10).into()),
+            StyleProp::PaddingRight(Length::Px(10).into()),
+            StyleProp::PaddingBottom(Length::Px(10).into()),
+            StyleProp::BorderWidth(Length::Px(2).into()),
         ],
     );
     style(
         e,
         child,
         &[
-            StyleProp::MarginBottom(Length::Px(5)),
-            StyleProp::MarginRight(Length::Px(7)),
+            StyleProp::MarginBottom(Length::Px(5).into()),
+            StyleProp::MarginRight(Length::Px(7).into()),
         ],
     );
     e.update_layout();

@@ -94,5 +94,6 @@ twine-theme = { path = "../twine-theme" }
 twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-20"] }
 critical-section = { version = "1", features = ["std"] }
 proptest = "1"
+trybuild = "1"
 log = "0.4"
 twine-vector = { path = "../twine-vector" }

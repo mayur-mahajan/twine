@@ -7,9 +7,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Mutex;
 
-use twine_anim::{Anim, AnimProp, Easing, Repeat};
+use twine_anim::{Anim, Easing, Repeat};
 use twine_core::{Color, Duration, Opa, Rect};
-use twine_engine::{Engine, NodeId, Obj, Wake, Widget, WidgetClass, WidgetCx};
+use twine_engine::{AnimProp, Engine, NodeId, Obj, Wake, Widget, WidgetClass, WidgetCx};
 use twine_style::{Length, Part, PropId, StyleProp, StyleValue};
 use twine_testing::EngineHarness;
 
@@ -154,9 +154,9 @@ fn deleting_node_removes_its_anims() {
     let (mut h, b) = scene();
     let child = h.engine_mut().create(b, Box::new(Obj)).unwrap();
     let e = h.engine_mut();
-    e.anim_start(b, AnimProp::X, Anim::new(0, 50).repeat(Repeat::Infinite));
-    e.anim_start(b, AnimProp::Opa, Anim::new(0, 255).repeat(Repeat::Infinite));
-    e.anim_start(child, AnimProp::Width, Anim::new(0, 10).repeat(Repeat::Infinite));
+    e.anim_start(b, AnimProp::X, Anim::new(0, 50).repeat(Repeat::Forever));
+    e.anim_start(b, AnimProp::Opa, Anim::new(0, 255).repeat(Repeat::Forever));
+    e.anim_start(child, AnimProp::Width, Anim::new(0, 10).repeat(Repeat::Forever));
     assert_eq!(e.anims_of(b).count(), 2);
     assert_eq!(e.anim_count(), 3);
     h.advance(Duration::ms(40));
@@ -199,7 +199,7 @@ fn timer_callback_gets_engine_and_can_remove_itself() {
     let (mut h, b) = scene();
     let t0 = h.now();
     h.engine_mut().timer_add(Duration::ms(100), move |e, id| {
-        common::style(e, b, &[StyleProp::BgColor(Color::BLUE)]);
+        common::style(e, b, &[StyleProp::BgColor(Color::BLUE.into())]);
         assert!(e.timer_remove(id));
     });
     h.update();
@@ -242,7 +242,7 @@ fn anim_fn_exec_receives_engine() {
         Anim::new(0, 255).duration(Duration::ms(32)),
         move |e: &mut Engine, v| {
             s.borrow_mut().push(v);
-            common::style(e, b, &[StyleProp::BgColor(Color::new(0, 0, v as u8))]);
+            common::style(e, b, &[StyleProp::BgColor(Color::new(0, 0, v as u8).into())]);
         },
     );
     h.run_until_idle();
@@ -336,7 +336,7 @@ fn style_prop_and_transform_targets() {
     let e = h.engine_mut();
     e.anim_start(
         b,
-        AnimProp::StyleProp(PropId::Radius as u8),
+        AnimProp::Style(PropId::Radius),
         Anim::new(0, 6).duration(Duration::ms(20)),
     );
     e.anim_start(
@@ -423,7 +423,7 @@ fn anim_gallery_scene_idle_when_paused() {
                     .duration(Duration::ms(1500))
                     .easing(easing)
                     .playback(Duration::ms(1500))
-                    .repeat(Repeat::Infinite),
+                    .repeat(Repeat::Forever),
             ),
         );
     }
@@ -435,7 +435,7 @@ fn anim_gallery_scene_idle_when_paused() {
             Anim::new(255, 60)
                 .duration(Duration::ms(800))
                 .playback(Duration::ms(800))
-                .repeat(Repeat::Infinite),
+                .repeat(Repeat::Forever),
         ),
     );
     h.advance(Duration::ms(300));

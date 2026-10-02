@@ -31,7 +31,6 @@ members = [
     "tools/xtask",
     "tools/twine-cli",
     "tools/twine-bench",
-    "examples",
 ]
 exclude = ["firmware", "fuzz", "crates/twine-esp"]
 

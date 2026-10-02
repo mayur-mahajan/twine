@@ -1,5 +1,5 @@
 //! Typed symbols and icons (R1.S08): `Symbol` as an image source and as text, and
-//! `impl IntoIcon` (`()` = no icon) for optional images.
+//! `Icon` (`()` = no icon) for optional images, as a constant, closure or signal property.
 
 use twine_engine::{NodeId, ObjFlags};
 use twine_testing::alloc::{CountingAllocator, count_allocs};
@@ -30,8 +30,9 @@ fn images(t: &TestUi, n: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
-fn icon(i: impl IntoIcon) -> Prop<Option<ImageSource>> {
-    i.into_icon()
+/// The icon property of `i`, as the optional image source it shows.
+fn icon<M>(i: impl IntoProp<Icon, M>) -> Prop<Option<ImageSource>> {
+    i.into_prop().map(|i| i.0)
 }
 
 #[test]
@@ -43,7 +44,7 @@ fn from_symbol_for_image_source() {
 }
 
 #[test]
-fn into_icon_constants_are_static() {
+fn icon_constants_are_static() {
     assert!(matches!(icon(()), Prop::Static(None)));
     assert!(matches!(
         icon(Symbol::Ok),
@@ -63,7 +64,7 @@ fn into_icon_constants_are_static() {
 }
 
 #[test]
-fn into_icon_reactive_forms_are_dynamic() {
+fn icon_reactive_forms_are_dynamic() {
     let cx = twine_reactive::create_root();
     let src: Signal<Option<ImageSource>> = cx.signal(None);
     let sym = cx.signal(Symbol::Ok);
@@ -72,18 +73,33 @@ fn into_icon_reactive_forms_are_dynamic() {
     assert!(matches!(icon(src), Prop::Dynamic(_)));
     assert!(matches!(icon(sym), Prop::Dynamic(_)));
     assert!(matches!(icon(opt), Prop::Dynamic(_)));
-    let Prop::Dynamic(f) = icon(move || shown.get().then(|| Symbol::Wifi.into())) else {
+    let Prop::Dynamic(f) = icon(move || shown.get().then_some(Symbol::Wifi)) else {
         panic!("closure icon must be dynamic");
     };
     assert_eq!(f(), Some(ImageSource::symbol(Symbol::Wifi)));
     shown.set(false);
     assert_eq!(f(), None);
+    // Closures returning a bare symbol or image source, and signals of image sources, are
+    // icons too (every type converting into `Icon`).
+    assert!(matches!(icon(move || Symbol::Ok), Prop::Dynamic(_)));
+    assert!(matches!(
+        icon(move || ImageSource::symbol(Symbol::Ok)),
+        Prop::Dynamic(_)
+    ));
+    assert!(matches!(
+        icon(cx.signal(ImageSource::symbol(Symbol::Ok))),
+        Prop::Dynamic(_)
+    ));
+    assert!(matches!(
+        icon(cx.memo(move || shown.get().then_some(Symbol::Ok))),
+        Prop::Dynamic(_)
+    ));
     cx.dispose();
 }
 
 #[test]
 fn symbol_is_an_image_prop_and_a_text() {
-    fn src(p: impl IntoProp<ImageSource>) -> Prop<ImageSource> {
+    fn src<M>(p: impl IntoProp<ImageSource, M>) -> Prop<ImageSource> {
         p.into_prop()
     }
     assert!(matches!(

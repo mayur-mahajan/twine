@@ -63,7 +63,16 @@ fn snapshot_mono_theme() {
     for dark in [false, true] {
         let mut h = EngineHarness::new(240, 200)
             .format(ColorFormat::I1)
-            .theme(Rc::new(MonoTheme::new(dark, &twine_assets::fonts::MONTSERRAT_14)));
+            .theme(Rc::new(
+                MonoTheme::builder()
+                    .mode(if dark {
+                        twine_theme::ThemeMode::Dark
+                    } else {
+                        twine_theme::ThemeMode::Light
+                    })
+                    .font(&twine_assets::fonts::MONTSERRAT_14)
+                    .build(),
+            ));
         controls(&mut h);
         h.run_until_idle();
         assert!(h.panel_rgb888().iter().all(|&v| v == 0 || v == 255));
@@ -129,7 +138,16 @@ fn snapshot_text_inputs_mono_theme() {
     for dark in [false, true] {
         let mut h = EngineHarness::new(240, 240)
             .format(ColorFormat::I1)
-            .theme(Rc::new(MonoTheme::new(dark, &twine_assets::fonts::MONTSERRAT_14)));
+            .theme(Rc::new(
+                MonoTheme::builder()
+                    .mode(if dark {
+                        twine_theme::ThemeMode::Dark
+                    } else {
+                        twine_theme::ThemeMode::Light
+                    })
+                    .font(&twine_assets::fonts::MONTSERRAT_14)
+                    .build(),
+            ));
         text_inputs(&mut h);
         h.run_until_idle();
         assert!(h.panel_rgb888().iter().all(|&v| v == 0 || v == 255));

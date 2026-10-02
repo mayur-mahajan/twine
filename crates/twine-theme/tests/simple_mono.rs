@@ -2,6 +2,7 @@
 #![allow(clippy::unreadable_literal)] // colors as LVGL writes them (0xRRGGBB)
 
 use std::rc::Rc;
+use twine_theme::{ThemeMode, Tone};
 
 use twine_core::{Color, ColorFormat};
 use twine_engine::{Engine, NodeId, Obj, ObjFlags, Widget, WidgetClass};
@@ -10,7 +11,9 @@ use twine_testing::EngineHarness;
 use twine_theme::{MonoTheme, Palette, SimpleTheme};
 
 struct FakeButton;
-static FAKE_BUTTON_CLASS: WidgetClass = WidgetClass::new("button").default_flags(ObjFlags::CLICKABLE);
+static FAKE_BUTTON_CLASS: WidgetClass = WidgetClass::new("fake_button")
+    .default_flags(ObjFlags::CLICKABLE)
+    .base(&twine_widgets::button::BUTTON_CLASS);
 impl Widget for FakeButton {
     fn class(&self) -> &'static WidgetClass {
         &FAKE_BUTTON_CLASS
@@ -47,7 +50,7 @@ fn simple_theme_screen_matches_lvgl() {
     );
     assert_eq!(
         e.style_color(s, Part::Main, PropId::TextColor),
-        Palette::Grey.darken(2)
+        Palette::Grey.tone(Tone::D2)
     );
     // Containers are white, buttons COLOR_DARK = lv_palette_main(GREY).
     assert_eq!(e.style_color(card, Part::Main, PropId::BgColor), Color::WHITE);
@@ -61,7 +64,12 @@ fn simple_theme_screen_matches_lvgl() {
 #[test]
 fn mono_theme_only_uses_pure_colors() {
     for dark in [false, true] {
-        let t = Rc::new(MonoTheme::new(dark, &twine_assets::fonts::MONTSERRAT_14));
+        let t = Rc::new(
+            MonoTheme::builder()
+                .mode(if dark { ThemeMode::Dark } else { ThemeMode::Light })
+                .font(&twine_assets::fonts::MONTSERRAT_14)
+                .build(),
+        );
         let (mut h, card, b) = scene(EngineHarness::new(240, 160).theme(t));
         let s = screen(h.engine());
         let states = [
@@ -97,7 +105,8 @@ fn harness_defaults_to_default_light() {
     let h = EngineHarness::new(64, 48);
     let d = h.display();
     let t = h.engine().theme(d).expect("a theme");
-    assert_eq!(t.name(), "default-light");
+    assert_eq!(t.name(), "default");
+    assert_eq!(h.engine().theme_mode(d), twine_style::ThemeMode::Light);
     let s = screen(h.engine());
     assert_eq!(
         h.engine().style_color(s, Part::Main, PropId::BgColor),
@@ -113,8 +122,15 @@ fn snapshot_theme_simple_container() {
 
 #[test]
 fn snapshot_theme_mono_container() {
-    let t = Rc::new(MonoTheme::new(false, &twine_assets::fonts::MONTSERRAT_14));
+    let t = Rc::new(
+        MonoTheme::builder()
+            .mode(ThemeMode::Light)
+            .font(&twine_assets::fonts::MONTSERRAT_14)
+            .build(),
+    );
     let (mut h, _, b) = scene(EngineHarness::new(240, 160).format(ColorFormat::I1).theme(t));
     h.engine_mut().add_state(b, State::CHECKED);
     h.assert_snapshot("theme_mono_container");
 }
+
+// Every theme defines every standard element in every mode it supports: `theme_modes.rs`.

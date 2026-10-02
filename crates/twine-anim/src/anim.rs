@@ -5,73 +5,27 @@ use core::fmt;
 
 use twine_core::Duration;
 
-use crate::Easing;
 use crate::timeline::AnimCx;
-
-/// How often an animation plays.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Repeat {
-    /// Plays once and then `n` more times (`Count(0)` = play once).
-    Count(u16),
-    /// Plays forever.
-    Infinite,
-}
-
-impl Default for Repeat {
-    /// Play once.
-    fn default() -> Self {
-        Repeat::Count(0)
-    }
-}
+use crate::{AnimSpec, Easing, Repeat};
 
 /// A raw engine node key (the engine converts its node ids to and from `u32`; this crate sits
 /// below the engine and cannot name them).
 pub type NodeKey = u32;
 
-/// The node property an animation writes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum AnimProp {
-    /// Local X position.
-    X,
-    /// Local Y position.
-    Y,
-    /// Width.
-    Width,
-    /// Height.
-    Height,
-    /// Opacity.
-    Opa,
-    /// Horizontal translation.
-    TranslateX,
-    /// Vertical translation.
-    TranslateY,
-    /// Horizontal transform scale.
-    ScaleX,
-    /// Vertical transform scale.
-    ScaleY,
-    /// Transform rotation.
-    Rotation,
-    /// Any integer-valued style property, by its property id (`PropId as u8`).
-    StyleProp(u8),
-    /// Horizontal scroll position.
-    ScrollX,
-    /// Vertical scroll position.
-    ScrollY,
-    /// A widget-defined value (e.g. a bar's value).
-    Value,
-    /// A widget-defined custom property.
-    Custom(u16),
-}
+/// A raw node property code: which property of a node an animation writes. This crate only
+/// compares codes (an animation started on the same node and code replaces the running one);
+/// their meaning belongs to the owner of the nodes (the engine encodes its typed `AnimProp`,
+/// which also covers style properties by `PropId`, into a code).
+pub type PropKey = u32;
 
 /// What an animation writes to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AnimTarget {
-    /// A property of an engine node. Starting an animation on a node property replaces a running
-    /// animation of the same node and property (LVGL: same `var` and `exec_cb`).
-    Node(NodeKey, AnimProp),
+    /// A property of an engine node (a node key and a property code). Starting an animation on
+    /// a node property replaces a running animation of the same node and property (LVGL: same
+    /// `var` and `exec_cb`).
+    Node(NodeKey, PropKey),
     /// A user-defined target resolved by the caller (e.g. a view-layer tween); never replaced
     /// automatically.
     Custom(u32),
@@ -149,16 +103,20 @@ impl fmt::Debug for AnimCallbacks {
     }
 }
 
-/// An animation: a value going from `start` to `end` over time, with LVGL's timing options
-/// (`lv_anim_t`).
+/// An animation: a value going from `start` to `end` over time with an [`AnimSpec`] timing
+/// (LVGL's `lv_anim_t` options).
 ///
-/// One cycle is: forward play (`duration`), then, with [`Anim::playback`], `playback_delay` and
-/// a backward play; cycles are separated by `repeat_delay`. The first cycle starts after
-/// `delay`. Time is wall-clock: [`Anim::sample`] maps any elapsed time directly to a value, so
-/// late frames jump to the right value instead of slowing the animation down.
+/// The timing lives in the [`spec`](Self::spec) field ([`AnimSpec`]). One cycle is: forward
+/// play ([`AnimSpec::duration`]), then, with a [`playback`](AnimSpec::playback),
+/// [`playback_delay`](AnimSpec::playback_delay) and a backward play; cycles
+/// ([`repeat`](AnimSpec::repeat)) are separated by [`repeat_delay`](AnimSpec::repeat_delay).
+/// The first cycle starts after [`delay`](AnimSpec::delay). Time is wall-clock: [`Anim::sample`] maps any elapsed time directly to a value, so
+/// late frames jump to the right value instead of slowing the animation down. The builder
+/// methods set fields of [`spec`](Self::spec); [`with_spec`](Self::with_spec) takes a whole
+/// spec (e.g. one shared with transitions or the view layer).
 ///
 /// ```
-/// use twine_anim::{Anim, Easing, Phase, Repeat};
+/// use twine_anim::{Anim, AnimSpec, Easing, Phase, Repeat};
 /// use twine_core::Duration;
 ///
 /// let a = Anim::new(0, 100)
@@ -166,11 +124,18 @@ impl fmt::Debug for AnimCallbacks {
 ///     .delay(Duration::ms(50))
 ///     .easing(Easing::Linear)
 ///     .playback(Duration::ms(100))
-///     .repeat(Repeat::Count(1));
+///     .repeat(Repeat::Times(2));
 /// assert_eq!(a.sample(Duration::ms(150)).value, 50);
 /// let back = a.sample(Duration::ms(300));
 /// assert_eq!((back.phase, back.value), (Phase::Backward, 50));
 /// assert!(a.sample(Duration::ms(650)).finished);
+///
+/// // The same timing as a reusable spec.
+/// static SPEC: AnimSpec = AnimSpec::new(Duration::ms(200))
+///     .delay(Duration::ms(50))
+///     .playback(Duration::ms(100))
+///     .repeat(Repeat::Times(2));
+/// assert_eq!(Anim::with_spec(0, 100, SPEC).spec, a.spec);
 /// ```
 #[derive(Debug)]
 pub struct Anim {
@@ -178,20 +143,9 @@ pub struct Anim {
     pub start: i32,
     /// End value.
     pub end: i32,
-    /// Duration of the forward play (default 500 ms, as LVGL).
-    pub duration: Duration,
-    /// Delay before the first cycle.
-    pub delay: Duration,
-    /// Easing curve (used in both directions).
-    pub easing: Easing,
-    /// Number of cycles.
-    pub repeat: Repeat,
-    /// Delay between cycles.
-    pub repeat_delay: Duration,
-    /// Duration of the backward play after each forward play (`None` = no playback).
-    pub playback: Option<Duration>,
-    /// Delay between the forward and the backward play.
-    pub playback_delay: Duration,
+    /// Timing: duration, delay, easing, repetition, playback, essential (default
+    /// [`AnimSpec::DEFAULT`]: 500 ms, linear, once, as LVGL).
+    pub spec: AnimSpec,
     /// Apply `start` during the initial delay (default `true`, as LVGL).
     pub early_apply: bool,
     /// What the animation writes to.
@@ -204,26 +158,54 @@ impl Anim {
     /// target `Custom(0)` (LVGL `lv_anim_init` defaults).
     #[must_use]
     pub fn new(start: i32, end: i32) -> Self {
+        Self::with_spec(start, end, AnimSpec::DEFAULT)
+    }
+
+    /// An animation from `start` to `end` with the timing `spec` (early apply, target
+    /// `Custom(0)`). Never panics.
+    ///
+    /// ```
+    /// use twine_anim::{Anim, AnimSpec, Easing};
+    /// use twine_core::Duration;
+    ///
+    /// static FADE: AnimSpec = AnimSpec::new(Duration::ms(150)).easing(Easing::EaseOut);
+    /// let a = Anim::with_spec(0, 255, FADE);
+    /// assert_eq!(a.spec.duration, Duration::ms(150));
+    /// ```
+    #[must_use]
+    pub fn with_spec(start: i32, end: i32, spec: AnimSpec) -> Self {
         Anim {
             start,
             end,
-            duration: Duration::ms(500),
-            delay: Duration::ZERO,
-            easing: Easing::Linear,
-            repeat: Repeat::Count(0),
-            repeat_delay: Duration::ZERO,
-            playback: None,
-            playback_delay: Duration::ZERO,
+            spec,
             early_apply: true,
             target: AnimTarget::Custom(0),
             callbacks: AnimCallbacks::default(),
         }
     }
 
+    /// Replaces the whole timing (every field set by the builder methods before is
+    /// overwritten). Never panics.
+    ///
+    /// ```
+    /// use twine_anim::{Anim, AnimSpec, Repeat};
+    /// use twine_core::Duration;
+    ///
+    /// let spec = AnimSpec::new(Duration::ms(300)).repeat(Repeat::Forever);
+    /// let a = Anim::new(0, 10).delay(Duration::ms(50)).spec(spec);
+    /// assert_eq!(a.spec.delay, Duration::ZERO); // replaced with the spec's delay
+    /// assert_eq!(a.spec.repeat, Repeat::Forever);
+    /// ```
+    #[must_use]
+    pub fn spec(mut self, spec: AnimSpec) -> Self {
+        self.spec = spec;
+        self
+    }
+
     /// Sets the forward play duration.
     #[must_use]
     pub fn duration(mut self, d: Duration) -> Self {
-        self.duration = d;
+        self.spec.duration = d;
         self
     }
 
@@ -234,8 +216,8 @@ impl Anim {
     /// ```
     /// use twine_anim::Anim;
     /// use twine_core::Duration;
-    /// assert_eq!(Anim::new(0, 300).speed(100).duration, Duration::secs(3));
-    /// assert_eq!(Anim::new(0, 0).speed(100).duration, Duration::ms(1));
+    /// assert_eq!(Anim::new(0, 300).speed(100).spec.duration, Duration::secs(3));
+    /// assert_eq!(Anim::new(0, 0).speed(100).spec.duration, Duration::ms(1));
     /// ```
     #[must_use]
     pub fn speed(mut self, px_per_s: u32) -> Self {
@@ -245,49 +227,67 @@ impl Anim {
         }
         let dist = u64::from(self.start.abs_diff(self.end));
         let us = dist * 1_000_000 / u64::from(px_per_s);
-        self.duration = Duration::us(us.max(1_000));
+        self.spec.duration = Duration::us(us.max(1_000));
         self
     }
 
     /// Sets the initial delay.
     #[must_use]
     pub fn delay(mut self, d: Duration) -> Self {
-        self.delay = d;
+        self.spec.delay = d;
         self
     }
 
     /// Sets the easing curve.
     #[must_use]
     pub fn easing(mut self, e: Easing) -> Self {
-        self.easing = e;
+        self.spec.easing = e;
         self
     }
 
     /// Sets the number of cycles.
     #[must_use]
     pub fn repeat(mut self, r: Repeat) -> Self {
-        self.repeat = r;
+        self.spec.repeat = r;
         self
     }
 
     /// Sets the delay between cycles.
     #[must_use]
     pub fn repeat_delay(mut self, d: Duration) -> Self {
-        self.repeat_delay = d;
+        self.spec.repeat_delay = d;
         self
     }
 
     /// Plays back to `start` after each forward play, taking `d`.
     #[must_use]
     pub fn playback(mut self, d: Duration) -> Self {
-        self.playback = Some(d);
+        self.spec.playback = Some(d);
         self
     }
 
     /// Sets the delay between the forward and the backward play.
     #[must_use]
     pub fn playback_delay(mut self, d: Duration) -> Self {
-        self.playback_delay = d;
+        self.spec.playback_delay = d;
+        self
+    }
+
+    /// Marks the animation as essential ([`AnimSpec::essential`]): the global
+    /// [`Motion`](crate::Motion) preference leaves it unchanged. Use it only where the motion
+    /// itself carries information (a progress indicator, a spinner showing that work is in
+    /// progress). Never panics.
+    ///
+    /// ```
+    /// use twine_anim::{Anim, Motion};
+    /// use twine_core::Duration;
+    ///
+    /// let a = Anim::new(0, 360).duration(Duration::secs(1)).essential();
+    /// assert!(!Motion::None.affects(&a.spec));
+    /// ```
+    #[must_use]
+    pub fn essential(mut self) -> Self {
+        self.spec.essential = true;
         self
     }
 
@@ -330,16 +330,17 @@ impl Anim {
 
     /// Length of one cycle's played part (forward + playback delay + backward), in µs.
     fn play_len(&self) -> u128 {
-        let d = u128::from(self.duration.as_micros());
-        match self.playback {
-            Some(pb) => d + u128::from(self.playback_delay.as_micros()) + u128::from(pb.as_micros()),
+        let s = &self.spec;
+        let d = u128::from(s.duration.as_micros());
+        match s.playback {
+            Some(pb) => d + u128::from(s.playback_delay.as_micros()) + u128::from(pb.as_micros()),
             None => d,
         }
     }
 
     /// The final value after the last cycle.
     fn final_value(&self) -> i32 {
-        if self.playback.is_some() {
+        if self.spec.playback.is_some() {
             self.start
         } else {
             self.end
@@ -349,13 +350,8 @@ impl Anim {
     /// Total time from the end of the initial delay to the end of the animation, `None` if
     /// infinite. Used for the finished check.
     fn active_len(&self) -> Option<u128> {
-        match self.repeat {
-            Repeat::Infinite => None,
-            Repeat::Count(n) => {
-                let cycles = u128::from(n) + 1;
-                Some(cycles * self.play_len() + (cycles - 1) * u128::from(self.repeat_delay.as_micros()))
-            }
-        }
+        let cycles = u128::from(self.spec.repeat.cycles()?);
+        Some(cycles * self.play_len() + (cycles - 1) * u128::from(self.spec.repeat_delay.as_micros()))
     }
 
     /// The state of the animation `elapsed` after it was started. Pure and allocation-free.
@@ -367,7 +363,8 @@ impl Anim {
     #[must_use]
     pub fn sample(&self, elapsed: Duration) -> Sample {
         let e = elapsed.as_micros();
-        let delay = self.delay.as_micros();
+        let spec = &self.spec;
+        let delay = spec.delay.as_micros();
         if e < delay {
             return Sample {
                 value: self.start,
@@ -378,7 +375,7 @@ impl Anim {
             };
         }
         let t = u128::from(e - delay);
-        let last_phase = if self.playback.is_some() {
+        let last_phase = if spec.playback.is_some() {
             Phase::Backward
         } else {
             Phase::Forward
@@ -391,10 +388,10 @@ impl Anim {
             phase_left: Duration::ZERO,
         };
         let play = self.play_len();
-        let cycle = play + u128::from(self.repeat_delay.as_micros());
-        if let (Repeat::Count(n), Some(total)) = (self.repeat, self.active_len()) {
+        let cycle = play + u128::from(spec.repeat_delay.as_micros());
+        if let (Some(cycles), Some(total)) = (spec.repeat.cycles(), self.active_len()) {
             if t >= total {
-                return finished(n);
+                return finished(cycles - 1);
             }
         }
         if cycle == 0 {
@@ -412,19 +409,19 @@ impl Anim {
         let repeats_done = k.min(u128::from(u16::MAX)) as u16;
         let left = |end: u128| Duration::us((end - u128::from(w)).min(u128::from(u64::MAX)) as u64);
 
-        let d = self.duration.as_micros();
+        let d = spec.duration.as_micros();
         if w < d {
-            let p = Duration::fraction_1024(Duration::us(w), self.duration);
+            let p = Duration::fraction_1024(Duration::us(w), spec.duration);
             return Sample {
-                value: self.easing.value(p, self.start, self.end),
+                value: spec.easing.value(p, self.start, self.end),
                 phase: Phase::Forward,
                 finished: false,
                 repeats_done,
                 phase_left: left(d.into()),
             };
         }
-        if let Some(pb) = self.playback {
-            let pd_end = d.saturating_add(self.playback_delay.as_micros());
+        if let Some(pb) = spec.playback {
+            let pd_end = d.saturating_add(spec.playback_delay.as_micros());
             if w < pd_end {
                 return Sample {
                     value: self.end,
@@ -438,7 +435,7 @@ impl Anim {
             if w < back_end {
                 let p = Duration::fraction_1024(Duration::us(w - pd_end), pb);
                 return Sample {
-                    value: self.easing.value(p, self.end, self.start),
+                    value: spec.easing.value(p, self.end, self.start),
                     phase: Phase::Backward,
                     finished: false,
                     repeats_done,
@@ -467,10 +464,10 @@ mod tests {
     #[test]
     fn anim_defaults_match_lvgl() {
         let a = Anim::new(0, 100);
-        assert_eq!(a.duration, Duration::ms(500));
+        assert_eq!(a.spec, AnimSpec::DEFAULT);
         assert!(a.early_apply);
-        assert_eq!(a.repeat, Repeat::Count(0));
-        assert_eq!(a.easing, Easing::Linear);
+        assert_eq!(a.spec.repeat, Repeat::ONCE);
+        assert_eq!(a.spec.easing, Easing::Linear);
         assert!(a.callbacks.is_empty());
         assert!(!Anim::new(0, 1).on_start(|_| {}).callbacks.is_empty());
     }
@@ -561,7 +558,7 @@ mod tests {
     fn repeat_count_three_cycles() {
         let a = Anim::new(0, 100)
             .duration(Duration::ms(100))
-            .repeat(Repeat::Count(2));
+            .repeat(Repeat::Times(3));
         let cases = [
             (50_000, 50, 0),
             (150_000, 50, 1),
@@ -580,7 +577,7 @@ mod tests {
     fn repeat_delay_between_cycles() {
         let a = Anim::new(0, 100)
             .duration(Duration::ms(100))
-            .repeat(Repeat::Count(1))
+            .repeat(Repeat::Times(2))
             .repeat_delay(Duration::ms(40));
         let s = a.sample(us(120_000));
         assert_eq!(
@@ -597,7 +594,7 @@ mod tests {
         let pb = Anim::new(0, 100)
             .duration(Duration::ms(100))
             .playback(Duration::ms(100))
-            .repeat(Repeat::Count(1))
+            .repeat(Repeat::Times(2))
             .repeat_delay(Duration::ms(40));
         let s = pb.sample(us(220_000));
         assert_eq!((s.value, s.phase), (0, Phase::RepeatDelay));
@@ -610,7 +607,7 @@ mod tests {
         let a = Anim::new(0, 100)
             .duration(Duration::ms(10))
             .playback(Duration::ms(10))
-            .repeat(Repeat::Infinite);
+            .repeat(Repeat::Forever);
         for t in [0, 10_000, 1_000_000, 3_600_000_000, u64::MAX] {
             assert!(!a.sample(us(t)).finished, "t = {t}");
         }
@@ -618,7 +615,7 @@ mod tests {
         assert_eq!(a.sample(us(1_005_000)).repeats_done, 50);
         assert_eq!(a.sample(us(u64::MAX)).repeats_done, u16::MAX);
         // Degenerate: no duration at all.
-        let z = Anim::new(1, 2).duration(Duration::ZERO).repeat(Repeat::Infinite);
+        let z = Anim::new(1, 2).duration(Duration::ZERO).repeat(Repeat::Forever);
         assert_eq!((z.sample(us(5)).value, z.sample(us(5)).finished), (2, false));
     }
 
@@ -631,16 +628,16 @@ mod tests {
 
     #[test]
     fn speed_computes_duration() {
-        assert_eq!(Anim::new(0, 300).speed(100).duration, Duration::secs(3));
-        assert_eq!(Anim::new(100, -100).speed(400).duration, Duration::ms(500));
-        assert_eq!(Anim::new(0, 1).speed(10_000).duration, Duration::ms(1)); // min 1 ms
-        assert_eq!(Anim::new(0, 7).speed(3).duration, Duration::us(2_333_333));
+        assert_eq!(Anim::new(0, 300).speed(100).spec.duration, Duration::secs(3));
+        assert_eq!(Anim::new(100, -100).speed(400).spec.duration, Duration::ms(500));
+        assert_eq!(Anim::new(0, 1).speed(10_000).spec.duration, Duration::ms(1)); // min 1 ms
+        assert_eq!(Anim::new(0, 7).speed(3).spec.duration, Duration::us(2_333_333));
         assert_eq!(
-            Anim::new(0, 7).duration(Duration::ms(9)).speed(0).duration,
+            Anim::new(0, 7).duration(Duration::ms(9)).speed(0).spec.duration,
             Duration::ms(9)
         );
         assert_eq!(
-            Anim::new(i32::MIN, i32::MAX).speed(1).duration.as_micros(),
+            Anim::new(i32::MIN, i32::MAX).speed(1).spec.duration.as_micros(),
             u64::from(u32::MAX) * 1_000_000
         );
     }
@@ -658,7 +655,7 @@ mod tests {
         let long = Anim::new(0, 10)
             .duration(Duration::MAX)
             .playback(Duration::MAX)
-            .repeat(Repeat::Count(u16::MAX));
+            .repeat(Repeat::Times(u16::MAX));
         assert!(!long.sample(us(u64::MAX)).finished);
     }
 
@@ -697,7 +694,7 @@ mod tests {
                     .duration(Duration::us(dur))
                     .delay(Duration::us(delay))
                     .playback_delay(Duration::us(pbd))
-                    .repeat(Repeat::Count(rep))
+                    .repeat(Repeat::Times(rep + 1))
                     .repeat_delay(Duration::us(rep_delay));
                 if let Some(pb) = pb {
                     a = a.playback(Duration::us(pb));

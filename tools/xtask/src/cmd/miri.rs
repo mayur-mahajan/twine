@@ -144,7 +144,8 @@ pub fn forbids_unsafe(lib_rs: &str) -> bool {
 }
 
 /// Checks the unsafe-code policy (see the module docs) over every workspace library crate
-/// (`crates/*`, `tools/*`, `examples`, each with a `src/lib.rs`).
+/// (`crates/*` and `tools/*`, each with a `src/lib.rs`; examples, tests and benches are not
+/// library crates).
 pub fn check_policy() -> R {
     let root = workspace_root();
     let mut dirs = Vec::new();
@@ -153,7 +154,6 @@ pub fn check_policy() -> R {
             dirs.push(entry?.path());
         }
     }
-    dirs.push(root.join("examples"));
     dirs.sort();
     let mut problems = Vec::new();
     let mut checked = 0usize;

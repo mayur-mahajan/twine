@@ -296,7 +296,7 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     let theme = DefaultTheme::light();
     // White on black: lit OLED pixels are the foreground.
     #[cfg(feature = "oled-ssd1306")]
-    let theme = MonoTheme::new(true, &twine::assets::fonts::MONTSERRAT_14);
+    let theme = MonoTheme::builder().mode(ThemeMode::Dark).font(&twine::assets::fonts::MONTSERRAT_14).build();
     let ui = builder.config(config).theme(theme).with_embassy_clock().build(demo::app);
     log::info!("twine: {} demo on {}x{}", demo::NAME, info.width, info.height);
     twine_embassy::run(ui).await

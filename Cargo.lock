@@ -3018,10 +3018,12 @@ name = "twine"
 version = "0.1.0"
 dependencies = [
  "critical-section",
+ "env_logger",
  "twine",
  "twine-anim",
  "twine-assets",
  "twine-core",
+ "twine-demos",
  "twine-engine",
  "twine-fs",
  "twine-hal",
@@ -3029,6 +3031,7 @@ dependencies = [
  "twine-layout",
  "twine-reactive",
  "twine-render",
+ "twine-sim",
  "twine-style",
  "twine-testing",
  "twine-text",
@@ -3165,13 +3168,19 @@ dependencies = [
 name = "twine-embedded-graphics"
 version = "0.1.0"
 dependencies = [
+ "critical-section",
  "defmt",
  "embedded-graphics",
  "embedded-graphics-core",
+ "embedded-graphics-simulator",
+ "env_logger",
+ "twine",
  "twine-core",
+ "twine-demos",
  "twine-embedded-graphics",
  "twine-hal",
  "twine-render",
+ "twine-sim",
  "twine-testing",
 ]
 
@@ -3198,35 +3207,6 @@ dependencies = [
  "twine-testing",
  "twine-text",
  "twine-vector",
-]
-
-[[package]]
-name = "twine-examples"
-version = "0.1.0"
-dependencies = [
- "critical-section",
- "embedded-graphics",
- "embedded-graphics-simulator",
- "env_logger",
- "twine",
- "twine-assets",
- "twine-core",
- "twine-demos",
- "twine-embedded-graphics",
- "twine-engine",
- "twine-fs",
- "twine-hal",
- "twine-image",
- "twine-reactive",
- "twine-render",
- "twine-sim",
- "twine-style",
- "twine-testing",
- "twine-text",
- "twine-theme",
- "twine-vector",
- "twine-view",
- "twine-widgets",
 ]
 
 [[package]]
@@ -3449,6 +3429,8 @@ dependencies = [
  "twine-testing",
  "twine-text",
  "twine-theme",
+ "twine-widgets",
+ "twine-widgets-ext",
 ]
 
 [[package]]
@@ -3476,6 +3458,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "log",
  "proptest",
+ "trybuild",
  "twine-anim",
  "twine-assets",
  "twine-core",

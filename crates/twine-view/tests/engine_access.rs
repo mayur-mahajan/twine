@@ -1,5 +1,6 @@
-//! `EngineAccess` diagnostics (R1.S09): calls that need the engine and run without it return
-//! `None` / do nothing, and in debug builds warn once per call site — without allocating.
+//! `EngineAccess` diagnostics (R1.S09): calls that must return what the engine holds and run
+//! without it return `None` / `false`, and in debug builds warn once per call site — without
+//! allocating. Calls that are queued instead (F1, see `engine_queue.rs`) never warn.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -22,7 +23,7 @@ fn setup() -> (TestUi, NodeRef<Label>, AnimController) {
     let o2 = out.clone();
     let mut t = TestUi::new(200, 100).mount(move |cx| {
         let r = cx.node_ref::<Label>();
-        let (_, ctl) = cx.animation(Anim::new(0, 100).duration(Duration::ms(100)));
+        let (_, ctl) = cx.animation(0, 100, AnimSpec::new(Duration::ms(100)));
         o2.set(Some((r, ctl)));
         label("x").node_ref(r).test_id("l")
     });
@@ -72,23 +73,26 @@ fn handles_warn_once_per_call_site() {
     let theme = use_theme(t.root_scope());
     let ((), logs) = capture_logs(|| {
         for _ in 0..2 {
+            // Queued for the next update (F1): no warning.
             ctl.pause();
             ctl.set_playing(true);
-            assert!(!ctl.is_playing());
             theme.set(DefaultTheme::dark());
+            // Needs the engine to answer.
+            assert!(!ctl.is_playing());
         }
     });
     let warns = engine_warnings(&logs);
-    assert_eq!(warns.len(), 4, "{logs:?}");
-    for (w, what) in warns.iter().zip([
-        "AnimController::pause",
-        "AnimController::set_playing",
-        "AnimController::is_playing",
-        "ThemeHandle::set",
-    ]) {
-        assert!(w.message.contains(what), "{} vs {what}", w.message);
-        assert!(w.message.contains("engine_access.rs:"), "{}", w.message);
-    }
+    assert_eq!(warns.len(), 1, "{logs:?}");
+    assert!(
+        warns[0].message.contains("AnimController::is_playing"),
+        "{}",
+        warns[0].message
+    );
+    assert!(
+        warns[0].message.contains("engine_access.rs:"),
+        "{}",
+        warns[0].message
+    );
 }
 
 #[test]
@@ -119,7 +123,7 @@ fn repeated_diagnostic_allocates_nothing() {
     let (_t, r, ctl) = setup();
     let call = || {
         let n = r.with_mut(|l: &mut Label, wcx| l.set_text(wcx, "no"));
-        ctl.stop();
+        assert!(!ctl.is_playing());
         n
     };
     let _ = call(); // first time at these call sites: may log (and format)

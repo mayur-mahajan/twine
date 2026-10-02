@@ -1,0 +1,22 @@
+error[E0277]: `&str` cannot be used as the value of type `i32` of an editable widget
+ --> tests/ui/wrong_model.rs:4:20
+  |
+4 |     let _ = slider("half");
+  |             ------ ^^^^^^ not a `i32` or a `Signal<i32>`
+  |             |
+  |             required by a bound introduced by this call
+  |
+  = help: the trait `IntoModel<i32>` is not implemented for `&str`
+help: the following other types implement trait `IntoModel<T>`
+ --> src/model.rs
+  |
+  | impl<T: 'static> IntoModel<T> for Signal<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Signal<T>`
+...
+  | impl<T: 'static> IntoModel<T> for Model<T> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Model<T>`
+note: required by a bound in `twine_view::slider`
+ --> src/widgets/controls.rs
+  |
+  | pub fn slider(value: impl IntoModel<i32>) -> WidgetView<Slider> {
+  |                           ^^^^^^^^^^^^^^ required by this bound in `slider`

@@ -364,7 +364,11 @@ fn snapshot_arc() {
     });
     snap("no_knob", |h, a| {
         let e = h.engine_mut();
-        e.set_local_prop(a, Selector::part(Part::Knob), StyleProp::BgOpacity(Opa::TRANSP));
+        e.set_local_prop(
+            a,
+            Selector::part(Part::Knob),
+            StyleProp::BgOpacity(Opa::TRANSP.into()),
+        );
         e.set_flag(a, ObjFlags::CLICKABLE, false);
     });
 }

@@ -26,15 +26,38 @@
 //! fine-grained bindings, so a change updates exactly the affected widgets and redraws
 //! exactly their pixels, and an idle UI uses no CPU at all.
 //!
+//! ## Guides
+//!
+//! - [Writing a custom widget](guide::custom_widgets): a gauge with its own class and parts,
+//!   drawing, keypad/encoder input, theming with design elements and theme modes, a typed
+//!   view, animations within the motion preference, and tests (the `gauge` example).
+//!
 //! ## Features
 //!
 //! - default: `color-rgb565`, `color-rgb565-swapped`, `img-qoi`, `perf-monitor`, `log`.
-//! - `std` (host, simulator, tests), `log`, `defmt`, `debug-checks`, `test-ids`.
-//! - `color-*`: pixel formats; `img-*`: image decoders; `montserrat-*`, `unscii-*`, …: the
-//!   built-in fonts of [`fonts`].
+//! - `std` (host, simulator, tests: the thread-local reactive runtime), `log`, `defmt`
+//!   (logging backends), `perf-monitor` (on-screen performance overlay), `debug-checks`
+//!   (expensive engine invariant checks), `test-ids` (keep test ids in release builds).
+//! - `async`: the async runtime (`AsyncUi`, `Ui::builder_async`) and the async HAL traits.
+//! - `color-*`: pixel formats the renderer is compiled for (`color-i1` also compiles `L8`);
+//!   `img-*`: image decoders (`qoi`, `png`, `jpeg`, `gif`, `bmp`, `lz4`).
+//! - `montserrat-*`, `unscii-*`, `dejavu-*`, `source-han-*`, `all-fonts`: the built-in fonts
+//!   of [`fonts`].
 //! - `bidi`, `arabic-shaping`: right-to-left and Arabic/Persian text; `ttf`: runtime TrueType
 //!   fonts; `fs`: the file system (`fs` module) and file images; `vector`: vector graphics
-//!   (`vector` module, `vector_canvas`).
+//!   (`vector` module, `vector_canvas`); `svg`: SVG images drawn as vectors (implies
+//!   `vector`).
+//! - `full`: every optional, platform-neutral part above (all pixel formats, decoders, fonts,
+//!   `vector`, `svg`, `ttf`, `fs`, `bidi`, `arabic-shaping`, `async`, `perf-monitor`) — for
+//!   hosts, simulators, tests and documentation. It leaves out `std`, the logging backends and
+//!   the debugging aids; firmware enables only what it uses.
+//!
+//! ## Examples
+//!
+//! The runnable desktop examples (simulator windows) live in this crate's `examples/`
+//! directory: `cargo run -p twine --example <name>` (e.g. `counter`, `thermostat`, `gauge`), or
+//! `cargo xtask sim <name>` (also headless: `--headless`, `--script <file>`). Board examples
+//! are in the repository's `firmware/` directory.
 #![no_std]
 #![forbid(unsafe_code)]
 
@@ -60,6 +83,8 @@ pub use twine_widgets_ext as widgets_ext;
 
 /// The built-in fonts (each behind its cargo feature).
 pub use twine_assets::fonts;
+
+pub mod guide;
 
 /// Everything an application needs: `use twine::prelude::*;`.
 ///

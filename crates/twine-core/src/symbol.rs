@@ -53,6 +53,11 @@ macro_rules! symbols {
             pub const ALL: &'static [Symbol] = &[$(Symbol::$variant),+];
 
             /// The symbol whose glyph is `c` (`None` for any other character).
+            /// ```
+            /// use twine_core::Symbol;
+            /// assert_eq!(Symbol::from_char('\u{F053}'), Some(Symbol::Left));
+            /// assert_eq!(Symbol::from_char('a'), None);
+            /// ```
             #[must_use]
             pub const fn from_char(c: char) -> Option<Symbol> {
                 // `GLYPHS` literals are one `char` each (checked by a unit test).
@@ -212,6 +217,11 @@ symbols! {
 
 impl Symbol {
     /// The glyph as a one-character string (a `const fn`: usable in `const`/`static` tables).
+    /// ```
+    /// use twine_core::Symbol;
+    /// const SAVE: &str = Symbol::Save.as_str();
+    /// assert_eq!(SAVE.chars().count(), 1);
+    /// ```
     #[must_use]
     #[inline]
     pub const fn as_str(self) -> &'static str {
@@ -219,6 +229,10 @@ impl Symbol {
     }
 
     /// The glyph's code point.
+    /// ```
+    /// use twine_core::Symbol;
+    /// assert_eq!(Symbol::Left.as_char(), '\u{F053}');
+    /// ```
     #[must_use]
     #[inline]
     pub const fn as_char(self) -> char {
@@ -226,6 +240,10 @@ impl Symbol {
     }
 
     /// The variant name (`"Ok"`, `"VolumeMid"`…), for galleries and tools.
+    /// ```
+    /// use twine_core::Symbol;
+    /// assert_eq!(Symbol::VolumeMid.name(), "VolumeMid");
+    /// ```
     #[must_use]
     pub const fn name(self) -> &'static str {
         NAMES[self as usize]
@@ -233,6 +251,11 @@ impl Symbol {
 
     /// `true` for the Font Awesome glyphs merged into the built-in fonts from the symbol font
     /// (every symbol except [`Symbol::Bullet`] and [`Symbol::Dummy`]).
+    /// ```
+    /// use twine_core::Symbol;
+    /// assert!(Symbol::Ok.is_font_awesome());
+    /// assert!(!Symbol::Bullet.is_font_awesome());
+    /// ```
     #[must_use]
     pub const fn is_font_awesome(self) -> bool {
         !matches!(self, Symbol::Bullet | Symbol::Dummy)

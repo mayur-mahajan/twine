@@ -1,0 +1,30 @@
+error[E0277]: `{integer}` cannot be used as the options of a dropdown or roller
+ --> tests/ui/wrong_options.rs:4:22
+  |
+4 |     let _ = dropdown(7, 0);
+  |             -------- ^ the trait `IntoOptions<_>` is not implemented for `{integer}`
+  |             |
+  |             required by a bound introduced by this call
+  |
+  = note: use an array, a `Vec`, a slice or an iterator of texts, or a signal, memo or closure of a `Vec` of strings
+help: the following other types implement trait `IntoOptions<M>`
+ --> src/text.rs
+  |
+  |         impl<S: AsRef<str> + 'static> IntoOptions<marker::Reactive<S>> for $s<Vec<S>> {
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         |
+  |         `Memo<Vec<S>>` implements `IntoOptions<Reactive<S>>`
+  |         `ReadSignal<Vec<S>>` implements `IntoOptions<Reactive<S>>`
+  |         `Signal<Vec<S>>` implements `IntoOptions<Reactive<S>>`
+...
+  | reactive_options!(Signal, ReadSignal, Memo);
+  | ------------------------------------------- in this macro invocation
+...
+  | impl<S: AsRef<str> + 'static> IntoOptions<marker::Prop> for crate::Prop<Vec<S>> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `twine_view::Prop<Vec<S>>` implements `IntoOptions<twine_view::marker::Prop>`
+note: required by a bound in `twine_view::dropdown`
+ --> src/widgets/selection.rs
+  |
+  | pub fn dropdown<MO>(options: impl IntoOptions<MO>, selected: impl IntoModel<usize>) -> WidgetView<Dropdown> {
+  |                                   ^^^^^^^^^^^^^^^ required by this bound in `dropdown`
+  = note: this error originates in the macro `reactive_options` (in Nightly builds, run with -Z macro-backtrace for more info)

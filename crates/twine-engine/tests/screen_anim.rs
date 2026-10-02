@@ -31,16 +31,16 @@ fn scene() -> Scene {
             e,
             a,
             &[
-                StyleProp::BgColor(Color::hex(0xDD_DD_DD)),
-                StyleProp::BgOpacity(twine_core::Opa::COVER),
+                StyleProp::BgColor(Color::hex(0xDD_DD_DD).into()),
+                StyleProp::BgOpacity(twine_core::Opa::COVER.into()),
             ],
         );
         common::style(
             e,
             b,
             &[
-                StyleProp::BgColor(Color::hex(0x20_40_C0)),
-                StyleProp::BgOpacity(twine_core::Opa::COVER),
+                StyleProp::BgColor(Color::hex(0x20_40_C0).into()),
+                StyleProp::BgOpacity(twine_core::Opa::COVER.into()),
             ],
         );
         common::boxed(e, a, Rect::from_xywh(8, 8, 24, 16), Color::RED);
@@ -243,4 +243,46 @@ fn deleting_screen_being_loaded_cancels() {
     assert_eq!(s.h.engine().anim_count(), 0);
     s.h.run_until_idle();
     assert_eq!(s.h.engine().active_screen(d), Some(s.a));
+}
+
+/// `ScreenAnim::all` lists every variant exactly once: the animated ones with the given time in
+/// LVGL order, then `None` (the `anim_gallery` example indexes it with its keys `1`–`9`, `a`–`f`).
+#[test]
+fn all_lists_every_variant_once() {
+    /// Position of each variant in `all` (exhaustive: a new variant must be listed there too).
+    fn index(a: ScreenAnim) -> usize {
+        use ScreenAnim as S;
+        match a {
+            S::OverLeft(_) => 0,
+            S::OverRight(_) => 1,
+            S::OverTop(_) => 2,
+            S::OverBottom(_) => 3,
+            S::MoveLeft(_) => 4,
+            S::MoveRight(_) => 5,
+            S::MoveTop(_) => 6,
+            S::MoveBottom(_) => 7,
+            S::FadeIn(_) => 8,
+            S::FadeOut(_) => 9,
+            S::OutLeft(_) => 10,
+            S::OutRight(_) => 11,
+            S::OutTop(_) => 12,
+            S::OutBottom(_) => 13,
+            S::None => 14,
+        }
+    }
+    let d = Duration::ms(500);
+    let all = ScreenAnim::all(d);
+    for (i, anim) in all.into_iter().enumerate() {
+        assert_eq!(index(anim), i, "{}", anim.name());
+        let expected = if anim == ScreenAnim::None {
+            Duration::ZERO
+        } else {
+            d
+        };
+        assert_eq!(anim.duration(), expected, "{}", anim.name());
+    }
+    let mut names: Vec<&str> = all.iter().map(|a| a.name()).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), all.len(), "names are distinct");
 }

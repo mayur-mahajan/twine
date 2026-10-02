@@ -73,8 +73,8 @@ fn scene(e: &mut Engine) {
         e,
         r,
         &[
-            StyleProp::Radius(Radius::Px(10)),
-            StyleProp::BorderWidth(Length::Px(3)),
+            StyleProp::Radius(Radius::Px(10).into()),
+            StyleProp::BorderWidth(Length::Px(3).into()),
         ],
     );
 }

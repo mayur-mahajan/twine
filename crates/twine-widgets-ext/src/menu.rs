@@ -713,7 +713,7 @@ pub fn cont_create(e: &mut Engine, parent: NodeId) -> Result<NodeId, EngineError
     let ok = e
         .tree()
         .node(parent)
-        .is_some_and(|n| matches!(n.class().name, "menu_page" | "menu_section"));
+        .is_some_and(|n| n.class().is(&MENU_PAGE_CLASS) || n.class().is(&MENU_SECTION_CLASS));
     if !ok {
         twine_core::warn!(target: "twine::engine", "menu: a row needs a page or a section, not {}", fmt_node_id(parent));
         return Err(EngineError::InvalidConfig("menu row outside a page or section"));

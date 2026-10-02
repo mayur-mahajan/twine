@@ -1,0 +1,25 @@
+# Headless tour of the gauge (cargo xtask sim-smoke): move the keypad focus to the load gauge
+# and back to the setpoint gauge (focus ring), step it up three times and down once (the needle
+# moves), let the load gauge cross its alarm threshold, then cycle the theme modes with F12
+# (dark, night, high contrast).
+wait 500
+shot initial
+key Next
+key Next
+key Right
+key Right
+key Right
+key Left
+wait 500
+shot setpoint_23
+wait 6000
+shot load_alarm
+hotkey F12
+wait 200
+shot dark
+hotkey F12
+wait 200
+shot night
+hotkey F12
+wait 200
+shot high_contrast

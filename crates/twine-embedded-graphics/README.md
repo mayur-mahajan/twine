@@ -18,3 +18,7 @@ Flushes go through `DrawTarget::fill_contiguous`, so drivers that implement it e
 (one address window + one pixel stream) are fast; drivers that only implement `draw_iter` work
 but are slower. For SPI panels with a native twine driver, prefer the native driver (it sends
 byte-swapped RGB565 without per-pixel conversion and supports DMA).
+
+Example: `examples/eg_simulator.rs` runs a twine app inside `embedded-graphics-simulator`
+(`cargo run -p twine-embedded-graphics --example eg_simulator --features eg-sim`, or
+`cargo xtask sim eg_simulator`; needs SDL2). The `eg-sim` feature only enables the example.

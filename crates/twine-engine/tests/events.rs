@@ -399,7 +399,7 @@ fn posted_value_changed_can_read_the_widget() {
         *log.borrow(),
         [
             "value Some(1) widget Some(1)",
-            "state from Some(State(0x0)) widget Some(1)",
+            "state from Some(State(DEFAULT)) widget Some(1)",
             "clicked widget Some(1)"
         ]
     );

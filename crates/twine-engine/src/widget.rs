@@ -36,8 +36,8 @@ impl<T: Any> AsAny for T {
 /// the widget holds only its own data and refers to other nodes by [`NodeId`]. Every method
 /// has a default except [`class`](Self::class).
 ///
-/// Animations of [`AnimProp::Value`](twine_anim::AnimProp::Value) and
-/// [`AnimProp::Custom`](twine_anim::AnimProp::Custom) reach the widget through
+/// Animations of [`AnimProp::Value`](crate::AnimProp::Value) and
+/// [`AnimProp::Custom`](crate::AnimProp::Custom) reach the widget through
 /// [`anim_value`](Self::anim_value) and [`anim_custom`](Self::anim_custom).
 ///
 /// ```
@@ -123,7 +123,7 @@ pub trait Widget: AsAny {
         EventResult::Continue
     }
 
-    /// Applies a value of an [`AnimProp::Value`](twine_anim::AnimProp::Value) animation
+    /// Applies a value of an [`AnimProp::Value`](crate::AnimProp::Value) animation
     /// started with [`Engine::anim_start`] (e.g. a bar's value). Default: ignored.
     ///
     /// Like [`event`](Self::event), the widget is taken out of its node while this runs.
@@ -131,7 +131,7 @@ pub trait Widget: AsAny {
         let _ = (cx, v);
     }
 
-    /// Applies a value of an [`AnimProp::Custom(id)`](twine_anim::AnimProp::Custom) animation
+    /// Applies a value of an [`AnimProp::Custom(id)`](crate::AnimProp::Custom) animation
     /// started with [`Engine::anim_start`]. Default: ignored.
     fn anim_custom(&mut self, cx: &mut WidgetCx<'_>, id: u16, v: i32) {
         let _ = (cx, id, v);
@@ -185,7 +185,18 @@ pub enum Editable {
     False,
 }
 
+/// How many classes [`WidgetClass::lineage`] visits at most (the class itself and its bases).
+/// Deeper chains (or a cycle of `static`s naming each other as base) are cut there: a lookup
+/// along the chain always ends.
+pub const MAX_CLASS_DEPTH: usize = 8;
+
 /// Static description of a widget type (LVGL `lv_obj_class_t`), usually a `static`.
+///
+/// A class is identified by its **address**: themes, queries and widgets compare classes with
+/// [`is`](Self::is) / [`is_a`](Self::is_a) (a pointer comparison), never by
+/// [`name`](Self::name), so two classes may share a name and a copy of a class is a different
+/// class. [`base`](Self::base) names the class a custom widget is themed like: a theme that
+/// does not know the class itself styles it like the nearest base it knows.
 ///
 /// ```
 /// use twine_engine::{Editable, GroupDef, ObjFlags, WidgetClass};
@@ -194,13 +205,17 @@ pub enum Editable {
 ///     .parts(&[Part::Main, Part::Indicator, Part::Knob])
 ///     .default_flags(ObjFlags::CLICKABLE)
 ///     .group_def(GroupDef::True)
-///     .editable(Editable::True)
-///     .theme_inheritable(false);
+///     .editable(Editable::True);
+/// // A custom slider that themes style like the built-in one.
+/// static FADER: WidgetClass = WidgetClass::new("fader").parts(SLIDER.parts).base(&SLIDER);
 /// assert_eq!(SLIDER.parts.len(), 3);
+/// assert!(FADER.is_a(&SLIDER));
+/// assert!(!SLIDER.is_a(&FADER));
 /// ```
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct WidgetClass {
-    /// Class name (`"obj"`, `"button"`…), shown in dumps and used by queries.
+    /// Class name (`"obj"`, `"button"`…), shown in dumps, logs and test queries. Not an
+    /// identity: compare classes with [`is`](Self::is) / [`is_a`](Self::is_a).
     pub name: &'static str,
     /// The parts the widget draws.
     pub parts: &'static [Part],
@@ -210,8 +225,13 @@ pub struct WidgetClass {
     pub group_def: GroupDef,
     /// Encoder edit mode.
     pub editable: Editable,
-    /// Whether themes style it like its base class.
-    pub theme_inheritable: bool,
+    /// The class themes style this one like when they do not know it (default `None`: a
+    /// theme that does not know the class gives it no styles). E.g. a custom button with
+    /// `base: Some(&BUTTON_CLASS)` looks like a button in every theme, and a theme (or the
+    /// application through a theme's `.class(..)` registration) may still style it on top.
+    /// Only theming and [`is_a`](Self::is_a) follow it: parts, flags and behaviour are the
+    /// class's own.
+    pub base: Option<&'static WidgetClass>,
     /// Parts the widget draws as several items, each in its own state (with
     /// [`Engine::rect_dsc_for_state`]), like the buttons (`Items`) of a button matrix. A state
     /// change of the node ignores the styles of these parts: it neither redraws the whole node
@@ -220,9 +240,24 @@ pub struct WidgetClass {
     pub item_parts: &'static [Part],
 }
 
+/// Shows the base by name only (a chain of bases could be long, or even a cycle).
+impl core::fmt::Debug for WidgetClass {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("WidgetClass")
+            .field("name", &self.name)
+            .field("parts", &self.parts)
+            .field("default_flags", &self.default_flags)
+            .field("group_def", &self.group_def)
+            .field("editable", &self.editable)
+            .field("base", &self.base.map(|b| b.name))
+            .field("item_parts", &self.item_parts)
+            .finish()
+    }
+}
+
 impl WidgetClass {
-    /// A class with parts `[Main]`, no flags, `GroupDef::Default`, `Editable::Inherit`,
-    /// theme-inheritable.
+    /// A class with parts `[Main]`, no flags, `GroupDef::Default`, `Editable::Inherit`, no
+    /// base and no item parts.
     #[must_use]
     pub const fn new(name: &'static str) -> Self {
         Self {
@@ -231,7 +266,7 @@ impl WidgetClass {
             default_flags: ObjFlags::empty(),
             group_def: GroupDef::Default,
             editable: Editable::Inherit,
-            theme_inheritable: true,
+            base: None,
             item_parts: &[],
         }
     }
@@ -264,10 +299,17 @@ impl WidgetClass {
         self
     }
 
-    /// Whether themes style it like its base class.
+    /// Themed like `base` where a theme does not know this class (see
+    /// [`WidgetClass::base`]).
+    ///
+    /// ```
+    /// use twine_engine::{OBJ_CLASS, WidgetClass};
+    /// static PANEL: WidgetClass = WidgetClass::new("panel").base(&OBJ_CLASS);
+    /// assert!(core::ptr::eq(PANEL.base.unwrap(), &OBJ_CLASS));
+    /// ```
     #[must_use]
-    pub const fn theme_inheritable(mut self, on: bool) -> Self {
-        self.theme_inheritable = on;
+    pub const fn base(mut self, base: &'static WidgetClass) -> Self {
+        self.base = Some(base);
         self
     }
 
@@ -277,6 +319,91 @@ impl WidgetClass {
         self.item_parts = parts;
         self
     }
+
+    /// Whether `self` is the class `other` (the same `static`; a pointer comparison).
+    ///
+    /// ```
+    /// use twine_engine::{OBJ_CLASS, WidgetClass};
+    /// static A: WidgetClass = WidgetClass::new("obj");
+    /// assert!(OBJ_CLASS.is(&OBJ_CLASS));
+    /// assert!(!A.is(&OBJ_CLASS)); // same name, different class
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is(&self, other: &WidgetClass) -> bool {
+        core::ptr::eq(self, other)
+    }
+
+    /// Whether `self` is `other` or has it as a (direct or indirect) [`base`](Self::base),
+    /// within [`MAX_CLASS_DEPTH`] steps. Never loops, never panics.
+    ///
+    /// ```
+    /// use twine_engine::{OBJ_CLASS, WidgetClass};
+    /// static PANEL: WidgetClass = WidgetClass::new("panel").base(&OBJ_CLASS);
+    /// static ALARM_PANEL: WidgetClass = WidgetClass::new("alarm_panel").base(&PANEL);
+    /// assert!(ALARM_PANEL.is_a(&OBJ_CLASS));
+    /// assert!(ALARM_PANEL.is_a(&ALARM_PANEL));
+    /// assert!(!OBJ_CLASS.is_a(&PANEL));
+    /// ```
+    #[must_use]
+    pub fn is_a(&'static self, other: &WidgetClass) -> bool {
+        self.lineage().any(|c| c.is(other))
+    }
+
+    /// The class, then its [`base`](Self::base), the base's base, … — at most
+    /// [`MAX_CLASS_DEPTH`] classes (a longer chain, or a cycle, is cut and logged once per
+    /// walk with `warn!`). Allocates nothing.
+    ///
+    /// ```
+    /// use twine_engine::{OBJ_CLASS, WidgetClass};
+    /// static PANEL: WidgetClass = WidgetClass::new("panel").base(&OBJ_CLASS);
+    /// let names: Vec<&str> = PANEL.lineage().map(|c| c.name).collect();
+    /// assert_eq!(names, ["panel", "obj"]);
+    /// ```
+    #[must_use]
+    pub fn lineage(&'static self) -> Lineage {
+        Lineage {
+            next: Some(self),
+            left: MAX_CLASS_DEPTH,
+        }
+    }
+}
+
+/// The iterator of [`WidgetClass::lineage`]: a class and its bases, bounded by
+/// [`MAX_CLASS_DEPTH`].
+#[derive(Clone, Debug)]
+pub struct Lineage {
+    next: Option<&'static WidgetClass>,
+    left: usize,
+}
+
+impl Iterator for Lineage {
+    type Item = &'static WidgetClass;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'static WidgetClass> {
+        let c = self.next?;
+        if self.left == 0 {
+            lineage_too_deep(c);
+            self.next = None;
+            return None;
+        }
+        self.left -= 1;
+        self.next = c.base;
+        Some(c)
+    }
+}
+
+/// Logs a base chain longer than [`MAX_CLASS_DEPTH`] (or a cycle).
+#[cold]
+#[inline(never)]
+fn lineage_too_deep(c: &'static WidgetClass) {
+    twine_core::warn!(
+        target: "twine::engine",
+        "widget class {}: base chain deeper than {} classes (or a cycle), cut",
+        c.name,
+        MAX_CLASS_DEPTH
+    );
 }
 
 /// Read-only view of one node for measuring, hit testing and cover checks.
@@ -353,6 +480,28 @@ impl<'a> MeasureCx<'a> {
     #[must_use]
     pub fn style_i32(&self, part: Part, prop: PropId) -> i32 {
         self.engine.style_i32(self.node, part, prop)
+    }
+
+    /// Finishes a value the widget read from a style it keeps itself (outside the node's
+    /// cascade): a [design element](twine_style::design) becomes the value of the node's theme,
+    /// a `Dp` length pixels (see [`Engine::finish_style_value`], which also gives the cost).
+    /// Never panics.
+    ///
+    /// ```
+    /// use twine_engine::MeasureCx;
+    /// use twine_style::{PropId, StyleBuf, StyleValue, design};
+    ///
+    /// /// A widget-owned style read outside the node's cascade (e.g. a highlighted span).
+    /// fn highlight_color(cx: &MeasureCx<'_>, own: &StyleBuf) -> StyleValue {
+    ///     let raw = own.get(PropId::TextColor).unwrap_or_default();
+    ///     cx.finish_style_value(PropId::TextColor, raw) // design::PRIMARY -> the theme's color
+    /// }
+    /// let own = StyleBuf::new().text_color(design::PRIMARY);
+    /// # let _ = (highlight_color, own);
+    /// ```
+    #[must_use]
+    pub fn finish_style_value(&self, prop: PropId, v: StyleValue) -> StyleValue {
+        self.engine.finish_style_value(self.node, prop, v)
     }
 
     /// The resolved font of `part`.
@@ -690,17 +839,36 @@ mod tests {
             .default_flags(ObjFlags::CHECKABLE)
             .group_def(GroupDef::False)
             .editable(Editable::True)
-            .theme_inheritable(false);
+            .base(&PROBE_CLASS);
         assert_eq!(C.name, "c");
         assert_eq!(C.parts, &[Part::Main, Part::Knob]);
         assert_eq!(C.default_flags, ObjFlags::CHECKABLE);
         assert_eq!(C.group_def, GroupDef::False);
         assert_eq!(C.editable, Editable::True);
-        assert!(!C.theme_inheritable);
+        assert!(C.base.is_some_and(|b| b.is(&PROBE_CLASS)));
         let d = WidgetClass::new("d");
         assert_eq!(d.parts, &[Part::Main]);
+        assert!(d.base.is_none());
         assert_eq!(d.group_def, GroupDef::Default);
         assert_eq!(d.editable, Editable::Inherit);
+    }
+
+    #[test]
+    fn lineage_is_bounded_and_identity_based() {
+        static A: WidgetClass = WidgetClass::new("a").base(&B);
+        static B: WidgetClass = WidgetClass::new("b").base(&A); // a cycle
+        static NAMESAKE: WidgetClass = WidgetClass::new("probe");
+        static CHILD: WidgetClass = WidgetClass::new("child").base(&PROBE_CLASS);
+        assert_eq!(A.lineage().count(), MAX_CLASS_DEPTH);
+        assert!(A.is_a(&B) && B.is_a(&A));
+        assert!(!A.is_a(&PROBE_CLASS));
+        assert!(CHILD.is_a(&PROBE_CLASS));
+        assert!(
+            !CHILD.is_a(&NAMESAKE),
+            "classes are compared by address, not by name"
+        );
+        assert!(!PROBE_CLASS.is_a(&CHILD));
+        assert!(alloc::format!("{A:?}").contains("base: Some(\"b\")"));
     }
 
     #[test]

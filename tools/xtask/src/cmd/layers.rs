@@ -22,28 +22,30 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("twine-style", 4),
     ("twine-layout", 5),
     ("twine-engine", 6),
-    ("twine-theme", 7),
     ("twine-widgets", 7),
     ("twine-widgets-ext", 8),
-    ("twine-view", 9),
-    ("twine-extra", 10),
-    ("twine-lottie", 10),
+    // Themes recognise the built-in widget classes by identity (their statics), so they sit
+    // above the widget crates.
+    ("twine-theme", 9),
+    ("twine-view", 10),
+    ("twine-extra", 11),
+    ("twine-lottie", 11),
     ("twine-assets", 4),
-    ("twine", 11),
-    ("twine-drivers", 11),
-    ("twine-embassy", 11),
-    ("twine-accel-stm32", 11),
-    ("twine-embedded-graphics", 11),
-    ("twine-demos", 12),
-    ("twine-sim", 12),
-    ("twine-testing", 12),
+    ("twine", 12),
+    ("twine-drivers", 12),
+    ("twine-embassy", 12),
+    ("twine-accel-stm32", 12),
+    ("twine-embedded-graphics", 12),
+    ("twine-demos", 13),
+    ("twine-sim", 13),
+    ("twine-testing", 13),
 ];
 
 /// Same-layer dependencies that are allowed: `(dependent, dependency)`.
-pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[("twine-widgets", "twine-theme")];
+pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[];
 
-/// Workspace members that are not part of the layered library (tools, examples).
-pub const EXEMPT: &[&str] = &["xtask", "twine-cli", "twine-bench", "twine-examples"];
+/// Workspace members that are not part of the layered library (tools).
+pub const EXEMPT: &[&str] = &["xtask", "twine-cli", "twine-bench"];
 
 fn layer(name: &str) -> Option<u8> {
     LAYERS.iter().find(|(n, _)| *n == name).map(|(_, l)| *l)
@@ -142,8 +144,8 @@ mod tests {
             ("twine-core", &[("log", None)]),
             ("twine-render", &[("twine-core", None)]),
             (
-                "twine-widgets",
-                &[("twine-theme", None), ("twine-core", Some("build"))],
+                "twine-theme",
+                &[("twine-widgets-ext", None), ("twine-core", Some("build"))],
             ),
             ("xtask", &[("twine-view", None)]),
         ]);
@@ -159,7 +161,7 @@ mod tests {
             e[0].contains("twine-core") && e[0].contains("twine-view"),
             "{e:?}"
         );
-        let j = meta(&[("twine-theme", &[("twine-widgets", None)])]);
+        let j = meta(&[("twine-widgets", &[("twine-theme", None)])]);
         assert_eq!(check_metadata(&j).unwrap().len(), 1);
     }
 

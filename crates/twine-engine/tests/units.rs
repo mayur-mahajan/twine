@@ -24,12 +24,12 @@ fn node_at(dpi: u16, props: &[StyleProp]) -> (EngineHarness, NodeId) {
 #[test]
 fn dp_resolves_with_the_display_dpi() {
     let props = [
-        StyleProp::Width(Length::dp(50)),
-        StyleProp::Height(Length::Px(30)),
-        StyleProp::PaddingLeft(Length::dp(10)),
-        StyleProp::BorderWidth(Length::dp(1)),
-        StyleProp::Radius(Radius::Dp(4)),
-        StyleProp::RowGap(Length::dp(6)),
+        StyleProp::Width(Length::dp(50).into()),
+        StyleProp::Height(Length::Px(30).into()),
+        StyleProp::PaddingLeft(Length::dp(10).into()),
+        StyleProp::BorderWidth(Length::dp(1).into()),
+        StyleProp::Radius(Radius::Dp(4).into()),
+        StyleProp::RowGap(Length::dp(6).into()),
     ];
     let (lo, a) = node_at(160, &props);
     let (hi, b) = node_at(320, &props);
@@ -64,8 +64,8 @@ fn dp_rounds_like_lvgl_dpx() {
     let (h, n) = node_at(
         130,
         &[
-            StyleProp::PaddingTop(Length::dp(12)),
-            StyleProp::PaddingBottom(Length::dp(1)),
+            StyleProp::PaddingTop(Length::dp(12).into()),
+            StyleProp::PaddingBottom(Length::dp(1).into()),
         ],
     );
     assert_eq!(h.engine().style_i32(n, Part::Main, PropId::PaddingTop), 10);
@@ -75,8 +75,8 @@ fn dp_rounds_like_lvgl_dpx() {
 #[test]
 fn px_lengths_do_not_depend_on_dpi() {
     let props = [
-        StyleProp::PaddingLeft(Length::Px(10)),
-        StyleProp::Width(Length::Px(50)),
+        StyleProp::PaddingLeft(Length::Px(10).into()),
+        StyleProp::Width(Length::Px(50).into()),
     ];
     let (lo, a) = node_at(160, &props);
     let (hi, b) = node_at(320, &props);
@@ -91,11 +91,11 @@ fn radius_circle_draws_like_the_circle_marker() {
         node_at(
             160,
             &[
-                StyleProp::Width(Length::Px(40)),
-                StyleProp::Height(Length::Px(40)),
-                StyleProp::BgColor(Color::RED),
-                StyleProp::BgOpacity(Opa::COVER),
-                StyleProp::Radius(r),
+                StyleProp::Width(Length::Px(40).into()),
+                StyleProp::Height(Length::Px(40).into()),
+                StyleProp::BgColor(Color::RED.into()),
+                StyleProp::BgOpacity(Opa::COVER.into()),
+                StyleProp::Radius(r.into()),
             ],
         )
     };

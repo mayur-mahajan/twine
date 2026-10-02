@@ -220,7 +220,7 @@ pub type BuildOp = Box<dyn FnOnce(&mut BuildCx<'_>, NodeId)>;
 /// use twine_view::prelude::*;
 /// use twine_widgets::label::Label;
 ///
-/// let v = widget_view(|| Label::new("hi")).bind(1u8, |_l: &mut Label, _cx, _v| {});
+/// let v = widget_view(|| Label::new("hi")).bind(1, |_l: &mut Label, _cx, _v: u8| {});
 /// # let _ = v;
 /// ```
 pub struct WidgetView<W: Widget> {
@@ -279,11 +279,13 @@ impl<W: Widget> WidgetView<W> {
     /// memos and closures through a binding that calls `set` whenever they change.
     ///
     /// `set` should be idempotent (do nothing for an unchanged value), like every widget
-    /// setter.
+    /// setter. Its value parameter fixes `T` (any [`IntoProp<T, _>`](IntoProp) is accepted, so
+    /// `T` is not inferred from `prop`): call a widget setter with it, or annotate it
+    /// (`|w: &mut MyWidget, cx, v: u8| …`).
     #[must_use]
-    pub fn bind<T: 'static>(
+    pub fn bind<T: 'static, M>(
         self,
-        prop: impl IntoProp<T>,
+        prop: impl IntoProp<T, M>,
         set: impl Fn(&mut W, &mut WidgetCx<'_>, T) + 'static,
     ) -> Self {
         let prop = prop.into_prop();
@@ -295,6 +297,46 @@ impl<W: Widget> WidgetView<W> {
     pub fn after_children(mut self, f: impl FnOnce(&mut BuildCx<'_>, NodeId) + 'static) -> Self {
         self.post.push(Box::new(f));
         self
+    }
+
+    /// Like [`bind`](Self::bind), applied **late**: the value is first set (and its binding
+    /// created) after every other build step and the children, in the order of the
+    /// `bind_after_children` calls, wherever in the builder chain they were made.
+    ///
+    /// For a value whose setter depends on other settings: a bar's or a gauge's value is
+    /// clamped into its range, so `bar(150).range(0..=200)` must apply the range first even
+    /// though `bar(..)` comes first in the chain. The built-in value widgets (`bar`, `led`,
+    /// `animimg`, …) use exactly this; views of custom widgets do the same. Later changes of a
+    /// dynamic value run the binding like any other (the order only matters for the first
+    /// application while building). Costs the same as [`bind`](Self::bind): one boxed build
+    /// step, and one reactive binding for a dynamic value.
+    ///
+    /// ```
+    /// use core::ops::RangeInclusive;
+    /// use twine_view::prelude::*;
+    /// use twine_widgets::bar::Bar;
+    ///
+    /// /// A bar view whose value is applied after its range.
+    /// fn level(v: i32, r: RangeInclusive<i32>) -> WidgetView<Bar> {
+    ///     widget_view(Bar::new)
+    ///         .bind_after_children(v, |b: &mut Bar, cx, v| b.set_value(cx, v, false))
+    ///         .bind(r, |b: &mut Bar, cx, r: RangeInclusive<i32>| {
+    ///             b.set_range(cx, *r.start(), *r.end());
+    ///         })
+    /// }
+    ///
+    /// let mut t = twine_testing::TestUi::new(120, 60).mount(|_| level(150, 0..=200).test_id("b"));
+    /// let id = t.find(twine_testing::by_id("b")).id();
+    /// assert_eq!(t.engine().widget::<Bar>(id).unwrap().value(), 150); // not clamped to 100
+    /// ```
+    #[must_use]
+    pub fn bind_after_children<T: 'static, M>(
+        self,
+        prop: impl IntoProp<T, M>,
+        set: impl Fn(&mut W, &mut WidgetCx<'_>, T) + 'static,
+    ) -> Self {
+        let prop = prop.into_prop();
+        self.after_children(move |cx, node| bind_prop::<W, T>(cx, node, prop, set))
     }
 
     /// The view's shared settings of type `T` (created with `T::default()` on first use).

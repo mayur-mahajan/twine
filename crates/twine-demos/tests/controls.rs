@@ -110,3 +110,50 @@ fn snapshots_initial() {
     t.run_until_idle();
     t.assert_snapshot("controls_initial_dark");
 }
+
+/// R2.S03: the controls (slider, bar, arc, switch, checkbox, buttons, labels) in every mode of
+/// the default theme, switched at run time; the keypad focus ring is shown on the slider.
+#[test]
+fn snapshots_theme_modes() {
+    let mut t = TestUi::new(320, 240).mount(app_static);
+    t.run_until_idle();
+    let slider = id(&t, "slider");
+    t.engine_mut().focus(slider);
+    t.engine_mut().add_state(slider, State::FOCUS_KEY);
+    t.run_until_idle();
+    let theme = use_theme(t.root_scope());
+    assert_eq!(theme.modes(), &ThemeMode::ALL);
+    for (mode, name) in [
+        (ThemeMode::Light, "light"),
+        (ThemeMode::Dark, "dark"),
+        (ThemeMode::Night, "night"),
+        (ThemeMode::HighContrast, "high_contrast"),
+    ] {
+        theme.set_mode(mode);
+        t.run_until_idle();
+        assert_eq!(theme.mode(), mode);
+        t.assert_snapshot(&format!("controls_mode_{name}"));
+    }
+}
+
+/// R2.S02: switching the default theme from light to dark at run time (a design element
+/// table swap, no re-applied styles, no rebuilt views) draws exactly what installing the dark
+/// theme draws.
+#[test]
+fn mode_switch_draws_like_the_dark_theme() {
+    use std::rc::Rc;
+    let mut switched = TestUi::new(320, 240).mount(app_static);
+    switched.run_until_idle();
+    use_theme(switched.root_scope()).set_mode(ThemeMode::Dark);
+    switched.run_until_idle();
+    switched.harness_mut().render_full();
+    let mut dark = TestUi::new(320, 240)
+        .theme(Rc::new(DefaultTheme::dark()))
+        .mount(app_static);
+    dark.run_until_idle();
+    dark.harness_mut().render_full();
+    assert!(
+        switched.harness_mut().panel_rgb888() == dark.harness_mut().panel_rgb888(),
+        "light → dark switch differs from the dark theme"
+    );
+}

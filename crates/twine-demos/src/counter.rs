@@ -31,5 +31,5 @@ pub fn app(cx: Scope) -> impl View {
     .gap(12)
     .padding(16)
     .align_items(CrossAlign::Center)
-    .size(Length::Pct(100), Length::Pct(100))
+    .fill()
 }

@@ -4,11 +4,11 @@
 use alloc::boxed::Box;
 use alloc::string::String;
 
-use twine_anim::{Anim, AnimProp};
+use twine_anim::Anim;
 use twine_core::{Angle, Duration, Point, Rect, Size};
 use twine_engine::{
-    DrawCx, Editable, Engine, EngineError, Event, EventCode, EventCx, EventParam, EventResult, GroupDef,
-    InputKind, Key, MeasureCx, NodeId, OBJ_FLAGS, ObjFlags, State, Widget, WidgetClass, WidgetCx,
+    AnimProp, DrawCx, Editable, Engine, EngineError, Event, EventCode, EventCx, EventParam, EventResult,
+    GroupDef, InputKind, Key, MeasureCx, NodeId, OBJ_FLAGS, ObjFlags, State, Widget, WidgetClass, WidgetCx,
     fmt_node_id,
 };
 use twine_image::{ImageSource, with_pixels};
@@ -464,7 +464,7 @@ impl Dropdown {
             e.set_local_prop(
                 list,
                 Selector::MAIN,
-                StyleProp::PartOpacity(twine_core::Opa::TRANSP),
+                StyleProp::PartOpacity(twine_core::Opa::TRANSP.into()),
             );
             e.anim_start(
                 list,

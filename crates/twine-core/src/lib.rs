@@ -12,9 +12,9 @@
 //! | Module | Contents |
 //! |--------|----------|
 //! | [`geometry`] | [`Point`], [`Size`], [`Rect`] (half-open), [`Insets`], [`Rotation`] |
-//! | [`math`] | [`Fx`] (16.16), [`Angle`] (0.1°), [`Scale`] (256 = 1.0), sqrt, sin/cos/atan2, bezier, `udiv255`, `map` |
+//! | [`math`] | [`Fx`] (16.16), [`Angle`] (0.1°), [`Scale`] (256 = 1.0), [`Fraction`] (255 = 1.0), [`AngularSpeed`] (°/s), sqrt, sin/cos/atan2, bezier, `udiv255`, `map` |
 //! | [`transform`] | [`Transform`] (2-D affine, fixed point) |
-//! | [`color`] | [`Color`], [`Opa`], [`ColorFormat`], [`PixelFormat`] and format marker types |
+//! | [`color`] | [`Color`], [`Opa`], [`ColorFormat`], [`PixelFormat`] and format marker types, the WCAG [`ContrastRatio`](color::ContrastRatio) |
 //! | [`time`] | [`Instant`], [`Duration`] (µs) |
 //! | [`arena`] | [`Arena<T>`], generational [`Id<T>`] |
 //! | [`small_vec`] | [`SmallVec`] (inline-first vector) |
@@ -31,8 +31,9 @@
 //! - Pixels are `i32`; [`Rect`] is **half-open** `[x0, x1) × [y0, y1)` (LVGL areas are
 //!   inclusive — ported algorithms convert explicitly).
 //! - Opacity is [`Opa`] (`u8`, 255 = cover); angles are [`Angle`] in 0.1°, clockwise on screen;
-//!   scale factors are [`Scale`] (`u16`, 256 = 1.0); time is [`Instant`]/[`Duration`] in µs
-//!   (`u64`).
+//!   scale factors are [`Scale`] (`u16`, 256 = 1.0); fractions of a whole (gradient stops,
+//!   brightness) are [`Fraction`] (`u8`, 255 = 1.0); angular speeds are [`AngularSpeed`]
+//!   (`u16`, whole degrees per second); time is [`Instant`]/[`Duration`] in µs (`u64`).
 //! - Arithmetic saturates rather than overflowing; invalid arguments log `warn!` and fall back
 //!   to a documented value instead of panicking (P7).
 //!

@@ -2,12 +2,15 @@
 //! builders are generated from the same property and shorthand tables of `twine-style`; these
 //! tests walk the tables (through the same callback macros) and check that every property and
 //! every shorthand exists in all three APIs under its table name and sets the same properties.
+//! R2.S01: a `StyleScope` (`.on_state(..)`) has exactly the same modifiers and stores the same
+//! values for its selector.
 
 use std::collections::BTreeSet;
 use twine_core::Fraction;
 use twine_style::Radius;
+use twine_style::design::DesignValue;
 
-use twine_anim::{AnimTemplate, Easing};
+use twine_anim::AnimSpec;
 use twine_core::{Angle, Color, Duration, Insets, Opa, Point, Scale};
 use twine_engine::NodeId;
 use twine_image::ImageSource;
@@ -15,14 +18,15 @@ use twine_render::{BlendMode, BorderSide, GradKind, GradStop, Gradient, ShadowDs
 use twine_style::{
     Align, BaseDir, BlurQuality, ColorFilter, CrossAlign, FlexFlow, GradDir, GridAlign, GridSpan, GridTrack,
     ImageColorkey, LayoutKind, Length, MainAlign, PROP_ALIASES, PROP_COUNT, PROP_META, Part, PropId,
-    PropValue, SHORTHANDS, Style, StyleBuf, StyleProp, StyleValue, TextLeadingTrim, TransitionDsc,
+    PropValue, Props, SHORTHANDS, Style, StyleBuf, StyleProp, StyleValue, TextLeadingTrim, TracksRef,
+    Transition, TransitionRef,
 };
 use twine_testing::{TestUi, by_id};
 use twine_text::{Font, TextAlign, TextDecor};
-use twine_view::prelude::{AnyView, IntoAnyView, Scope, ViewExt, label};
+use twine_view::prelude::{AnyView, IntoAnyView, Scope, State, StyleExt, ViewExt, container, label};
 
 /// A constant, non-default sample of every payload type (so a set property is observable).
-trait Sample: Copy {
+trait Sample {
     const S: Self;
 }
 
@@ -43,8 +47,8 @@ static KEY: ImageColorkey = ImageColorkey {
     high: Color::WHITE,
 };
 static FILTER: ColorFilter = ColorFilter::SHADE;
-static ANIM: AnimTemplate = AnimTemplate::new(Duration::ms(5), Easing::Linear);
-static TRANS: TransitionDsc = TransitionDsc::new(&[PropId::BgColor], Duration::ms(5), Easing::Linear);
+static ANIM: AnimSpec = AnimSpec::new(Duration::ms(5));
+static TRANS: Transition = Transition::of(Props::BG, Duration::ms(5));
 static TRACKS: [GridTrack; 2] = [GridTrack::Px(10), GridTrack::Fr(1)];
 
 samples! {
@@ -81,12 +85,18 @@ samples! {
     &'static ImageColorkey = &KEY;
     &'static Font = &twine_assets::fonts::MONTSERRAT_20;
     &'static ColorFilter = &FILTER;
-    &'static AnimTemplate = &ANIM;
-    &'static TransitionDsc = &TRANS;
-    &'static [GridTrack] = &TRACKS;
+    &'static AnimSpec = &ANIM;
+    TransitionRef = TransitionRef::Static(&TRANS);
+    TracksRef = TracksRef::Static(&TRACKS);
     Point = Point::new(4, 5);
     Insets = Insets::new(1, 2, 3, 4);
     ShadowDsc = ShadowDsc { width: 6, ofs_x: 1, ofs_y: 2, spread: 3, color: Color::BLUE, opa: Opa::P30 };
+    // Design-value payloads (R2.S02): the fixed sample of their type.
+    DesignValue<Length> = DesignValue::Fixed(<Length as Sample>::S);
+    DesignValue<Color> = DesignValue::Fixed(<Color as Sample>::S);
+    DesignValue<Opa> = DesignValue::Fixed(<Opa as Sample>::S);
+    DesignValue<Radius> = DesignValue::Fixed(<Radius as Sample>::S);
+    DesignValue<&'static Font> = DesignValue::Fixed(<&'static Font as Sample>::S);
 }
 
 /// The sample value of a property, as the style value it should resolve to.
@@ -94,46 +104,91 @@ fn sample_value<T: Sample + PropValue>() -> StyleValue {
     T::S.into_value()
 }
 
-fn mount(v: impl FnOnce(Scope) -> AnyView + 'static) -> (TestUi, NodeId) {
+/// The state of the `StyleScope` checks (no theme or widget styles it).
+const SCOPE_STATE: State = State::custom::<0>();
+
+/// Mounts `v` and returns the nodes `n` (set with view modifiers) and `s` (the same through
+/// `.on_state(SCOPE_STATE, ..)`, in that state).
+fn mount(v: impl FnOnce(Scope) -> AnyView + 'static) -> (TestUi, NodeId, NodeId) {
     let mut t = TestUi::new(120, 80).mount(v);
     t.run_until_idle();
     let n = t.find(by_id("n")).id();
-    (t, n)
+    let s = t.find(by_id("s")).id();
+    (t, n, s)
 }
 
-/// One row per property: `(id, key, StyleBuf value, style! value, view value)`.
+/// One row per property: `(id, key, StyleBuf value, style! value, view value, scope value)`.
 type PropCheck = (
     PropId,
     &'static str,
     Option<StyleValue>,
     Option<StyleValue>,
     StyleValue,
+    StyleValue,
 );
+
+/// Sets one property through its modifier (on a view or a scope), by the row's kind: `layout`
+/// takes a whole `Layout` (the sample kind is `Grid`: a grid without tracks), `tracks` a track
+/// list (the sample's `'static` list).
+macro_rules! view_set {
+    (layout $key:ident $v:ident $s:expr) => {{
+        assert_eq!($s, LayoutKind::Grid);
+        $v.layout(twine_view::Layout::grid(Vec::new(), Vec::new()))
+    }};
+    (tracks $key:ident $v:ident $s:expr) => {{
+        assert_eq!($s, TracksRef::Static(&TRACKS));
+        $v.$key(&TRACKS)
+    }};
+    (trans $key:ident $v:ident $s:expr) => {{
+        assert_eq!($s, TransitionRef::Static(&TRANS));
+        $v.$key(&TRANS)
+    }};
+    ($kind:ident $key:ident $v:ident $s:expr) => {
+        $v.$key($s)
+    };
+}
+
+/// The sample of a row as a `style!` / builder value (a grid template is given as its
+/// `'static` list).
+macro_rules! style_sample {
+    (tracks [$($ty:tt)+]) => { &TRACKS };
+    (trans [$($ty:tt)+]) => { &TRANS };
+    ($kind:ident [$($ty:tt)+]) => { <twine_style::__prop_ty!($($ty)+) as Sample>::S };
+}
 
 macro_rules! check_props {
     (
         []
         $(
-            $(#[doc = $doc:literal])*
-            $name:ident ( $key:ident ) : $kind:ident [$($ty:tt)+] [ $($flag:ident)* ] $default:ident
-                [ $($alias:literal)* ];
+            $(#[doc = $gdoc:literal])*
+            $group:ident {
+                $(
+                    $(#[doc = $doc:literal])*
+                    $name:ident ( $key:ident ) : $kind:ident [$($ty:tt)+] [ $($flag:ident)* ] $default:ident
+                        [ $($alias:literal)* ];
+                )*
+            }
         )*
     ) => {
         /// Sets every property through its `StyleBuf` builder, its `style!` key and its view
         /// modifier (all on one label), and reports what each API stored.
         fn check_every_prop() -> Vec<(PropCheck, StyleValue)> {
-            // One view with every property modifier.
-            let (t, n) = mount(|_| {
+            // One view with every property modifier, and one with every scope modifier.
+            let (t, n, sn) = mount(|_| {
                 let v = label("x").test_id("n");
-                $( let v = v.$key(<twine_style::__prop_ty!($($ty)+) as Sample>::S); )*
-                v.into_any()
+                $($( let v = view_set!($kind $key v <twine_style::__prop_ty!($($ty)+) as Sample>::S); )*)*
+                let s = label("y").test_id("s").state(SCOPE_STATE, true).on_state(SCOPE_STATE, |s| {
+                    $($( let s = view_set!($kind $key s <twine_style::__prop_ty!($($ty)+) as Sample>::S); )*)*
+                    s
+                });
+                container((v, s)).into_any()
             });
             let e = t.engine();
-            vec![$(
+            vec![$($(
                 {
-                    static S: Style = twine_style::style! { $key: <twine_style::__prop_ty!($($ty)+) as Sample>::S };
+                    static S: Style = twine_style::style! { $key: style_sample!($kind [$($ty)+]) };
                     let want = sample_value::<twine_style::__prop_ty!($($ty)+)>();
-                    let buf = StyleBuf::new().$key(<twine_style::__prop_ty!($($ty)+) as Sample>::S);
+                    let buf = StyleBuf::new().$key(style_sample!($kind [$($ty)+]));
                     (
                         (
                             PropId::$name,
@@ -141,11 +196,12 @@ macro_rules! check_props {
                             buf.get(PropId::$name),
                             S.get(PropId::$name),
                             e.style_prop(n, Part::Main, PropId::$name),
+                            e.style_prop(sn, Part::Main, PropId::$name),
                         ),
                         want,
                     )
                 },
-            )*]
+            )*)*]
         }
     };
 }
@@ -181,17 +237,28 @@ macro_rules! check_shorthands {
                         $name: ($(<twine_style::__prop_ty!($($pty)+) as Sample>::S),+)
                     };
                     let buf = StyleBuf::new().$name($(<twine_style::__prop_ty!($($pty)+) as Sample>::S),+);
-                    let (t, n) = mount(|_| {
-                        label("x")
-                            .test_id("n")
-                            .$name($(<twine_style::__prop_ty!($($pty)+) as Sample>::S),+)
-                            .into_any()
+                    let (t, n, sn) = mount(|_| {
+                        container((
+                            label("x")
+                                .test_id("n")
+                                .$name($(<twine_style::__prop_ty!($($pty)+) as Sample>::S),+),
+                            label("y").test_id("s").state(SCOPE_STATE, true).on_state(SCOPE_STATE, |s| {
+                                s.$name($(<twine_style::__prop_ty!($($pty)+) as Sample>::S),+)
+                            }),
+                        ))
+                        .into_any()
                     });
+                    let e = t.engine();
                     let view = buf
                         .iter()
-                        .map(|p| (p.id(), t.engine().style_prop(n, Part::Main, p.id())))
+                        .flat_map(|p| {
+                            [
+                                (p.id(), e.style_prop(n, Part::Main, p.id())),
+                                (p.id(), e.style_prop(sn, Part::Main, p.id())),
+                            ]
+                        })
                         .collect();
-                    (stringify!($name), buf.iter().copied().collect(), S.props().to_vec(), view)
+                    (stringify!($name), buf.iter().cloned().collect(), S.props().to_vec(), view)
                 },
             )*]
         }
@@ -209,7 +276,7 @@ fn every_table_property_has_modifier_builder_and_key() {
     let rows = check_every_prop();
     assert_eq!(rows.len(), PROP_COUNT, "the table has every property once");
     let mut seen = BTreeSet::new();
-    for ((id, key, buf, style, view), want) in rows {
+    for ((id, key, buf, style, view, scope), want) in rows {
         assert!(seen.insert(id), "{id:?} twice");
         assert_eq!(key, id.meta().snake_name, "{id:?}: key");
         assert_ne!(
@@ -219,7 +286,8 @@ fn every_table_property_has_modifier_builder_and_key() {
         );
         assert_eq!(buf, Some(want), "StyleBuf::{key}");
         assert_eq!(style, Some(want), "style! {{ {key}: .. }}");
-        assert_eq!(view, want, "ViewExt::{key}");
+        assert_eq!(view, want, "StyleExt::{key} on a view");
+        assert_eq!(scope, want, "StyleExt::{key} in a StyleScope");
     }
     assert_eq!(seen.len(), PROP_COUNT);
 }

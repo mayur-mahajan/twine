@@ -63,8 +63,8 @@ fn led_brightness_mixes_color() {
     let l = led::create(e, screen).unwrap();
     e.align(l, Align::Center, 0, 0);
     // A plain white square: the drawn color is the LED color darkened by the brightness.
-    e.set_local_prop(l, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
-    e.set_local_prop(l, Selector::MAIN, StyleProp::BgColor(Color::WHITE));
+    e.set_local_prop(l, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER.into()));
+    e.set_local_prop(l, Selector::MAIN, StyleProp::BgColor(Color::WHITE.into()));
     let red = Color::new(255, 0, 0);
     with(&mut h, l, |w: &mut Led, cx| {
         w.set_color(cx, red);
@@ -262,7 +262,7 @@ fn snapshot_line() {
         e.set_local_prop(
             l,
             Selector::MAIN,
-            StyleProp::LineColor(Color::new(0x21, 0x96, 0xF3)),
+            StyleProp::LineColor(Color::new(0x21, 0x96, 0xF3).into()),
         );
         h.run_until_idle();
         h.advance(Duration::ms(1));
@@ -273,23 +273,70 @@ fn snapshot_line() {
 #[test]
 fn led_takes_theme_primary_color() {
     use std::rc::Rc;
-    use twine_theme::{DefaultTheme, Palette, ThemeMode};
-    let theme = DefaultTheme::new(
-        Palette::Teal,
-        Palette::Amber,
-        ThemeMode::Light,
-        &twine_assets::fonts::MONTSERRAT_14,
-    );
+    use twine_style::design;
+    use twine_theme::{DefaultTheme, Palette};
+    let theme = DefaultTheme::builder()
+        .primary(Palette::Teal)
+        .secondary(Palette::Amber)
+        .build();
     let mut h = EngineHarness::new(60, 60).theme(Rc::new(theme));
     let screen = h.screen();
     let l = led::create(h.engine_mut(), screen).unwrap();
     assert_eq!(get::<Led>(&h, l).color(), Palette::Teal.main());
-    assert_eq!(h.engine().color_primary(l), Palette::Teal.main());
-    assert_eq!(h.engine().color_secondary(l), Palette::Amber.main());
+    assert_eq!(get::<Led>(&h, l).color_value(), design::PRIMARY.into());
     // Without a theme: LVGL's default blue.
     let mut h = EngineHarness::new(60, 60).no_theme();
     let screen = h.screen();
     let l = led::create(h.engine_mut(), screen).unwrap();
     assert_eq!(get::<Led>(&h, l).color(), LED_DEFAULT_COLOR);
-    assert_eq!(LED_DEFAULT_COLOR, twine_engine::DEFAULT_COLOR_PRIMARY);
+    assert_eq!(LED_DEFAULT_COLOR, Palette::Blue.main());
+}
+
+/// The LED's color is a design element resolved on creation and on every theme mode switch
+/// (not captured once): it follows Light, Dark, Night and High contrast.
+#[test]
+fn led_color_follows_every_theme_mode() {
+    use std::rc::Rc;
+    use twine_core::Size;
+    use twine_engine::ThemeHook;
+    use twine_style::{ThemeMode, design};
+    use twine_theme::DefaultTheme;
+    let theme = Rc::new(DefaultTheme::light());
+    let mut h = EngineHarness::new(60, 60).theme(theme.clone());
+    let screen = h.screen();
+    let l = led::create(h.engine_mut(), screen).unwrap();
+    let alarm = led::create(h.engine_mut(), screen).unwrap();
+    let fixed = led::create(h.engine_mut(), screen).unwrap();
+    h.engine_mut()
+        .with_widget_mut(alarm, |w: &mut Led, cx| w.set_color(cx, design::DANGER));
+    h.engine_mut()
+        .with_widget_mut(fixed, |w: &mut Led, cx| w.set_color(cx, Color::GREEN));
+    h.run_until_idle();
+    let d = h.engine().default_display().unwrap();
+    let mut seen = Vec::new();
+    for mode in [
+        ThemeMode::Dark,
+        ThemeMode::Night,
+        ThemeMode::HighContrast,
+        ThemeMode::Light,
+    ] {
+        h.engine_mut().set_theme_mode(d, mode);
+        h.run_until_idle();
+        let table = theme.design(mode, 130, Size::new(60, 60)).unwrap();
+        assert_eq!(
+            get::<Led>(&h, l).color(),
+            table.get(design::PRIMARY).unwrap(),
+            "{mode:?}"
+        );
+        assert_eq!(
+            get::<Led>(&h, alarm).color(),
+            table.get(design::DANGER).unwrap(),
+            "{mode:?}"
+        );
+        assert_eq!(get::<Led>(&h, fixed).color(), Color::GREEN, "{mode:?}");
+        seen.push(get::<Led>(&h, l).color());
+    }
+    // Night and high contrast have their own accents.
+    assert_ne!(seen[1], seen[3]);
+    assert_ne!(seen[2], seen[3]);
 }

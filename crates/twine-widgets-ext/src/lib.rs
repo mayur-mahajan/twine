@@ -1,9 +1,11 @@
 //! # twine-widgets-ext
 //!
 //! The complex widgets of the Twine GUI library, each a port of the LVGL widget of the same
-//! name, built on the basic widgets of `twine-widgets`:
+//! name, built on the basic widgets of `twine-widgets`. The last column lists the
+//! [`WidgetClass::name`](twine_engine::WidgetClass::name) of each class (diagnostics only:
+//! themes match the `*_CLASS` statics by identity, not by name):
 //!
-//! | Widget | LVGL | Classes (theme names) |
+//! | Widget | LVGL | Class names |
 //! |--------|------|-----------------------|
 //! | [`Dropdown`](dropdown::Dropdown) | `lv_dropdown` | `dropdown`, `dropdown_list` |
 //! | [`Roller`](roller::Roller) | `lv_roller` | `roller` |
@@ -24,9 +26,10 @@
 //! only; invalid input logs `warn!` and is ignored (P7).
 //!
 //! Composite widgets (a window's header, a menu's pages) are made of child nodes of their own
-//! classes, so themes style them by class name like LVGL's `lv_obj_check_type`: the theme
-//! crate does not depend on this one. Popups (a dropdown's option list) live on the display's
-//! top layer while open and are deleted when closed.
+//! classes, so themes style each part by class identity (`&'static WidgetClass`, like LVGL's
+//! `lv_obj_check_type`); `twine-theme` depends on this crate for the class statics. Popups (a
+//! dropdown's option list) live on the display's top layer while open and are deleted when
+//! closed.
 //!
 //! ## Features
 //!

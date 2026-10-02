@@ -47,14 +47,14 @@ pub fn virtual_list<V: View>(
     let inner = widget_view(|| Obj).op(move |cx, node| {
         let e = cx.engine();
         for p in [
-            StyleProp::BgOpacity(Opa::TRANSP),
-            StyleProp::BorderWidth(Length::Px(0)),
-            StyleProp::PaddingTop(Length::Px(0)),
-            StyleProp::PaddingBottom(Length::Px(0)),
-            StyleProp::PaddingLeft(Length::Px(0)),
-            StyleProp::PaddingRight(Length::Px(0)),
-            StyleProp::Width(Length::pct(100)),
-            StyleProp::Height(Length::pct(100)),
+            StyleProp::BgOpacity(Opa::TRANSP.into()),
+            StyleProp::BorderWidth(Length::Px(0).into()),
+            StyleProp::PaddingTop(Length::Px(0).into()),
+            StyleProp::PaddingBottom(Length::Px(0).into()),
+            StyleProp::PaddingLeft(Length::Px(0).into()),
+            StyleProp::PaddingRight(Length::Px(0).into()),
+            StyleProp::Width(Length::pct(100).into()),
+            StyleProp::Height(Length::pct(100).into()),
         ] {
             e.set_local_prop(node, Selector::MAIN, p);
         }
@@ -66,10 +66,10 @@ pub fn virtual_list<V: View>(
         };
         e.set_flag(content, ObjFlags::all(), false);
         for p in [
-            StyleProp::BgOpacity(Opa::TRANSP),
-            StyleProp::BorderWidth(Length::Px(0)),
-            StyleProp::Width(Length::Px(1)),
-            StyleProp::Height(Length::Px(0)),
+            StyleProp::BgOpacity(Opa::TRANSP.into()),
+            StyleProp::BorderWidth(Length::Px(0).into()),
+            StyleProp::Width(Length::Px(1).into()),
+            StyleProp::Height(Length::Px(0).into()),
         ] {
             e.set_local_prop(content, Selector::MAIN, p);
         }
@@ -124,7 +124,7 @@ pub fn virtual_list<V: View>(
                             let h = i32::try_from(n)
                                 .unwrap_or(i32::MAX / rh.max(1))
                                 .saturating_mul(rh);
-                            e.set_local_prop(c, Selector::MAIN, StyleProp::Height(Length::Px(h)));
+                            e.set_local_prop(c, Selector::MAIN, StyleProp::Height(Length::Px(h).into()));
                         }
                     });
                     EngineAccess::with(|e| update_range(e, node, scope, &st, &*v));

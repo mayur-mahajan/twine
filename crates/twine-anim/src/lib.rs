@@ -2,18 +2,21 @@
 //!
 //! Animation building blocks of the Twine GUI library, below the widget engine in the layering
 //! (it depends only on `twine-core`, so the style system can reference easing curves and
-//! animation templates).
+//! animation specs).
 //!
 //! - [`Easing`]: animation curves, exact integer ports of LVGL's `lv_anim_path_*` functions
 //!   (no floating point; identical results on every target).
 //! - [`Interpolate`]: linear interpolation of animatable values (numbers, colors, points, …).
-//! - [`Anim`]: an animation (values, duration, delay, easing, repeat, playback) with a pure
+//! - [`AnimSpec`]: the timing of an animation (duration, easing, delay, [`Repeat`], playback,
+//!   essential), `const`-constructible and shared by every animation kind: engine animations,
+//!   style transitions, the `Anim` style property and the view layer's tweens.
+//! - [`Motion`]: the global "reduce motion" preference and how it changes a spec, applied once
+//!   per animation start.
+//! - [`Anim`]: an animation (start and end values, an [`AnimSpec`], a target) with a pure
 //!   timing model, [`Anim::sample`].
 //! - [`Timeline`]: runs many animations, applies their values through a [`TickSink`] and
 //!   returns the next deadline.
 //! - [`Timers`]: periodic callbacks (LVGL `lv_timer`) that also return their next deadline.
-//! - [`AnimTemplate`]: `const` animation parameters (duration, easing, repeat) used by the
-//!   `Anim` style property.
 //!
 //! Progress values use 1024 = 1.0 ([`EASING_ONE`]); time is [`Instant`](twine_core::Instant) /
 //! [`Duration`](twine_core::Duration) in microseconds and always wall-clock: a late frame
@@ -39,13 +42,13 @@ extern crate alloc;
 mod anim;
 mod easing;
 mod interp;
-mod template;
+mod spec;
 mod timeline;
 mod timer;
 
-pub use anim::{Anim, AnimCallbacks, AnimProp, AnimTarget, NodeKey, Phase, Repeat, Sample};
+pub use anim::{Anim, AnimCallbacks, AnimTarget, NodeKey, Phase, PropKey, Sample};
 pub use easing::{EASING_ONE, Easing};
 pub use interp::Interpolate;
-pub use template::AnimTemplate;
+pub use spec::{AnimSpec, Motion, Repeat};
 pub use timeline::{AnimCx, AnimId, Exec, ExecFn, TickSink, Timeline};
 pub use timer::{TimerCx, TimerId, Timers};

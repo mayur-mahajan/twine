@@ -51,17 +51,20 @@ pub fn three_entries() -> Tree {
             entry(
                 EntryKind::Local,
                 Selector::MAIN,
-                &[StyleProp::BgOpacity(Opa::COVER)],
+                &[StyleProp::BgOpacity(Opa::COVER.into())],
             ),
             entry(
                 EntryKind::Normal,
                 Selector::state(State::PRESSED),
-                &[StyleProp::BgColor(Color::hex(0x0000_0080))],
+                &[StyleProp::BgColor(Color::hex(0x0000_0080).into())],
             ),
             entry(
                 EntryKind::Theme,
                 Selector::MAIN,
-                &[StyleProp::BgColor(Color::BLUE), StyleProp::Radius(Radius::Px(8))],
+                &[
+                    StyleProp::BgColor(Color::BLUE.into()),
+                    StyleProp::Radius(Radius::Px(8).into()),
+                ],
             ),
         ],
         state: State::PRESSED,
@@ -76,7 +79,7 @@ pub fn depth_5() -> Tree {
         entries: vec![entry(
             EntryKind::Theme,
             Selector::MAIN,
-            &[StyleProp::TextColor(Color::RED)],
+            &[StyleProp::TextColor(Color::RED.into())],
         )],
         state: State::DEFAULT,
         parent: None,
@@ -87,14 +90,17 @@ pub fn depth_5() -> Tree {
                 entry(
                     EntryKind::Normal,
                     Selector::MAIN,
-                    &[StyleProp::BgColor(Color::WHITE), StyleProp::Radius(Radius::Px(4))],
+                    &[
+                        StyleProp::BgColor(Color::WHITE.into()),
+                        StyleProp::Radius(Radius::Px(4).into()),
+                    ],
                 ),
                 entry(
                     EntryKind::Theme,
                     Selector::MAIN,
                     &[
-                        StyleProp::PaddingTop(Length::Px(2)),
-                        StyleProp::Width(Length::Px(10)),
+                        StyleProp::PaddingTop(Length::Px(2).into()),
+                        StyleProp::Width(Length::Px(10).into()),
                     ],
                 ),
             ],
@@ -113,7 +119,10 @@ pub fn ten_entries() -> Tree {
                 entry(
                     EntryKind::Normal,
                     Selector::MAIN,
-                    &[StyleProp::Width(Length::Px(i)), StyleProp::Height(Length::Px(i))],
+                    &[
+                        StyleProp::Width(Length::Px(i).into()),
+                        StyleProp::Height(Length::Px(i).into()),
+                    ],
                 )
             })
             .collect(),
@@ -149,8 +158,8 @@ pub fn set_20_props() -> StyleBuf {
     let mut s = StyleBuf::new();
     for i in 0..20 {
         let id = PropId::ALL[(i * 5) % PropId::ALL.len()];
-        let p =
-            StyleProp::from_value(id, id.meta().default).unwrap_or(StyleProp::Radius(Radius::Px(i as i32)));
+        let p = StyleProp::from_value(id, id.meta().default)
+            .unwrap_or(StyleProp::Radius(Radius::Px(i as i32).into()));
         s.set(black_box(p));
     }
     s

@@ -13,8 +13,8 @@ use twine_style::{FlexFlow, GridTrack, LayoutKind, Length, Selector, StyleProp};
 use twine_testing::EngineHarness;
 
 fn solid(e: &mut Engine, n: NodeId, c: u32) {
-    e.set_local_prop(n, Selector::MAIN, StyleProp::BgColor(Color::hex(c)));
-    e.set_local_prop(n, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
+    e.set_local_prop(n, Selector::MAIN, StyleProp::BgColor(Color::hex(c).into()));
+    e.set_local_prop(n, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER.into()));
 }
 
 /// A full-screen container with `layout`, returned with its children.
@@ -23,8 +23,8 @@ fn container(e: &mut Engine, layout: LayoutKind) -> NodeId {
     let c = e.create(s, Box::new(Obj)).unwrap();
     e.set_size(c, Length::pct(100), Length::pct(100));
     e.set_layout(c, layout);
-    e.set_local_prop(c, Selector::MAIN, StyleProp::RowGap(Length::Px(2)));
-    e.set_local_prop(c, Selector::MAIN, StyleProp::ColumnGap(Length::Px(2)));
+    e.set_local_prop(c, Selector::MAIN, StyleProp::RowGap(Length::Px(2).into()));
+    e.set_local_prop(c, Selector::MAIN, StyleProp::ColumnGap(Length::Px(2).into()));
     c
 }
 
@@ -79,7 +79,7 @@ fn grid_10x10_relayout(c: &mut Criterion) {
     let mut cont = None;
     let mut h = EngineHarness::new(320, 240).no_theme().mount_engine(|e| {
         let g = container(e, LayoutKind::Grid);
-        e.set_grid_tracks(g, TRACKS, TRACKS);
+        e.set_grid_tracks(g, &TRACKS, &TRACKS);
         for i in 0..100 {
             let n = e.create(g, Box::new(Obj)).unwrap();
             e.set_grid_cell(
@@ -100,7 +100,7 @@ fn grid_10x10_relayout(c: &mut Criterion) {
         b.iter(|| {
             gap = if gap == 2 { 3 } else { 2 };
             let e = h.engine_mut();
-            e.set_local_prop(g, Selector::MAIN, StyleProp::ColumnGap(Length::Px(gap)));
+            e.set_local_prop(g, Selector::MAIN, StyleProp::ColumnGap(Length::Px(gap).into()));
             e.update_layout();
             e.layout_stats().moved
         });

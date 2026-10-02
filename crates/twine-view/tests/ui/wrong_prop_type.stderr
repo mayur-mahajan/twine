@@ -1,0 +1,30 @@
+error[E0277]: `&str` cannot be used as a property of type `DesignValue<twine_view::prelude::Color>`
+ --> tests/ui/wrong_prop_type.rs:4:27
+  |
+4 |     let _ = label("x").bg("red");
+  |                        -- ^^^^^ not convertible into `DesignValue<twine_view::prelude::Color>`, nor a closure, signal or memo of a value convertible into `DesignValue<twine_view::prelude::Color>`
+  |                        |
+  |                        required by a bound introduced by this call
+  |
+  = help: the trait `IntoProp<DesignValue<twine_view::prelude::Color>, _>` is not implemented for `&str`
+  = note: a property of type `DesignValue<twine_view::prelude::Color>` accepts every value `V` with `impl From<V> for DesignValue<twine_view::prelude::Color>`, as a constant, a closure result or a signal value
+  = help: the following other types implement trait `IntoProp<T, M>`:
+            `&'static [T; N]` implements `IntoProp<&'static [T], twine_view::marker::Slice>`
+            `Memo<U>` implements `IntoProp<T, Reactive<U>>`
+            `ReadSignal<U>` implements `IntoProp<T, Reactive<U>>`
+            `Signal<U>` implements `IntoProp<T, Reactive<U>>`
+            `twine_view::Prop<T>` implements `IntoProp<T, twine_view::marker::Prop>`
+note: required by a bound in `bg`
+ --> src/style_ext.rs
+  |
+  |                 $( $p: impl IntoProp<::twine_style::__prop_ty!($($pty)+), $g> ),+
+  |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `StyleExt::bg`
+...
+  |     ::twine_style::__shorthand_table!(shorthand_modifiers);
+  |     ------------------------------------------------------ in this macro invocation
+  |
+ ::: $WORKSPACE/crates/twine-style/src/table.rs
+  |
+  |             bg(color: elem<C> [ColorValue] => BgColor, BgOpacity = OPA_COVER) [] {
+  |             -- required by a bound in this associated function
+  = note: this error originates in the macro `shorthand_modifiers` which comes from the expansion of the macro `::twine_style::__shorthand_table` (in Nightly builds, run with -Z macro-backtrace for more info)

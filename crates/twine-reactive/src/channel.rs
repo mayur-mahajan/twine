@@ -112,7 +112,24 @@ impl UiWaker {
     }
 
     /// Removes the registered task if it is `w` (or wakes the same task); returns whether it
-    /// was removed.
+    /// was removed. Another registered task is left in place; the flag is not touched.
+    ///
+    /// Interrupt-safe like [`wake`](Self::wake) (a critical section and atomics, no
+    /// allocation); the removed task waker is dropped after the critical section, in the
+    /// caller's context. Typically called by the task that registered itself, when it stops
+    /// waiting. Never panics.
+    ///
+    /// ```
+    /// use twine_reactive::UiWaker;
+    /// static W: UiWaker = UiWaker::new();
+    /// static TASK: UiWaker = UiWaker::new(); // stands in for an executor's task waker
+    /// static OTHER: UiWaker = UiWaker::new();
+    /// W.register(&TASK.task_waker());
+    /// assert!(!W.unregister(&OTHER.task_waker())); // not the registered task: kept
+    /// assert!(W.unregister(&TASK.task_waker()));
+    /// W.wake();
+    /// assert!(!TASK.is_set()); // no task to wake any more
+    /// ```
     pub fn unregister(&self, w: &Waker) -> bool {
         let old = critical_section::with(|cs| {
             let cell = self.waker.borrow(cs);
@@ -129,7 +146,26 @@ impl UiWaker {
         removed
     }
 
-    /// Clears the flag and removes the registered task (a waker handed to a new owner).
+    /// Clears the flag and removes the registered task (a waker handed to a new owner, e.g.
+    /// when a pooled waker goes back to the pool).
+    ///
+    /// Interrupt-safe (a critical section and atomics, no allocation); the removed task waker
+    /// is dropped after the critical section, in the caller's context. A `wake` racing with
+    /// `reset` from an interrupt may be lost, so reset a waker only while no interrupt handler
+    /// or task still uses it for the previous owner. Never panics.
+    ///
+    /// ```
+    /// use twine_reactive::UiWaker;
+    /// static W: UiWaker = UiWaker::new();
+    /// static TASK: UiWaker = UiWaker::new();
+    /// W.register(&TASK.task_waker());
+    /// W.wake();
+    /// W.reset();
+    /// assert!(!W.is_set());
+    /// TASK.take();
+    /// W.wake();
+    /// assert!(!TASK.is_set()); // the task was removed
+    /// ```
     pub fn reset(&self) {
         let old = critical_section::with(|cs| self.waker.borrow(cs).take());
         self.flag.store(false, Ordering::Release);

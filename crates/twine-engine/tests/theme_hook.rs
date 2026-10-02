@@ -78,7 +78,7 @@ fn theme_styles_have_lowest_priority() {
     assert_eq!(e.style_color(n, Part::Main, PropId::BgColor), Color::RED);
     e.add_style(n, Rc::new(StyleBuf::new().bg_color(Color::BLUE)), Selector::MAIN);
     assert_eq!(e.style_color(n, Part::Main, PropId::BgColor), Color::BLUE);
-    e.set_local_prop(n, Selector::MAIN, StyleProp::BgColor(Color::GREEN));
+    e.set_local_prop(n, Selector::MAIN, StyleProp::BgColor(Color::GREEN.into()));
     assert_eq!(e.style_color(n, Part::Main, PropId::BgColor), Color::GREEN);
     // Other properties of the theme still apply.
     assert_eq!(e.style_i32(n, Part::Main, PropId::Radius), 3);
@@ -172,5 +172,108 @@ fn default_font_comes_from_the_theme() {
     assert_eq!(
         e.style_prop(n, Part::Main, PropId::Radius),
         PropId::Radius.meta().default
+    );
+}
+
+/// Supplies design elements in two modes and counts `apply` calls (R2.S02).
+struct TwoModes {
+    light: Rc<twine_style::design::ElementTable>,
+    dark: Rc<twine_style::design::ElementTable>,
+    calls: Rc<Cell<u32>>,
+}
+
+impl ThemeHook for TwoModes {
+    fn apply(&self, _: &mut ThemeCx<'_>, _: &'static WidgetClass) {
+        self.calls.set(self.calls.get() + 1);
+    }
+    fn font_normal(&self) -> &'static Font {
+        &twine_assets::fonts::MONTSERRAT_14
+    }
+    fn design(
+        &self,
+        mode: twine_style::ThemeMode,
+        _: u16,
+        _: twine_core::Size,
+    ) -> Option<Rc<twine_style::design::ElementTable>> {
+        match mode {
+            twine_style::ThemeMode::Light => Some(self.light.clone()),
+            twine_style::ThemeMode::Dark => Some(self.dark.clone()),
+            twine_style::ThemeMode::Night | twine_style::ThemeMode::HighContrast => None,
+        }
+    }
+    fn modes(&self) -> &'static [twine_style::ThemeMode] {
+        &[twine_style::ThemeMode::Light, twine_style::ThemeMode::Dark]
+    }
+}
+
+#[test]
+fn set_theme_mode_swaps_the_table_and_invalidates_once() {
+    use twine_style::ThemeMode;
+    use twine_style::design::{self, ElementTable};
+    let calls = Rc::new(Cell::new(0));
+    let theme = Rc::new(TwoModes {
+        light: Rc::new(ElementTable::new().with(design::SURFACE, Color::WHITE)),
+        dark: Rc::new(ElementTable::new().with(design::SURFACE, Color::BLACK)),
+        calls: calls.clone(),
+    });
+    let mut h = EngineHarness::new(64, 48).theme(theme);
+    let s = screen(h.engine());
+    let n = {
+        let e = h.engine_mut();
+        let n = e.create(s, Box::new(Obj)).unwrap();
+        e.set_size(n, 20, 10);
+        e.set_local_prop(n, Selector::MAIN, StyleProp::BgColor(design::SURFACE.into()));
+        e.set_local_prop(
+            n,
+            Selector::MAIN,
+            StyleProp::BgOpacity(twine_core::Opa::COVER.into()),
+        );
+        n
+    };
+    h.run_until_idle();
+    let d = h.display();
+    assert_eq!(h.engine().cached_main(n).bg_color, Color::WHITE);
+    let (applied, epoch) = (calls.get(), h.engine().design_epoch(d));
+    h.engine_mut().set_theme_mode(d, ThemeMode::Dark);
+    assert_eq!(calls.get(), applied, "the theme's styles are not re-applied");
+    assert_ne!(h.engine().design_epoch(d), epoch);
+    assert_eq!(h.engine().theme_mode(d), ThemeMode::Dark);
+    // The cached hot properties were refreshed too.
+    assert_eq!(h.engine().cached_main(n).bg_color, Color::BLACK);
+    assert_eq!(h.engine().design_value(d, design::SURFACE), Some(Color::BLACK));
+    h.update();
+    assert_eq!(
+        h.invalidations(),
+        &[(Rect::from_xywh(0, 0, 64, 48), InvalidateReason::StyleChange)]
+    );
+    h.run_until_idle();
+    // Idempotent: the current mode does nothing.
+    let epoch = h.engine().design_epoch(d);
+    h.engine_mut().set_theme_mode(d, ThemeMode::Dark);
+    assert_eq!(h.engine().design_epoch(d), epoch);
+    h.assert_idle();
+    // R2.S03: an unsupported mode is the documented fallback — the display keeps its mode
+    // and table, nothing is redrawn — plus a warning; never a panic.
+    assert_eq!(h.engine().theme_modes(d), &[ThemeMode::Light, ThemeMode::Dark]);
+    let ((), logs) = twine_testing::capture_logs(|| h.engine_mut().set_theme_mode(d, ThemeMode::Night));
+    assert_eq!(h.engine().theme_mode(d), ThemeMode::Dark);
+    assert_eq!(h.engine().design_epoch(d), epoch);
+    assert_eq!(h.engine().cached_main(n).bg_color, Color::BLACK);
+    assert!(
+        logs.iter()
+            .any(|l| l.level == log::Level::Warn && l.message.contains("has no Night mode")),
+        "{logs:?}"
+    );
+    h.assert_idle();
+    // Without a theme: a warning, nothing changes, no panic.
+    h.engine_mut().remove_theme(d);
+    h.run_until_idle();
+    h.engine_mut().set_theme_mode(d, ThemeMode::Dark);
+    assert_eq!(h.engine().theme_mode(d), ThemeMode::Light);
+    assert!(h.engine().theme_modes(d).is_empty());
+    assert_eq!(
+        h.engine().style_color(n, Part::Main, PropId::BgColor),
+        Color::WHITE,
+        "an element without a table gives the property's default"
     );
 }

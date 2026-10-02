@@ -93,7 +93,7 @@ pub fn app(cx: Scope) -> impl View {
             ),
         )
         .bar_size(BAR_H)
-        .size(Length::pct(100), Length::pct(100))
+        .fill()
         .test_id("tabs"),
     )
     .header_height(BAR_H)
@@ -216,7 +216,7 @@ fn tiles(s: Selection) -> impl View {
             ),
         ),
     )
-    .size(Length::pct(100), Length::pct(100))
+    .fill()
     .scrollbar(ScrollbarMode::Off)
     .test_id("tiles")
 }

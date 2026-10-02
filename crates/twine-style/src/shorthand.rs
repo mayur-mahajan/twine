@@ -64,23 +64,25 @@ macro_rules! define_shorthands {
 
         /// Expands one `style!` entry: a shorthand (the value is always parenthesized by
         /// `__style_props!`; several parameters are a tuple) or, for any other key, the
-        /// property of `__style_prop!`. Continues the `__style_props!` muncher.
+        /// property of `__style_prop!`. Continues the `__style_props!` muncher, passing its
+        /// finished spread segments (`$segs`, one token tree) through unchanged.
         #[doc(hidden)]
         #[macro_export]
         macro_rules! __style_shorthand {
             $(
-                ($name, ( $( $d $p:expr ),+ $d(,)? ), [$d($d acc:expr),*] $d($d rest:tt)*) => {
+                ($name, ( $( $d $p:expr ),+ $d(,)? ), $d segs:tt [$d($d acc:expr),*] $d($d rest:tt)*) => {
                     $crate::__style_props!(
+                        $d segs
                         [$d($d acc,)* $( $( $crate::__shorthand_prop!([$var] [$($($sel)+)?] [$($c)?] $pk $d $p) ),+ ),+]
                         $d($d rest)*
                     )
                 };
             )*
-            ($d key:ident, ($d v:expr), [$d($d acc:expr),*] $d($d rest:tt)*) => {
-                $crate::__style_props!([$d($d acc,)* $crate::__style_prop!($d key, $d v)] $d($d rest)*)
+            ($d key:ident, ($d v:expr), $d segs:tt [$d($d acc:expr),*] $d($d rest:tt)*) => {
+                $crate::__style_props!($d segs [$d($d acc,)* $crate::__style_prop!($d key, $d v)] $d($d rest)*)
             };
-            ($d key:ident, $d v:expr, [$d($d acc:expr),*] $d($d rest:tt)*) => {
-                $crate::__style_props!([$d($d acc,)* $crate::__style_prop!($d key, $d v)] $d($d rest)*)
+            ($d key:ident, $d v:expr, $d segs:tt [$d($d acc:expr),*] $d($d rest:tt)*) => {
+                $crate::__style_props!($d segs [$d($d acc,)* $crate::__style_prop!($d key, $d v)] $d($d rest)*)
             };
         }
     };

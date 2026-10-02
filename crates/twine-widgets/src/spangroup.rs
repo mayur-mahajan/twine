@@ -201,7 +201,7 @@ pub struct SpanLine {
 ///     w.set_span_text(cx, a, "Hello, ");
 ///     let b = w.add_span(cx);
 ///     w.set_span_text(cx, b, "world");
-///     w.set_span_style(cx, b, StyleProp::TextColor(Color::RED));
+///     w.set_span_style(cx, b, StyleProp::TextColor(Color::RED.into()));
 /// });
 /// h.run_until_idle();
 /// assert_eq!(h.engine().widget::<SpanGroup>(g).unwrap().span_count(), 2);
@@ -230,27 +230,23 @@ struct SpanStyle<'a> {
 }
 
 impl SpanStyle<'_> {
+    /// The span's own value (design elements and `Dp` finished for the group's display),
+    /// else the group's.
     fn get(&self, p: PropId) -> StyleValue {
-        self.span
-            .style
-            .get(p)
-            .unwrap_or_else(|| self.m.style(Part::Main, p))
+        match self.span.style.get(p) {
+            Some(v) => self.m.finish_style_value(p, v),
+            None => self.m.style(Part::Main, p),
+        }
     }
 
     fn font(&self) -> &'static Font {
-        match self.span.style.get(PropId::Font) {
-            Some(v) => v
-                .get::<&'static Font>()
-                .unwrap_or_else(|| self.m.font(Part::Main)),
-            None => self.m.font(Part::Main),
-        }
+        self.get(PropId::Font)
+            .get::<&'static Font>()
+            .unwrap_or_else(|| self.m.font(Part::Main))
     }
 
     fn i32(&self, p: PropId) -> i32 {
-        match self.span.style.get(p) {
-            Some(v) => v.as_i32().unwrap_or(0),
-            None => self.m.style_i32(Part::Main, p),
-        }
+        self.get(p).as_px().unwrap_or(0)
     }
 
     fn color(&self) -> Color {

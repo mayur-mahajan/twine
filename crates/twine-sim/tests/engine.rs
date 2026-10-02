@@ -18,13 +18,13 @@ fn out_dir(tag: &str) -> PathBuf {
 
 fn scene(e: &mut Engine) -> NodeId {
     let screen = e.active_screen(e.default_display().unwrap()).unwrap();
-    e.set_local_prop(screen, Selector::MAIN, StyleProp::BgColor(Color::WHITE));
-    e.set_local_prop(screen, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
+    e.set_local_prop(screen, Selector::MAIN, StyleProp::BgColor(Color::WHITE.into()));
+    e.set_local_prop(screen, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER.into()));
     let b = e.create(screen, Box::new(Obj)).unwrap();
     e.set_pos(b, 4, 2);
     e.set_size(b, 10, 6);
-    e.set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::RED));
-    e.set_local_prop(b, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
+    e.set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::RED.into()));
+    e.set_local_prop(b, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER.into()));
     b
 }
 
@@ -149,5 +149,44 @@ fn engine_hotkeys_toggle_overlays() {
     // The performance overlay darkens the bottom-right corner.
     let p = png_pixel(&shot, 190, 94);
     assert!(p[0] < 128 && p[1] < 128 && p[2] < 128, "{p:?}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// R2.S03: F12 switches the installed theme to its next mode (`Engine::set_theme_mode`),
+/// cycling through the modes the theme supports.
+#[test]
+fn f12_cycles_the_theme_modes() {
+    use twine_theme::{DefaultTheme, SimpleTheme};
+    let script = "wait 16\nshot m0\nhotkey F12\nwait 32\nshot m1\nhotkey F12\nwait 32\nshot m2\n\
+                  hotkey F12\nwait 32\nshot m3\nhotkey F12\nwait 32\nshot m4\n";
+    let screen_bg = |dir: &PathBuf, shot: &str| png_pixel(&dir.join(format!("{shot}.png")), 0, 0);
+    // The panel is RGB565: compare with the quantized color.
+    let q = |hex: u32| {
+        let c = Color::from_rgb565(Color::hex(hex).to_rgb565());
+        [c.r, c.g, c.b]
+    };
+    // The default theme: light → dark → night → high contrast → light (screen backgrounds).
+    let (cfg, dir) = headless(
+        SimConfig::new(32, 16).theme(Rc::new(DefaultTheme::light())),
+        "modes",
+        Some(script),
+    );
+    SimApp::engine(cfg, |_| {}).unwrap().run_headless().unwrap();
+    assert_eq!(screen_bg(&dir, "m0"), q(0x00F5_F5F5));
+    assert_eq!(screen_bg(&dir, "m1"), q(0x0015_171A));
+    assert_eq!(screen_bg(&dir, "m2"), q(0x0000_0000));
+    assert_eq!(screen_bg(&dir, "m3"), q(0x0000_0000));
+    assert_eq!(screen_bg(&dir, "m4"), q(0x00F5_F5F5));
+    let _ = std::fs::remove_dir_all(dir);
+    // The simple theme: light ↔ high contrast (white screen) only.
+    let (cfg, dir) = headless(
+        SimConfig::new(32, 16).theme(Rc::new(SimpleTheme::new())),
+        "modes-simple",
+        Some(script),
+    );
+    SimApp::engine(cfg, |_| {}).unwrap().run_headless().unwrap();
+    assert_eq!(screen_bg(&dir, "m0"), q(0x00F5_F5F5));
+    assert_eq!(screen_bg(&dir, "m1"), q(0x00FF_FFFF));
+    assert_eq!(screen_bg(&dir, "m2"), q(0x00F5_F5F5));
     let _ = std::fs::remove_dir_all(dir);
 }

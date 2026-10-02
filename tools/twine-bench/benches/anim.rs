@@ -6,8 +6,9 @@
 #![allow(missing_docs)] // the harness macros generate undocumented public items
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use twine_anim::{Anim, AnimProp, Repeat};
+use twine_anim::{Anim, Repeat};
 use twine_core::{Color, Duration, Opa, Rect};
+use twine_engine::AnimProp;
 use twine_style::StyleProp;
 use twine_testing::EngineHarness;
 use twine_testing::scenes::styled_box;
@@ -22,8 +23,8 @@ fn anim_frame_20_nodes(c: &mut Criterion) {
                 s,
                 r,
                 &[
-                    StyleProp::BgColor(Color::hex(0x30_60_90 + i as u32 * 0x0002_0304)),
-                    StyleProp::BgOpacity(Opa::COVER),
+                    StyleProp::BgColor(Color::hex(0x30_60_90 + i as u32 * 0x0002_0304).into()),
+                    StyleProp::BgOpacity(Opa::COVER.into()),
                 ],
             );
             let (prop, from, to) = if i % 2 == 0 {
@@ -37,7 +38,7 @@ fn anim_frame_20_nodes(c: &mut Criterion) {
                 Anim::new(from, to)
                     .duration(Duration::ms(700))
                     .playback(Duration::ms(700))
-                    .repeat(Repeat::Infinite),
+                    .repeat(Repeat::Forever),
             );
         }
     });

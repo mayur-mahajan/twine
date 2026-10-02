@@ -16,7 +16,11 @@ use twine_widgets::textarea::{self, Textarea};
 fn rtl(h: &mut EngineHarness, id: NodeId) {
     let e = h.engine_mut();
     e.set_local_prop(id, Selector::MAIN, StyleProp::BaseDir(BaseDir::Rtl));
-    e.set_local_prop(id, Selector::MAIN, StyleProp::Font(&DEJAVU_16_PERSIAN_HEBREW));
+    e.set_local_prop(
+        id,
+        Selector::MAIN,
+        StyleProp::Font((&DEJAVU_16_PERSIAN_HEBREW).into()),
+    );
 }
 
 #[test]

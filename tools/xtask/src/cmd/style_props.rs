@@ -7,7 +7,7 @@
 
 use std::fmt::Write as _;
 
-use twine_style::{PROP_ALIASES, PropFlags, PropId, SHORTHANDS, StyleProp, StyleValue};
+use twine_style::{PROP_ALIASES, PropFlags, PropId, Props, SHORTHANDS, StyleProp, StyleValue};
 
 use crate::util::{R, workspace_root};
 
@@ -54,7 +54,7 @@ fn default_text(id: PropId) -> String {
                 StyleValue::Int(255) => "`Fraction::ONE`".into(),
                 _ => format!("`Fraction::from_raw({d})`"),
             },
-            "Radius" => match d.get::<twine_style::Radius>() {
+            "RadiusValue" => match d.get::<twine_style::Radius>() {
                 Some(r) => format!("`Radius::{r:?}`"),
                 None => format!("`{d}`"),
             },
@@ -85,6 +85,14 @@ fn aliases_text(aliases: &[&str]) -> String {
     }
 }
 
+/// The property group (`Props::…` constant) of `id`.
+fn props_group(id: PropId) -> &'static str {
+    Props::GROUPS
+        .iter()
+        .find(|(_, p)| p.contains(id))
+        .map_or("—", |(n, _)| n)
+}
+
 /// The markdown tables.
 #[must_use]
 pub fn generate() -> String {
@@ -100,26 +108,44 @@ pub fn generate() -> String {
          name, the **key**: the `style!` key, the `StyleBuf` builder method and the `twine-view` \
          modifier (`ViewExt`); the `PropId`/`StyleProp` variant is the same name in `PascalCase`. \
          The former names (the previous Twine key and the LVGL constant) are `#[doc(alias)]`es \
-         only: `style!` rejects them. Flags are LVGL's `LV_STYLE_PROP_FLAG_*`; the group is \
-         `id >> 4`.\n",
+         only: `style!` rejects them. Flags are LVGL's `LV_STYLE_PROP_FLAG_*`; **Props** is the \
+         property group (the `Props::…` constant transitions use, see below); the lookup group is \
+         `id >> 4`. The `…Value` types (`ColorValue`, `LengthValue`, `RadiusValue`, `OpacityValue`, \
+         `FontValue`) take a fixed value or a design element of `twine_style::design` (e.g. \
+         `design::SURFACE`) that the display's theme supplies.\n",
         twine_style::PROP_COUNT
     );
-    s.push_str("| Id | Property | Key | Type | Default | Flags | Group | Former names |\n");
-    s.push_str("|---:|----------|-----|------|---------|-------|------:|--------------|\n");
+    s.push_str("| Id | Property | Key | Type | Default | Flags | Props | Lookup group | Former names |\n");
+    s.push_str("|---:|----------|-----|------|---------|-------|-------|------:|--------------|\n");
     for id in PropId::ALL {
         let m = id.meta();
         let _ = writeln!(
             s,
-            "| {} | `{}` | `{}` | `{}` | {} | {} | {} | {} |",
+            "| {} | `{}` | `{}` | `{}` | {} | {} | `{}` | {} | {} |",
             id as u8,
             m.name,
             m.snake_name,
             m.type_name,
             default_text(id),
             flags_text(m.flags),
+            props_group(id),
             m.group,
             aliases_text(PROP_ALIASES[id as usize - 1])
         );
+    }
+    s.push_str("\n## Property groups\n\n");
+    s.push_str(
+        "Every property belongs to one group of the property table; each group is a `Props` \
+         constant (`Props::BG | Props::TRANSFORM`), e.g. for `Transition::of`.\n\n",
+    );
+    s.push_str("| Group | Members |\n");
+    s.push_str("|-------|---------|\n");
+    for (name, props) in Props::GROUPS {
+        let members: Vec<String> = props
+            .iter()
+            .map(|id| format!("`{}`", id.meta().snake_name))
+            .collect();
+        let _ = writeln!(s, "| `Props::{name}` | {} |", members.join(", "));
     }
     s.push_str("\n## Shorthands\n\n");
     s.push_str(
@@ -181,14 +207,18 @@ mod tests {
                 .count(),
             twine_style::PROP_COUNT
         );
-        assert!(t.contains("| `Width` | `width` | `Length` | `content` | LAYOUT | 0 | `LV_STYLE_WIDTH` |"));
-        assert!(t.contains("`Align` | `align` | `Align` | `Default` |"));
-        assert!(t.contains("`Font` | `font` | `&'static Font` | theme font"));
-        assert!(t.contains("| `PaddingTop` | `padding_top` |"));
-        assert!(t.contains("`pad_top`, `LV_STYLE_PAD_TOP`"));
-        assert!(t.contains("| `padding` | `v: Length` | `padding_top`, `padding_bottom`, `padding_left`, `padding_right` | `pad_all` |"));
         assert!(t.contains(
-            "| `border` | `width: Length, color: Color` | `border_width`, `border_color`, `border_opacity` | — |"
+            "| `Width` | `width` | `LengthValue` | `content` | LAYOUT | `SIZE` | 0 | `LV_STYLE_WIDTH` |"
+        ));
+        assert!(t.contains("`Radius` | `radius` | `RadiusValue` | `Radius::Px(0)` |"));
+        assert!(t.contains("`Align` | `align` | `Align` | `Default` |"));
+        assert!(t.contains("`Font` | `font` | `FontValue` | theme font"));
+        assert!(t.contains("| `PaddingTop` | `padding_top` |"));
+        assert!(t.contains("| `Props::BG` | `bg_color`, `bg_opacity`,"));
+        assert!(t.contains("`pad_top`, `LV_STYLE_PAD_TOP`"));
+        assert!(t.contains("| `padding` | `v: LengthValue` | `padding_top`, `padding_bottom`, `padding_left`, `padding_right` | `pad_all` |"));
+        assert!(t.contains(
+            "| `border` | `width: LengthValue, color: ColorValue` | `border_width`, `border_color`, `border_opacity` | — |"
         ));
     }
 }

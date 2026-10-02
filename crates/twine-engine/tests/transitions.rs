@@ -4,29 +4,33 @@ mod common;
 
 use twine_core::{Color, Duration, Opa, Rect, Scale};
 use twine_engine::{Easing, NodeId, State};
-use twine_style::{GradDir, Part, PropId, Selector, Style, StyleProp, StyleValue, TransitionDsc};
+use twine_style::{
+    GradDir, Part, PropId, Props, Selector, Style, StyleProp, StyleValue, Transition, TransitionRef,
+};
 use twine_testing::EngineHarness;
 
-static PROPS: [PropId; 4] = [
+const PROPS: Props = Props::from_ids(&[
     PropId::BgColor,
     PropId::TransformScaleX,
     PropId::TransformScaleY,
     PropId::BgGradientDir,
-];
-static TR: TransitionDsc = TransitionDsc::new(&PROPS, Duration::ms(100), Easing::Linear);
+]);
+static TR: Transition = Transition::of(PROPS, Duration::ms(100)).easing(Easing::Linear);
 static BASE: Style = Style::new(&[
-    StyleProp::BgColor(Color::RED),
-    StyleProp::BgOpacity(Opa::COVER),
-    StyleProp::Transition(&TR),
+    StyleProp::BgColor(::twine_style::design::DesignValue::Fixed(Color::RED)),
+    StyleProp::BgOpacity(::twine_style::design::DesignValue::Fixed(Opa::COVER)),
+    StyleProp::Transition(TransitionRef::Static(&TR)),
 ]);
 static PRESSED: Style = Style::new(&[
-    StyleProp::BgColor(Color::BLUE),
+    StyleProp::BgColor(::twine_style::design::DesignValue::Fixed(Color::BLUE)),
     StyleProp::TransformScaleX(Scale::from_raw_256(320)),
     StyleProp::TransformScaleY(Scale::from_raw_256(320)),
     StyleProp::BgGradientDir(GradDir::Ver),
-    StyleProp::BgGradientColor(Color::BLUE),
+    StyleProp::BgGradientColor(::twine_style::design::DesignValue::Fixed(Color::BLUE)),
 ]);
-static PRESSED_SAME: Style = Style::new(&[StyleProp::BgColor(Color::RED)]);
+static PRESSED_SAME: Style = Style::new(&[StyleProp::BgColor(::twine_style::design::DesignValue::Fixed(
+    Color::RED,
+))]);
 
 /// A 100 × 60 white display with a 20 × 20 box at (40, 20) styled with `BASE` / `pressed`.
 fn scene(pressed: &'static Style) -> (EngineHarness, NodeId) {
@@ -190,7 +194,7 @@ fn setting_local_prop_stops_its_transition() {
     h.engine_mut().add_state(b, State::PRESSED);
     h.update();
     h.engine_mut()
-        .set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::GREEN));
+        .set_local_prop(b, Selector::MAIN, StyleProp::BgColor(Color::GREEN.into()));
     assert_eq!(h.engine().transition_count(), 3);
     // The transition value is gone: the pressed style (higher state weight than the local
     // default-state property) applies directly.
@@ -267,19 +271,19 @@ fn dsc_for_state_applies_ancestor_recolor_and_own_state_recolor() {
     let (mut h, b) = scene(&PRESSED_SAME);
     let e = h.engine_mut();
     let parent = e.tree().parent(b).unwrap();
-    e.set_local_prop(parent, Selector::MAIN, StyleProp::Recolor(Color::BLACK));
-    e.set_local_prop(parent, Selector::MAIN, StyleProp::RecolorOpacity(Opa::P50));
+    e.set_local_prop(parent, Selector::MAIN, StyleProp::Recolor(Color::BLACK.into()));
+    e.set_local_prop(parent, Selector::MAIN, StyleProp::RecolorOpacity(Opa::P50.into()));
     let items = Selector::part(Part::Items);
-    e.set_local_prop(b, items, StyleProp::TextColor(Color::WHITE));
+    e.set_local_prop(b, items, StyleProp::TextColor(Color::WHITE.into()));
     e.set_local_prop(
         b,
         Selector::state(State::CHECKED),
-        StyleProp::Recolor(Color::BLACK),
+        StyleProp::Recolor(Color::BLACK.into()),
     );
     e.set_local_prop(
         b,
         Selector::state(State::CHECKED),
-        StyleProp::RecolorOpacity(Opa::COVER),
+        StyleProp::RecolorOpacity(Opa::COVER.into()),
     );
     let e = h.engine();
     let plain = e.text_dsc_for_state(b, Part::Items, State::DEFAULT, Opa::COVER);
@@ -288,4 +292,226 @@ fn dsc_for_state_applies_ancestor_recolor_and_own_state_recolor() {
     // In `CHECKED` the node's own `Main` recolor (resolved in that state) covers it fully.
     let checked = e.text_dsc_for_state(b, Part::Items, State::CHECKED, Opa::COVER);
     assert_eq!(checked.color, Color::BLACK);
+}
+
+// ---- R2.S06: property sets, derived lists, inline transitions ---------------------------------
+
+/// A drawn red 20 × 20 box; `setup` adds its transitions and pressed look.
+fn inline_scene(setup: impl FnOnce(&mut twine_engine::Engine, NodeId)) -> (EngineHarness, NodeId) {
+    let mut b = None;
+    let mut setup = Some(setup);
+    let mut h = EngineHarness::new(100, 60).no_theme().mount_engine(|e| {
+        let s = common::white_screen(e);
+        let n = common::boxed(e, s, Rect::from_xywh(40, 20, 20, 20), Color::RED);
+        (setup.take().unwrap())(e, n);
+        b = Some(n);
+    });
+    h.run_until_idle();
+    (h, b.unwrap())
+}
+
+fn scale_x(h: &EngineHarness, b: NodeId) -> StyleValue {
+    h.engine().style_prop(b, Part::Main, PropId::TransformScaleX)
+}
+
+const PRESSED_SEL: Selector = Selector::state(State::PRESSED);
+
+/// The pressed look of the R2.S06 tests: background, scale (interpolable) and a gradient
+/// direction (discrete).
+fn pressed_look(e: &mut twine_engine::Engine, n: NodeId) {
+    e.set_local_prop(n, PRESSED_SEL, StyleProp::BgColor(Color::BLUE.into()));
+    e.set_local_prop(
+        n,
+        PRESSED_SEL,
+        StyleProp::TransformScaleX(Scale::from_raw_256(320)),
+    );
+    e.set_local_prop(n, PRESSED_SEL, StyleProp::BgGradientDir(GradDir::Ver));
+}
+
+#[test]
+fn inline_transition_animates_only_what_the_state_changes() {
+    let (mut h, b) = inline_scene(|e, n| {
+        // Set on the default state, built at run time: no `'static`, no property list.
+        e.set_local_transition(n, Selector::MAIN, Transition::all(Duration::ms(100)));
+        pressed_look(e, n);
+    });
+    let t0 = h.now();
+    h.engine_mut().add_state(b, State::PRESSED);
+    h.update();
+    // Background and scale animate; the discrete gradient direction switches at once; the
+    // radius, width, … are not touched.
+    assert_eq!(h.engine().transition_count(), 2);
+    assert_eq!(
+        h.engine().style_prop(b, Part::Main, PropId::BgGradientDir),
+        StyleValue::from(GradDir::Ver)
+    );
+    at(&mut h, t0, 50);
+    assert_eq!(bg(&h, b), mixed(Color::BLUE, Color::RED, 50));
+    assert_ne!(scale_x(&h, b), StyleValue::Scale(Scale::from_raw_256(320)));
+    at(&mut h, t0, 100);
+    assert_eq!(bg(&h, b), Color::BLUE);
+    assert_eq!(scale_x(&h, b), StyleValue::Scale(Scale::from_raw_256(320)));
+    assert_eq!(h.engine().transition_count(), 0);
+    // Releasing animates back the same way.
+    h.engine_mut().clear_state(b, State::PRESSED);
+    h.update();
+    assert_eq!(h.engine().transition_count(), 2);
+    h.run_until_idle();
+    assert_eq!(bg(&h, b), Color::RED);
+}
+
+#[test]
+fn group_transition_animates_its_groups_only() {
+    let (mut h, b) = inline_scene(|e, n| {
+        e.set_local_transition(n, Selector::MAIN, Transition::of(Props::BG, Duration::ms(100)));
+        pressed_look(e, n);
+    });
+    h.engine_mut().add_state(b, State::PRESSED);
+    h.update();
+    // `BgColor` (and the listed, discrete `BgGradientDir`, which switches at the end, as in
+    // LVGL); the scale is not in `Props::BG` and jumps.
+    assert_eq!(h.engine().transition_count(), 2);
+    assert_eq!(scale_x(&h, b), StyleValue::Scale(Scale::from_raw_256(320)));
+    assert_eq!(bg(&h, b), Color::RED);
+    h.run_until_idle();
+    assert_eq!(bg(&h, b), Color::BLUE);
+}
+
+#[test]
+fn the_higher_state_weight_wins_per_property() {
+    let (mut h, b) = inline_scene(|e, n| {
+        e.set_local_transition(n, Selector::MAIN, Transition::all(Duration::ms(300)));
+        // Entering the pressed state: the background with the pressed transition (100 ms),
+        // everything else with the default one (300 ms).
+        e.set_local_transition(n, PRESSED_SEL, Transition::of(Props::BG, Duration::ms(100)));
+        pressed_look(e, n);
+    });
+    let t0 = h.now();
+    h.engine_mut().add_state(b, State::PRESSED);
+    h.update();
+    at(&mut h, t0, 100);
+    assert_eq!(bg(&h, b), Color::BLUE, "the pressed transition's 100 ms");
+    assert!(
+        scale_x(&h, b) != StyleValue::Scale(Scale::from_raw_256(320)),
+        "300 ms"
+    );
+    at(&mut h, t0, 300);
+    assert_eq!(scale_x(&h, b), StyleValue::Scale(Scale::from_raw_256(320)));
+    // Leaving the pressed state, only the default transition applies (300 ms for both).
+    let t1 = h.now();
+    h.engine_mut().clear_state(b, State::PRESSED);
+    h.update();
+    at(&mut h, t1, 100);
+    assert_ne!(bg(&h, b), Color::RED);
+    at(&mut h, t1, 300);
+    assert_eq!(bg(&h, b), Color::RED);
+}
+
+#[test]
+fn a_state_transition_runs_when_entering_that_state_only() {
+    let (mut h, b) = inline_scene(|e, n| {
+        e.set_local_transition(n, PRESSED_SEL, Transition::all(Duration::ms(100)).ease_out());
+        pressed_look(e, n);
+    });
+    h.engine_mut().add_state(b, State::PRESSED);
+    h.update();
+    assert_eq!(h.engine().transition_count(), 2);
+    h.run_until_idle();
+    h.engine_mut().clear_state(b, State::PRESSED);
+    h.update();
+    assert_eq!(
+        h.engine().transition_count(),
+        0,
+        "no transition into the default state"
+    );
+    assert_eq!(bg(&h, b), Color::RED);
+}
+
+#[test]
+fn inline_transitions_are_idempotent_and_owned_by_the_style() {
+    let (mut h, b) = inline_scene(|e, n| {
+        e.set_local_transition(n, Selector::MAIN, Transition::all(Duration::ms(100)));
+        pressed_look(e, n);
+    });
+    h.engine_mut()
+        .set_local_transition(b, Selector::MAIN, Transition::all(Duration::ms(100)));
+    assert_eq!(h.update(), twine_engine::Wake::Idle);
+    assert!(h.flushes().is_empty(), "an equal transition changes nothing");
+    let shared = std::rc::Rc::new(Transition::all(Duration::ms(50)));
+    h.engine_mut()
+        .set_local_transition(b, Selector::MAIN, shared.clone());
+    assert_eq!(
+        std::rc::Rc::strong_count(&shared),
+        2,
+        "held by the node's local style"
+    );
+    h.engine_mut().delete(b).unwrap();
+    assert_eq!(std::rc::Rc::strong_count(&shared), 1, "released with the node");
+}
+
+// ---- R2.S07: state precedence and application states ----------------------------------------
+
+#[test]
+fn custom_state_transitions_derive_props_and_outrank_disabled() {
+    const ALARM: State = State::custom::<0>();
+    let alarm = Selector::state(ALARM);
+    let disabled = Selector::state(State::DISABLED);
+    let (mut h, b) = inline_scene(|e, n| {
+        e.set_local_transition(n, Selector::MAIN, Transition::all(Duration::ms(300)));
+        e.set_local_prop(n, disabled, StyleProp::BgColor(Color::GREEN.into()));
+        e.set_local_transition(n, disabled, Transition::of(Props::BG, Duration::ms(200)));
+        e.set_local_prop(n, alarm, StyleProp::BgColor(Color::BLUE.into()));
+        e.set_local_prop(n, alarm, StyleProp::TransformScaleX(Scale::from_raw_256(320)));
+        e.set_local_transition(n, alarm, Transition::of(Props::BG, Duration::ms(100)));
+    });
+    let t0 = h.now();
+    h.engine_mut().add_state(b, State::DISABLED | ALARM);
+    h.update();
+    // Derived from the entries that start applying: background and scale (both interpolable).
+    assert_eq!(h.engine().transition_count(), 2);
+    at(&mut h, t0, 50);
+    assert_eq!(
+        bg(&h, b),
+        mixed(Color::BLUE, Color::RED, 50),
+        "towards ALARM's blue, not DISABLED's green"
+    );
+    at(&mut h, t0, 100);
+    assert_eq!(
+        bg(&h, b),
+        Color::BLUE,
+        "ALARM's own 100 ms transition (it outranks DISABLED's)"
+    );
+    assert_ne!(
+        scale_x(&h, b),
+        StyleValue::Scale(Scale::from_raw_256(320)),
+        "default 300 ms"
+    );
+    h.run_until_idle();
+    assert_eq!(scale_x(&h, b), StyleValue::Scale(Scale::from_raw_256(320)));
+    // Leaving ALARM: DISABLED's look applies, through the default transition.
+    h.engine_mut().clear_state(b, ALARM);
+    h.update();
+    h.run_until_idle();
+    assert_eq!(bg(&h, b), Color::GREEN);
+}
+
+/// An `ANY`-state style applied in resolution but was skipped when transitions started (its
+/// weight was read as the raw bits there); now every part of the engine uses
+/// `Selector::state_matches` / `Selector::weight`.
+#[test]
+fn regression_any_state_transition_starts_like_a_default_one() {
+    for sel in [Selector::MAIN, Selector::state(State::ANY)] {
+        let (mut h, b) = inline_scene(|e, n| {
+            e.set_local_transition(n, sel, Transition::all(Duration::ms(100)));
+            pressed_look(e, n);
+        });
+        let t0 = h.now();
+        h.engine_mut().add_state(b, State::PRESSED);
+        h.update();
+        assert_eq!(h.engine().transition_count(), 2, "{sel:?}");
+        at(&mut h, t0, 50);
+        assert_eq!(bg(&h, b), mixed(Color::BLUE, Color::RED, 50), "{sel:?}");
+        h.run_until_idle();
+        assert_eq!(bg(&h, b), Color::BLUE);
+    }
 }

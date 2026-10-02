@@ -3,9 +3,13 @@
 use alloc::boxed::Box;
 
 use twine_core::{Color, Fraction, Opa};
-use twine_engine::{DrawCx, Engine, EngineError, NodeId, OBJ_FLAGS, Widget, WidgetClass, WidgetCx};
+use twine_engine::{
+    DrawCx, Engine, EngineError, Event, EventCode, EventCx, EventResult, NodeId, OBJ_FLAGS, Widget,
+    WidgetClass, WidgetCx,
+};
 use twine_render::{GradStop, Gradient, MAX_STOPS};
 use twine_style::Part;
+use twine_style::design::{self, ColorValue};
 
 use crate::log_set;
 use crate::util::{self, log_value};
@@ -16,9 +20,9 @@ pub const LED_BRIGHT_MIN: Fraction = Fraction::from_raw(80);
 pub const LED_BRIGHT_MAX: Fraction = Fraction::ONE;
 /// LVGL `lv_led_class.width_def` / `height_def`: `LV_DPI_DEF / 5`.
 pub const LED_DEFAULT_SIZE: i32 = util::DPI_DEF / 5;
-/// The LED color without a theme: LVGL's default primary color (blue 500). With a theme a new
-/// LED takes the theme's primary color (LVGL `lv_theme_get_color_primary`).
-pub const LED_DEFAULT_COLOR: Color = twine_engine::DEFAULT_COLOR_PRIMARY;
+/// The color an LED shows when its color is a design element its display's theme does not
+/// define (e.g. no theme): LVGL's default primary color (blue 500, `#2196F3`).
+pub const LED_DEFAULT_COLOR: Color = Color::hex(0x0021_96F3);
 
 /// The class of [`Led`]: `"led"`, part `Main`, the base object's flags (LVGL `lv_led_class`).
 pub static LED_CLASS: WidgetClass = WidgetClass::new("led").default_flags(OBJ_FLAGS);
@@ -26,6 +30,12 @@ pub static LED_CLASS: WidgetClass = WidgetClass::new("led").default_flags(OBJ_FL
 /// An LED (LVGL `lv_led`): a circle (with the default theme) whose background, border,
 /// outline and shadow colors take the LED's color, darkened by its brightness; the shadow
 /// ("glow") shrinks with the brightness.
+///
+/// The color is a [`ColorValue`]: by default the theme's [`design::PRIMARY`] (LVGL's
+/// `lv_theme_get_color_primary`), so an LED follows the theme mode (light, dark, night, high
+/// contrast) like every styled color; set a fixed color or another element (e.g.
+/// `design::DANGER`) with [`set_color`](Self::set_color). The element is resolved when the LED
+/// is created and again on every `StyleChanged` (a theme or mode switch), never while drawing.
 ///
 /// Brightness runs from [`LED_BRIGHT_MIN`] (off) to [`LED_BRIGHT_MAX`] (on). Each style color
 /// is first replaced by the LED color scaled by that color's own brightness (so a white
@@ -44,7 +54,10 @@ pub static LED_CLASS: WidgetClass = WidgetClass::new("led").default_flags(OBJ_FL
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Led {
-    color: Color,
+    /// The color as set (a fixed color or a design element).
+    color: ColorValue,
+    /// `color` resolved for the LED's display (what is drawn).
+    resolved: Color,
     bright: u8,
 }
 
@@ -61,20 +74,39 @@ pub const fn color_brightness(c: Color) -> u8 {
 }
 
 impl Led {
-    /// An LED, on, in [`LED_DEFAULT_COLOR`] until it is created: then it takes the primary
-    /// color of its display's theme (LVGL `lv_led_constructor`).
+    /// An LED, on, in the theme's [`design::PRIMARY`] (LVGL `lv_led_constructor`); it shows
+    /// [`LED_DEFAULT_COLOR`] until it is created (and where the theme does not define the
+    /// element).
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            color: LED_DEFAULT_COLOR,
+            color: ColorValue::Element(design::PRIMARY),
+            resolved: LED_DEFAULT_COLOR,
             bright: LED_BRIGHT_MAX.raw(),
         }
     }
 
-    /// The color.
+    /// The color as drawn: [`color_value`](Self::color_value) resolved for the LED's display.
     #[must_use]
     pub fn color(&self) -> Color {
+        self.resolved
+    }
+
+    /// The color as set: a fixed color or a design element (default [`design::PRIMARY`]).
+    #[must_use]
+    pub fn color_value(&self) -> ColorValue {
         self.color
+    }
+
+    /// Resolves the color for the display of `node` ([`LED_DEFAULT_COLOR`] for an element
+    /// the display's theme does not define). Returns whether the drawn color changed.
+    fn resolve(&mut self, engine: &Engine, node: NodeId) -> bool {
+        let c = engine
+            .resolve_design_value(node, self.color)
+            .unwrap_or(LED_DEFAULT_COLOR);
+        let changed = c != self.resolved;
+        self.resolved = c;
+        changed
     }
 
     /// The brightness (`LED_BRIGHT_MIN ..= LED_BRIGHT_MAX`).
@@ -90,14 +122,34 @@ impl Led {
             > u16::midpoint(u16::from(LED_BRIGHT_MIN.raw()), u16::from(LED_BRIGHT_MAX.raw()))
     }
 
-    /// Sets the color. Idempotent.
-    pub fn set_color(&mut self, cx: &mut WidgetCx<'_>, c: Color) {
+    /// Sets the color: a [`Color`] or a design element such as `design::DANGER` (followed
+    /// through theme mode switches). Idempotent; redraws only when the drawn color changes.
+    ///
+    /// ```
+    /// use twine_core::Color;
+    /// use twine_style::design;
+    /// use twine_testing::EngineHarness;
+    /// use twine_widgets::led::{self, Led};
+    ///
+    /// let mut h = EngineHarness::new(60, 60);
+    /// let screen = h.screen();
+    /// let l = led::create(h.engine_mut(), screen).unwrap();
+    /// h.engine_mut().with_widget_mut(l, |w: &mut Led, cx| w.set_color(cx, Color::RED));
+    /// assert_eq!(h.engine().widget::<Led>(l).unwrap().color(), Color::RED);
+    /// h.engine_mut().with_widget_mut(l, |w: &mut Led, cx| w.set_color(cx, design::DANGER));
+    /// assert_eq!(h.engine().widget::<Led>(l).unwrap().color_value(), design::DANGER.into());
+    /// ```
+    pub fn set_color(&mut self, cx: &mut WidgetCx<'_>, c: impl Into<ColorValue>) {
+        let c = c.into();
         if self.color == c {
             return;
         }
         log_set(LED_CLASS.name, cx.node(), "color");
         self.color = c;
-        cx.invalidate_for("led.color");
+        let node = cx.node();
+        if self.resolve(cx.engine(), node) {
+            cx.invalidate_for("led.color");
+        }
     }
 
     /// Sets the brightness, clamped to `LED_BRIGHT_MIN ..= LED_BRIGHT_MAX` (LVGL's 80…255 of
@@ -134,7 +186,7 @@ impl Led {
 
     /// A style color turned into the LED's color at this brightness.
     fn tint(self, c: Color) -> Color {
-        let c = Color::mix(self.color, Color::BLACK, Opa::from_raw(color_brightness(c)));
+        let c = Color::mix(self.resolved, Color::BLACK, Opa::from_raw(color_brightness(c)));
         Color::mix(c, Color::BLACK, Opa::from_raw(self.bright))
     }
 }
@@ -154,9 +206,20 @@ impl Widget for Led {
 
     fn init(&mut self, cx: &mut WidgetCx<'_>) {
         let id = cx.node();
-        // LVGL `lv_led_constructor`: the theme's primary color.
-        self.color = cx.engine().color_primary(id);
+        // LVGL `lv_led_constructor`: the theme's primary color (an element, resolved here).
+        self.resolve(cx.engine(), id);
         cx.engine_mut().set_size(id, LED_DEFAULT_SIZE, LED_DEFAULT_SIZE);
+    }
+
+    /// A theme or theme mode switch (`StyleChanged`) resolves the color again.
+    fn event(&mut self, cx: &mut EventCx<'_>, ev: &Event) -> EventResult {
+        if ev.code == EventCode::StyleChanged && ev.target == cx.node() {
+            let node = cx.node();
+            if self.resolve(cx.engine(), node) {
+                cx.widget_cx().invalidate_for("led.color");
+            }
+        }
+        EventResult::Continue
     }
 
     /// LVGL `lv_led_event` `DRAW_MAIN` (it replaces the base object's drawing).

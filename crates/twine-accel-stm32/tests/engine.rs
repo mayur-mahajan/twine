@@ -22,8 +22,8 @@ fn engine(regs: MockRegs) -> (Engine, twine_engine::DisplayId) {
     let buf: &'static mut [u8] = Box::leak(vec![0u8; usize::from(W) * 2 * 16].into_boxed_slice());
     let d = e.add_display(panel, BufferMode::partial_single(buf)).unwrap();
     let s = e.active_screen(d).unwrap();
-    e.set_local_prop(s, Selector::MAIN, StyleProp::BgColor(Color::RED));
-    e.set_local_prop(s, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
+    e.set_local_prop(s, Selector::MAIN, StyleProp::BgColor(Color::RED.into()));
+    e.set_local_prop(s, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER.into()));
     (e, d)
 }
 

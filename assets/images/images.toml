@@ -1,4 +1,4 @@
-# Images converted by `cargo xtask images` into `examples/src/assets/` (the image gallery).
+# Images converted by `cargo xtask images` into `crates/twine/examples/assets/` (the `image_gallery` example).
 # Inputs are drawn procedurally by `cargo xtask gen-assets` (see SOURCES.md).
 
 [[image]]

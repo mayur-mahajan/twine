@@ -70,6 +70,10 @@ fn signal_memory_bytes() {
     assert!(per_signal <= 96, "{per_signal} bytes per signal (budget 96)");
 }
 
+// Not built under Miri: reaching the arenas' steady state takes 20 000 create/dispose cycles
+// (milliseconds natively, hours under Miri), and Miri already reports any leaked allocation at the
+// end of every test it runs, so the leak check itself is covered there.
+#[cfg(not(miri))]
 #[test]
 fn stored_value_churn_does_not_leak() {
     // Create and dispose scopes holding heap-owning stored values; after a warm-up the live

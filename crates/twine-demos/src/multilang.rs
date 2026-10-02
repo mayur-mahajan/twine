@@ -346,20 +346,18 @@ fn card(i: usize) -> impl View {
         row((
             image(avatar(i)).size(40, 40),
             column((
-                label(p.name)
-                    .text_color(Color::hex(0x0015_65C0))
-                    .width(Length::pct(100)),
-                label(p.about).width(Length::pct(100)),
+                label(p.name).text_color(Color::hex(0x0015_65C0)).fill_width(),
+                label(p.about).fill_width(),
             ))
             .flex_grow(1)
             .gap(2),
         ))
         .gap(10)
-        .width(Length::pct(100))
+        .fill_width()
         .align_items(CrossAlign::Center),
     )
     .base_dir(DIRS[i])
-    .width(Length::pct(100))
+    .fill_width()
     .height(ROW_H - 6)
     .padding(8)
     .test_id(CODES[i])
@@ -408,20 +406,17 @@ pub fn app(cx: Scope) -> impl View {
                 .test_id("next"),
         ))
         .base_dir(dir)
-        .width(Length::pct(100))
+        .fill_width()
         .gap(8)
         .align_items(CrossAlign::Center),
-        label(tr!("people"))
-            .base_dir(dir)
-            .width(Length::pct(100))
-            .test_id("people"),
+        label(tr!("people")).base_dir(dir).fill_width().test_id("people"),
         virtual_list(|| PEOPLE.len(), ROW_H, |_cx, i| card(i))
             .node_ref(list)
-            .width(Length::pct(100))
+            .fill_width()
             .flex_grow(1),
     ))
     .font(&TEXT_FONT)
-    .size(Length::pct(100), Length::pct(100))
+    .fill()
     .padding(8)
     .gap(6)
 }

@@ -61,8 +61,8 @@ fn flush_engine() -> (Engine, twine_engine::DisplayId) {
         .add_display(FailingPanel(None), BufferMode::partial_single(leak(64 * 2 * 32)))
         .unwrap();
     let s = e.active_screen(d).unwrap();
-    e.set_local_prop(s, Selector::MAIN, StyleProp::BgColor(Color::RED));
-    e.set_local_prop(s, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
+    e.set_local_prop(s, Selector::MAIN, StyleProp::BgColor(Color::RED.into()));
+    e.set_local_prop(s, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER.into()));
     (e, d)
 }
 
@@ -84,7 +84,7 @@ fn present_error_is_raised() {
     let fb = FailingFb(Some((DrawBufferMem::new(leak(64 * 2 * 32)), None)));
     let d = e.add_framebuffer_display(fb, BufferMode::direct()).unwrap();
     let s = e.active_screen(d).unwrap();
-    e.set_local_prop(s, Selector::MAIN, StyleProp::BgColor(Color::BLUE));
+    e.set_local_prop(s, Selector::MAIN, StyleProp::BgColor(Color::BLUE.into()));
     let _ = e.step(Instant::from_millis(1));
     assert_eq!(e.take_faults(), Faults::from(FaultKind::FlushError));
     assert_eq!(
@@ -136,7 +136,7 @@ fn dead_node_is_never_handed_out_and_every_call_ignores_it() {
     assert!(ids.iter().all(|&id| id != DEAD_NODE));
     assert!(!e.tree().contains(DEAD_NODE));
     let len = e.tree().len();
-    e.set_local_prop(DEAD_NODE, Selector::MAIN, StyleProp::BgColor(Color::RED));
+    e.set_local_prop(DEAD_NODE, Selector::MAIN, StyleProp::BgColor(Color::RED.into()));
     assert!(e.widget::<Obj>(DEAD_NODE).is_none());
     assert!(e.delete(DEAD_NODE).is_err());
     assert!(e.create(DEAD_NODE, Box::new(Obj)).is_err());

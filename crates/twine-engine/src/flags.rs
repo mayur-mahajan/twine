@@ -112,7 +112,8 @@ impl defmt::Format for LayoutDirty {
 }
 
 /// Formats the set flags of a bitflags value as `A|B|C` (`-` when empty), e.g. for
-/// [`ObjFlags`] or [`State`](crate::State) in tree dumps.
+/// [`ObjFlags`] in tree dumps ([`State`](crate::State) has its own `Display`, which names
+/// application states).
 #[must_use]
 pub fn flag_names<F: bitflags::Flags>(flags: F) -> impl fmt::Display {
     struct N<F>(F);

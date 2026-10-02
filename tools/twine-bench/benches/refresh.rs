@@ -58,11 +58,11 @@ fn large_tree(e: &mut Engine) -> NodeId {
     let mut parent = e.active_screen(d).unwrap();
     let solid = |c: u32| {
         [
-            StyleProp::BgColor(Color::hex(c)),
-            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::BgColor(Color::hex(c).into()),
+            StyleProp::BgOpacity(Opa::COVER.into()),
         ]
     };
-    e.set_local_prop(parent, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
+    e.set_local_prop(parent, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER.into()));
     for level in 0..10 {
         let r = Rect::new(level * 8, level * 6, 320 - level * 8, 240 - level * 6);
         for i in 0..99 {

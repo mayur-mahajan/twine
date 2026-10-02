@@ -112,8 +112,9 @@ fn roller_theme_styles() {
 #[test]
 fn roller_height_from_visible_rows() {
     for dpi in [130u16, 260] {
-        let mut h = EngineHarness::new(320, 480)
-            .theme(std::rc::Rc::new(twine_theme::DefaultTheme::light().with_dpi(dpi)));
+        let mut h = EngineHarness::new(320, 480).theme(std::rc::Rc::new(
+            twine_theme::DefaultTheme::builder().dpi(dpi).build(),
+        ));
         let screen = h.screen();
         let r = roller::create(h.engine_mut(), screen).unwrap();
         with(&mut h, r, |w: &mut Roller, cx| w.set_visible_row_count(cx, 4));

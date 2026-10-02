@@ -18,6 +18,10 @@ drawtarget = ["dep:twine-render"]
 defmt = ["dep:defmt", "twine-core/defmt", "twine-hal/defmt", "twine-render?/defmt"]
 ## Log through the `log` crate.
 log = ["twine-core/log", "twine-hal/log", "twine-render?/log"]
+## Builds the `eg_simulator` example (a twine app inside `embedded-graphics-simulator`), which
+## links SDL2 (`brew install sdl2` / `apt install libsdl2-dev`). Changes nothing in the library:
+## the example's crates are dev-dependencies.
+eg-sim = []
 
 [dependencies]
 twine-core = { path = "../twine-core" }
@@ -27,7 +31,19 @@ embedded-graphics-core = "0.4"
 defmt = { version = "1", optional = true }
 
 [dev-dependencies]
-twine-embedded-graphics = { path = ".", features = ["drawtarget"] }
+twine-embedded-graphics = { path = ".", features = ["drawtarget", "log"] }
 twine-render = { path = "../twine-render", features = ["color-rgb565", "color-l8", "color-i1"] }
 twine-testing = { path = "../twine-testing", default-features = false, features = ["render"] }
 embedded-graphics = "0.8"
+# `eg_simulator` (feature `eg-sim`). Compiling `embedded-graphics-simulator` needs no SDL2; only
+# linking the example does, so the other test targets build without it.
+embedded-graphics-simulator = "0.8"
+twine = { path = "../twine", features = ["std"] }
+twine-demos = { path = "../twine-demos" }
+twine-sim = { path = "../twine-sim" }
+critical-section = { version = "1", features = ["std"] }
+env_logger = "0.11"
+
+[[example]]
+name = "eg_simulator"
+required-features = ["eg-sim"]

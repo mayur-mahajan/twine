@@ -43,6 +43,12 @@ struct Canvas {
 /// Playback is an engine animation from the first to the last frame (duration = frames ÷ frame
 /// rate ÷ speed), so a paused or finished animation leaves the UI idle.
 ///
+/// **Motion preference:** playback is an *essential* animation
+/// ([`Anim::essential`](twine_engine::Anim::essential)): the animation is the widget's content,
+/// so the engine's [`Motion`](twine_engine::Motion) preference (`Reduced`, `None`) does not
+/// shorten or skip it. An application honouring "reduce motion" decides itself, e.g. shows a
+/// still frame instead of calling `play`.
+///
 /// ```
 /// use twine_core::Duration;
 /// use twine_testing::EngineHarness;
@@ -274,12 +280,16 @@ impl Lottie {
             // frame count), repeated forever: seeking keeps the loop continuous.
             Anim::new(to_i32(from), to_i32(from + total))
                 .duration(ms(total))
-                .repeat(Repeat::Infinite)
+                .repeat(Repeat::Forever)
+                // The animation is the content: essential under a reduced motion preference.
+                .essential()
         } else if from + 1 >= total {
             self.playing = false;
             return;
         } else {
-            Anim::new(to_i32(from), to_i32(total - 1)).duration(ms(total - 1 - from))
+            Anim::new(to_i32(from), to_i32(total - 1))
+                .duration(ms(total - 1 - from))
+                .essential()
         };
         let node = cx.node();
         self.anim = Some(

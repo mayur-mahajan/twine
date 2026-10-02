@@ -55,7 +55,7 @@ mod thermostat {
         cx.on_message(&SENSOR, move |m: SensorMsg| {
             current.set((m.celsius * 10.0) as i32)
         });
-        let shown = cx.tween(move || current.get(), Duration::ms(400), Easing::EaseOut);
+        let shown = cx.tween(move || current.get(), AnimSpec::new(Duration::ms(400)).ease_out());
         let heating = cx.memo(move || current.get() < target.get());
 
         column((
@@ -186,7 +186,7 @@ impl View for Pair {
 
 #[test]
 fn s3_views_and_props() {
-    fn takes_prop<T: 'static>(p: impl IntoProp<T>) -> Prop<T> {
+    fn takes_prop<T: 'static, M>(p: impl IntoProp<T, M>) -> Prop<T> {
         p.into_prop()
     }
     let cx = twine::reactive::create_root();
@@ -238,7 +238,7 @@ fn basic_controls(cx: Scope) -> impl View {
             .checked_images(Symbol::Pause, Symbol::Pause)
             .disabled_image(Symbol::Stop),
         animimg(&FRAMES, Duration::ms(500))
-            .repeat(Repeat::Infinite)
+            .repeat(Repeat::Forever)
             .playing(on),
         arc(level)
             .range(0..=100)
@@ -446,14 +446,10 @@ pub static CARD_PRESSED: Style = style! { bg_color: Color::hex(0xEEEEEE), transf
 fn card(title: &'static str) -> impl View {
     container(label(title))
         .style(&CARD)
-        .style_for(Selector::state(State::PRESSED), &CARD_PRESSED)
-        .transition(&SMOOTH)
+        .on_state(State::PRESSED, |s| s.style(&CARD_PRESSED))
+        // Animates what the pressed style changes (background, scale): no property list.
+        .transition(Transition::all(Duration::ms(150)).ease_out())
 }
-pub static SMOOTH: TransitionDsc = TransitionDsc::new(
-    &[PropId::BgColor, PropId::TransformScaleX, PropId::TransformScaleY],
-    Duration::ms(150),
-    Easing::EaseOut,
-);
 
 #[test]
 fn s4_styles() {
@@ -468,12 +464,14 @@ fn s5_themes<D: twine::hal::DisplayDriver + 'static>(display: D, clock: impl twi
     let app = |_cx: Scope| label("themed");
     let ui = Ui::builder(display)
         .clock(clock)
-        .theme(DefaultTheme::new(
-            Palette::Blue,
-            Palette::Red,
-            ThemeMode::Dark,
-            &fonts::MONTSERRAT_14,
-        ))
+        .theme(
+            DefaultTheme::builder()
+                .primary(Palette::Blue)
+                .secondary(Palette::Red)
+                .mode(ThemeMode::Dark)
+                .fonts(FontScale::uniform(&fonts::MONTSERRAT_14))
+                .build(),
+        )
         .build(app);
     let mut ui = ui;
     // Switch at runtime: ui.set_theme(...) or from a view: use_theme(cx).set(...)
@@ -549,18 +547,12 @@ fn animation(cx: Scope) -> impl View {
     // Tween: a ReadSignal that animates toward the source value whenever it changes.
     let h = cx.tween(
         move || if open.get() { 200 } else { 48 },
-        Duration::ms(250),
-        Easing::EaseInOut,
+        AnimSpec::new(Duration::ms(250)).ease_in_out(),
     );
     let _ = container(content).height(h);
 
     // Free-running animation value:
-    let (angle, ctl) = cx.animation(
-        Anim::new(0, 3600)
-            .duration(Duration::ms(1000))
-            .repeat(Repeat::Infinite)
-            .easing(Easing::Linear),
-    );
+    let (angle, ctl) = cx.animation(0, 3600, AnimSpec::new(Duration::ms(1000)).forever());
     let _ = image(ImageSource::from(&GEAR)).rotation(move || Angle::deci_deg(angle.get()));
     ctl.pause();
     ctl.resume();
@@ -637,7 +629,7 @@ impl Gauge {
 }
 
 // Declarative wrapper:
-pub fn gauge(value: impl IntoProp<i32>) -> impl View {
+pub fn gauge<M>(value: impl IntoProp<i32, M>) -> impl View {
     widget_view(|| Gauge { value: 0 }).bind(value, |g: &mut Gauge, cx, v| g.set_value(cx, v))
 }
 

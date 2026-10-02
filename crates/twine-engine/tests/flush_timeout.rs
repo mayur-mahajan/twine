@@ -50,8 +50,8 @@ fn ms(t: u64) -> Instant {
 
 fn paint(e: &mut Engine, d: DisplayId, c: Color) {
     let s = e.active_screen(d).unwrap();
-    e.set_local_prop(s, Selector::MAIN, StyleProp::BgColor(c));
-    e.set_local_prop(s, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
+    e.set_local_prop(s, Selector::MAIN, StyleProp::BgColor(c.into()));
+    e.set_local_prop(s, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER.into()));
 }
 
 /// An engine with a red, hung `MemoryDisplay` (single partial buffer, 4 chunks per frame).

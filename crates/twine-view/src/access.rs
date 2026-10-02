@@ -7,7 +7,7 @@ use core::marker::PhantomData;
 use core::panic::Location;
 
 use twine_engine::Engine;
-use twine_reactive::{provide_ambient, with_ambient};
+use twine_reactive::{ambient_is, provide_ambient, with_ambient};
 
 /// The scoped "current engine": lets code without an engine parameter — [`NodeRef`](crate::NodeRef)
 /// `with_mut`, bindings, hooks — reach the engine while the [`Ui`](crate::Ui) runs it.
@@ -23,17 +23,21 @@ use twine_reactive::{provide_ambient, with_ambient};
 ///
 /// # Diagnostics
 ///
-/// The view layer's imperative calls that need the engine and cannot wait for it —
-/// [`NodeRef::with_mut`](crate::NodeRef::with_mut), the [`AnimController`](crate::AnimController)
-/// methods, [`ThemeHandle::set`](crate::ThemeHandle::set) — return `None` / do nothing when
-/// called without it. In debug builds (`debug_assertions`) they also log one `warn!` (target
+/// The view layer's calls that must return what the engine holds —
+/// [`NodeRef::with_mut`](crate::NodeRef::with_mut) and
+/// [`AnimController::is_playing`](crate::AnimController::is_playing) — return `None` / `false`
+/// when called without it. In debug builds (`debug_assertions`) they also log one `warn!` (target
 /// `twine::view`) **per call site** naming the caller's file and line, so a misplaced call is
 /// visible without flooding the log from a loop. The "already warned" set is a fixed table of
 /// 32 call-site addresses in a `static` guarded by a critical section (no heap, no atomics);
 /// once it is full, further new sites warn on every call instead of being lost. In release builds the
 /// check, the table and the `#[track_caller]` location argument are compiled out entirely: the
 /// calls behave identically and silently. Calls that defer instead (bindings, timers,
-/// animations and modals created or changed outside `Ui::update`) are correct and never warn.
+/// animations and modals created outside `Ui::update`) or are queued on the `Ui` (scope
+/// cleanups, the other [`AnimController`](crate::AnimController) methods,
+/// [`ThemeHandle::set`](crate::ThemeHandle::set), [`ThemeHandle::set_mode`](crate::ThemeHandle::set_mode),
+/// [`MotionHandle::set`](crate::MotionHandle::set): see [`UiCore`](crate::UiCore) § Engine
+/// commands) are correct and never warn.
 ///
 /// ```
 /// use twine_engine::{Engine, EngineConfig};
@@ -56,14 +60,35 @@ impl EngineAccess {
     /// Calls `f` with the current engine, or returns `None` (without calling `f`) when there is
     /// none: outside `Ui`, or while an enclosing `with` holds it.
     pub fn with<R>(f: impl FnOnce(&mut Engine) -> R) -> Option<R> {
-        with_ambient(|v| v.and_then(|a| a.downcast_mut::<Engine>()).map(f))
+        with_ambient(|v| as_engine(v).map(f))
     }
 
     /// Whether an engine is available right now.
     #[must_use]
     pub fn available() -> bool {
-        Self::with(|_| ()).is_some()
+        ambient_is::<Engine>()
     }
+}
+
+/// Whether the engine is available to the running effect; defers the effect (not evaluated:
+/// it runs, and re-subscribes, at the next flush) when it is not. The guard of every effect
+/// that needs the engine (bindings, model sync, modals): one shared out-of-line copy, a single
+/// read of the ambient slot ([`ambient_is`]).
+#[inline(never)]
+pub(crate) fn engine_ready() -> bool {
+    let ready = EngineAccess::available();
+    if !ready {
+        twine_reactive::defer_current_effect();
+    }
+    ready
+}
+
+/// The engine in the ambient slot, if that is what it holds. Out of line: [`EngineAccess::with`]
+/// is instantiated once per closure (event handlers, `NodeRef::with_mut`, model sync, …), the
+/// downcast is shared. Binding runs do not go through it (see `bind::binding_target`).
+#[inline(never)]
+fn as_engine(v: Option<&mut dyn core::any::Any>) -> Option<&mut Engine> {
+    v.and_then(|a| a.downcast_mut::<Engine>())
 }
 
 /// The context `Ui` passes to [`twine_reactive::flush_effects_with`]: a marker telling the

@@ -246,6 +246,10 @@ fn scope_values_and_closures_dropped_on_dispose() {
     assert_eq!(Rc::strong_count(&token), 1);
 }
 
+// Not built under Miri: wearing out a slot takes 65 535 dispose cycles by definition (instant
+// natively, hours under Miri); the retirement logic itself has no `unsafe` (it is twine-core's
+// `Arena`, `#![forbid(unsafe_code)]`), so Miri has nothing to add here.
+#[cfg(not(miri))]
 #[test]
 fn runtime_stats_reports_retired_slots() {
     // A fresh runtime (one per test thread): the child scope's slot is the only free one, so

@@ -4,14 +4,18 @@
 
 use twine_core::Color;
 
-/// The 19 material colors of LVGL's `lv_palette_t`, in LVGL order.
+/// The 19 material colors of LVGL's `lv_palette_t`, in LVGL order. Each has ten
+/// [`Tone`]s: [`tone`](Self::tone) (LVGL `lv_palette_lighten` / `lv_palette_darken`),
+/// [`main`](Self::main) for the middle one. A palette entry converts into its main
+/// [`Color`] (`Color::from(Palette::Teal)`), so theme builders take either.
 ///
 /// ```
 /// use twine_core::Color;
-/// use twine_theme::Palette;
+/// use twine_theme::{Palette, Tone};
 /// assert_eq!(Palette::Blue.main(), Color::hex(0x2196F3));
-/// assert_eq!(Palette::Grey.lighten(4), Color::hex(0xF5F5F5));
-/// assert_eq!(Palette::Grey.darken(4), Color::hex(0x212121));
+/// assert_eq!(Palette::Grey.tone(Tone::L4), Color::hex(0xF5F5F5));
+/// assert_eq!(Palette::Grey.tone(Tone::D4), Color::hex(0x212121));
+/// assert_eq!(Color::from(Palette::Blue), Palette::Blue.tone(Tone::Main));
 /// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -155,49 +159,90 @@ impl Palette {
         Color::hex(MAIN[self as usize])
     }
 
-    /// A lighter shade, `lvl` 1..=5 (LVGL `lv_palette_lighten`). Out-of-range levels are
-    /// clamped silently (a `const fn` cannot log; see [`lighten_checked`](Self::lighten_checked)).
+    /// The color of `tone`: [`Tone::L1`]…[`Tone::L5`] are LVGL's `lv_palette_lighten(p, 1..=5)`,
+    /// [`Tone::D1`]…[`Tone::D4`] `lv_palette_darken(p, 1..=4)`, [`Tone::Main`]
+    /// `lv_palette_main(p)`. Every tone exists for every palette entry: no level can be out of
+    /// range.
+    ///
+    /// ```
+    /// use twine_core::Color;
+    /// use twine_theme::{Palette, Tone};
+    /// assert_eq!(Palette::Blue.tone(Tone::L2), Color::hex(0x64B5F6));
+    /// assert_eq!(Palette::Red.tone(Tone::D1), Color::hex(0xE53935));
+    /// ```
+    #[doc(alias = "lv_palette_lighten")]
+    #[doc(alias = "lv_palette_darken")]
+    #[doc(alias = "lighten")]
+    #[doc(alias = "darken")]
     #[must_use]
-    pub const fn lighten(self, lvl: u8) -> Color {
-        let i = if lvl < 1 {
-            0
-        } else if lvl > 5 {
-            4
-        } else {
-            lvl as usize - 1
-        };
-        Color::hex(LIGHT[self as usize][i])
+    pub const fn tone(self, tone: Tone) -> Color {
+        let p = self as usize;
+        Color::hex(match tone {
+            Tone::L5 => LIGHT[p][4],
+            Tone::L4 => LIGHT[p][3],
+            Tone::L3 => LIGHT[p][2],
+            Tone::L2 => LIGHT[p][1],
+            Tone::L1 => LIGHT[p][0],
+            Tone::Main => MAIN[p],
+            Tone::D1 => DARK[p][0],
+            Tone::D2 => DARK[p][1],
+            Tone::D3 => DARK[p][2],
+            Tone::D4 => DARK[p][3],
+        })
     }
+}
 
-    /// A darker shade, `lvl` 1..=4 (LVGL `lv_palette_darken`). Out-of-range levels are
-    /// clamped silently (see [`darken_checked`](Self::darken_checked)).
-    #[must_use]
-    pub const fn darken(self, lvl: u8) -> Color {
-        let i = if lvl < 1 {
-            0
-        } else if lvl > 4 {
-            3
-        } else {
-            lvl as usize - 1
-        };
-        Color::hex(DARK[self as usize][i])
+/// The main color of the palette entry (LVGL `lv_palette_main`).
+impl From<Palette> for Color {
+    fn from(p: Palette) -> Color {
+        p.main()
     }
+}
 
-    /// Like [`lighten`](Self::lighten), logging `warn!` for a level outside 1..=5.
-    #[must_use]
-    pub fn lighten_checked(self, lvl: u8) -> Color {
-        if !(1..=5).contains(&lvl) {
-            twine_core::warn!(target: "twine::style", "palette lighten level {} out of 1..=5, clamped", lvl);
-        }
-        self.lighten(lvl)
-    }
+/// A tone of a [`Palette`] color, lightest to darkest (Material's 50…900 shades).
+///
+/// ```
+/// use twine_theme::{Palette, Tone};
+/// assert_eq!(Tone::ALL.len(), 10);
+/// assert!(Palette::Grey.tone(Tone::L5).relative_luminance() > Palette::Grey.tone(Tone::D4).relative_luminance());
+/// ```
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Tone {
+    /// Lightest (`lv_palette_lighten(p, 5)`, Material 50).
+    L5,
+    /// `lv_palette_lighten(p, 4)` (Material 100).
+    L4,
+    /// `lv_palette_lighten(p, 3)` (Material 200).
+    L3,
+    /// `lv_palette_lighten(p, 2)` (Material 300).
+    L2,
+    /// `lv_palette_lighten(p, 1)` (Material 400).
+    L1,
+    /// The main color (`lv_palette_main`, Material 500).
+    Main,
+    /// `lv_palette_darken(p, 1)` (Material 600).
+    D1,
+    /// `lv_palette_darken(p, 2)` (Material 700).
+    D2,
+    /// `lv_palette_darken(p, 3)` (Material 800).
+    D3,
+    /// Darkest (`lv_palette_darken(p, 4)`, Material 900).
+    D4,
+}
 
-    /// Like [`darken`](Self::darken), logging `warn!` for a level outside 1..=4.
-    #[must_use]
-    pub fn darken_checked(self, lvl: u8) -> Color {
-        if !(1..=4).contains(&lvl) {
-            twine_core::warn!(target: "twine::style", "palette darken level {} out of 1..=4, clamped", lvl);
-        }
-        self.darken(lvl)
-    }
+impl Tone {
+    /// Every tone, lightest to darkest.
+    pub const ALL: [Tone; 10] = [
+        Tone::L5,
+        Tone::L4,
+        Tone::L3,
+        Tone::L2,
+        Tone::L1,
+        Tone::Main,
+        Tone::D1,
+        Tone::D2,
+        Tone::D3,
+        Tone::D4,
+    ];
 }

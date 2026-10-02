@@ -73,11 +73,7 @@ fn find_ambiguous_panics_with_tree() {
 #[should_panic(expected = "running anims: 1")]
 fn run_until_idle_reports_running_anim() {
     let mut t = TestUi::new(100, 60).mount(|cx| {
-        let (a, _ctl) = cx.animation(
-            Anim::new(0, 100)
-                .duration(Duration::ms(500))
-                .repeat(Repeat::Infinite),
-        );
+        let (a, _ctl) = cx.animation(0, 100, AnimSpec::new(Duration::ms(500)).forever());
         label(text!("{}", a.get()))
     });
     t.run_until_idle();
@@ -88,7 +84,7 @@ fn advance_steps_in_refr_period() {
     let ticks = Rc::new(RefCell::new(Vec::new()));
     let tk = ticks.clone();
     let mut t = TestUi::new(100, 60).mount(move |cx| {
-        let (a, _c) = cx.animation(Anim::new(0, 1000).duration(Duration::ms(1000)));
+        let (a, _c) = cx.animation(0, 1000, AnimSpec::new(Duration::ms(1000)));
         cx.effect(move || tk.borrow_mut().push(a.get()));
         label("x")
     });

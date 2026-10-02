@@ -1,7 +1,5 @@
 //! Two-way bindings: [`Model`] and [`IntoModel`].
 
-use alloc::string::String;
-
 use twine_engine::{Engine, Event, EventCode, EventFilter, EventResult, NodeId};
 use twine_reactive::Signal;
 
@@ -28,8 +26,8 @@ impl<T: core::fmt::Debug + 'static> core::fmt::Debug for Model<T> {
     }
 }
 
-/// Anything usable as the value of an editable widget: a plain value (any [`ModelValue`]) or
-/// a [`Signal`].
+/// Anything usable as the value of an editable widget: a plain value of type `T` (the widget
+/// owns the state) or a [`Signal<T>`] (two-way).
 ///
 /// ```
 /// use twine_view::prelude::*;
@@ -41,36 +39,34 @@ impl<T: core::fmt::Debug + 'static> core::fmt::Debug for Model<T> {
 ///     .on_change(|checked: bool| { let _ = checked; });
 /// cx.dispose();
 /// ```
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` cannot be used as the value of type `{T}` of an editable widget",
-    label = "not a `{T}` or a `Signal<{T}>`",
-    note = "declare your own value types with `impl twine_view::ModelValue for MyType {{}}`"
-)]
-pub trait IntoModel<T: 'static> {
-    /// The model.
-    fn into_model(self) -> Model<T>;
-}
-
-/// A type usable as the plain (widget-owned) value of an editable widget. Declare your own
-/// types with a one-line impl:
+///
+/// Every type is a model value of its own type, with no declaration:
 ///
 /// ```
 /// use twine_view::prelude::*;
 ///
 /// #[derive(Clone, Copy, PartialEq)]
 /// pub struct Level(pub u8);
-/// impl ModelValue for Level {}
 ///
 /// fn take<T: 'static>(m: impl IntoModel<T>) -> Model<T> { m.into_model() }
 /// assert!(matches!(take(Level(2)), Model::Owned(Level(2))));
+/// assert!(matches!(take::<usize>(3), Model::Owned(3))); // a literal infers
 /// ```
 ///
-/// Unlike [`PropValue`](crate::PropValue) this is a true blanket
-/// (`impl<T: ModelValue> IntoModel<T> for T`): models have no closure form, so nothing overlaps
-/// (`Signal<T>` and `Model<T>` would have to equal their own `T`).
-pub trait ModelValue: 'static {}
+/// There is no conversion (unlike [`IntoProp`](crate::IntoProp)): a bound signal is written
+/// back, so it must have the widget's value type, and an exact type lets integer literals infer
+/// for every integer type. The impls need no marker parameter: `impl<T> IntoModel<T> for T`
+/// cannot overlap `impl<T> IntoModel<T> for Signal<T>` (that would need `T = Signal<T>`).
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be used as the value of type `{T}` of an editable widget",
+    label = "not a `{T}` or a `Signal<{T}>`"
+)]
+pub trait IntoModel<T: 'static> {
+    /// The model.
+    fn into_model(self) -> Model<T>;
+}
 
-impl<T: ModelValue> IntoModel<T> for T {
+impl<T: 'static> IntoModel<T> for T {
     #[inline]
     fn into_model(self) -> Model<T> {
         Model::Owned(self)
@@ -89,21 +85,6 @@ impl<T: 'static> IntoModel<T> for Model<T> {
     }
 }
 
-impl ModelValue for bool {}
-impl ModelValue for u8 {}
-impl ModelValue for u16 {}
-impl ModelValue for u32 {}
-impl ModelValue for u64 {}
-impl ModelValue for usize {}
-impl ModelValue for i8 {}
-impl ModelValue for i16 {}
-impl ModelValue for i32 {}
-impl ModelValue for i64 {}
-impl ModelValue for char {}
-impl ModelValue for String {}
-impl<T: 'static> ModelValue for Option<T> {}
-impl<A: ModelValue, B: ModelValue> ModelValue for (A, B) {}
-
 /// Wires a model to a widget: `show` displays the value (once for owned values, as a binding
 /// for bound signals); for bound signals, every `ValueChanged` of the node reads the widget's
 /// value with `read` (which also gets the event: widgets that send `ValueChanged` from their own
@@ -112,6 +93,32 @@ impl<A: ModelValue, B: ModelValue> ModelValue for (A, B) {}
 /// idempotency ends the round trip (the binding re-runs once and changes nothing).
 ///
 /// Public for widget crates outside this one (e.g. `twine-lottie`'s `.frame(..)`).
+/// Never panics (a binding whose signal was disposed stops writing back).
+///
+/// ```
+/// use twine_view::prelude::*;
+/// use twine_view::{IntoModel, bind_model};
+///
+/// /// A `.selected(..)` modifier: the `CHECKED` state, as a value or a two-way bound signal.
+/// fn selected(v: WidgetView<Button>, on: impl IntoModel<bool>) -> WidgetView<Button> {
+///     let model = on.into_model();
+///     v.op(move |cx, node| {
+///         bind_model(
+///             cx,
+///             node,
+///             model,
+///             |e, n, on| e.set_state(n, State::CHECKED, on),
+///             |e, n, _ev| e.tree().node(n).is_some_and(|x| x.state().contains(State::CHECKED)),
+///         )
+///     })
+/// }
+///
+/// fn app(cx: Scope) -> impl View {
+///     let on = cx.signal(false);
+///     selected(button(label("Pick me")), on)
+/// }
+/// # let _ = app;
+/// ```
 pub fn bind_model<T: PartialEq + Clone + 'static>(
     cx: &mut BuildCx<'_>,
     node: NodeId,
@@ -181,8 +188,8 @@ pub(crate) fn bind_model_synced<T: PartialEq + Clone + 'static>(
                 if core::mem::take(&mut first) {
                     return;
                 }
-                if !EngineAccess::available() {
-                    return twine_reactive::defer_current_effect();
+                if !crate::access::engine_ready() {
+                    return;
                 }
                 let v = EngineAccess::with(|e| {
                     if e.tree().contains(node) {
@@ -203,6 +210,20 @@ pub(crate) fn bind_model_synced<T: PartialEq + Clone + 'static>(
 }
 
 /// The value an event carries as [`EventParam::Value`](twine_engine::EventParam::Value).
+/// Never panics; `None` for any other parameter.
+///
+/// ```
+/// use twine_engine::{Engine, EngineConfig, EventCode, EventFilter, EventParam, EventResult, Obj};
+/// use twine_view::event_value;
+///
+/// let mut e = Engine::new(EngineConfig::default()).unwrap();
+/// let n = e.create_root(Box::new(Obj)).unwrap();
+/// e.add_event_handler(n, EventFilter::Code(EventCode::ValueChanged), |_, ev| {
+///     assert_eq!(event_value(ev), Some(42));
+///     EventResult::Continue
+/// });
+/// e.send_event(n, EventCode::ValueChanged, EventParam::Value(42));
+/// ```
 #[must_use]
 pub fn event_value(ev: &Event) -> Option<i32> {
     match ev.param {
@@ -211,10 +232,25 @@ pub fn event_value(ev: &Event) -> Option<i32> {
     }
 }
 
-/// Registers `f` for every `ValueChanged` sent to `node` itself, with `map(engine, event)`
-/// as argument (skipped when `map` returns `None`); the engine is lent to `f` through
-/// [`EngineAccess`].
-pub(crate) fn on_value_changed<T: 'static>(
+/// Registers `f` for every `ValueChanged` sent to `node` itself, with `map(engine, node,
+/// event)` as argument (skipped when `map` returns `None`); the engine is lent to `f` through
+/// [`EngineAccess`] meanwhile.
+///
+/// The building block of the `.on_change(..)` modifiers: public for widget views outside this
+/// crate (a custom widget's view wrapper, see the facade's custom widget guide). `map`
+/// usually reads the value the widget sent with the event ([`event_value`]) or reads the
+/// node's state; it runs once per `ValueChanged`, never while rendering. Never panics.
+///
+/// ```
+/// use twine_view::prelude::*;
+/// use twine_view::{event_value, on_value_changed};
+///
+/// fn on_level(v: WidgetView<twine_widgets::slider::Slider>, mut f: impl FnMut(i32) + 'static) -> impl View {
+///     v.op(move |cx, node| on_value_changed(cx, node, |_, _, ev| event_value(ev), move |x| f(x)))
+/// }
+/// # let _ = on_level(slider(3), |_| {});
+/// ```
+pub fn on_value_changed<T: 'static>(
     cx: &mut BuildCx<'_>,
     node: NodeId,
     map: impl Fn(&Engine, NodeId, &Event) -> Option<T> + 'static,

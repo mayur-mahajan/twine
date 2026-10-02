@@ -3,8 +3,9 @@
 //! Sizing, positioning, flex and grid layout of the Twine GUI library, with the semantics of
 //! LVGL 9 (`lv_obj_pos.c`, `lv_flex.c`, `lv_grid.c`). The crate is independent of the widget
 //! tree: it works on any [`LayoutTree`], reads the layout style properties of
-//! `twine-style` (`Width`, `MinWidth`, `X`, `Align`, `Pad*`, `Margin*`, `Flex*`, `Grid*`,
-//! `BaseDir`, `Translate*`…) and writes absolute, half-open rectangles back.
+//! `twine-style` (`Width`, `MinWidth`, `X`, `Align`, `Padding*`, `RowGap`, `ColumnGap`,
+//! `Margin*`, `Flex*`, `Grid*`, `BaseDir`, `Translate*`…) and writes absolute, half-open
+//! rectangles back.
 //!
 //! Integer math only; divisions that share space (flex grow, grid `fr` tracks) round each
 //! share to the closest integer and carry the rest to the next one, so sizes always add up

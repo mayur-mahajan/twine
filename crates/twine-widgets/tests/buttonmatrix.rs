@@ -211,13 +211,17 @@ fn btnm_press_invalidates_only_button() {
     let m = buttonmatrix::create_with(e, screen, MapSrc::Static(&MAP_3X4)).unwrap();
     e.set_size(m, 200, 120);
     e.align(m, Align::Center, 0, 0);
-    e.set_local_prop(m, Selector::MAIN, StyleProp::RowGap(Length::Px(4)));
-    e.set_local_prop(m, Selector::MAIN, StyleProp::ColumnGap(Length::Px(4)));
-    e.set_local_prop(m, Selector::part(Part::Items), StyleProp::BgColor(Color::BLUE));
+    e.set_local_prop(m, Selector::MAIN, StyleProp::RowGap(Length::Px(4).into()));
+    e.set_local_prop(m, Selector::MAIN, StyleProp::ColumnGap(Length::Px(4).into()));
     e.set_local_prop(
         m,
         Selector::part(Part::Items),
-        StyleProp::BgOpacity(twine_core::Opa::COVER),
+        StyleProp::BgColor(Color::BLUE.into()),
+    );
+    e.set_local_prop(
+        m,
+        Selector::part(Part::Items),
+        StyleProp::BgOpacity(twine_core::Opa::COVER.into()),
     );
     h.run_until_idle();
     let b = area(&h, m, 4);

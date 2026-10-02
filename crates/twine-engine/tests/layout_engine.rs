@@ -14,8 +14,8 @@ use twine_engine::{
     Wake,
 };
 use twine_style::{
-    Align, Anchor, CrossAlign, FlexFlow, GridAlign, GridSpan, GridTrack, LayoutKind, Length, MainAlign,
-    StyleProp,
+    Align, Anchor, CrossAlign, FlexFlow, GridAlign, GridSpan, GridTrack, LayoutKind, Length, MainAlign, Part,
+    PropId, StyleProp,
 };
 use twine_testing::EngineHarness;
 use twine_testing::alloc::{CountingAllocator, count_allocs};
@@ -47,7 +47,14 @@ fn node(e: &mut Engine, parent: NodeId, x: i32, y: i32, w: i32, h: i32, c: Color
     let n = e.create(parent, Box::new(Obj)).unwrap();
     e.set_pos(n, x, y);
     e.set_size(n, w, h);
-    style(e, n, &[StyleProp::BgColor(c), StyleProp::BgOpacity(Opa::COVER)]);
+    style(
+        e,
+        n,
+        &[
+            StyleProp::BgColor(c.into()),
+            StyleProp::BgOpacity(Opa::COVER.into()),
+        ],
+    );
     n
 }
 
@@ -229,10 +236,10 @@ fn content_sized_parent_grows_with_child() {
         e,
         outer,
         &[
-            StyleProp::PaddingLeft(Length::Px(5)),
-            StyleProp::PaddingTop(Length::Px(5)),
-            StyleProp::PaddingRight(Length::Px(5)),
-            StyleProp::PaddingBottom(Length::Px(5)),
+            StyleProp::PaddingLeft(Length::Px(5).into()),
+            StyleProp::PaddingTop(Length::Px(5).into()),
+            StyleProp::PaddingRight(Length::Px(5).into()),
+            StyleProp::PaddingBottom(Length::Px(5).into()),
         ],
     );
     let inner = e.create(outer, Box::new(Obj)).unwrap(); // content-sized too
@@ -385,8 +392,8 @@ fn flex_tree(e: &mut Engine, n: usize) -> NodeId {
         e,
         c,
         &[
-            StyleProp::RowGap(Length::Px(4)),
-            StyleProp::ColumnGap(Length::Px(4)),
+            StyleProp::RowGap(Length::Px(4).into()),
+            StyleProp::ColumnGap(Length::Px(4).into()),
         ],
     );
     for i in 0..n {
@@ -445,10 +452,10 @@ fn layout_flex_row_wrap() {
             e,
             c,
             &[
-                StyleProp::PaddingLeft(Length::Px(6)),
-                StyleProp::PaddingTop(Length::Px(6)),
-                StyleProp::PaddingRight(Length::Px(6)),
-                StyleProp::PaddingBottom(Length::Px(6)),
+                StyleProp::PaddingLeft(Length::Px(6).into()),
+                StyleProp::PaddingTop(Length::Px(6).into()),
+                StyleProp::PaddingRight(Length::Px(6).into()),
+                StyleProp::PaddingBottom(Length::Px(6).into()),
             ],
         );
         let g = e.tree().children(c).nth(5).unwrap();
@@ -469,15 +476,15 @@ fn layout_grid_3x3() {
         e.set_size(g, 150, 110);
         e.align(g, Align::Center, 0, 0);
         e.set_layout(g, LayoutKind::Grid);
-        e.set_grid_tracks(g, COLS, ROWS);
+        e.set_grid_tracks(g, &COLS, &ROWS);
         style(
             e,
             g,
             &[
-                StyleProp::RowGap(Length::Px(4)),
-                StyleProp::ColumnGap(Length::Px(4)),
-                StyleProp::BgColor(Color::hex(0xE0_E0_E0)),
-                StyleProp::BgOpacity(Opa::COVER),
+                StyleProp::RowGap(Length::Px(4).into()),
+                StyleProp::ColumnGap(Length::Px(4).into()),
+                StyleProp::BgColor(Color::hex(0xE0_E0_E0).into()),
+                StyleProp::BgOpacity(Opa::COVER.into()),
             ],
         );
         let aligns = [GridAlign::Stretch, GridAlign::Center, GridAlign::End];
@@ -519,4 +526,113 @@ fn layout_align_to() {
     });
     h.run_until_idle();
     h.assert_snapshot("layout_align_to");
+}
+
+/// Every flex flow orders the children along its main axis (reversed flows in reverse child
+/// order, wrapping flows on a new line when the next child does not fit), and switching flows
+/// back and forth re-lays out the container each time (the `flex_layout` example cycles the flows with `f`).
+#[test]
+fn flex_flows_order_children_along_the_main_axis() {
+    const FLOWS: [FlexFlow; 8] = [
+        FlexFlow::ROW,
+        FlexFlow::COLUMN,
+        FlexFlow::ROW.wrap(true),
+        FlexFlow::ROW.reverse(true),
+        FlexFlow::ROW.wrap(true).reverse(true),
+        FlexFlow::COLUMN.wrap(true),
+        FlexFlow::COLUMN.reverse(true),
+        FlexFlow::COLUMN.wrap(true).reverse(true),
+    ];
+    let mut h = harness(240, 120);
+    let s = h.screen();
+    let e = h.engine_mut();
+    let c = node(e, s, 0, 0, 100, 100, Color::hex(0xEE_EE_EE));
+    e.set_layout(c, LayoutKind::Flex);
+    // Three 40 px squares: two fit on a 100 px line, the third overflows or wraps.
+    let items: Vec<NodeId> = (0..3).map(|_| node(e, c, 0, 0, 40, 40, Color::RED)).collect();
+    let mut first_pass = Vec::new();
+    for pass in 0..2 {
+        for (i, flow) in FLOWS.into_iter().enumerate() {
+            h.engine_mut().set_flex_flow(c, flow);
+            h.update();
+            let at: Vec<(i32, i32)> = items
+                .iter()
+                .map(|n| {
+                    let r = h.engine().coords(*n);
+                    (r.x0, r.y0)
+                })
+                .collect();
+            let row = flow == FlexFlow::ROW
+                || flow == FlexFlow::ROW.wrap(true)
+                || flow == FlexFlow::ROW.reverse(true)
+                || flow == FlexFlow::ROW.wrap(true).reverse(true);
+            let reverse = i == 3 || i == 4 || i == 6 || i == 7;
+            let wrap = i == 2 || i == 4 || i == 5 || i == 7;
+            let (main, cross): (Vec<i32>, Vec<i32>) =
+                at.iter().map(|&(x, y)| if row { (x, y) } else { (y, x) }).unzip();
+            // Reversed flows place the children in reverse order, then pack them like the
+            // forward flow (the last child first, on the first line).
+            let [p, q, r] = if reverse { [2, 1, 0] } else { [0, 1, 2] };
+            assert!(main[p] < main[q], "{flow:?}: {at:?}");
+            assert_eq!(cross[q], cross[p], "{flow:?}: {at:?}");
+            if wrap {
+                assert_eq!(main[r], main[p], "{flow:?} wraps its third child: {at:?}");
+                assert!(cross[r] > cross[p], "{flow:?}: {at:?}");
+            } else {
+                assert!(main[q] < main[r], "{flow:?}: {at:?}");
+                assert_eq!(cross[r], cross[p], "{flow:?}: {at:?}");
+            }
+            if pass == 0 {
+                first_pass.push(at);
+            } else {
+                assert_eq!(at, first_pass[i], "{flow:?} lays out the same again");
+            }
+        }
+    }
+}
+
+static SPAN_COLS: [GridTrack; 3] = [GridTrack::Px(50), GridTrack::Px(50), GridTrack::Px(50)];
+static SPAN_ROWS: [GridTrack; 2] = [GridTrack::Px(40), GridTrack::Px(40)];
+static FR_COLS: [GridTrack; 2] = [GridTrack::Fr(1), GridTrack::Fr(1)];
+
+/// A cell span resolves as the child's style and stretches the child over the spanned tracks
+/// and the gap between them; a new track template re-lays out every cell (the `grid_layout`
+/// example's keys `h` and `t`).
+#[test]
+fn grid_cell_span_and_template_changes_relayout() {
+    let mut h = harness(240, 120);
+    let s = h.screen();
+    let e = h.engine_mut();
+    let g = node(e, s, 0, 0, 200, 100, Color::hex(0xEE_EE_EE));
+    e.set_layout(g, LayoutKind::Grid);
+    e.set_grid_tracks(g, &SPAN_COLS, &SPAN_ROWS);
+    style(
+        e,
+        g,
+        &[
+            StyleProp::ColumnGap(Length::Px(10).into()),
+            StyleProp::RowGap(Length::Px(10).into()),
+        ],
+    );
+    let a = node(e, g, 0, 0, 10, 10, Color::RED);
+    let b = node(e, g, 0, 0, 10, 10, Color::BLUE);
+    let cell = |e: &mut Engine, n: NodeId, col: GridSpan, row: i32| {
+        e.set_grid_cell(n, col, row, GridAlign::Stretch, GridAlign::Stretch);
+    };
+    cell(e, a, GridSpan::new(0, 1), 0);
+    cell(e, b, GridSpan::new(1, 1), 1);
+    h.run_until_idle();
+    assert_eq!(h.engine().coords(a), Rect::from_xywh(0, 0, 50, 40));
+    assert_eq!(h.engine().coords(b), Rect::from_xywh(60, 50, 50, 40));
+
+    cell(h.engine_mut(), a, GridSpan::new(0, 2), 0);
+    h.update();
+    assert_eq!(h.engine().style_i32(a, Part::Main, PropId::GridCellColumnSpan), 2);
+    assert_eq!(h.engine().coords(a), Rect::from_xywh(0, 0, 110, 40));
+    assert_eq!(h.engine().coords(b), Rect::from_xywh(60, 50, 50, 40));
+
+    h.engine_mut().set_grid_tracks(g, &FR_COLS, &SPAN_ROWS);
+    h.update();
+    assert_eq!(h.engine().coords(a), Rect::from_xywh(0, 0, 200, 40));
+    assert_eq!(h.engine().coords(b), Rect::from_xywh(105, 50, 95, 40));
 }

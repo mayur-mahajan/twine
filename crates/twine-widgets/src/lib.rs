@@ -6,6 +6,7 @@
 //! | Widget | LVGL | Parts |
 //! |--------|------|-------|
 //! | [`Container`](container::Container) | `lv_obj` | `Main`, `Scrollbar` |
+//! | [`Card`](container::Card) | `lv_obj` with the theme's card look | `Main`, `Scrollbar` |
 //! | [`Label`](label::Label) | `lv_label` | `Main`, `Scrollbar`, `Selected` |
 //! | [`Button`](button::Button) | `lv_button` | `Main`, `Scrollbar` |
 //! | [`Image`](image::Image) | `lv_image` | `Main` |

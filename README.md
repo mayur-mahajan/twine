@@ -21,7 +21,10 @@ to what changed, and an idle UI executes no code at all.
 
 ## Example
 
-*API preview — the declarative layer is still being implemented.*
+The `counter` example of the `twine` crate (run it with `cargo xtask sim counter`; the app
+function is `twine_demos::counter::app`, compiled and tested with the workspace). The
+declarative layer runs on the simulator and in the board examples under `firmware/`; the API
+may still change before the first release.
 
 ```rust
 use twine::prelude::*;
@@ -42,13 +45,21 @@ pub fn counter(cx: Scope) -> impl View {
     .gap(12)
     .padding(16)
     .align_items(CrossAlign::Center)
-    .size(Length::Pct(100), Length::Pct(100))
+    .fill()
 }
 
 fn main() {
     twine_sim::run(SimConfig::new(320, 240).title("Counter").scale(2), counter);
 }
 ```
+
+## Guides
+
+- **Writing a custom widget** (`twine::guide::custom_widgets` in the `twine` crate docs,
+  [source](crates/twine/src/guide/custom_widgets.md)): a gauge with its own class and parts,
+  drawing, keypad/encoder input, theming with design elements in every theme mode, a typed
+  view, animations within the motion preference, and tests. The finished widget is the
+  `gauge` example: `cargo xtask sim gauge`.
 
 ## Crate map
 
@@ -109,7 +120,8 @@ Commands:
 | Command | What it does |
 |---------|--------------|
 | `cargo xtask ci` | everything CI runs (fmt, clippy, tests, no_std builds, docs, Miri, todo-check, layers); `--quick` skips the slow stages, `--only <stage>` runs single stages |
-| `cargo xtask sim <example>` | run a simulator example (`examples/src/bin/<example>.rs`) |
+| `cargo xtask sim <example>` | run a simulator example (a Cargo example of `twine` in `crates/twine/examples/`; same as `cargo run -p twine --example <example>`) |
+| `cargo xtask sim-smoke` | run every simulator example headless |
 | `cargo xtask snapshots [--update]` | run / refresh snapshot tests (review diffs before updating) |
 | `cargo xtask nostd` | build the `no_std` crates for all embedded targets |
 | `cargo xtask firmware [example] [--strict]` | build the example firmware and print flash/RAM sizes |
@@ -129,9 +141,9 @@ layout bounds, perf monitor, slow motion, screenshots) are listed with `F1`.
 snapshot tests), controls time (pause, slow motion, single step) and emulates bus bandwidth.
 For projects already built on [embedded-graphics], `cargo xtask sim eg_simulator` runs the
 counter demo inside `embedded-graphics-simulator` through the `twine-embedded-graphics`
-adapter. It needs SDL2 (`brew install sdl2` on macOS, `apt install libsdl2-dev` on Linux) and
-the `twine-examples` feature `eg-sim`, which the xtask enables. `cargo xtask ci` skips it with
-a warning when SDL2 is missing.
+adapter (an example of `twine-embedded-graphics`). It needs SDL2 (`brew install sdl2` on macOS,
+`apt install libsdl2-dev` on Linux) and the `twine-embedded-graphics` feature `eg-sim`, which the
+xtask enables. `cargo xtask ci` skips it with a warning when SDL2 is missing.
 
 [embedded-graphics]: https://docs.rs/embedded-graphics
 

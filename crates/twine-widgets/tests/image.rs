@@ -3,11 +3,11 @@
 
 mod common;
 
-#[path = "../../../examples/src/assets/logo_argb8888.rs"]
+#[path = "../../twine/examples/assets/logo_argb8888.rs"]
 mod logo_argb8888;
-#[path = "../../../examples/src/assets/logo_rgb565.rs"]
+#[path = "../../twine/examples/assets/logo_rgb565.rs"]
 mod logo_rgb565;
-#[path = "../../../examples/src/assets/logo_rgb565a8.rs"]
+#[path = "../../twine/examples/assets/logo_rgb565a8.rs"]
 mod logo_rgb565a8;
 
 use std::collections::HashMap;
@@ -162,11 +162,14 @@ fn image_covers_only_when_opaque() {
     with(&mut h, i, |w: &mut Image, cx| {
         w.set_rotation(cx, Angle::deci_deg(0));
     });
-    h.engine_mut()
-        .set_local_prop(i, Selector::MAIN, StyleProp::ImageOpacity(Opa::from_raw(200)));
+    h.engine_mut().set_local_prop(
+        i,
+        Selector::MAIN,
+        StyleProp::ImageOpacity(Opa::from_raw(200).into()),
+    );
     assert!(!covers(&h), "not faded");
     h.engine_mut()
-        .set_local_prop(i, Selector::MAIN, StyleProp::ImageOpacity(Opa::COVER));
+        .set_local_prop(i, Selector::MAIN, StyleProp::ImageOpacity(Opa::COVER.into()));
     with(&mut h, i, |w: &mut Image, cx| {
         w.set_src(cx, stat(&logo_argb8888::LOGO_ARGB8888));
     });
@@ -269,9 +272,9 @@ fn snapshot_image_argb_on_bg() {
         e.set_local_prop(
             i,
             Selector::MAIN,
-            StyleProp::BgColor(twine_theme::Palette::Amber.main()),
+            StyleProp::BgColor(twine_theme::Palette::Amber.main().into()),
         );
-        e.set_local_prop(i, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER));
+        e.set_local_prop(i, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER.into()));
         e.set_size(i, 80, 80);
     });
 }
@@ -299,9 +302,9 @@ fn snapshot_image_recolor() {
         e.set_local_prop(
             i,
             Selector::MAIN,
-            StyleProp::ImageRecolor(twine_theme::Palette::Green.main()),
+            StyleProp::ImageRecolor(twine_theme::Palette::Green.main().into()),
         );
-        e.set_local_prop(i, Selector::MAIN, StyleProp::ImageRecolorOpacity(Opa::P70));
+        e.set_local_prop(i, Selector::MAIN, StyleProp::ImageRecolorOpacity(Opa::P70.into()));
     });
 }
 
@@ -312,12 +315,12 @@ fn snapshot_image_symbol() {
         e.set_local_prop(
             i,
             Selector::MAIN,
-            StyleProp::Font(&twine_assets::fonts::MONTSERRAT_20),
+            StyleProp::Font((&twine_assets::fonts::MONTSERRAT_20).into()),
         );
         e.set_local_prop(
             i,
             Selector::MAIN,
-            StyleProp::TextColor(twine_theme::Palette::Blue.main()),
+            StyleProp::TextColor(twine_theme::Palette::Blue.main().into()),
         );
     });
 }

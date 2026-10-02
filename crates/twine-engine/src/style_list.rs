@@ -5,13 +5,14 @@ use alloc::rc::Rc;
 use alloc::vec::Vec;
 
 use twine_core::{Color, Insets, Opa};
+use twine_style::design::ElementRef;
 use twine_style::{
     EntryKind, Length, Part, PropId, Selector, State, StyleBuf, StyleDefaults, StyleEntry, StyleProp,
     StyleRef, StyleSource, StyleValue, resolve,
 };
 use twine_text::Font;
 
-use crate::{Engine, EngineError, InvalidateReason, LayoutDirty, MainStyle, NodeId, Tree, fmt_node_id};
+use crate::{Engine, EngineError, InvalidateReason, LayoutDirty, MainStyle, NodeId, fmt_node_id};
 
 /// The style entries of a node, kept sorted by priority (highest first): transitions, local
 /// styles (one per selector), normal styles (latest added first), theme styles (latest added
@@ -118,20 +119,37 @@ impl StyleList {
     }
 }
 
-impl StyleSource for Tree {
+/// The engine's widget tree as the style resolver sees it (so `twine_style::resolve(&engine,
+/// ..)` resolves exactly like [`Engine::style_prop`]). Density-independent lengths resolve with
+/// the DPI of the node's display ([`Engine::node_dpi`]), design elements with its theme's
+/// element table ([`Engine::design_table`]).
+impl StyleSource for Engine {
     type Id = NodeId;
 
+    #[inline]
     fn entries(&self, id: NodeId) -> &[StyleEntry] {
-        self.node(id).map_or(&[], |n| n.styles.entries())
+        self.tree.node(id).map_or(&[], |n| n.styles.entries())
     }
 
+    #[inline]
     fn state(&self, id: NodeId) -> State {
-        self.node(id).map_or(State::DEFAULT, crate::Node::state)
+        self.tree.node(id).map_or(State::DEFAULT, crate::Node::state)
     }
 
-    /// The style parent: inheritance follows [`Tree::style_parent`] links.
+    /// The style parent: inheritance follows [`Tree::style_parent`](crate::Tree::style_parent) links.
+    #[inline]
     fn parent(&self, id: NodeId) -> Option<NodeId> {
-        Tree::style_parent(self, id)
+        self.tree.style_parent(id)
+    }
+
+    fn dpi(&self, id: NodeId) -> u16 {
+        self.node_dpi(id)
+    }
+
+    /// The design element table of the node's display (its theme's table for the current
+    /// mode, see [`Engine::set_theme_mode`]).
+    fn design_value(&self, id: NodeId, element: ElementRef) -> Option<StyleValue> {
+        self.node_design_value(id, element)
     }
 }
 
@@ -157,7 +175,7 @@ enum StateCmp {
 #[must_use]
 pub(crate) fn length_px(v: StyleValue, basis: i32) -> i32 {
     match v.as_length() {
-        // `Dp` was converted by `style_prop`; a raw one counts at the reference DPI.
+        // The resolver converted `Dp`; a raw one counts at the reference DPI.
         Some(Length::Px(p) | Length::Dp(p)) => p,
         Some(Length::Pct(p)) => (i64::from(basis) * i64::from(p) / 100) as i32,
         Some(Length::Content) | None => v.as_i32().unwrap_or(0),
@@ -169,7 +187,7 @@ fn warn_missing(what: &str, id: NodeId) {
 }
 
 impl Engine {
-    /// The defaults used for resolution: `TextFont` is the default display's theme font, else
+    /// The defaults used for resolution: `Font` is the default display's theme font, else
     /// [`EngineConfig::default_font`](crate::EngineConfig::default_font), else
     /// [`twine_text::EMPTY_FONT`].
     pub(crate) fn style_defaults(&self) -> StyleDefaults {
@@ -248,6 +266,10 @@ impl Engine {
     /// (P3): setting the value it already has does nothing (no invalidation, no layout).
     /// A running style transition of the property is stopped (LVGL).
     ///
+    /// A grid template built at run time is set with
+    /// [`set_local_grid_tracks`](Self::set_local_grid_tracks), a transition built at run time
+    /// with [`set_local_transition`](Self::set_local_transition) (the local style holds them).
+    ///
     /// ```
     /// use twine_core::Color;
     /// use twine_engine::{Engine, EngineConfig, Obj};
@@ -255,7 +277,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let root = e.create_root(Box::new(Obj)).unwrap();
-    /// e.set_local_prop(root, Selector::MAIN, StyleProp::BgColor(Color::RED));
+    /// e.set_local_prop(root, Selector::MAIN, StyleProp::BgColor(Color::RED.into()));
     /// assert_eq!(e.style_color(root, Part::Main, PropId::BgColor), Color::RED);
     /// ```
     pub fn set_local_prop(&mut self, id: NodeId, selector: Selector, prop: StyleProp) {
@@ -274,9 +296,52 @@ impl Engine {
         if n.styles.local(selector).and_then(|s| s.get(pid)) == Some(prop.value()) {
             return;
         }
-        n.styles.local_mut(selector).set(prop);
+        if !n.styles.local_mut(selector).set(prop) {
+            return;
+        }
         twine_core::trace!(target: "twine::style", "{} local {:?} = {:?}", fmt_node_id(id), pid, prop.value());
         self.refresh_style(id, selector.part, Some(pid));
+    }
+
+    /// Sets the local `transition` property for `selector`: which properties animate when the
+    /// node enters the selector's state, and how ([`Transition`](twine_style::Transition)). A
+    /// `&'static Transition` is stored as a reference; a [`Transition`](twine_style::Transition)
+    /// value is moved into an `Rc` held by the node's local style (released with it). Idempotent
+    /// (P3): an equal transition does nothing; nothing is redrawn (a transition only matters at
+    /// the next state change). Allocates only to hold a run-time transition (build time);
+    /// never panics.
+    ///
+    /// ```
+    /// use twine_core::Duration;
+    /// use twine_engine::{Engine, EngineConfig, Obj, State};
+    /// use twine_style::{Selector, Transition};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let n = e.create_root(Box::new(Obj)).unwrap();
+    /// let pressed = Selector::state(State::PRESSED);
+    /// e.set_local_transition(n, pressed, Transition::all(Duration::ms(150)).ease_out());
+    /// let entries = e.tree().node(n).unwrap().styles().entries();
+    /// let t = entries.iter().find_map(|en| en.style.get_transition().copied());
+    /// assert_eq!(t.map(|t| t.spec.duration), Some(Duration::ms(150)));
+    /// ```
+    pub fn set_local_transition(
+        &mut self,
+        id: NodeId,
+        selector: Selector,
+        t: impl Into<twine_style::TransitionValue>,
+    ) {
+        let t = t.into();
+        let Some(n) = self.tree.node_mut(id) else {
+            warn_missing("set_local_transition", id);
+            return;
+        };
+        if n.styles.local(selector).and_then(StyleBuf::get_transition) == Some(t.get()) {
+            return;
+        }
+        if n.styles.local_mut(selector).set_transition(t) {
+            twine_core::trace!(target: "twine::style", "{} local transition for {:?}", fmt_node_id(id), selector);
+            n.style_cache.invalidate();
+        }
     }
 
     /// Removes a local property; returns whether it was set.
@@ -296,29 +361,46 @@ impl Engine {
     /// The value of `prop` for `part` of `id` with full LVGL resolution (state weights,
     /// priority, inheritance, defaults). Unknown ids give the default. A density-independent
     /// length ([`Length::Dp`]) comes back in pixels for the DPI of `id`'s display
-    /// ([`node_dpi`](Self::node_dpi)).
+    /// ([`node_dpi`](Self::node_dpi)), converted by the resolver ([`StyleSource::dpi`]).
     #[must_use]
     pub fn style_prop(&self, id: NodeId, part: Part, prop: PropId) -> StyleValue {
-        self.dp_to_px(id, resolve(&self.tree, id, part, prop, &self.style_defaults()))
+        resolve(self, id, part, prop, &self.style_defaults())
     }
 
-    /// `v` with a [`Length::Dp`] converted to pixels for `id`'s display. Every other value
-    /// passes through with one comparison; the conversion itself (one multiply/divide) is out
-    /// of line.
-    #[inline]
-    pub(crate) fn dp_to_px(&self, id: NodeId, v: StyleValue) -> StyleValue {
-        if v.is_dp() { self.dp_to_px_cold(id, v) } else { v }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn dp_to_px_cold(&self, id: NodeId, v: StyleValue) -> StyleValue {
-        v.with_dpi(self.node_dpi(id))
+    /// Finishes a value read straight from a style of `id` (outside the cascade) like
+    /// [`style_prop`](Self::style_prop) finishes what it resolves: a design element becomes
+    /// its theme value, a `Dp` length pixels ([`twine_style::resolve_value`]); any other
+    /// value is returned unchanged.
+    ///
+    /// Never panics: an element the theme does not define (or an unknown `id`, or no theme)
+    /// gives the property's default, with a warning logged once per element kind. Cost: O(1)
+    /// for a plain value (one check, inlined); a design element is one theme table read; a
+    /// `Dp` length reads the display's DPI ([`node_dpi`](Self::node_dpi): direct with one
+    /// display, a walk to the node's root with several).
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_engine::{Engine, EngineConfig};
+    /// use twine_hal::DisplayInfo;
+    /// use twine_style::{Length, PropId, StyleValue};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::L8).with_dpi(320), 64).unwrap();
+    /// let screen = e.active_screen(d).unwrap();
+    /// let v = e.finish_style_value(screen, PropId::Width, StyleValue::Length(Length::Dp(10)));
+    /// assert_eq!(v, StyleValue::Length(Length::Px(20))); // 10 dp at 320 DPI
+    /// let px = StyleValue::Length(Length::Px(7));
+    /// assert_eq!(e.finish_style_value(screen, PropId::Width, px), px); // unchanged
+    /// ```
+    #[must_use]
+    pub fn finish_style_value(&self, id: NodeId, prop: PropId, v: StyleValue) -> StyleValue {
+        twine_style::resolve_value(self, id, prop, &self.style_defaults(), v)
     }
 
     /// The DPI that density-independent lengths of `id` resolve with: the DPI of the display
     /// showing `id` (`DisplayInfo::dpi`), else of the default display, else
-    /// [`twine_style::DEFAULT_DPI`]. With one display this is a direct read.
+    /// [`twine_style::DEFAULT_DPI`]. With one display this is a direct read; the resolver
+    /// asks only when it finds a `Dp` value.
     #[must_use]
     pub fn node_dpi(&self, id: NodeId) -> u16 {
         if let [d] = self.displays.as_slice() {
@@ -349,7 +431,7 @@ impl Engine {
         self.style_prop(id, part, prop).as_opa().unwrap_or(Opa::COVER)
     }
 
-    /// The font of `part` (`TextFont`, inherited, default from the configuration).
+    /// The font of `part` (`Font`, inherited, default from the configuration).
     #[must_use]
     pub fn style_font(&self, id: NodeId, part: Part) -> &'static Font {
         self.style_prop(id, part, PropId::Font)
@@ -422,7 +504,7 @@ impl Engine {
 
     /// Adds (`on`) or removes states. Idempotent; when the change selects the same style
     /// entries as before nothing is invalidated (LVGL `lv_obj_style_state_compare`).
-    /// Otherwise the style transitions of the new state start (see `TransitionDsc`; only on
+    /// Otherwise the style transitions of the new state start (see `twine_style::Transition`; only on
     /// nodes that were drawn already). Every actual change sends
     /// [`StateChanged`](crate::EventCode::StateChanged) with the previous state (posted: a
     /// busy widget gets it once it is back, see [`post_event`](Self::post_event)).
@@ -564,7 +646,7 @@ impl Engine {
 /// `item_parts` (the widget redraws those items itself). Returns the strongest effect and
 /// whether an inherited property is involved.
 fn state_compare(entries: &[StyleEntry], old: State, new: State, item_parts: &[Part]) -> (StateCmp, bool) {
-    let applies = |sel: &Selector, st: State| sel.state == State::ANY || sel.state.bits() & !st.bits() == 0;
+    let applies = |sel: &Selector, st: State| sel.state_matches(st);
     let mut res = StateCmp::Same;
     let mut inherited = false;
     for e in entries {
@@ -605,7 +687,7 @@ mod tests {
         l.insert(StyleEntry::new(Selector::MAIN, &B, EntryKind::Normal));
         l.insert(StyleEntry::new(Selector::MAIN, &B, EntryKind::Theme));
         l.local_mut(Selector::MAIN)
-            .set(StyleProp::Radius(twine_style::Radius::Px(3)));
+            .set(StyleProp::Radius(twine_style::Radius::Px(3).into()));
         l.insert(StyleEntry::new(Selector::MAIN, &A, EntryKind::Transition));
         let kinds: Vec<EntryKind> = l.entries().iter().map(|e| e.kind).collect();
         assert_eq!(
@@ -631,26 +713,34 @@ mod tests {
 
     #[test]
     fn transition_entry_beats_all() {
-        use crate::{Obj, Tree};
+        use crate::{Engine, EngineConfig, Obj};
         use alloc::boxed::Box;
-        static RED: Style = Style::new(&[StyleProp::BgColor(Color::RED)]);
-        static BLUE: Style = Style::new(&[StyleProp::BgColor(Color::BLUE)]);
-        let mut t = Tree::new();
-        let n = t.create(None, Box::new(Obj)).unwrap();
-        let list = &mut t.node_mut(n).unwrap().styles;
+        static RED: Style = Style::new(&[StyleProp::BgColor(::twine_style::design::DesignValue::Fixed(
+            Color::RED,
+        ))]);
+        static BLUE: Style = Style::new(&[StyleProp::BgColor(::twine_style::design::DesignValue::Fixed(
+            Color::BLUE,
+        ))]);
+        let mut e = Engine::new(EngineConfig::default()).unwrap();
+        let n = e.create_root(Box::new(Obj)).unwrap();
+        let list = &mut e.tree.node_mut(n).unwrap().styles;
         list.local_mut(Selector::state(State::PRESSED))
-            .set(StyleProp::BgColor(Color::GREEN));
+            .set(StyleProp::BgColor(Color::GREEN.into()));
         list.insert(StyleEntry::new(Selector::MAIN, &BLUE, EntryKind::Normal));
         list.insert(StyleEntry::new(Selector::MAIN, &RED, EntryKind::Transition));
-        t.node_mut(n).unwrap().state = State::PRESSED;
-        let v = twine_style::resolve(&t, n, Part::Main, PropId::BgColor, &StyleDefaults::default());
+        e.tree.node_mut(n).unwrap().state = State::PRESSED;
+        let v = twine_style::resolve(&e, n, Part::Main, PropId::BgColor, &StyleDefaults::default());
         assert_eq!(v, StyleValue::Color(Color::RED));
     }
 
     #[test]
     fn state_compare_classifies() {
-        static PRESSED_COLOR: Style = Style::new(&[StyleProp::BgColor(Color::RED)]);
-        static PRESSED_PAD: Style = Style::new(&[StyleProp::PaddingTop(Length::Px(3))]);
+        static PRESSED_COLOR: Style = Style::new(&[StyleProp::BgColor(
+            ::twine_style::design::DesignValue::Fixed(Color::RED),
+        )]);
+        static PRESSED_PAD: Style = Style::new(&[StyleProp::PaddingTop(
+            ::twine_style::design::DesignValue::Fixed(Length::Px(3)),
+        )]);
         static PRESSED_SHADOW: Style = Style::new(&[StyleProp::ShadowWidth(3)]);
         let e = |s: &'static Style| StyleEntry::new(Selector::state(State::PRESSED), s, EntryKind::Normal);
         let d = State::DEFAULT;

@@ -10,7 +10,7 @@ use twine_widgets_ext::menu::{
 
 use crate::build::{BuildCx, WidgetView, widget_view};
 use crate::prop::IntoProp;
-use crate::text::{IntoText, bind_str};
+use crate::text::{IntoText, TextProp, TextRef, bind_str};
 use crate::view::{View, ViewSeq};
 
 /// A reference to a menu page, filled when the page is built (`.page_ref(r)`), so rows can
@@ -97,13 +97,13 @@ impl WidgetView<Menu> {
 
     /// Where the headers go.
     #[must_use]
-    pub fn header_mode(self, mode: impl IntoProp<MenuHeaderMode>) -> Self {
+    pub fn header_mode<M>(self, mode: impl IntoProp<MenuHeaderMode, M>) -> Self {
         self.bind(mode, |m: &mut Menu, cx, mode| m.set_mode_header(cx, mode))
     }
 
     /// Whether the root page shows a back button.
     #[must_use]
-    pub fn root_back_button(self, on: impl IntoProp<bool>) -> Self {
+    pub fn root_back_button<M>(self, on: impl IntoProp<bool, M>) -> Self {
         self.bind(on, |m: &mut Menu, cx, on| m.set_mode_root_back_button(cx, on))
     }
 }
@@ -135,22 +135,20 @@ impl WidgetView<MenuPage> {
     /// The title shown in the menu's header while the page is loaded (any [`IntoText`]; a
     /// dynamic title also updates the header of a loaded page).
     #[must_use]
-    pub fn title(self, title: impl IntoText) -> Self {
-        let title = title.into_text();
+    pub fn title<MT>(self, title: impl IntoText<MT>) -> Self {
+        self.title_prop(title.into_text())
+    }
+
+    /// [`title`](Self::title) after the conversion (not generic).
+    fn title_prop(self, title: TextProp) -> Self {
         self.op(move |cx, node| {
-            bind_str(
-                cx,
-                node,
-                title,
-                |e, n, s| {
-                    e.with_widget_mut(n, |p: &mut MenuPage, wcx| p.set_title_static(wcx, Some(s)));
-                    refresh_menu_titles(e, n);
-                },
-                |e, n, s| {
-                    e.with_widget_mut(n, |p: &mut MenuPage, wcx| p.set_title(wcx, Some(s)));
-                    refresh_menu_titles(e, n);
-                },
-            );
+            bind_str(cx, node, title, |e, n, s| {
+                e.with_widget_mut(n, |p: &mut MenuPage, wcx| match s {
+                    TextRef::Static(s) => p.set_title_static(wcx, Some(s)),
+                    TextRef::Borrowed(s) => p.set_title(wcx, Some(s)),
+                });
+                refresh_menu_titles(e, n);
+            });
         })
     }
 

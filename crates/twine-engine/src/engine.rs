@@ -44,7 +44,7 @@ pub struct Engine {
     pub(crate) displays: Vec<Display>,
     pub(crate) default_display: Option<DisplayId>,
     pub(crate) config: EngineConfig,
-    /// The default display's theme font (the default `TextFont` of every node).
+    /// The default display's theme font (the default `Font` of every node).
     pub(crate) theme_font: Option<&'static twine_text::Font>,
     pub(crate) res: Option<RenderRes>,
     /// Nodes drawn in the current frame.
@@ -70,9 +70,6 @@ pub struct Engine {
     pub(crate) default_group: Option<crate::GroupId>,
     /// Gridnav containers.
     pub(crate) gridnavs: Vec<crate::gridnav::GridnavDsc>,
-    /// Grid templates owned by the engine (`set_grid_column_tracks`), few: one per grid
-    /// container built at run time.
-    pub(crate) grid_templates: Vec<crate::layout::GridTemplate>,
     /// Next user handler id.
     pub(crate) next_handler_id: u32,
     /// Next `EventCode::Custom` value.
@@ -157,7 +154,6 @@ impl Engine {
             groups: Vec::new(),
             default_group: None,
             gridnavs: Vec::new(),
-            grid_templates: Vec::new(),
             next_handler_id: 0,
             next_event_code: 0,
             layout: crate::layout::LayoutState::default(),

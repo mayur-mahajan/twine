@@ -1,0 +1,25 @@
+error[E0277]: `{integer}` cannot be used as a text
+ --> tests/ui/wrong_text.rs:4:19
+  |
+4 |     let _ = label(42);
+  |             ----- ^^ not a `&'static str`, `Symbol`, `String`, `text!`, a closure returning a `String`, `&'static str` or `Symbol`, or a signal or memo of a string
+  |             |
+  |             required by a bound introduced by this call
+  |
+  = help: the trait `IntoText<_>` is not implemented for `{integer}`
+  = note: format other values with `text!` (no allocation) or a closure returning a `String`
+  = help: the following other types implement trait `IntoText<M>`:
+            `&'static str` implements `IntoText<Value<&'static str>>`
+            `&T` implements `IntoText<twine_view::marker::Ref<M>>`
+            `Memo<S>` implements `IntoText<Reactive<S>>`
+            `ReadSignal<S>` implements `IntoText<Reactive<S>>`
+            `Signal<S>` implements `IntoText<Reactive<S>>`
+            `String` implements `IntoText<Value<String>>`
+            `TextFn` implements `IntoText<Value<TextFn>>`
+            `TextProp` implements `IntoText<twine_view::marker::Prop>`
+            `twine_view::prelude::Symbol` implements `IntoText<Value<twine_view::prelude::Symbol>>`
+note: required by a bound in `twine_view::label`
+ --> src/widgets/core.rs
+  |
+  | pub fn label<MT>(text: impl IntoText<MT>) -> WidgetView<Label> {
+  |                             ^^^^^^^^^^^^ required by this bound in `label`

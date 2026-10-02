@@ -166,7 +166,9 @@ impl Label {
                         .playback(t)
                         .playback_delay(LABEL_SCROLL_DELAY)
                         .repeat_delay(LABEL_SCROLL_DELAY)
-                        .repeat(Repeat::Infinite);
+                        .repeat(Repeat::Forever)
+                        // Scrolling is how the text can be read: essential.
+                        .essential();
                     ScrollState::ensure(&mut self.scroll.x, cx, ANIM_OFS_X, (start, end, t), a);
                     hor = true;
                 } else {
@@ -181,7 +183,9 @@ impl Label {
                         .playback(t)
                         .playback_delay(LABEL_SCROLL_DELAY)
                         .repeat_delay(LABEL_SCROLL_DELAY)
-                        .repeat(Repeat::Infinite);
+                        .repeat(Repeat::Forever)
+                        // Scrolling is how the text can be read: essential.
+                        .essential();
                     ScrollState::ensure(&mut self.scroll.y, cx, ANIM_OFS_Y, (start, end, t), a);
                 } else {
                     ScrollState::clear(&mut self.scroll.y, &mut self.scroll.ofs.y, cx);
@@ -195,7 +199,9 @@ impl Label {
                     let a = Anim::new(start, end)
                         .duration(t)
                         .easing(Easing::Linear)
-                        .repeat(Repeat::Infinite);
+                        .repeat(Repeat::Forever)
+                        // Scrolling is how the text can be read: essential.
+                        .essential();
                     ScrollState::ensure(&mut self.scroll.x, cx, ANIM_OFS_X, (start, end, t), a);
                     hor = true;
                 } else {
@@ -207,7 +213,9 @@ impl Label {
                     let a = Anim::new(start, end)
                         .duration(t)
                         .easing(Easing::Linear)
-                        .repeat(Repeat::Infinite);
+                        .repeat(Repeat::Forever)
+                        // Scrolling is how the text can be read: essential.
+                        .essential();
                     ScrollState::ensure(&mut self.scroll.y, cx, ANIM_OFS_Y, (start, end, t), a);
                 } else {
                     ScrollState::clear(&mut self.scroll.y, &mut self.scroll.ofs.y, cx);

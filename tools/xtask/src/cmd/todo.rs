@@ -1,6 +1,6 @@
 //! `cargo xtask todo-check`: rejects untracked work markers (P9).
 //!
-//! Scans `crates/`, `tools/`, `examples/` and `firmware/` (`*.rs`, `*.toml`, skipping `target/`)
+//! Scans `crates/` (examples included), `tools/` and `firmware/` (`*.rs`, `*.toml`, skipping `target/`)
 //! and fails on `todo!(`, `unimplemented!(`, `TODO`, `FIXME`, `XXX`, `HACK`, `dbg!(` and on any
 //! `NOTE(` that is not followed by a step id: `Pxx.Syy)` (original plan) or `Rn.Smm)` (the API
 //! evolution plan, `docs/plan/api-evolution.md`). The only allowed markers are
@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::util::{R, workspace_root};
 
-const ROOTS: &[&str] = &["crates", "tools", "examples", "firmware"];
+const ROOTS: &[&str] = &["crates", "tools", "firmware"];
 /// Paths (relative to the workspace root, `/`-separated) exempt from the check.
 const EXEMPT: &[&str] = &["tools/xtask/src/cmd/todo.rs"];
 const FORBIDDEN: &[&str] = &[

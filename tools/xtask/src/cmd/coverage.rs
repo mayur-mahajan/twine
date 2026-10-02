@@ -49,12 +49,9 @@ impl CrateLines {
 /// Extracts the crate name from a source path (`…/crates/<name>/…` or `…/tools/<name>/…`).
 fn crate_of(path: &str) -> Option<String> {
     let norm = path.replace('\\', "/");
-    for marker in ["/crates/", "/tools/", "/examples/"] {
+    for marker in ["/crates/", "/tools/"] {
         if let Some(pos) = norm.rfind(marker) {
             let rest = &norm[pos + marker.len()..];
-            if marker == "/examples/" {
-                return Some("twine-examples".into());
-            }
             return rest.split('/').next().map(str::to_string);
         }
     }

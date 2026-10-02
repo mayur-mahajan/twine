@@ -110,12 +110,8 @@ fn idle_after_every_interaction() {
 #[test]
 fn no_alloc_steady_state_frames() {
     let mut t = TestUi::new(200, 100).mount(|cx| {
-        let (a, _ctl) = cx.animation(
-            Anim::new(0, 3600)
-                .duration(Duration::ms(1000))
-                .repeat(Repeat::Infinite),
-        );
-        let v = cx.tween(move || a.get() / 36, Duration::ms(50), Easing::Linear);
+        let (a, _ctl) = cx.animation(0, 3600, AnimSpec::new(Duration::ms(1000)).forever());
+        let v = cx.tween(move || a.get() / 36, Duration::ms(50));
         label(text!("{} %", v.get())).test_id("l")
     });
     let period = t.engine().config().refr_period;

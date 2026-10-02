@@ -196,11 +196,7 @@ fn heap_stable_after_20_open_close_cycles() {
 
 #[test]
 fn snapshot_selection() {
-    for (mode, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
-        let theme = match mode {
-            ThemeMode::Light => DefaultTheme::light(),
-            ThemeMode::Dark => DefaultTheme::dark(),
-        };
+    for (theme, name) in [(DefaultTheme::light(), "light"), (DefaultTheme::dark(), "dark")] {
         let mut t = TestUi::new(320, 240).theme(std::rc::Rc::new(theme)).mount(app);
         t.run_until_idle();
         let s = t.root_scope().expect_context::<Selection>();

@@ -25,8 +25,8 @@ fn column(e: &mut Engine, parent: NodeId) -> NodeId {
         &[
             StyleProp::Layout(LayoutKind::Flex),
             StyleProp::FlexFlow(FlexFlow::COLUMN),
-            StyleProp::RowGap(Length::Px(4)),
-            StyleProp::Width(Length::Px(120)),
+            StyleProp::RowGap(Length::Px(4).into()),
+            StyleProp::Width(Length::Px(120).into()),
         ],
     );
     c
@@ -47,10 +47,10 @@ fn leaf(e: &mut Engine, parent: NodeId, h: i32, c: Color) -> NodeId {
         e,
         n,
         &[
-            StyleProp::Width(Length::pct(50)),
-            StyleProp::Height(Length::Px(h)),
-            StyleProp::BgColor(c),
-            StyleProp::BgOpacity(Opa::COVER),
+            StyleProp::Width(Length::pct(50).into()),
+            StyleProp::Height(Length::Px(h).into()),
+            StyleProp::BgColor(c.into()),
+            StyleProp::BgOpacity(Opa::COVER.into()),
         ],
     );
     n
@@ -157,7 +157,10 @@ fn passthrough_draws_nothing_and_does_not_clip() {
         style(
             e,
             w,
-            &[StyleProp::BgColor(Color::RED), StyleProp::BgOpacity(Opa::COVER)],
+            &[
+                StyleProp::BgColor(Color::RED.into()),
+                StyleProp::BgOpacity(Opa::COVER.into()),
+            ],
         );
         let n = e.create(w, Box::new(Obj)).unwrap();
         e.set_pos(n, 40, 40);
@@ -165,7 +168,10 @@ fn passthrough_draws_nothing_and_does_not_clip() {
         style(
             e,
             n,
-            &[StyleProp::BgColor(Color::BLUE), StyleProp::BgOpacity(Opa::COVER)],
+            &[
+                StyleProp::BgColor(Color::BLUE.into()),
+                StyleProp::BgOpacity(Opa::COVER.into()),
+            ],
         );
     }
     h.run_until_idle();
@@ -230,7 +236,10 @@ fn passthrough_never_covers_the_gaps_between_its_children() {
         style(
             e,
             w,
-            &[StyleProp::BgColor(Color::RED), StyleProp::BgOpacity(Opa::COVER)],
+            &[
+                StyleProp::BgColor(Color::RED.into()),
+                StyleProp::BgOpacity(Opa::COVER.into()),
+            ],
         );
         leaf(e, w, 10, Color::BLUE);
         leaf(e, w, 10, Color::BLUE);

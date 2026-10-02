@@ -8,7 +8,7 @@ use core::fmt;
 use twine_core::{Duration, Instant};
 
 use crate::Anim;
-use crate::anim::{AnimCallbacks, AnimProp, AnimTarget, NodeKey, Phase};
+use crate::anim::{AnimCallbacks, AnimTarget, NodeKey, Phase, PropKey};
 
 /// Handle of an animation in a [`Timeline`]. Generational: once the animation ends or is
 /// removed, its id is rejected even if the slot is reused.
@@ -122,7 +122,7 @@ enum Which {
 ///
 /// ```
 /// use core::any::Any;
-/// use twine_anim::{Anim, AnimProp, AnimTarget, TickSink, Timeline};
+/// use twine_anim::{Anim, AnimTarget, TickSink, Timeline};
 /// use twine_core::{Duration, Instant};
 ///
 /// struct Sink(Vec<(AnimTarget, i32)>);
@@ -133,7 +133,7 @@ enum Which {
 ///
 /// let mut tl = Timeline::new();
 /// let t0 = Instant::ZERO;
-/// let target = AnimTarget::Node(7, AnimProp::X);
+/// let target = AnimTarget::Node(7, 0); // node key 7, property code 0 (the owner's meaning)
 /// tl.add(Anim::new(0, 100).duration(Duration::ms(100)).target(target), t0);
 /// let mut sink = Sink(Vec::new());
 /// assert_eq!(tl.tick(t0 + Duration::ms(50), &mut sink), Some(t0 + Duration::ms(50)));
@@ -290,8 +290,9 @@ impl Timeline {
         self.remove_where(|t| matches!(t, AnimTarget::Node(k, _) if k == key))
     }
 
-    /// Removes the animations of property `prop` of node `key`; returns how many were removed.
-    pub fn remove_target_prop(&mut self, key: NodeKey, prop: AnimProp) -> usize {
+    /// Removes the animations of property code `prop` of node `key`; returns how many were
+    /// removed.
+    pub fn remove_target_prop(&mut self, key: NodeKey, prop: PropKey) -> usize {
         self.remove_where(|t| t == AnimTarget::Node(key, prop))
     }
 
@@ -299,6 +300,34 @@ impl Timeline {
     #[must_use]
     pub fn get(&self, id: AnimId) -> Option<&Anim> {
         self.slot(id).and_then(|s| s.anim.as_ref())
+    }
+
+    /// The timing of a live animation, to change it in place (e.g. to apply a motion
+    /// preference before a [`restart`](Self::restart)); takes effect from the next tick as if
+    /// the animation had always had it. `None` for a stale id. Never panics; O(1).
+    ///
+    /// The timeline knows no motion preference: the spec written here is used as is. The
+    /// engine applies [`Motion::apply`](crate::Motion::apply) when it **starts** an animation
+    /// (and, when the preference becomes stricter, only ends running animations that would not
+    /// end by themselves), so a spec changed through `spec_mut` is not re-adjusted to the
+    /// current preference — apply it yourself (`*spec = motion.apply(*spec)`) if it must
+    /// honour it.
+    ///
+    /// ```
+    /// use twine_anim::{Anim, Motion, Timeline};
+    /// use twine_core::{Duration, Instant};
+    ///
+    /// let mut tl = Timeline::new();
+    /// let id = tl.add(Anim::new(0, 100).duration(Duration::ms(400)), Instant::ZERO);
+    /// if let Some(spec) = tl.spec_mut(id) {
+    ///     *spec = Motion::Reduced.apply(*spec); // not done for you
+    /// }
+    /// assert_eq!(tl.get(id).unwrap().spec.duration, Motion::REDUCED_CAP);
+    /// ```
+    pub fn spec_mut(&mut self, id: AnimId) -> Option<&mut crate::AnimSpec> {
+        self.slot_mut(id)
+            .and_then(|s| s.anim.as_mut())
+            .map(|a| &mut a.spec)
     }
 
     /// Every live animation (running or paused) with its id, in slot order.
@@ -369,6 +398,48 @@ impl Timeline {
     /// Removes every animation (no callbacks are called).
     pub fn clear(&mut self) {
         self.remove_where(|_| true);
+    }
+
+    /// Ends every live animation for which `f` returns `true` at the next
+    /// [`tick`](Self::tick): its timing becomes [`Motion::None`](crate::Motion::None)'s (no
+    /// durations, no delays, one cycle; essential or not) and it restarts at `now`, so that tick
+    /// applies its final value and runs its callbacks (`on_start` if it had not started yet,
+    /// `on_complete`). A paused animation is resumed to end. Returns how many were ended. Used
+    /// when the motion preference becomes stricter; allocation-free, never panics.
+    ///
+    /// ```
+    /// use core::any::Any;
+    /// use twine_anim::{Anim, AnimTarget, TickSink, Timeline};
+    /// use twine_core::{Duration, Instant};
+    ///
+    /// struct Last(i32);
+    /// impl TickSink for Last {
+    ///     fn apply(&mut self, _: AnimTarget, v: i32) { self.0 = v; }
+    ///     fn ctx(&mut self) -> &mut dyn Any { self }
+    /// }
+    /// let mut tl = Timeline::new();
+    /// tl.add(Anim::new(0, 100).duration(Duration::secs(10)), Instant::ZERO);
+    /// assert_eq!(tl.finish_where(Instant::ZERO, |a| !a.spec.essential), 1);
+    /// let mut sink = Last(-1);
+    /// assert_eq!(tl.tick(Instant::from_millis(1), &mut sink), None); // done
+    /// assert_eq!(sink.0, 100);
+    /// ```
+    pub fn finish_where(&mut self, now: Instant, mut f: impl FnMut(&Anim) -> bool) -> usize {
+        let mut n = 0;
+        for s in &mut self.slots {
+            let Some(anim) = s.anim.as_mut() else { continue };
+            if !f(anim) {
+                continue;
+            }
+            let essential = anim.spec.essential;
+            anim.spec.essential = false;
+            anim.spec = crate::Motion::None.apply(anim.spec);
+            anim.spec.essential = essential;
+            s.start_time = now;
+            s.paused_at = None;
+            n += 1;
+        }
+        n
     }
 
     /// Calls callback `which` of slot `index`, then puts it back if the animation still exists.
@@ -504,6 +575,11 @@ impl Timeline {
 mod tests {
     use super::*;
     use crate::{Easing, Repeat};
+
+    /// Property codes of the tests (any numbers: the timeline only compares them).
+    const X: PropKey = 0;
+    const Y: PropKey = 1;
+    const OPA: PropKey = 4;
     use alloc::rc::Rc;
     use alloc::string::String;
     use core::cell::RefCell;
@@ -528,7 +604,7 @@ mod tests {
     }
 
     fn node(k: u32) -> AnimTarget {
-        AnimTarget::Node(k, AnimProp::X)
+        AnimTarget::Node(k, X)
     }
 
     fn lin(start: i32, end: i32, dur_ms: u64) -> Anim {
@@ -542,22 +618,22 @@ mod tests {
         let mut tl = Timeline::new();
         let mut sink = Sink::default();
         tl.add(lin(0, 100, 100).target(node(1)), ms(0));
-        tl.add(lin(10, 20, 100).target(AnimTarget::Node(1, AnimProp::Opa)), ms(0));
+        tl.add(lin(10, 20, 100).target(AnimTarget::Node(1, OPA)), ms(0));
         assert_eq!(tl.tick(ms(0), &mut sink), Some(ms(0)));
         assert_eq!(tl.tick(ms(50), &mut sink), Some(ms(50)));
         assert_eq!(
             sink.applied,
             [
                 (node(1), 0),
-                (AnimTarget::Node(1, AnimProp::Opa), 10),
+                (AnimTarget::Node(1, OPA), 10),
                 (node(1), 50),
-                (AnimTarget::Node(1, AnimProp::Opa), 15)
+                (AnimTarget::Node(1, OPA), 15)
             ]
         );
         assert_eq!(tl.tick(ms(1000), &mut sink), None);
         assert_eq!(
             sink.applied[4..],
-            [(node(1), 100), (AnimTarget::Node(1, AnimProp::Opa), 20)]
+            [(node(1), 100), (AnimTarget::Node(1, OPA), 20)]
         );
         assert_eq!(tl.running_count(), 0);
     }
@@ -579,7 +655,7 @@ mod tests {
         let mut tl = Timeline::new();
         let mut sink = Sink::default();
         let a = tl.add(lin(0, 100, 100).target(node(1)), ms(0));
-        let b = tl.add(lin(0, 100, 100).target(AnimTarget::Node(1, AnimProp::Y)), ms(0));
+        let b = tl.add(lin(0, 100, 100).target(AnimTarget::Node(1, Y)), ms(0));
         let c = tl.add(lin(500, 600, 100).target(node(1)), ms(0));
         assert!(tl.get(a).is_none());
         assert!(tl.get(b).is_some() && tl.get(c).is_some());
@@ -623,7 +699,7 @@ mod tests {
         let mut sink = Sink::default();
         let a = lin(0, 100, 100)
             .delay(Duration::ms(10))
-            .repeat(Repeat::Count(2))
+            .repeat(Repeat::Times(3))
             .on_start(logger(&log, "start"))
             .on_repeat(logger(&log, "repeat"))
             .on_complete(logger(&log, "complete"));

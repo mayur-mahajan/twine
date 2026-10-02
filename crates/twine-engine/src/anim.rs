@@ -18,11 +18,140 @@ use alloc::vec::Vec;
 use core::any::Any;
 use core::cell::RefCell;
 
-use twine_anim::{Anim, AnimCx, AnimId, AnimProp, AnimTarget, TickSink, Timeline, TimerId, Timers};
+use twine_anim::{
+    Anim, AnimCx, AnimId, AnimTarget, Motion, NodeKey, PropKey, TickSink, Timeline, TimerId, Timers,
+};
 use twine_core::{Angle, Duration, Instant, Opa, Scale};
 use twine_style::{Length, PropId, Selector, StyleProp, StyleValue};
 
 use crate::{Engine, NodeId, Wake, fmt_node_id};
+
+/// The node property an engine animation writes ([`Engine::anim_start`]).
+///
+/// Typed here, where the vocabulary lives (style properties by [`PropId`], widget values):
+/// `twine-anim`'s timeline only compares opaque codes ([`PropKey`]), which
+/// [`key`](Self::key) / [`from_key`](Self::from_key) convert to and from (a `match`, no table).
+///
+/// ```
+/// use twine_engine::AnimProp;
+/// use twine_style::PropId;
+///
+/// for p in [AnimProp::X, AnimProp::Style(PropId::Radius), AnimProp::Custom(7), AnimProp::Value] {
+///     assert_eq!(AnimProp::from_key(p.key()), Some(p));
+/// }
+/// assert_ne!(AnimProp::Custom(0).key(), AnimProp::X.key());
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum AnimProp {
+    /// Local X position.
+    X,
+    /// Local Y position.
+    Y,
+    /// Width.
+    Width,
+    /// Height.
+    Height,
+    /// Opacity of the part (`part_opacity`).
+    Opa,
+    /// Horizontal translation.
+    TranslateX,
+    /// Vertical translation.
+    TranslateY,
+    /// Horizontal transform scale.
+    ScaleX,
+    /// Vertical transform scale.
+    ScaleY,
+    /// Transform rotation.
+    Rotation,
+    /// Any integer-like style property (integers, pixel lengths, opacities, angles, scales) of
+    /// the `Main` part, set as a local property.
+    Style(PropId),
+    /// Horizontal scroll position.
+    ScrollX,
+    /// Vertical scroll position.
+    ScrollY,
+    /// A widget-defined value (e.g. a bar's value).
+    Value,
+    /// A widget-defined custom property.
+    Custom(u16),
+}
+
+/// First code of [`AnimProp::Style`] (`+ PropId`).
+const KEY_STYLE: PropKey = 0x100;
+/// First code of [`AnimProp::Custom`] (`+ id`).
+const KEY_CUSTOM: PropKey = 0x1_0000;
+
+impl AnimProp {
+    /// The property's code in a [`AnimTarget::Node`] target.
+    #[must_use]
+    pub const fn key(self) -> PropKey {
+        match self {
+            AnimProp::X => 0,
+            AnimProp::Y => 1,
+            AnimProp::Width => 2,
+            AnimProp::Height => 3,
+            AnimProp::Opa => 4,
+            AnimProp::TranslateX => 5,
+            AnimProp::TranslateY => 6,
+            AnimProp::ScaleX => 7,
+            AnimProp::ScaleY => 8,
+            AnimProp::Rotation => 9,
+            AnimProp::ScrollX => 10,
+            AnimProp::ScrollY => 11,
+            AnimProp::Value => 12,
+            AnimProp::Style(p) => KEY_STYLE + p as PropKey,
+            AnimProp::Custom(c) => KEY_CUSTOM + c as PropKey,
+        }
+    }
+
+    /// The property of a code made by [`key`](Self::key) (`None` for any other number).
+    #[must_use]
+    pub const fn from_key(key: PropKey) -> Option<AnimProp> {
+        Some(match key {
+            0 => AnimProp::X,
+            1 => AnimProp::Y,
+            2 => AnimProp::Width,
+            3 => AnimProp::Height,
+            4 => AnimProp::Opa,
+            5 => AnimProp::TranslateX,
+            6 => AnimProp::TranslateY,
+            7 => AnimProp::ScaleX,
+            8 => AnimProp::ScaleY,
+            9 => AnimProp::Rotation,
+            10 => AnimProp::ScrollX,
+            11 => AnimProp::ScrollY,
+            12 => AnimProp::Value,
+            k if k >= KEY_CUSTOM && k - KEY_CUSTOM <= u16::MAX as PropKey => {
+                AnimProp::Custom((k - KEY_CUSTOM) as u16)
+            }
+            k if k > KEY_STYLE && k < KEY_STYLE + 256 => match PropId::from_u8((k - KEY_STYLE) as u8) {
+                Some(p) => AnimProp::Style(p),
+                None => return None,
+            },
+            _ => return None,
+        })
+    }
+
+    /// The [`AnimTarget::Node`] target of this property of node `node`.
+    /// For code driving a [`Timeline`](twine_anim::Timeline) or matching the targets of the
+    /// engine's animations by hand. Never panics.
+    ///
+    /// ```
+    /// use twine_anim::AnimTarget;
+    /// use twine_engine::{AnimProp, Engine, EngineConfig, Obj};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let n = e.create_root(Box::new(Obj)).unwrap();
+    /// let t = AnimProp::X.target(n.to_raw());
+    /// assert!(matches!(t, AnimTarget::Node(k, _) if k == n.to_raw()));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn target(self, node: NodeKey) -> AnimTarget {
+        AnimTarget::Node(node, self.key())
+    }
+}
 
 /// A shared exec closure of [`Engine::anim_start_fn`].
 type ExecRc = Rc<RefCell<dyn FnMut(&mut Engine, i32)>>;
@@ -145,6 +274,8 @@ pub(crate) struct AnimState {
     timer_skip: Vec<TimerId>,
     draining_timers: bool,
     warned: Warned,
+    /// The motion preference, applied once per animation start.
+    pub(crate) motion: Motion,
 }
 
 impl core::fmt::Debug for AnimState {
@@ -160,6 +291,15 @@ impl AnimState {
     /// The time to start something at: the running step's time, else the last known time.
     fn now(&self) -> Instant {
         self.clock.unwrap_or(self.last_now)
+    }
+
+    /// Applies the motion preference to an animation being started (once per start; nothing
+    /// to do for `Motion::Full` and essential animations).
+    #[inline]
+    fn adjust(&self, anim: &mut Anim) {
+        if self.motion.affects(&anim.spec) {
+            anim.spec = self.motion.apply(anim.spec);
+        }
     }
 
     fn after_add(&mut self, id: AnimId) {
@@ -191,10 +331,14 @@ impl Engine {
     /// | `Value`, `Custom(id)` | [`Widget::anim_value`](crate::Widget::anim_value) / [`Widget::anim_custom`](crate::Widget::anim_custom) |
     ///
     /// The animation starts at the current update (or the next one when called between
-    /// updates). Deleting the node stops it.
+    /// updates). Deleting the node stops it. Its timing is adjusted to the engine's
+    /// [`motion`](Self::motion) preference unless it is essential ([`Anim::essential`]); this
+    /// holds for every way an animation is started (also [`anim_start_fn`](Self::anim_start_fn),
+    /// style transitions, screen loads and scroll animations).
     ///
     /// ```
-    /// use twine_anim::{Anim, AnimProp};
+    /// use twine_anim::Anim;
+    /// use twine_engine::AnimProp;
     /// use twine_core::{Duration, Instant};
     /// use twine_engine::{Engine, EngineConfig, Obj};
     /// use twine_style::{Part, PropId};
@@ -212,7 +356,8 @@ impl Engine {
             twine_core::warn!(target: "twine::anim", "anim_start: node {} not found", fmt_node_id(node));
             return AnimId::DANGLING;
         }
-        let anim = anim.target(AnimTarget::Node(node.to_raw(), prop));
+        let mut anim = anim.target(prop.target(node.to_raw()));
+        self.anim.adjust(&mut anim);
         let now = self.anim.now();
         let id = self.anim.timeline.add(anim, now);
         self.anim.after_add(id);
@@ -231,14 +376,15 @@ impl Engine {
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let n = e.create_root(Box::new(Obj)).unwrap();
     /// e.anim_start_fn(Anim::new(0, 255).duration(Duration::ms(10)), move |e, v| {
-    ///     e.set_local_prop(n, Selector::MAIN, StyleProp::BgColor(Color::new(v as u8, 0, 0)));
+    ///     e.set_local_prop(n, Selector::MAIN, StyleProp::BgColor(Color::new(v as u8, 0, 0).into()));
     /// });
     /// e.run_anims(Instant::ZERO);
     /// e.run_anims(Instant::from_millis(10));
     /// assert_eq!(e.style_color(n, Part::Main, PropId::BgColor), Color::new(255, 0, 0));
     /// ```
-    pub fn anim_start_fn(&mut self, anim: Anim, exec: impl FnMut(&mut Engine, i32) + 'static) -> AnimId {
+    pub fn anim_start_fn(&mut self, mut anim: Anim, exec: impl FnMut(&mut Engine, i32) + 'static) -> AnimId {
         let f: ExecRc = Rc::new(RefCell::new(exec));
+        self.anim.adjust(&mut anim);
         let now = self.anim.now();
         let id = self.anim.timeline.add_fn(
             anim,
@@ -257,9 +403,10 @@ impl Engine {
     /// loads).
     pub(crate) fn anim_start_internal(
         &mut self,
-        anim: Anim,
+        mut anim: Anim,
         exec: impl FnMut(&mut dyn Any, i32) + 'static,
     ) -> AnimId {
+        self.anim.adjust(&mut anim);
         let now = self.anim.now();
         let id = self.anim.timeline.add_fn(anim, exec, now);
         self.anim.after_add(id);
@@ -269,7 +416,8 @@ impl Engine {
     /// Adds an animation whose values arrive as [`Op::Apply`] of its own target (internal:
     /// style transitions use [`AnimTarget::Custom`] with their serial). Allocates nothing once
     /// the timeline has a free slot.
-    pub(crate) fn anim_start_target(&mut self, anim: Anim) -> AnimId {
+    pub(crate) fn anim_start_target(&mut self, mut anim: Anim) -> AnimId {
+        self.anim.adjust(&mut anim);
         let now = self.anim.now();
         let id = self.anim.timeline.add(anim, now);
         self.anim.after_add(id);
@@ -307,9 +455,18 @@ impl Engine {
     }
 
     /// Restarts an animation from its beginning (delay included). Returns `false` for a
-    /// finished or unknown id.
+    /// finished or unknown id. A restart is a start: the current [`motion`](Self::motion)
+    /// preference is applied to the animation's timing again (a stricter preference set since
+    /// shortens it; a timing shortened by an earlier preference stays short — start a new
+    /// animation to play the full timing again).
     pub fn anim_restart(&mut self, id: AnimId) -> bool {
         let now = self.anim.now();
+        let motion = self.anim.motion;
+        if let Some(spec) = self.anim.timeline.spec_mut(id) {
+            if motion.affects(spec) {
+                *spec = motion.apply(*spec);
+            }
+        }
         if !self.anim.timeline.restart(id, now) {
             return false;
         }
@@ -338,6 +495,76 @@ impl Engine {
             .iter()
             .filter(move |(_, a)| matches!(a.target, AnimTarget::Node(k, _) if k == key))
             .map(|(id, _)| id)
+    }
+
+    /// The motion preference (default [`Motion::Full`]): see [`set_motion`](Self::set_motion).
+    /// ```
+    /// use twine_anim::Motion;
+    /// use twine_engine::{Engine, EngineConfig};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// assert_eq!(e.motion(), Motion::Full);
+    /// e.set_motion(Motion::Reduced);
+    /// assert_eq!(e.motion(), Motion::Reduced);
+    /// ```
+    #[must_use]
+    pub fn motion(&self) -> Motion {
+        self.anim.motion
+    }
+
+    /// Sets the global motion preference (the platform's "reduce motion" accessibility
+    /// setting; [`Motion`] documents what each level does and which animations are essential).
+    /// It is applied once when an animation starts — every animation of the engine: those of
+    /// [`anim_start`](Self::anim_start) / [`anim_start_fn`](Self::anim_start_fn) (and so the
+    /// view layer's tweens), style transitions (with [`Motion::None`] they are not created at
+    /// all), screen load animations and scroll animations — never per frame.
+    ///
+    /// Running animations: when the preference becomes stricter, non-essential animations that
+    /// would not end by themselves end now — every one with [`Motion::None`], the endless ones
+    /// ([`Repeat::Forever`](twine_anim::Repeat::Forever)) with [`Motion::Reduced`] — jumping to
+    /// their final values at the next animation step (their `on_complete` callbacks run). The
+    /// others finish as started. Idempotent (an unchanged preference does nothing); never
+    /// allocates or panics.
+    ///
+    /// ```
+    /// use twine_anim::{Anim, Motion};
+    /// use twine_core::{Duration, Instant};
+    /// use twine_engine::{AnimProp, Engine, EngineConfig, Obj};
+    /// use twine_style::{Part, PropId};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let n = e.create_root(Box::new(Obj)).unwrap();
+    /// e.set_motion(Motion::None);
+    /// e.anim_start(n, AnimProp::Opa, Anim::new(0, 200).duration(Duration::secs(1)));
+    /// e.run_anims(Instant::ZERO); // no motion: the end value at once
+    /// assert_eq!(e.style_opa(n, Part::Main, PropId::PartOpacity).raw(), 200);
+    /// assert_eq!(e.anim_count(), 0);
+    /// ```
+    pub fn set_motion(&mut self, motion: Motion) {
+        let old = self.anim.motion;
+        if old == motion {
+            return;
+        }
+        self.anim.motion = motion;
+        let now = self.anim.now();
+        let ended = match motion {
+            Motion::Full => 0,
+            Motion::Reduced => self.anim.timeline.finish_where(now, |a| {
+                !a.spec.essential && a.spec.repeat == twine_anim::Repeat::Forever
+            }),
+            Motion::None => self.anim.timeline.finish_where(now, |a| !a.spec.essential),
+        };
+        if ended > 0 {
+            // Their final values are applied at the next animation step.
+            self.anim.added_since_tick = true;
+        }
+        twine_core::info!(
+            target: "twine::anim",
+            "motion {:?} -> {:?} ({} running animations ended)",
+            old,
+            motion,
+            ended
+        );
     }
 
     /// Number of live animations (running or paused, including style transitions and screen
@@ -561,7 +788,7 @@ impl Engine {
         match op {
             Op::Apply(AnimTarget::Node(key, prop), v) => {
                 let id = NodeId::from_raw(key);
-                if self.tree.contains(id) {
+                if let (true, Some(prop)) = (self.tree.contains(id), AnimProp::from_key(prop)) {
                     self.anim_apply(id, prop, v);
                 }
             }
@@ -594,13 +821,13 @@ impl Engine {
     fn anim_apply(&mut self, id: NodeId, prop: AnimProp, v: i32) {
         let px = |v| Length::Px(v);
         let p = match prop {
-            AnimProp::X => StyleProp::X(px(v)),
-            AnimProp::Y => StyleProp::Y(px(v)),
-            AnimProp::Width => StyleProp::Width(px(v)),
-            AnimProp::Height => StyleProp::Height(px(v)),
-            AnimProp::Opa => StyleProp::PartOpacity(Opa::from_raw(clamp_u(v, 255) as u8)),
-            AnimProp::TranslateX => StyleProp::TranslateX(px(v)),
-            AnimProp::TranslateY => StyleProp::TranslateY(px(v)),
+            AnimProp::X => StyleProp::X(px(v).into()),
+            AnimProp::Y => StyleProp::Y(px(v).into()),
+            AnimProp::Width => StyleProp::Width(px(v).into()),
+            AnimProp::Height => StyleProp::Height(px(v).into()),
+            AnimProp::Opa => StyleProp::PartOpacity(Opa::from_raw(clamp_u(v, 255) as u8).into()),
+            AnimProp::TranslateX => StyleProp::TranslateX(px(v).into()),
+            AnimProp::TranslateY => StyleProp::TranslateY(px(v).into()),
             AnimProp::ScaleX => {
                 StyleProp::TransformScaleX(Scale::from_raw_256(clamp_u(v, i32::from(u16::MAX)) as u16))
             }
@@ -608,14 +835,14 @@ impl Engine {
                 StyleProp::TransformScaleY(Scale::from_raw_256(clamp_u(v, i32::from(u16::MAX)) as u16))
             }
             AnimProp::Rotation => StyleProp::TransformRotation(Angle::deci_deg(v)),
-            AnimProp::StyleProp(raw) => {
-                let Some(p) = PropId::from_u8(raw).and_then(|pid| int_prop(pid, v)) else {
+            AnimProp::Style(pid) => {
+                let Some(p) = int_prop(pid, v) else {
                     if !self.anim.warned.style_prop {
                         self.anim.warned.style_prop = true;
                         twine_core::warn!(
                             target: "twine::anim",
-                            "AnimProp::StyleProp({}) is not an integer-like property (animate it with anim_start_fn)",
-                            raw
+                            "AnimProp::Style({:?}) is not an integer-like property (animate it with anim_start_fn)",
+                            pid
                         );
                     }
                     return;

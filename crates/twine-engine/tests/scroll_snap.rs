@@ -28,7 +28,7 @@ fn scene() -> (EngineHarness, NodeId, Vec<NodeId>) {
     let mut h = EngineHarness::new(240, 140).no_theme().mount_engine(|e| {
         let s = white_screen(e);
         let (cont, _) = common::list(e, s, Rect::from_xywh(20, 20, 200, 100), 0, 0);
-        style(e, cont, &[StyleProp::BgColor(Color::hex(0x00DD_DDDD))]);
+        style(e, cont, &[StyleProp::BgColor(Color::hex(0x00DD_DDDD).into())]);
         let cards = (0..8)
             .map(|i| {
                 twine_testing::scenes::child_box(
@@ -36,9 +36,9 @@ fn scene() -> (EngineHarness, NodeId, Vec<NodeId>) {
                     cont,
                     Rect::from_xywh(i * 100, 10, 80, 80),
                     &[
-                        StyleProp::BgColor(Color::hex(COLORS[i as usize])),
-                        StyleProp::BgOpacity(Opa::COVER),
-                        StyleProp::Radius(Radius::Px(8)),
+                        StyleProp::BgColor(Color::hex(COLORS[i as usize]).into()),
+                        StyleProp::BgOpacity(Opa::COVER.into()),
+                        StyleProp::Radius(Radius::Px(8).into()),
                     ],
                 )
             })

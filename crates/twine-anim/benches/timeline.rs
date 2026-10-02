@@ -8,7 +8,7 @@
 use core::any::Any;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use twine_anim::{Anim, AnimProp, AnimTarget, Easing, Repeat, TickSink, Timeline};
+use twine_anim::{Anim, AnimTarget, Easing, Repeat, TickSink, Timeline};
 use twine_core::{Duration, Instant};
 
 /// Sums the applied values (so the work is not optimized away).
@@ -35,8 +35,8 @@ fn timeline(n: u32, running: u32) -> Timeline {
                     Easing::Linear
                 })
                 .playback(Duration::ms(1000))
-                .repeat(Repeat::Infinite)
-                .target(AnimTarget::Node(i, AnimProp::X)),
+                .repeat(Repeat::Forever)
+                .target(AnimTarget::Node(i, 0)),
             Instant::ZERO,
         );
         if i >= running {

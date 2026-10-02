@@ -367,7 +367,7 @@ mod tests {
         assert_eq!(t.coords(n), Rect::from_xywh(20 + 50 - 25, 30 + 40 + 5, 50, 10));
         // Inner alignments use the base's content area.
         t.style_mut(base)
-            .set(twine_style::StyleProp::PaddingLeft(Length::Px(10)));
+            .set(twine_style::StyleProp::PaddingLeft(Length::Px(10).into()));
         t.set_align_to(
             n,
             Some(AlignTo {
@@ -411,7 +411,8 @@ mod tests {
         assert_eq!(t.coords(b).origin(), Point::new(100, 140));
         assert_eq!(t.coords(a).origin(), Point::new(120, 140));
         // Moving the base moves both on the next layout.
-        t.style_mut(base).set(twine_style::StyleProp::X(Length::Px(0)));
+        t.style_mut(base)
+            .set(twine_style::StyleProp::X(Length::Px(0).into()));
         run(&mut t);
         assert_eq!(t.coords(a).origin(), Point::new(20, 140));
     }
@@ -451,7 +452,8 @@ mod tests {
         t.reset_set_coords_calls();
         run(&mut t);
         assert_eq!(t.set_coords_calls(), 0);
-        t.style_mut(a).set(twine_style::StyleProp::Width(Length::Px(11)));
+        t.style_mut(a)
+            .set(twine_style::StyleProp::Width(Length::Px(11).into()));
         run(&mut t);
         assert_eq!(t.set_coords_calls(), 1);
     }

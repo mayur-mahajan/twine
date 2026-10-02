@@ -3,12 +3,12 @@
 
 pub use crate::text;
 pub use crate::{
-    AnimController, AnyView, BuildCx, BuildError, Container, Dynamic, Flex, ForEach, Grid, IntoAnyView,
-    IntoGridSpan, IntoIcon, IntoModel, IntoOptions, IntoProp, IntoText, ModalHandle, Model, ModelValue,
-    Navigator, NodeRef, Prop, PropValue, ScopeExt, ScreenAnim, ScreenLoad, TextFn, ThemeHandle, Ui,
-    UiBuilder, UiError, View, ViewExt, ViewSeq, VirtualList, Wake, When, WhenElse, WidgetView, button,
-    column, container, dynamic, flex, for_each, grid, image, label, navigator, row, scroll_view, spacer,
-    stack, use_navigator, use_theme, virtual_list, when, widget_view,
+    AnimController, AnyView, BuildCx, BuildError, Container, Dynamic, Flex, ForEach, Grid, Icon, IntoAnyView,
+    IntoModel, IntoOptions, IntoProp, IntoText, Layout, ModalHandle, Model, MotionHandle, Navigator, NodeRef,
+    Prop, ScopeExt, ScreenAnim, ScreenLoad, StyleExt, StyleScope, TextFn, ThemeHandle, Ui, UiBuilder,
+    UiError, View, ViewExt, ViewSeq, VirtualList, Wake, When, WhenElse, WidgetView, button, card, column,
+    container, dynamic, flex, for_each, grid, image, label, navigator, row, scroll_view, spacer, stack,
+    use_motion, use_navigator, use_theme, virtual_list, when, widget_view,
 };
 pub use crate::{
     Btn, MenuPageRef, MenuPageView, SpanView, TabView, TilePos, TileView, animimg, arc, bar, btn,
@@ -21,7 +21,7 @@ pub use crate::{
 pub use crate::{AsyncUi, AsyncUiBuilder};
 #[cfg(feature = "vector")]
 pub use crate::{VectorCanvas, vector_canvas};
-pub use twine_anim::{Anim, Easing, Interpolate, Repeat};
+pub use twine_anim::{Anim, AnimSpec, Easing, Interpolate, Motion, Repeat};
 pub use twine_core::fault::{FaultCounts, FaultKind, Faults};
 pub use twine_core::{
     Angle, AngularSpeed, Color, Duration, Fraction, Insets, Instant, Opa, Point, Rect, Scale, Size,
@@ -37,13 +37,14 @@ pub use twine_reactive::{
     Channel, EffectId, Memo, ReadSignal, Scope, Signal, UiWaker, WriteSignal, batch, untrack,
 };
 pub use twine_render::{BlendMode, BorderSide, Gradient, ShadowDsc};
+pub use twine_style::design;
 pub use twine_style::{
     Align, Anchor, Axis, BaseDir, CrossAlign, FlexDirection, FlexFlow, GridAlign, GridSpan, GridTrack,
-    LayoutKind, Length, MainAlign, Part, PropId, Radius, ScrollSnap, ScrollbarMode, Selector, Side, Sides,
-    State, Style, StyleBuf, StyleProp, StyleRef, TransitionDsc, grid_tracks, style,
+    GridTracks, LayoutKind, Length, MainAlign, Part, PropId, Props, Radius, ScrollSnap, ScrollbarMode,
+    Selector, Side, Sides, State, Style, StyleBuf, StyleProp, StyleRef, Transition, grid_tracks, style,
 };
 pub use twine_text::{Font, LongMode, Symbol, TextAlign, TextDecor};
-pub use twine_theme::{DefaultTheme, MonoTheme, Palette, SimpleTheme, Theme, ThemeMode};
+pub use twine_theme::{DefaultTheme, FontScale, MonoTheme, Palette, SimpleTheme, Theme, ThemeMode, Tone};
 #[cfg(feature = "vector")]
 pub use twine_vector::{FxPoint, Path, VectorDsc, VectorScene};
 pub use twine_widgets::Orientation;
@@ -51,6 +52,7 @@ pub use twine_widgets::arc::ArcMode;
 pub use twine_widgets::bar::BarMode;
 pub use twine_widgets::button::Button;
 pub use twine_widgets::buttonmatrix::BtnCtrl;
+pub use twine_widgets::container::Card;
 pub use twine_widgets::image::ImageAlign;
 pub use twine_widgets::image_button::ImageButtonState;
 pub use twine_widgets::keyboard::KeyboardMode;

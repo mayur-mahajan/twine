@@ -19,7 +19,7 @@ use crate::model::{IntoModel, bind_model, event_value, on_value_changed};
 use crate::modifiers::ViewExt;
 use crate::node_ref::NodeRef;
 use crate::prop::{IntoProp, Prop};
-use crate::text::{IntoText, TextProp, bind_str};
+use crate::text::{IntoText, TextProp, TextRef, bind_str};
 
 // ---- Button matrix --------------------------------------------------------------------------
 
@@ -42,7 +42,7 @@ impl core::fmt::Debug for Btn {
 
 /// A button of a [`buttonmatrix`] showing `text` (any [`IntoText`]; dynamic texts, e.g.
 /// translations, update the matrix's map when they change). One width unit by default.
-pub fn btn(text: impl IntoText) -> Btn {
+pub fn btn<MT>(text: impl IntoText<MT>) -> Btn {
     Btn {
         text: text.into_text(),
         ctrl: BtnCtrl::empty(),
@@ -210,7 +210,7 @@ where
 impl WidgetView<ButtonMatrix> {
     /// At most one checkable button is checked at a time.
     #[must_use]
-    pub fn one_checked(self, on: impl IntoProp<bool>) -> Self {
+    pub fn one_checked<M>(self, on: impl IntoProp<bool, M>) -> Self {
         self.bind(on, |m: &mut ButtonMatrix, cx, on| m.set_one_checked(cx, on))
     }
 
@@ -304,7 +304,7 @@ impl WidgetView<Keyboard> {
     /// The key map shown: lower/upper case letters, special characters, a number pad or a
     /// user map.
     #[must_use]
-    pub fn mode(self, m: impl IntoProp<KeyboardMode>) -> Self {
+    pub fn mode<M>(self, m: impl IntoProp<KeyboardMode, M>) -> Self {
         self.bind(m, |k: &mut Keyboard, cx, m| k.set_mode(cx, m))
     }
 
@@ -324,7 +324,7 @@ impl WidgetView<Keyboard> {
 
     /// Shows the pressed key enlarged above it.
     #[must_use]
-    pub fn popovers(self, on: impl IntoProp<bool>) -> Self {
+    pub fn popovers<M>(self, on: impl IntoProp<bool, M>) -> Self {
         self.bind(on, |k: &mut Keyboard, cx, on| k.set_popovers(cx, on))
     }
 
@@ -377,76 +377,76 @@ pub fn textarea(text: impl IntoModel<String>) -> WidgetView<Textarea> {
 impl WidgetView<Textarea> {
     /// The text shown (greyed) while the field is empty.
     #[must_use]
-    pub fn placeholder(self, text: impl IntoText) -> Self {
-        let text = text.into_text();
+    pub fn placeholder<MT>(self, text: impl IntoText<MT>) -> Self {
+        self.placeholder_prop(text.into_text())
+    }
+
+    /// [`placeholder`](Self::placeholder) after the conversion (not generic).
+    fn placeholder_prop(self, text: TextProp) -> Self {
         self.op(move |cx, node| {
-            bind_str(
-                cx,
-                node,
-                text,
-                |e, n, s| {
-                    e.with_widget_mut(n, |t: &mut Textarea, wcx| t.set_placeholder_text_static(wcx, s));
-                },
-                |e, n, s| {
-                    e.with_widget_mut(n, |t: &mut Textarea, wcx| t.set_placeholder_text(wcx, s));
-                },
-            );
+            bind_str(cx, node, text, |e, n, s| {
+                e.with_widget_mut(n, |t: &mut Textarea, wcx| match s {
+                    TextRef::Static(s) => t.set_placeholder_text_static(wcx, s),
+                    TextRef::Borrowed(s) => t.set_placeholder_text(wcx, s),
+                });
+            });
         })
     }
 
     /// One line: no line breaks, scrolls horizontally, Enter sends `Ready`.
     #[must_use]
-    pub fn one_line(self, on: impl IntoProp<bool>) -> Self {
+    pub fn one_line<M>(self, on: impl IntoProp<bool, M>) -> Self {
         self.bind(on, |t: &mut Textarea, cx, on| t.set_one_line(cx, on))
     }
 
     /// Shows bullets instead of the characters (the last typed one briefly).
     #[must_use]
-    pub fn password(self, on: impl IntoProp<bool>) -> Self {
+    pub fn password<M>(self, on: impl IntoProp<bool, M>) -> Self {
         self.bind(on, |t: &mut Textarea, cx, on| t.set_password_mode(cx, on))
     }
 
-    /// The maximum number of characters (0 = unlimited).
+    /// The maximum number of characters (0 = unlimited). An `i32` like every count of the view
+    /// API, so that literals infer (see [`IntoProp`] § Integer literals); a negative value is
+    /// warned about and counts as 0.
     #[must_use]
-    pub fn max_length(self, n: impl IntoProp<u32>) -> Self {
-        self.bind(n, |t: &mut Textarea, cx, n| t.set_max_length(cx, n))
+    pub fn max_length<M>(self, n: impl IntoProp<i32, M>) -> Self {
+        self.bind(n, |t: &mut Textarea, cx, n: i32| {
+            t.set_max_length(cx, super::count_u32("max_length", n, 0));
+        })
     }
 
     /// Accepts only the characters of `chars` (e.g. `"0123456789."`; any [`IntoText`]).
     #[must_use]
-    pub fn accepted_chars(self, chars: impl IntoText) -> Self {
-        let chars = chars.into_text();
+    pub fn accepted_chars<MT>(self, chars: impl IntoText<MT>) -> Self {
+        self.accepted_chars_prop(chars.into_text())
+    }
+
+    /// [`accepted_chars`](Self::accepted_chars) after the conversion (not generic).
+    fn accepted_chars_prop(self, chars: TextProp) -> Self {
         self.op(move |cx, node| {
-            bind_str(
-                cx,
-                node,
-                chars,
-                |e, n, s| {
-                    e.with_widget_mut(n, |t: &mut Textarea, wcx| {
-                        t.set_accepted_chars(wcx, Some(AcceptedChars::Static(s)));
-                    });
-                },
-                |e, n, s| {
-                    e.with_widget_mut(n, |t: &mut Textarea, wcx| {
-                        // Compared first: no copy for an unchanged list.
+            bind_str(cx, node, chars, |e, n, s| {
+                e.with_widget_mut(n, |t: &mut Textarea, wcx| match s {
+                    TextRef::Static(s) => t.set_accepted_chars(wcx, Some(AcceptedChars::Static(s))),
+                    // Compared first: no copy for an unchanged list.
+                    TextRef::Borrowed(s) => {
                         if t.accepted_chars().map(AcceptedChars::as_str) != Some(s) {
                             t.set_accepted_chars(wcx, Some(AcceptedChars::Owned(s.into())));
                         }
-                    });
-                },
-            );
+                    }
+                });
+            });
         })
     }
 
     /// A click moves the cursor to the clicked character (default on).
     #[must_use]
-    pub fn cursor_click_pos(self, on: impl IntoProp<bool>) -> Self {
+    pub fn cursor_click_pos<M>(self, on: impl IntoProp<bool, M>) -> Self {
         self.bind(on, |t: &mut Textarea, cx, on| t.set_cursor_click_pos(cx, on))
     }
 
     /// Dragging selects text.
     #[must_use]
-    pub fn text_selection(self, on: impl IntoProp<bool>) -> Self {
+    pub fn text_selection<M>(self, on: impl IntoProp<bool, M>) -> Self {
         self.bind(on, |t: &mut Textarea, cx, on| t.set_text_selection(cx, on))
     }
 
@@ -531,7 +531,7 @@ pub fn spinbox(value: impl IntoModel<i32>) -> WidgetView<Spinbox> {
 impl WidgetView<Spinbox> {
     /// The value range.
     #[must_use]
-    pub fn range(self, r: impl IntoProp<RangeInclusive<i32>>) -> Self {
+    pub fn range<M>(self, r: impl IntoProp<RangeInclusive<i32>, M>) -> Self {
         self.bind(r, |s: &mut Spinbox, cx, r: RangeInclusive<i32>| {
             s.set_range(cx, *r.start(), *r.end());
         })
@@ -540,7 +540,7 @@ impl WidgetView<Spinbox> {
     /// `total` digits (1…10, leading zeros shown) with the decimal point after `sep_pos`
     /// digits (0 = none).
     #[must_use]
-    pub fn digits(self, total: impl IntoProp<u8>, sep_pos: impl IntoProp<u8>) -> Self {
+    pub fn digits<M1, M2>(self, total: impl IntoProp<u8, M1>, sep_pos: impl IntoProp<u8, M2>) -> Self {
         match (total.into_prop(), sep_pos.into_prop()) {
             (Prop::Static(total), Prop::Static(sep)) => self.op(move |cx, node| {
                 cx.engine().with_widget_mut(node, |s: &mut Spinbox, wcx| {
@@ -559,15 +559,18 @@ impl WidgetView<Spinbox> {
         }
     }
 
-    /// The step of one increment (a power of ten: the digit being edited).
+    /// The step of one increment (a power of ten: the digit being edited). An `i32` like the
+    /// value, so that literals infer; a value below 1 is warned about and counts as 1.
     #[must_use]
-    pub fn step(self, step: impl IntoProp<u32>) -> Self {
-        self.bind(step, |s: &mut Spinbox, cx, step| s.set_step(cx, step))
+    pub fn step<M>(self, step: impl IntoProp<i32, M>) -> Self {
+        self.bind(step, |s: &mut Spinbox, cx, step: i32| {
+            s.set_step(cx, super::count_u32("step", step, 1));
+        })
     }
 
     /// Wraps around at the range ends instead of stopping.
     #[must_use]
-    pub fn rollover(self, on: impl IntoProp<bool>) -> Self {
+    pub fn rollover<M>(self, on: impl IntoProp<bool, M>) -> Self {
         self.bind(on, |s: &mut Spinbox, cx, on| s.set_rollover(cx, on))
     }
 

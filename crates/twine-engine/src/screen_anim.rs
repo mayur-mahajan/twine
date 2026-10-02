@@ -462,7 +462,7 @@ impl Engine {
                         self.set_local_prop(
                             node,
                             Selector::MAIN,
-                            StyleProp::PartOpacity(Opa::from_raw(v.clamp(0, 255) as u8)),
+                            StyleProp::PartOpacity(Opa::from_raw(v.clamp(0, 255) as u8).into()),
                         );
                     }
                 }

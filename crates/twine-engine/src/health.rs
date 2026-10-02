@@ -118,6 +118,25 @@ fn unrotate(area: Rect, rotation: Rotation, w: i32, h: i32) -> Rect {
 impl Engine {
     /// The flush health of `display` (`None` for unknown displays): state, consecutive
     /// errors, last success and last error code. See [`FlushPolicy`].
+    /// Never panics; O(1).
+    ///
+    /// ```
+    /// use twine_core::fault::FaultKind;
+    /// use twine_core::{ColorFormat, Rect};
+    /// use twine_engine::{DisplayState, DriverErrorCode, Engine, EngineConfig};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64).unwrap();
+    /// let area = Rect::from_xywh(0, 0, 8, 8);
+    /// e.report_flush(d, area, Err(DriverErrorCode::new(5))); // the driver's flush failed
+    /// let h = e.display_health(d).unwrap();
+    /// assert_eq!(h.state, DisplayState::Degraded);
+    /// assert_eq!((h.consecutive_errors, h.last_error), (1, Some(DriverErrorCode::new(5))));
+    /// assert_eq!(e.last_fault(FaultKind::FlushError).map(|r| r.code), Some(5));
+    /// e.recover_display(d).unwrap(); // e.g. after resetting the panel
+    /// assert_eq!(e.display_health(d).unwrap().state, DisplayState::Healthy);
+    /// ```
     #[must_use]
     pub fn display_health(&self, display: DisplayId) -> Option<DisplayHealth> {
         let h = &self.displays.get(display.index())?.health;
@@ -146,7 +165,25 @@ impl Engine {
     /// failure. A no-op for the counters of a healthy display (it is still redrawn).
     ///
     /// # Errors
-    /// [`EngineError::DisplayNotFound`] for unknown displays.
+    /// [`EngineError::DisplayNotFound`] for unknown displays (never panics).
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Rect};
+    /// use twine_engine::{DisplayState, DriverErrorCode, Engine, EngineConfig, FlushPolicy};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let config = EngineConfig {
+    ///     flush_policy: FlushPolicy::Halt,
+    ///     max_consecutive_flush_errors: 1,
+    ///     ..EngineConfig::default()
+    /// };
+    /// let mut e = Engine::new(config).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64).unwrap();
+    /// e.report_flush(d, Rect::from_xywh(0, 0, 8, 8), Err(DriverErrorCode::NONE));
+    /// assert_eq!(e.display_health(d).unwrap().state, DisplayState::Halted);
+    /// e.recover_display(d).unwrap(); // the application reset the panel
+    /// assert_eq!(e.display_health(d).unwrap().state, DisplayState::Healthy);
+    /// ```
     pub fn recover_display(&mut self, display: DisplayId) -> Result<(), EngineError> {
         let Some(disp) = self.displays.get_mut(display.index()) else {
             twine_core::warn!(target: "twine::refresh", "recover_display: display {} not found", display);
@@ -178,7 +215,23 @@ impl Engine {
     /// [`DisplayHealth`] exactly as for the engine's own flushes (the failed area is redrawn by a
     /// later frame). Call it for every flush, successful or not, also after
     /// [`refresh_end`](Self::refresh_end). Other displays report their flushes themselves; a
-    /// call for them logs `warn!` and is ignored.
+    /// call for them logs `warn!` and is ignored. Never panics (an unknown display is
+    /// ignored with a `warn!`).
+    ///
+    /// ```
+    /// use twine_core::fault::FaultKind;
+    /// use twine_core::{ColorFormat, Rect};
+    /// use twine_engine::{DisplayState, DriverErrorCode, Engine, EngineConfig};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64).unwrap();
+    /// let area = Rect::from_xywh(0, 0, 8, 4);
+    /// e.report_flush(d, area, Err(DriverErrorCode::new(3))); // area redrawn by a later frame
+    /// assert!(e.take_faults().contains(FaultKind::FlushError));
+    /// e.report_flush(d, area, Ok(())); // a success makes the display healthy again
+    /// assert_eq!(e.display_health(d).unwrap().state, DisplayState::Healthy);
+    /// ```
     pub fn report_flush(&mut self, display: DisplayId, area: Rect, result: Result<(), DriverErrorCode>) {
         let d = display.index();
         let Some(disp) = self.displays.get(d) else {

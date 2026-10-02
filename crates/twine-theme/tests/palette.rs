@@ -4,7 +4,7 @@
 
 use twine_core::Color;
 use twine_style::dpx;
-use twine_theme::Palette;
+use twine_theme::{Palette, Tone};
 
 /// `(palette, main, lighten 1..=5, darken 1..=4)`: every row of `lv_palette.c`
 /// (`lv_palette_main`, `lv_palette_lighten`, `lv_palette_darken`), 19 × 10 values.
@@ -138,57 +138,51 @@ fn palette_all_19x10_values_match_lvgl() {
     for (i, (p, main, light, dark)) in LVGL.iter().enumerate() {
         assert_eq!(Palette::ALL[i], *p, "LVGL order");
         assert_eq!(p.main(), Color::hex(*main));
-        for (lvl, v) in light.iter().enumerate() {
-            assert_eq!(
-                p.lighten(lvl as u8 + 1),
-                Color::hex(*v),
-                "{p:?} lighten {}",
-                lvl + 1
-            );
+        let light_tones = [Tone::L1, Tone::L2, Tone::L3, Tone::L4, Tone::L5];
+        for (t, v) in light_tones.iter().zip(light) {
+            assert_eq!(p.tone(*t), Color::hex(*v), "{p:?} {t:?}");
         }
-        for (lvl, v) in dark.iter().enumerate() {
-            assert_eq!(
-                p.darken(lvl as u8 + 1),
-                Color::hex(*v),
-                "{p:?} darken {}",
-                lvl + 1
-            );
+        for (t, v) in [Tone::D1, Tone::D2, Tone::D3, Tone::D4].iter().zip(dark) {
+            assert_eq!(p.tone(*t), Color::hex(*v), "{p:?} {t:?}");
         }
+        assert_eq!(p.tone(Tone::Main), p.main());
+        assert_eq!(Color::from(*p), p.main());
     }
 }
 
 #[test]
 fn lighten_darken_tables_match_lvgl() {
     // lv_palette_lighten: {LV_COLOR_MAKE(0xEF, 0x53, 0x50), ...} (RED, level 1)
-    assert_eq!(Palette::Red.lighten(1), Color::hex(0xEF5350));
+    assert_eq!(Palette::Red.tone(Tone::L1), Color::hex(0xEF5350));
     // lv_palette_lighten: GREY row, level 2 = LV_COLOR_MAKE(0xE0, 0xE0, 0xE0) (LIGHT_COLOR_GREY)
-    assert_eq!(Palette::Grey.lighten(2), Color::hex(0xE0E0E0));
+    assert_eq!(Palette::Grey.tone(Tone::L2), Color::hex(0xE0E0E0));
     // lv_palette_lighten: GREY row, level 4 = LV_COLOR_MAKE(0xF5, 0xF5, 0xF5) (LIGHT_COLOR_SCR)
-    assert_eq!(Palette::Grey.lighten(4), Color::hex(0xF5F5F5));
+    assert_eq!(Palette::Grey.tone(Tone::L4), Color::hex(0xF5F5F5));
     // lv_palette_lighten: GREY row, level 5 = LV_COLOR_MAKE(0xFA, 0xFA, 0xFA) (DARK_COLOR_TEXT)
-    assert_eq!(Palette::Grey.lighten(5), Color::hex(0xFAFAFA));
+    assert_eq!(Palette::Grey.tone(Tone::L5), Color::hex(0xFAFAFA));
     // lv_palette_lighten: BLUE row, level 3 = LV_COLOR_MAKE(0x90, 0xCA, 0xF9)
-    assert_eq!(Palette::Blue.lighten(3), Color::hex(0x90CAF9));
+    assert_eq!(Palette::Blue.tone(Tone::L3), Color::hex(0x90CAF9));
     // lv_palette_lighten: DEEP_ORANGE row, level 5 = LV_COLOR_MAKE(0xFB, 0xE9, 0xE7)
-    assert_eq!(Palette::DeepOrange.lighten(5), Color::hex(0xFBE9E7));
+    assert_eq!(Palette::DeepOrange.tone(Tone::L5), Color::hex(0xFBE9E7));
     // lv_palette_darken: GREY row, level 4 = LV_COLOR_MAKE(0x21, 0x21, 0x21) (LIGHT_COLOR_TEXT)
-    assert_eq!(Palette::Grey.darken(4), Color::hex(0x212121));
+    assert_eq!(Palette::Grey.tone(Tone::D4), Color::hex(0x212121));
     // lv_palette_darken: GREY row, level 2 = LV_COLOR_MAKE(0x61, 0x61, 0x61) (dark scrollbar)
-    assert_eq!(Palette::Grey.darken(2), Color::hex(0x616161));
+    assert_eq!(Palette::Grey.tone(Tone::D2), Color::hex(0x616161));
     // lv_palette_darken: TEAL row, level 4 = LV_COLOR_MAKE(0x00, 0x4D, 0x40)
-    assert_eq!(Palette::Teal.darken(4), Color::hex(0x004D40));
+    assert_eq!(Palette::Teal.tone(Tone::D4), Color::hex(0x004D40));
     // lv_palette_darken: AMBER row, level 1 = LV_COLOR_MAKE(0xFF, 0xB3, 0x00)
-    assert_eq!(Palette::Amber.darken(1), Color::hex(0xFFB300));
+    assert_eq!(Palette::Amber.tone(Tone::D1), Color::hex(0xFFB300));
 }
 
 #[test]
-fn out_of_range_levels_clamp() {
-    assert_eq!(Palette::Red.lighten(0), Palette::Red.lighten(1));
-    assert_eq!(Palette::Red.lighten(9), Palette::Red.lighten(5));
-    assert_eq!(Palette::Red.darken(0), Palette::Red.darken(1));
-    assert_eq!(Palette::Red.darken(7), Palette::Red.darken(4));
-    assert_eq!(Palette::Red.lighten_checked(9), Palette::Red.lighten(5));
-    assert_eq!(Palette::Red.darken_checked(0), Palette::Red.darken(1));
+fn tones_run_light_to_dark() {
+    for p in Palette::ALL {
+        let lum: Vec<u32> = Tone::ALL
+            .iter()
+            .map(|t| p.tone(*t).relative_luminance())
+            .collect();
+        assert!(lum.windows(2).all(|w| w[0] >= w[1]), "{p:?}: {lum:?}");
+    }
 }
 
 #[test]

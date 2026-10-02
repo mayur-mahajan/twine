@@ -4,12 +4,12 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use core::cell::Cell;
 
-use twine_anim::{Anim, AnimId, AnimProp};
+use twine_anim::{Anim, AnimId};
 use twine_core::{Duration, Point, Rect, Size};
 use twine_engine::{
-    DrawCx, Easing, Editable, Engine, EngineError, Event, EventCode, EventCx, EventParam, EventResult,
-    GroupDef, InputKind, Key, MeasureCx, NodeId, OBJ_FLAGS, ObjFlags, Widget, WidgetClass, WidgetCx,
-    fmt_node_id,
+    AnimProp, DrawCx, Easing, Editable, Engine, EngineError, Event, EventCode, EventCx, EventParam,
+    EventResult, GroupDef, InputKind, Key, MeasureCx, NodeId, OBJ_FLAGS, ObjFlags, Widget, WidgetClass,
+    WidgetCx, fmt_node_id,
 };
 use twine_style::{COORD_MAX, Length, Part, PropId, TextAlign};
 use twine_text::{TextDrawFlags, TextLayout};
@@ -246,6 +246,23 @@ impl Roller {
     }
 
     /// Sets the mode, keeping the options; selects the first option. Idempotent.
+    /// Never panics.
+    ///
+    /// ```
+    /// use twine_testing::EngineHarness;
+    /// use twine_widgets_ext::roller::{self, Roller, RollerMode};
+    ///
+    /// let mut h = EngineHarness::new(200, 200);
+    /// let screen = h.screen();
+    /// let r = roller::create(h.engine_mut(), screen).unwrap();
+    /// h.engine_mut().with_widget_mut(r, |w: &mut Roller, cx| {
+    ///     w.set_options(cx, "Mon\nTue\nWed", RollerMode::Normal);
+    ///     w.set_selected(cx, 2, false);
+    ///     w.set_mode(cx, RollerMode::Infinite); // endless wheel, back to the first option
+    /// });
+    /// let w = h.engine().widget::<Roller>(r).unwrap();
+    /// assert_eq!((w.mode(), w.selected(), w.option_count()), (RollerMode::Infinite, 0, 3));
+    /// ```
     pub fn set_mode(&mut self, cx: &mut WidgetCx<'_>, mode: RollerMode) {
         if self.mode == mode {
             return;

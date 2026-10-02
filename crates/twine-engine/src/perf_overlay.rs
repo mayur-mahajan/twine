@@ -82,10 +82,10 @@ impl Engine {
                 self.set_flag(id, crate::ObjFlags::CLICKABLE, false);
                 // Content-sized (the text) plus a margin, in the bottom-right corner.
                 for p in [
-                    StyleProp::PaddingLeft(Length::Px(MARGIN)),
-                    StyleProp::PaddingTop(Length::Px(MARGIN)),
-                    StyleProp::PaddingRight(Length::Px(MARGIN)),
-                    StyleProp::PaddingBottom(Length::Px(MARGIN)),
+                    StyleProp::PaddingLeft(Length::Px(MARGIN).into()),
+                    StyleProp::PaddingTop(Length::Px(MARGIN).into()),
+                    StyleProp::PaddingRight(Length::Px(MARGIN).into()),
+                    StyleProp::PaddingBottom(Length::Px(MARGIN).into()),
                 ] {
                     self.set_local_prop(id, Selector::MAIN, p);
                 }

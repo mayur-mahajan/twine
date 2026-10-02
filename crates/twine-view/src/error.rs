@@ -65,6 +65,46 @@ impl BuildFailure {
     }
 }
 
+/// Which bound of the view layer a [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity)
+/// record raised by the view layer is about: the stable
+/// [`code`](twine_engine::FaultRecord::code) of the record (the engine's own capacity faults,
+/// e.g. a full widget tree, have code `0`).
+///
+/// ```
+/// use twine_view::CapacityFault;
+/// assert_eq!(CapacityFault::EngineQueue.code(), 1);
+/// assert_eq!(CapacityFault::from_code(1), Some(CapacityFault::EngineQueue));
+/// assert_eq!(CapacityFault::from_code(0), None);
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u32)]
+#[non_exhaustive]
+pub enum CapacityFault {
+    /// The `Ui`'s engine command queue was full: engine side effects issued without the
+    /// engine (a scope disposed or a handle called outside `Ui::update`) were dropped; the
+    /// record's `occurrences` is their number (see
+    /// [`UiBuilder::engine_queue_capacity`](crate::UiBuilder::engine_queue_capacity)).
+    EngineQueue = 1,
+}
+
+impl CapacityFault {
+    /// The stable numeric code (the fault record's `code`).
+    #[must_use]
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+
+    /// The bound with code `code` (`None` for an unknown code).
+    #[must_use]
+    pub const fn from_code(code: u32) -> Option<CapacityFault> {
+        match code {
+            1 => Some(CapacityFault::EngineQueue),
+            _ => None,
+        }
+    }
+}
+
 impl fmt::Display for BuildFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {

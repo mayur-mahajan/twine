@@ -91,24 +91,24 @@ fn init_draw_rect_dsc_resolves_all_props() {
     let m = Selector::MAIN;
     let e = h.engine_mut();
     for p in [
-        StyleProp::BgColor(Color::hex(0x0001_0203)),
-        StyleProp::BgOpacity(Opa::from_raw(201)),
-        StyleProp::Radius(Radius::Px(9)),
-        StyleProp::BorderColor(Color::hex(0x0004_0506)),
-        StyleProp::BorderWidth(Length::Px(3)),
-        StyleProp::BorderOpacity(Opa::from_raw(202)),
+        StyleProp::BgColor(Color::hex(0x0001_0203).into()),
+        StyleProp::BgOpacity(Opa::from_raw(201).into()),
+        StyleProp::Radius(Radius::Px(9).into()),
+        StyleProp::BorderColor(Color::hex(0x0004_0506).into()),
+        StyleProp::BorderWidth(Length::Px(3).into()),
+        StyleProp::BorderOpacity(Opa::from_raw(202).into()),
         StyleProp::BorderSide(BorderSide::TOP | BorderSide::LEFT),
         StyleProp::BorderAboveChildren(false),
-        StyleProp::OutlineColor(Color::hex(0x0007_0809)),
+        StyleProp::OutlineColor(Color::hex(0x0007_0809).into()),
         StyleProp::OutlineWidth(4),
-        StyleProp::OutlineOpacity(Opa::from_raw(203)),
+        StyleProp::OutlineOpacity(Opa::from_raw(203).into()),
         StyleProp::OutlineOffset(5),
         StyleProp::ShadowWidth(6),
         StyleProp::ShadowOffsetX(7),
         StyleProp::ShadowOffsetY(8),
         StyleProp::ShadowSpread(10),
-        StyleProp::ShadowColor(Color::hex(0x000A_0B0C)),
-        StyleProp::ShadowOpacity(Opa::from_raw(204)),
+        StyleProp::ShadowColor(Color::hex(0x000A_0B0C).into()),
+        StyleProp::ShadowOpacity(Opa::from_raw(204).into()),
     ] {
         e.set_local_prop(c, m, p);
     }
@@ -133,9 +133,9 @@ fn init_draw_rect_dsc_resolves_all_props() {
     assert_eq!(d.shadow.opa, Opa::from_raw(204));
     // The style `Recolor` applies to every color (LVGL 9.3+).
     h.engine_mut()
-        .set_local_prop(c, m, StyleProp::Recolor(Color::BLACK));
+        .set_local_prop(c, m, StyleProp::Recolor(Color::BLACK.into()));
     h.engine_mut()
-        .set_local_prop(c, m, StyleProp::RecolorOpacity(Opa::COVER));
+        .set_local_prop(c, m, StyleProp::RecolorOpacity(Opa::COVER.into()));
     let d = MeasureCx::new(h.engine(), c).rect_dsc(Part::Main).base;
     assert_eq!(d.bg_color, Color::BLACK);
     assert_eq!(d.border_color, Color::BLACK);

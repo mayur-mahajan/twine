@@ -2,6 +2,8 @@
 
 use twine_core::{Color, Duration, Opa};
 
+use crate::design::{DesignValue, Element};
+
 use twine_render::RADIUS_CIRCLE;
 pub use twine_render::{BlendMode, BorderSide, Gradient};
 pub use twine_text::{TextAlign, TextDecor};
@@ -123,8 +125,8 @@ impl Length {
 
     /// The length in pixels: `Pct` is relative to `parent` (truncated like LVGL
     /// `lv_pct_to_px`, saturating), `Content` is `content`. A `Dp` that was not converted
-    /// with [`with_dpi`](Self::with_dpi) counts at the reference 160 DPI (1 dp = 1 px); the
-    /// engine converts `Dp` with the display's DPI before layout.
+    /// with [`with_dpi`](Self::with_dpi) counts at the reference 160 DPI (1 dp = 1 px); style
+    /// resolution converts `Dp` with the DPI of the source ([`StyleSource::dpi`](crate::StyleSource::dpi)).
     #[must_use]
     pub const fn resolve(self, parent: i32, content: i32) -> i32 {
         match self {
@@ -183,7 +185,16 @@ impl From<i32> for Length {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Radius {
-    /// Pixels.
+    /// Pixels. Drawn clamped to `0..=` half the shorter side of the node, so a negative value
+    /// draws square corners and a large one a fully round shape. A value at or above the
+    /// renderer's circle marker (`twine_render::RADIUS_CIRCLE`, 32 767) is stored like
+    /// [`Circle`](Self::Circle) and reads back as `Circle` (it draws the same).
+    ///
+    /// ```
+    /// use twine_style::{Length, Radius};
+    /// assert_eq!(Radius::from_length(Radius::Px(40_000).to_length()), Some(Radius::Circle));
+    /// assert_eq!(Radius::from_length(Radius::Px(-3).to_length()), Some(Radius::Px(-3)));
+    /// ```
     Px(i32),
     /// Density-independent pixels (see [`Length::Dp`]).
     Dp(i32),
@@ -305,47 +316,56 @@ impl __DurationArg<DurationMs> {
     }
 }
 
-/// Converts `style!` values into [`Length`] in `const` context: integers become pixels, a
-/// `Length` stays unchanged (inherent methods on two instantiations; no trait needed).
+/// Converts `style!` values into a [`LengthValue`](crate::design::LengthValue) in `const`
+/// context: integers become pixels; a `Length`, a `LengthElement` or a `LengthValue` is taken
+/// as is (inherent methods on concrete instantiations; no trait needed).
 #[doc(hidden)]
 pub struct __LengthArg<T>(pub T);
 
-impl __LengthArg<i32> {
-    #[doc(hidden)]
-    #[must_use]
-    pub const fn get(self) -> Length {
-        Length::Px(self.0)
-    }
-}
-
-impl __LengthArg<Length> {
-    #[doc(hidden)]
-    #[must_use]
-    pub const fn get(self) -> Length {
-        self.0
-    }
-}
-
-/// Converts `style!` values into [`Radius`] in `const` context: integers become pixels, a
-/// `Radius` stays unchanged.
+/// Converts `style!` values into a [`RadiusValue`](crate::design::RadiusValue) in `const`
+/// context: integers become pixels; a `Radius`, a `RadiusElement` or a `RadiusValue` is taken
+/// as is.
 #[doc(hidden)]
 pub struct __RadiusArg<T>(pub T);
 
-impl __RadiusArg<i32> {
-    #[doc(hidden)]
-    #[must_use]
-    pub const fn get(self) -> Radius {
-        Radius::Px(self.0)
-    }
+macro_rules! design_arg {
+    ($arg:ident, $t:ident, $px:expr) => {
+        impl $arg<i32> {
+            #[doc(hidden)]
+            #[must_use]
+            pub const fn get(self) -> DesignValue<$t> {
+                DesignValue::Fixed($px(self.0))
+            }
+        }
+
+        impl $arg<$t> {
+            #[doc(hidden)]
+            #[must_use]
+            pub const fn get(self) -> DesignValue<$t> {
+                DesignValue::Fixed(self.0)
+            }
+        }
+
+        impl $arg<Element<$t>> {
+            #[doc(hidden)]
+            #[must_use]
+            pub const fn get(self) -> DesignValue<$t> {
+                DesignValue::Element(self.0)
+            }
+        }
+
+        impl $arg<DesignValue<$t>> {
+            #[doc(hidden)]
+            #[must_use]
+            pub const fn get(self) -> DesignValue<$t> {
+                self.0
+            }
+        }
+    };
 }
 
-impl __RadiusArg<Radius> {
-    #[doc(hidden)]
-    #[must_use]
-    pub const fn get(self) -> Radius {
-        self.0
-    }
-}
+design_arg!(__LengthArg, Length, Length::Px);
+design_arg!(__RadiusArg, Radius, Radius::Px);
 
 /// Alignment of an object inside its parent's content area (the `align` style property; LVGL
 /// `lv_align_t` without the `OUT_*` values, same discriminants).
@@ -1246,8 +1266,8 @@ mod tests {
 
     #[test]
     fn length_resolve_px_pct_content() {
-        const L: Length = __LengthArg(12).get();
-        const P: Length = __LengthArg(Length::pct(5)).get();
+        const L: crate::design::LengthValue = __LengthArg(12).get();
+        const P: crate::design::LengthValue = __LengthArg(Length::pct(5)).get();
         assert_eq!(Length::Px(-5).resolve(100, 7), -5);
         assert_eq!(Length::pct(50).resolve(201, 7), 100); // truncated like lv_pct_to_px
         assert_eq!(Length::pct(-50).resolve(201, 7), -100);
@@ -1258,7 +1278,7 @@ mod tests {
         assert_eq!(Length::default(), Length::Px(0));
         assert_eq!(Length::Px(4).as_px(), Some(4));
         assert_eq!(Length::Content.as_px(), None);
-        assert_eq!((L, P), (Length::Px(12), Length::Pct(5)));
+        assert_eq!((L, P), (Length::Px(12).into(), Length::Pct(5).into()));
     }
 
     #[test]

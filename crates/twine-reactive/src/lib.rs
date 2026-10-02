@@ -89,8 +89,9 @@
 //! Code that runs without a context parameter (event handlers, user effects, timer
 //! callbacks) reaches the engine through the *ambient* slot: [`provide_ambient`] lends a
 //! `&mut dyn Any` for the duration of a call, [`with_ambient`] borrows it exclusively
-//! (taking it out of the slot, so nested borrows see `None`). A binding whose widget was
-//! deleted disposes itself with [`dispose_current_effect`].
+//! (taking it out of the slot, so nested borrows see `None`) and [`ambient_is`] tests its type
+//! without borrowing it. A binding whose widget was deleted disposes itself with
+//! [`dispose_current_effect`].
 //!
 //! A flush processes effects in rounds (effects queued by one round form the next); after
 //! [`set_flush_iterations_limit`] rounds (default 100) the rest are dropped with an `error!`.
@@ -157,7 +158,7 @@ mod scope;
 mod signal;
 mod stored;
 
-pub use ambient::{provide_ambient, with_ambient};
+pub use ambient::{ambient_is, provide_ambient, with_ambient};
 pub use batch::{
     batch, defer_current_effect, dispose_current_effect, flush_effects_with, has_pending_effects,
     set_flush_iterations_limit, untrack,

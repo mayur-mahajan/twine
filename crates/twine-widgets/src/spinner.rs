@@ -119,7 +119,11 @@ impl Spinner {
             cx.engine_mut().anim_stop(id);
         }
         let node = cx.node();
-        let a = Anim::new(0, BEZIER_MAX).duration(period).repeat(Repeat::Infinite);
+        // A busy indicator: essential, it keeps turning under a reduced motion preference.
+        let a = Anim::new(0, BEZIER_MAX)
+            .duration(period)
+            .repeat(Repeat::Forever)
+            .essential();
         self.anim = Some(cx.engine_mut().anim_start(node, AnimProp::Custom(ANIM_SPIN), a));
         self.arc.set_bg_angles(cx, Angle::deg(0), Angle::deg(360));
         self.arc.set_rotation(cx, Angle::deg(270));

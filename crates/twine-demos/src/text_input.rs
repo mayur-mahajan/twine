@@ -74,13 +74,13 @@ pub fn app(cx: Scope) -> impl View {
                 form.quantity.set(1);
             }),
         ))
-        .width(Length::pct(100))
+        .fill_width()
         .align_items(CrossAlign::Center),
         textarea(form.name)
             .one_line(true)
             .placeholder("Your name")
             .max_length(24)
-            .width(Length::pct(100))
+            .fill_width()
             .node_ref(fields[0])
             .on_focus(edit(NAME))
             .on_click(edit(NAME))
@@ -89,7 +89,7 @@ pub fn app(cx: Scope) -> impl View {
             .one_line(true)
             .password(true)
             .placeholder("Password")
-            .width(Length::pct(100))
+            .fill_width()
             .node_ref(fields[1])
             .on_focus(edit(PASSWORD))
             .on_click(edit(PASSWORD))
@@ -116,26 +116,26 @@ pub fn app(cx: Scope) -> impl View {
                 .on_click(move || spin.with_mut(|s: &mut Spinbox, cx| s.increment(cx)))
                 .test_id("plus"),
         ))
-        .width(Length::pct(100))
+        .fill_width()
         .gap(6)
         .align_items(CrossAlign::Center),
         spangroup((
             span("Hello, "),
             span(form.name)
                 .font(&fonts::MONTSERRAT_16)
-                .text_color(Palette::Blue.main()),
+                .text_color(design::PRIMARY),
             span("!"),
         ))
         .mode(SpanMode::Break)
-        .width(Length::pct(100))
+        .fill_width()
         .test_id("preview"),
     ))
-    .width(Length::pct(100))
+    .fill_width()
     .gap(8);
 
     container((
         scroll_view(Axis::Vertical, content)
-            .size(Length::pct(100), Length::pct(100))
+            .fill()
             .padding(10)
             .node_ref(page)
             .test_id("page"),
@@ -156,7 +156,7 @@ pub fn app(cx: Scope) -> impl View {
                             e.set_local_prop(
                                 p,
                                 Selector::MAIN,
-                                StyleProp::PaddingBottom(Length::Px(KB_H + 10)),
+                                StyleProp::PaddingBottom(Length::Px(KB_H + 10).into()),
                             );
                             e.update_layout();
                             if let Some(t) = ta.get_untracked() {
@@ -167,7 +167,7 @@ pub fn app(cx: Scope) -> impl View {
                                     e.set_local_prop(
                                         p,
                                         Selector::MAIN,
-                                        StyleProp::PaddingBottom(Length::Px(10)),
+                                        StyleProp::PaddingBottom(Length::Px(10).into()),
                                     );
                                 });
                             });
@@ -178,7 +178,7 @@ pub fn app(cx: Scope) -> impl View {
             },
         ),
     ))
-    .size(Length::pct(100), Length::pct(100))
+    .fill()
     .padding(0)
     .border_width(0)
     .radius(0)

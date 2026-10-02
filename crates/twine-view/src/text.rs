@@ -12,6 +12,7 @@ use twine_widgets::label::Label;
 
 use crate::bind::bind_effect;
 use crate::build::BuildCx;
+use crate::prop::marker;
 
 /// A function writing a text into a formatter.
 pub type TextWriter = dyn Fn(&mut dyn Write);
@@ -48,8 +49,10 @@ impl core::fmt::Debug for TextProp {
     }
 }
 
-/// Anything usable as a text: `&'static str`, `String`, [`text!`](crate::text!),
-/// `Signal<String>`, `ReadSignal<String>`, `Memo<String>` and `F: Fn() -> String`.
+/// Anything usable as a text: a `&'static str`, a [`Symbol`](twine_text::Symbol), a
+/// `String` or a reference to any of these (copied), [`text!`](crate::text!), a closure returning a
+/// `String`, a `&'static str` or a `Symbol`, or a `Signal`, `ReadSignal` or `Memo` of any
+/// `AsRef<str>` type (`String`, `&'static str`, …).
 ///
 /// ```
 /// use twine_view::prelude::*;
@@ -57,29 +60,36 @@ impl core::fmt::Debug for TextProp {
 /// let cx = twine_reactive::create_root();
 /// let name = cx.signal(String::from("Ada"));
 /// let n = cx.signal(3);
+/// let on = cx.signal(true);
 /// let _a = label("static");
 /// let _b = label(String::from("owned"));
 /// let _c = label(name);
 /// let _d = label(move || format!("{} items", n.get()));
 /// let _e = label(text!("{} items", n.get())); // formats in place, no allocation
+/// let _f = label(move || if on.get() { "On" } else { "Off" }); // stored without copying
 /// cx.dispose();
 /// ```
+///
+/// `M` is a marker inferred by the compiler, as for [`IntoProp`](crate::IntoProp): it tells
+/// the forms apart (e.g. closures returning a `String` from closures returning a
+/// `&'static str`, which a single-parameter trait could not).
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be used as a text",
-    label = "not a `&'static str`, `String`, `text!`, signal or memo of `String`, or `Fn() -> String`"
+    label = "not a `&'static str`, `Symbol`, `String`, `text!`, a closure returning a `String`, `&'static str` or `Symbol`, or a signal or memo of a string",
+    note = "format other values with `text!` (no allocation) or a closure returning a `String`"
 )]
-pub trait IntoText {
+pub trait IntoText<M> {
     /// The text property.
     fn into_text(self) -> TextProp;
 }
 
-impl IntoText for &'static str {
+impl IntoText<marker::Value<&'static str>> for &'static str {
     fn into_text(self) -> TextProp {
         TextProp::Static(self)
     }
 }
 
-impl IntoText for twine_text::Symbol {
+impl IntoText<marker::Value<twine_text::Symbol>> for twine_text::Symbol {
     /// The symbol's glyph as a static text (no allocation): `label(Symbol::Ok)`.
     #[inline]
     fn into_text(self) -> TextProp {
@@ -87,53 +97,69 @@ impl IntoText for twine_text::Symbol {
     }
 }
 
-impl IntoText for String {
+impl IntoText<marker::Value<String>> for String {
     fn into_text(self) -> TextProp {
         TextProp::Owned(self)
     }
 }
 
-impl IntoText for TextProp {
+impl IntoText<marker::Value<TextFn>> for TextFn {
+    fn into_text(self) -> TextProp {
+        TextProp::Write(self.0)
+    }
+}
+
+impl IntoText<marker::Prop> for TextProp {
     fn into_text(self) -> TextProp {
         self
     }
 }
 
-impl<F: Fn() -> String + 'static> IntoText for F {
+/// A reference to a text (e.g. the items of a `&'static [&'static str]`, or `&String`): the
+/// referenced value is cloned.
+impl<T: IntoText<M> + Clone, M> IntoText<marker::Ref<M>> for &T {
+    #[inline]
+    fn into_text(self) -> TextProp {
+        self.clone().into_text()
+    }
+}
+
+impl<F: Fn() -> String + 'static> IntoText<marker::Closure<String>> for F {
     fn into_text(self) -> TextProp {
         TextProp::Fn(Box::new(self))
     }
 }
 
-impl IntoText for Signal<String> {
+/// A closure choosing a `'static` text (e.g. a translation): the widget stores the chosen text
+/// without copying.
+impl<F: Fn() -> &'static str + 'static> IntoText<marker::Closure<&'static str>> for F {
     fn into_text(self) -> TextProp {
-        TextProp::Write(Box::new(move |w| {
-            self.with(|s| {
-                let _ = w.write_str(s);
-            });
-        }))
+        TextProp::StaticFn(Box::new(self))
     }
 }
 
-impl IntoText for ReadSignal<String> {
+impl<F: Fn() -> twine_text::Symbol + 'static> IntoText<marker::Closure<twine_text::Symbol>> for F {
     fn into_text(self) -> TextProp {
-        TextProp::Write(Box::new(move |w| {
-            self.with(|s| {
-                let _ = w.write_str(s);
-            });
-        }))
+        TextProp::StaticFn(Box::new(move || self().as_str()))
     }
 }
 
-impl IntoText for Memo<String> {
-    fn into_text(self) -> TextProp {
-        TextProp::Write(Box::new(move |w| {
-            self.with(|s| {
-                let _ = w.write_str(s);
-            });
-        }))
-    }
+/// The `IntoText` impls of the reactive handles: the text is written from the handle's value
+/// in place (`with`, no clone).
+macro_rules! reactive_texts {
+    ($($s:ident),+) => {$(
+        impl<S: AsRef<str> + 'static> IntoText<marker::Reactive<S>> for $s<S> {
+            fn into_text(self) -> TextProp {
+                TextProp::Write(Box::new(move |w| {
+                    self.with(|s| {
+                        let _ = w.write_str(s.as_ref());
+                    });
+                }))
+            }
+        }
+    )+};
 }
+reactive_texts!(Signal, ReadSignal, Memo);
 
 /// A text writer: the value [`text!`](crate::text!) expands to.
 pub struct TextFn(pub Box<TextWriter>);
@@ -149,12 +175,6 @@ impl TextFn {
     #[must_use]
     pub fn new(f: impl Fn(&mut dyn Write) + 'static) -> Self {
         TextFn(Box::new(f))
-    }
-}
-
-impl IntoText for TextFn {
-    fn into_text(self) -> TextProp {
-        TextProp::Write(self.0)
     }
 }
 
@@ -231,50 +251,85 @@ pub(crate) fn bind_label_text(cx: &mut BuildCx<'_>, node: NodeId, text: TextProp
     }
 }
 
-/// Applies a text property to any widget text through two setters: `set_static` for
-/// `'static` texts (no copy) and `set` for the others. Dynamic texts become a binding;
-/// [`text!`](crate::text!) and signal texts format into a scratch string owned by the binding
-/// (no allocation once it is large enough). The setters should be idempotent.
+/// A text handed to a widget text setter by [`bind_str`]: a `'static` text the widget can
+/// store without copying, or a borrowed one it copies.
+#[derive(Clone, Copy)]
+pub(crate) enum TextRef<'a> {
+    /// A `'static` text (store the reference).
+    Static(&'static str),
+    /// A borrowed text (copy it; ideally only when it differs from the current one).
+    Borrowed(&'a str),
+}
+
+/// Applies a text property to any widget text through `set` (which chooses the widget's
+/// no-copy setter for [`TextRef::Static`]). A constant text is set at once; a dynamic one
+/// becomes a binding; [`text!`](crate::text!) and signal texts format into a scratch string
+/// owned by the binding (no allocation once it is large enough). `set` should be idempotent.
+///
+/// Only the constant case and one binding are generic (per call site): the dynamic text
+/// sources are evaluated by the shared, non-generic [`DynText::eval`] (a direct call).
 pub(crate) fn bind_str(
     cx: &mut BuildCx<'_>,
     node: NodeId,
     text: TextProp,
-    set_static: impl Fn(&mut twine_engine::Engine, NodeId, &'static str) + 'static,
-    set: impl Fn(&mut twine_engine::Engine, NodeId, &str) + 'static,
+    set: impl Fn(&mut twine_engine::Engine, NodeId, TextRef<'_>) + 'static,
 ) {
-    match text {
-        TextProp::Scoped(f) => {
-            let t = f(cx.scope());
-            bind_str(cx, node, t, set_static, set);
-        }
-        TextProp::StaticFn(f) => {
-            let scope = cx.scope();
-            cx.provide(|| bind_effect(scope, node, f, move |e, n, s: &'static str| set_static(e, n, s)));
-        }
-        TextProp::Static(s) => set_static(cx.engine(), node, s),
-        TextProp::Owned(s) => set(cx.engine(), node, &s),
-        TextProp::Fn(f) => {
-            let scope = cx.scope();
-            cx.provide(|| bind_effect(scope, node, f, move |e, n, s: String| set(e, n, &s)));
-        }
-        TextProp::Write(w) => {
-            let scope = cx.scope();
-            let scratch = alloc::rc::Rc::new(core::cell::RefCell::new(String::new()));
-            cx.provide(|| {
-                bind_effect(
-                    scope,
-                    node,
-                    move || {
-                        {
-                            let mut b = scratch.borrow_mut();
-                            b.clear();
-                            w(&mut *b);
-                        }
-                        scratch.clone()
-                    },
-                    move |e, n, s: alloc::rc::Rc<core::cell::RefCell<String>>| set(e, n, &s.borrow()),
-                );
-            });
+    let src = match text.resolve(cx.scope()) {
+        TextProp::Static(s) => return set(cx.engine(), node, TextRef::Static(s)),
+        TextProp::Owned(s) => return set(cx.engine(), node, TextRef::Borrowed(&s)),
+        TextProp::StaticFn(f) => DynText::StaticFn(f),
+        TextProp::Fn(f) => DynText::Fn(f),
+        TextProp::Write(w) => DynText::Write(w, alloc::rc::Rc::default()),
+        // `resolve` resolved it.
+        TextProp::Scoped(_) => return,
+    };
+    let scope = cx.scope();
+    cx.provide(|| {
+        bind_effect(
+            scope,
+            node,
+            move || src.eval(),
+            move |e, n, v: TextValue| match v {
+                TextValue::Static(s) => set(e, n, TextRef::Static(s)),
+                TextValue::Owned(s) => set(e, n, TextRef::Borrowed(&s)),
+                TextValue::Scratch(b) => set(e, n, TextRef::Borrowed(&b.borrow())),
+            },
+        );
+    });
+}
+
+/// The source of a dynamic text bound by [`bind_str`].
+enum DynText {
+    /// [`TextProp::StaticFn`].
+    StaticFn(Box<dyn Fn() -> &'static str>),
+    /// [`TextProp::Fn`].
+    Fn(Box<dyn Fn() -> String>),
+    /// [`TextProp::Write`] and the binding's reused scratch string.
+    Write(Box<TextWriter>, alloc::rc::Rc<core::cell::RefCell<String>>),
+}
+
+/// One evaluation of a [`DynText`].
+enum TextValue {
+    Static(&'static str),
+    Owned(String),
+    Scratch(alloc::rc::Rc<core::cell::RefCell<String>>),
+}
+
+impl DynText {
+    /// Evaluates the text (the signal reads are tracked by the running binding).
+    #[inline(never)]
+    fn eval(&self) -> TextValue {
+        match self {
+            DynText::StaticFn(f) => TextValue::Static(f()),
+            DynText::Fn(f) => TextValue::Owned(f()),
+            DynText::Write(w, scratch) => {
+                {
+                    let mut b = scratch.borrow_mut();
+                    b.clear();
+                    w(&mut *b);
+                }
+                TextValue::Scratch(scratch.clone())
+            }
         }
     }
 }
@@ -353,10 +408,10 @@ fn write_joined<S: AsRef<str>>(items: &[S], w: &mut dyn Write) {
 }
 
 /// The options of a [`dropdown`](crate::dropdown) or [`roller`](crate::roller): a fixed list
-/// of texts (an array, a `Vec`, a `&'static` slice or an iterator `map`, of anything
-/// [`IntoText`] — each item may itself be dynamic, e.g. a translation) or a reactive list
-/// (a `Signal`, `ReadSignal` or `Memo` of a `Vec` of strings, a closure returning one, or a
-/// [`Prop`](crate::Prop)).
+/// of texts (anything iterable — an array, a `Vec`, a `&'static` slice, an iterator — of
+/// anything [`IntoText`]; each item may itself be dynamic, e.g. a translation) or a reactive
+/// list (a `Signal`, `ReadSignal` or `Memo` of a `Vec` of strings, a closure returning one, or
+/// a [`Prop`](crate::Prop)). `M` is an inferred marker, as for [`IntoText`].
 ///
 /// The widget stores the options as one `'\n'`-joined text (an option must not contain
 /// `'\n'`): a fixed list of constant texts is joined once when the view is built; dynamic
@@ -372,7 +427,8 @@ fn write_joined<S: AsRef<str>>(items: &[S], w: &mut dyn Write) {
 ///     column((
 ///         dropdown(["Low", "Medium", "High"], sel),
 ///         dropdown(names, 0usize),
-///         roller((0..24).map(|h| format!("{h:02}")), 7usize),
+///         roller((0..24).map(|h| format!("{h:02}")), 7),
+///         roller((1..=4).filter(|q| q % 2 == 0).map(|q| format!("{q} h")), 0),
 ///         dropdown(vec![text!("{} items", sel.get()), text!("none")], 0usize),
 ///     ))
 /// }
@@ -380,62 +436,42 @@ fn write_joined<S: AsRef<str>>(items: &[S], w: &mut dyn Write) {
 /// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be used as the options of a dropdown or roller",
-    note = "use an array, a `Vec` or an iterator `map` of texts, or a signal, memo or closure of a `Vec` of strings"
+    note = "use an array, a `Vec`, a slice or an iterator of texts, or a signal, memo or closure of a `Vec` of strings"
 )]
-pub trait IntoOptions {
+pub trait IntoOptions<M> {
     /// The options as one `'\n'`-joined text.
     fn into_options(self) -> TextProp;
 }
 
-impl<T: IntoText, const N: usize> IntoOptions for [T; N] {
+impl<I: IntoIterator, M> IntoOptions<marker::Value<M>> for I
+where
+    I::Item: IntoText<M>,
+{
     fn into_options(self) -> TextProp {
         join_texts(self.into_iter().map(IntoText::into_text).collect())
     }
 }
 
-impl<T: IntoText> IntoOptions for Vec<T> {
-    fn into_options(self) -> TextProp {
-        join_texts(self.into_iter().map(IntoText::into_text).collect())
-    }
+/// The `IntoOptions` impls of the reactive handles: one binding writes the joined list from
+/// the handle's value in place (`with`, no clone).
+macro_rules! reactive_options {
+    ($($s:ident),+) => {$(
+        impl<S: AsRef<str> + 'static> IntoOptions<marker::Reactive<S>> for $s<Vec<S>> {
+            fn into_options(self) -> TextProp {
+                TextProp::Write(Box::new(move |w| self.with(|v| write_joined(v, w))))
+            }
+        }
+    )+};
 }
+reactive_options!(Signal, ReadSignal, Memo);
 
-impl<T: IntoText + Clone> IntoOptions for &'static [T] {
-    fn into_options(self) -> TextProp {
-        join_texts(self.iter().cloned().map(IntoText::into_text).collect())
-    }
-}
-
-impl<I: Iterator, T: IntoText, F: FnMut(I::Item) -> T> IntoOptions for core::iter::Map<I, F> {
-    fn into_options(self) -> TextProp {
-        join_texts(self.map(IntoText::into_text).collect())
-    }
-}
-
-impl<S: AsRef<str> + 'static> IntoOptions for Signal<Vec<S>> {
-    fn into_options(self) -> TextProp {
-        TextProp::Write(Box::new(move |w| self.with(|v| write_joined(v, w))))
-    }
-}
-
-impl<S: AsRef<str> + 'static> IntoOptions for ReadSignal<Vec<S>> {
-    fn into_options(self) -> TextProp {
-        TextProp::Write(Box::new(move |w| self.with(|v| write_joined(v, w))))
-    }
-}
-
-impl<S: AsRef<str> + 'static> IntoOptions for Memo<Vec<S>> {
-    fn into_options(self) -> TextProp {
-        TextProp::Write(Box::new(move |w| self.with(|v| write_joined(v, w))))
-    }
-}
-
-impl<S: AsRef<str> + 'static, F: Fn() -> Vec<S> + 'static> IntoOptions for F {
+impl<S: AsRef<str> + 'static, F: Fn() -> Vec<S> + 'static> IntoOptions<marker::Closure<S>> for F {
     fn into_options(self) -> TextProp {
         TextProp::Write(Box::new(move |w| write_joined(&self(), w)))
     }
 }
 
-impl<S: AsRef<str> + 'static> IntoOptions for crate::Prop<Vec<S>> {
+impl<S: AsRef<str> + 'static> IntoOptions<marker::Prop> for crate::Prop<Vec<S>> {
     fn into_options(self) -> TextProp {
         match self {
             crate::Prop::Static(v) => {

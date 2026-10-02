@@ -189,7 +189,7 @@ fn macro_covers_every_property() {
         grid_cell_y_align: twine_style::GridAlign::End,
         text_leading_trim: twine_style::TextLeadingTrim::Capital,
         rotary_sensitivity: Scale::pct(200),
-        flex_grow: 2u16,
+        flex_grow: 2,
         anim_duration: twine_core::Duration::ms(300),
         drop_shadow_quality: twine_style::BlurQuality::Speed,
         base_dir: twine_style::BaseDir::Rtl,
@@ -269,4 +269,114 @@ fn macro_and_builder_agree_on_every_shorthand() {
     }
     assert_eq!(b.len(), S.props().len());
     assert!(SHORTHANDS.iter().any(|s| s.name == "padding_x"));
+}
+
+// ---- Composition: `..BASE` spreads (R2.S05) ---------------------------------------------
+
+static BUTTON: Style = style! { bg: Color::WHITE, radius: 8, padding: 12 };
+
+#[test]
+fn spread_single_overrides_in_place() {
+    static DANGER: Style = style! { ..BUTTON, bg_color: Color::RED, width: 60 };
+    // The overridden property keeps its position; new ones are appended; no duplicates.
+    assert_eq!(
+        ids(&DANGER),
+        [
+            PropId::BgColor,
+            PropId::BgOpacity,
+            PropId::Radius,
+            PropId::PaddingTop,
+            PropId::PaddingBottom,
+            PropId::PaddingLeft,
+            PropId::PaddingRight,
+            PropId::Width
+        ]
+    );
+    assert_eq!(DANGER.get(PropId::BgColor), Some(StyleValue::Color(Color::RED)));
+    assert_eq!(
+        DANGER.get(PropId::Radius),
+        Some(StyleValue::Length(Length::Px(8)))
+    );
+    assert_eq!(BUTTON.get(PropId::BgColor), Some(StyleValue::Color(Color::WHITE)));
+    assert_eq!(DANGER.has_group(), BUTTON.has_group() | PropId::Width.group_bit());
+}
+
+#[test]
+fn spread_order_matters_and_later_wins() {
+    static A: Style = style! { radius: 1, width: 10 };
+    static B: Style = style! { radius: 2, height: 20 };
+    static AB: Style = style! { ..A, ..B };
+    static BA: Style = style! { ..B, ..A };
+    // A key before a spread is overridden by the spread; one after it wins.
+    static KEY_FIRST: Style = style! { radius: 9, ..A };
+    static KEY_LAST: Style = style! { ..A, radius: 9 };
+    static MIXED: Style = style! { width: 1, ..A, radius: 3, ..B, height: 4, };
+    let r = |s: &Style| s.get(PropId::Radius);
+    assert_eq!(r(&AB), Some(StyleValue::Length(Length::Px(2))));
+    assert_eq!(r(&BA), Some(StyleValue::Length(Length::Px(1))));
+    assert_eq!(r(&KEY_FIRST), Some(StyleValue::Length(Length::Px(1))));
+    assert_eq!(r(&KEY_LAST), Some(StyleValue::Length(Length::Px(9))));
+    assert_eq!(ids(&AB), [PropId::Radius, PropId::Width, PropId::Height]);
+    assert_eq!(ids(&MIXED), [PropId::Width, PropId::Radius, PropId::Height]);
+    assert_eq!(
+        values(&MIXED),
+        [
+            StyleValue::Length(Length::Px(10)),
+            StyleValue::Length(Length::Px(2)),
+            StyleValue::Length(Length::Px(4))
+        ]
+    );
+}
+
+#[test]
+fn spread_nested_and_of_consts_and_references() {
+    const BASE: Style = style! { radius: 4, bg_opacity: Opa::P50 };
+    static MID: Style = style! { ..BASE, radius: 6 };
+    static LEAF: Style = style! { ..&MID, bg_opacity: Opa::COVER };
+    static ONLY: Style = style! { ..LEAF };
+    assert_eq!(LEAF.get(PropId::Radius), Some(StyleValue::Length(Length::Px(6))));
+    assert_eq!(LEAF.get(PropId::BgOpacity), Some(StyleValue::Opa(Opa::COVER)));
+    assert_eq!(ids(&ONLY), ids(&LEAF));
+    assert_eq!(values(&ONLY), values(&LEAF));
+}
+
+#[test]
+fn spread_collapses_duplicates_of_a_plain_base() {
+    // A plain `style!` keeps its entries as written (later wins at lookup); a spread stores
+    // each property once.
+    static PLAIN: Style = style! { padding: 1, padding_top: 2 };
+    static MERGED: Style = style! { ..PLAIN };
+    assert_eq!(PLAIN.props().len(), 5);
+    assert_eq!(MERGED.props().len(), 4);
+    assert_eq!(
+        MERGED.get(PropId::PaddingTop),
+        Some(StyleValue::Length(Length::Px(2)))
+    );
+    assert_eq!(MERGED.get(PropId::PaddingLeft), PLAIN.get(PropId::PaddingLeft));
+}
+
+// Compile-time evaluation: the composition is a constant, so it cannot allocate or run code.
+const COMPOSED: Style = style! { ..BUTTON, radius: Radius::Circle, transition: &SMOOTH };
+static SMOOTH: twine_style::Transition = twine_style::Transition::of(
+    twine_style::Props::of(PropId::BgColor),
+    twine_core::Duration::ms(100),
+);
+const _: () = assert!(COMPOSED.props().len() == BUTTON.props().len() + 1);
+
+#[test]
+fn spread_is_const_and_keeps_static_references() {
+    static FROM_CONST: Style = COMPOSED;
+    // Pointers to other statics (fonts, transitions, …) survive the compile-time merge.
+    static WITH_FONT: Style = style! { ..COMPOSED, font: &twine_text::EMPTY_FONT };
+    static FONTED: Style = style! { ..WITH_FONT, padding: 0 };
+    static CIRCLE: Style = style! { radius: Radius::Circle };
+    assert_eq!(FROM_CONST.get(PropId::Radius), CIRCLE.get(PropId::Radius));
+    assert!(matches!(
+        FONTED.get(PropId::Transition),
+        Some(StyleValue::Transition(twine_style::TransitionRef::Static(t))) if core::ptr::eq(t, &raw const SMOOTH)
+    ));
+    assert!(matches!(
+        FONTED.get(PropId::Font),
+        Some(StyleValue::Font(f)) if core::ptr::eq(f, &raw const twine_text::EMPTY_FONT)
+    ));
 }

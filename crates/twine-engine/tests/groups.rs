@@ -202,7 +202,7 @@ fn focus_state_change_invalidates_only_nodes() {
             e.set_local_prop(
                 b,
                 Selector::MAIN.with_state(State::FOCUSED),
-                StyleProp::BgColor(Color::RED),
+                StyleProp::BgColor(Color::RED.into()),
             );
             e.group_add(g, b);
             ids.push(b);

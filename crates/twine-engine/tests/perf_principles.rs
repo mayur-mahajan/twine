@@ -76,7 +76,7 @@ fn p2_style_change_invalidates_node_only() {
     });
     h.run_until_idle();
     h.engine_mut()
-        .set_local_prop(ids[3], Selector::MAIN, StyleProp::BgColor(Color::GREEN));
+        .set_local_prop(ids[3], Selector::MAIN, StyleProp::BgColor(Color::GREEN.into()));
     let log = h.engine().invalidation_log().to_vec();
     assert!(!log.is_empty());
     assert!(
@@ -97,16 +97,19 @@ fn p4_zero_alloc_steady_state() {
         for i in 0..199 {
             let (x, y) = ((i % 20) * 16, (i / 20) * 24);
             let mut props = vec![
-                StyleProp::BgColor(Color::hex(0x10_20_30 + i as u32 * 0x0001_0203)),
-                StyleProp::BgOpacity(Opa::COVER),
-                StyleProp::Radius(Radius::Px(3)),
+                StyleProp::BgColor(Color::hex(0x10_20_30 + i as u32 * 0x0001_0203).into()),
+                StyleProp::BgOpacity(Opa::COVER.into()),
+                StyleProp::Radius(Radius::Px(3).into()),
             ];
             if i % 7 == 0 {
-                props.extend([StyleProp::ShadowWidth(6), StyleProp::ShadowOpacity(Opa::P40)]);
+                props.extend([
+                    StyleProp::ShadowWidth(6),
+                    StyleProp::ShadowOpacity(Opa::P40.into()),
+                ]);
             }
             if i % 5 == 0 {
                 props.extend([
-                    StyleProp::BgGradientColor(Color::WHITE),
+                    StyleProp::BgGradientColor(Color::WHITE.into()),
                     StyleProp::BgGradientDir(GradDir::Hor),
                 ]);
             }

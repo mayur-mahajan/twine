@@ -1,19 +1,33 @@
-//! `cargo xtask sim <example>` runs a simulator example from `examples/src/bin/`;
+//! `cargo xtask sim <example>` runs a simulator example: a Cargo example of the `twine` crate
+//! (`crates/twine/examples/`), or one of [`FEATURE_EXAMPLES`];
 //! `cargo xtask sim-smoke` runs all of them headless (CI job `sim-smoke`).
 
 use std::path::PathBuf;
 
 use crate::util::{R, cargo, run as run_cmd, workspace_root};
 
-/// Names of the available examples (file stems of `examples/src/bin/*.rs`), sorted.
+/// The package whose Cargo examples are the simulator examples.
+pub const PACKAGE: &str = "twine";
+
+/// Directory of the simulator examples, relative to the workspace root.
+pub const EXAMPLES_DIR: &str = "crates/twine/examples";
+
+/// Examples that run in another simulator (`embedded-graphics-simulator`, SDL2), each a Cargo
+/// example of another package behind a feature: `(example, package, feature)`. They have no
+/// headless mode, so `sim-smoke` skips them (CI builds them in the `eg-sim` stage when SDL2 is
+/// installed).
+pub const FEATURE_EXAMPLES: &[(&str, &str, &str)] = &[("eg_simulator", "twine-embedded-graphics", "eg-sim")];
+
+/// Names of the Cargo examples of [`PACKAGE`] (`examples/<name>.rs` and
+/// `examples/<name>/main.rs`, as Cargo discovers them), sorted.
 #[must_use]
 pub fn examples() -> Vec<String> {
-    let dir = workspace_root().join("examples/src/bin");
+    let dir = workspace_root().join(EXAMPLES_DIR);
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .map(|rd| {
             rd.filter_map(Result::ok)
                 .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|e| e == "rs"))
+                .filter(|p| p.extension().is_some_and(|e| e == "rs") || p.join("main.rs").is_file())
                 .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
                 .collect()
         })
@@ -22,10 +36,14 @@ pub fn examples() -> Vec<String> {
     names
 }
 
-/// Examples that run in another simulator (`embedded-graphics-simulator`, SDL2) behind the
-/// `twine-examples` feature of the same name: `(example, feature)`. They have no headless mode,
-/// so `sim-smoke` skips them (CI builds them in the `eg-sim` stage when SDL2 is installed).
-pub const FEATURE_EXAMPLES: &[(&str, &str)] = &[("eg_simulator", "eg-sim")];
+/// Every runnable example: [`examples`] and the [`FEATURE_EXAMPLES`], sorted.
+#[must_use]
+pub fn all_examples() -> Vec<String> {
+    let mut names = examples();
+    names.extend(FEATURE_EXAMPLES.iter().map(|(e, _, _)| (*e).to_string()));
+    names.sort();
+    names
+}
 
 /// The directory of the SDL2 library (`sdl2-config --prefix`/lib), if SDL2 is installed.
 #[must_use]
@@ -52,11 +70,13 @@ pub fn add_sdl2_env(cmd: &mut std::process::Command, lib: &std::path::Path) {
     }
 }
 
-/// The headless script of `example`, if `examples/scripts/<example>.twinescript` exists.
+/// The headless script of `example`, if `crates/twine/examples/scripts/<example>.twinescript`
+/// exists.
 #[must_use]
 pub fn smoke_script(example: &str) -> Option<PathBuf> {
     let p = workspace_root()
-        .join("examples/scripts")
+        .join(EXAMPLES_DIR)
+        .join("scripts")
         .join(format!("{example}.twinescript"));
     p.is_file().then_some(p)
 }
@@ -74,7 +94,7 @@ pub struct SimOptions {
 
 /// Runs `example`, forwarding `args` to it and `RUST_LOG` (default `twine=info`).
 pub fn run(example: &str, opts: &SimOptions, args: &[String]) -> R {
-    let available = examples();
+    let available = all_examples();
     if !available.iter().any(|e| e == example) {
         let list = if available.is_empty() {
             "(none yet)".to_string()
@@ -84,8 +104,8 @@ pub fn run(example: &str, opts: &SimOptions, args: &[String]) -> R {
         return Err(format!("sim: unknown example `{example}`; available: {list}").into());
     }
     let mut cmd = cargo();
-    cmd.args(["run", "-p", "twine-examples", "--bin", example]);
-    if let Some((_, feature)) = FEATURE_EXAMPLES.iter().find(|(e, _)| *e == example) {
+    if let Some((_, package, feature)) = FEATURE_EXAMPLES.iter().find(|(e, _, _)| *e == example) {
+        cmd.args(["run", "-p", package, "--example", example]);
         let Some(lib) = sdl2_lib_dir() else {
             return Err(format!(
                 "sim: `{example}` needs SDL2 (`brew install sdl2` / `apt install libsdl2-dev`)"
@@ -94,6 +114,8 @@ pub fn run(example: &str, opts: &SimOptions, args: &[String]) -> R {
         };
         cmd.args(["--features", feature]);
         add_sdl2_env(&mut cmd, &lib);
+    } else {
+        cmd.args(["run", "-p", PACKAGE, "--example", example]);
     }
     if opts.release {
         cmd.arg("--release");
@@ -126,12 +148,9 @@ pub fn smoke() -> R {
         return Ok(());
     }
     // Build once so the per-example runs only execute.
-    run_cmd(cargo().args(["build", "-p", "twine-examples", "--bins"]))?;
+    run_cmd(cargo().args(["build", "-p", PACKAGE, "--examples"]))?;
     let mut failed = Vec::new();
-    for ex in all
-        .iter()
-        .filter(|e| !FEATURE_EXAMPLES.iter().any(|(f, _)| f == e))
-    {
+    for ex in &all {
         let opts = SimOptions {
             release: false,
             headless: true,
@@ -156,7 +175,15 @@ mod tests {
 
     #[test]
     fn test_pattern_has_a_smoke_script() {
-        assert!(examples().iter().any(|e| e == "test_pattern"));
+        let all = examples();
+        // Single-file and multi-file (`<name>/main.rs`) examples; helper directories are not.
+        assert!(all.iter().any(|e| e == "hello"));
+        assert!(all.iter().any(|e| e == "test_pattern"));
+        assert!(
+            !all.iter()
+                .any(|e| e == "common" || e == "assets" || e == "scripts")
+        );
+        assert!(all_examples().iter().any(|e| e == "eg_simulator"));
         assert!(smoke_script("test_pattern").is_some());
         assert!(smoke_script("no_such_example").is_none());
     }

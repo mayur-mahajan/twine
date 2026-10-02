@@ -179,7 +179,7 @@ fn hidden_ancestor_skips_invalidation() {
     h.engine_mut().set_local_prop(
         child,
         twine_style::Selector::MAIN,
-        StyleProp::BgColor(Color::GREEN),
+        StyleProp::BgColor(Color::GREEN.into()),
     );
     assert!(log(&h).is_empty());
     h.assert_idle();
@@ -231,7 +231,7 @@ fn ext_draw_includes_shadow_and_outline() {
         &mut e,
         n,
         &[
-            StyleProp::ShadowOpacity(twine_core::Opa::TRANSP),
+            StyleProp::ShadowOpacity(twine_core::Opa::TRANSP.into()),
             StyleProp::OutlineWidth(1),
         ],
     );
@@ -244,8 +244,8 @@ fn ext_draw_includes_shadow_and_outline() {
         m,
         &[
             StyleProp::TransformRotation(twine_core::Angle::deg(90)),
-            StyleProp::TransformPivotX(twine_style::Length::Pct(50)),
-            StyleProp::TransformPivotY(twine_style::Length::Pct(50)),
+            StyleProp::TransformPivotX(twine_style::Length::Pct(50).into()),
+            StyleProp::TransformPivotY(twine_style::Length::Pct(50).into()),
         ],
     );
     let ext = e.tree().node(m).unwrap().ext_draw();

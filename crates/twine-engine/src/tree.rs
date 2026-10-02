@@ -20,6 +20,20 @@ use crate::{
     fmt_node_id,
 };
 
+/// Layout attributes few nodes have, kept out of [`Node`] behind one pointer (LVGL
+/// `spec_attr`). Freed with the node, or when every attribute is cleared.
+#[derive(Debug, Default)]
+pub(crate) struct LayoutExt {
+    /// `Engine::align_to` relation.
+    pub(crate) align_to: Option<twine_layout::AlignTo<NodeId>>,
+}
+
+impl LayoutExt {
+    fn is_empty(&self) -> bool {
+        self.align_to.is_none()
+    }
+}
+
 /// One node of the tree: links, the widget, flags, state, styles and geometry.
 ///
 /// Fields are private; read them with the getters and change them through
@@ -49,8 +63,8 @@ pub struct Node {
     /// The widget's own content size as last measured (used while the widget is detached).
     pub(crate) widget_size: core::cell::Cell<twine_core::Size>,
     pub(crate) layout_dirty: LayoutDirty,
-    /// `Engine::align_to` relation.
-    pub(crate) align_to: Option<twine_layout::AlignTo<NodeId>>,
+    /// Layout attributes few nodes have (`align_to`), allocated on first use (LVGL `spec_attr`): a plain node pays one pointer for them.
+    pub(crate) layout_ext: Option<Box<LayoutExt>>,
     /// Some node was aligned to this one (its moves re-layout them).
     pub(crate) align_base: bool,
     pub(crate) style_cache: StyleCache,
@@ -100,7 +114,7 @@ impl Node {
             ext_draw: 0,
             widget_ext: core::cell::Cell::new(0),
             layout_dirty: LayoutDirty::empty(),
-            align_to: None,
+            layout_ext: None,
             align_base: false,
             style_cache: StyleCache::default(),
             rendered: core::cell::Cell::new(false),
@@ -115,6 +129,24 @@ impl Node {
     #[must_use]
     pub fn parent(&self) -> Option<NodeId> {
         self.parent
+    }
+
+    /// The `Engine::align_to` relation, if any.
+    #[inline]
+    pub(crate) fn align_to(&self) -> Option<twine_layout::AlignTo<NodeId>> {
+        self.layout_ext.as_deref().and_then(|x| x.align_to)
+    }
+
+    /// The node's rare layout attributes, allocated on first use.
+    pub(crate) fn layout_ext_mut(&mut self) -> &mut LayoutExt {
+        self.layout_ext.get_or_insert_with(Box::default)
+    }
+
+    /// Frees the rare layout attributes once none is set.
+    pub(crate) fn trim_layout_ext(&mut self) {
+        if self.layout_ext.as_deref().is_some_and(LayoutExt::is_empty) {
+            self.layout_ext = None;
+        }
     }
 
     /// The first child.
@@ -875,7 +907,9 @@ impl Tree {
     }
 
     /// Writes an indented dump of `root`'s subtree, one node per line:
-    /// `obj n3g1 "test_id" [x0,y0 → x1,y1] state=PRESSED flags=CLICKABLE|… text="…"`.
+    /// `obj n3g1 "test_id" [x0,y0 → x1,y1] state=PRESSED flags=CLICKABLE|… text="…"` (states as
+    /// [`State`](crate::State)'s `Display`: application states by their
+    /// [`set_custom_name`](crate::State::set_custom_name) names, `DEFAULT` for none).
     pub fn dump(&self, root: NodeId, out: &mut dyn Write) -> fmt::Result {
         for id in self.descendants(root) {
             let depth = self.ancestors(id).take_while(|a| *a != root).count() + usize::from(id != root);
@@ -895,7 +929,7 @@ impl Tree {
                 c.y0,
                 c.x1,
                 c.y1,
-                flag_names(n.state),
+                n.state,
                 flag_names(n.flags)
             )?;
             if let Some(t) = n.widget.text() {
@@ -1167,11 +1201,26 @@ mod tests {
         let lines: Vec<&str> = s.lines().collect();
         assert_eq!(lines.len(), 3);
         assert!(
-            lines[0].starts_with("obj n0g1 [0,0 → 0,0] state=- flags=CLICKABLE"),
+            lines[0].starts_with("obj n0g1 [0,0 → 0,0] state=DEFAULT flags=CLICKABLE"),
             "{}",
             lines[0]
         );
         assert!(lines[1].starts_with("  obj n1g1 [1,2 → 3,4]"), "{}", lines[1]);
+    }
+
+    #[test]
+    fn dump_names_application_states() {
+        // Slot 2: other tests of this binary leave it unnamed.
+        const ALARM: State = State::custom::<2>();
+        State::set_custom_name(ALARM, "ALARM");
+        let (mut t, root, kids) = tree_with(1);
+        t.node_mut(kids[0]).unwrap().state = State::PRESSED | ALARM;
+        let mut s = String::new();
+        t.dump(root, &mut s).unwrap();
+        assert!(
+            s.lines().nth(1).unwrap().contains("state=PRESSED|ALARM flags="),
+            "{s}"
+        );
     }
 
     #[test]

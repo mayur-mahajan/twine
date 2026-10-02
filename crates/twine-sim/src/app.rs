@@ -274,13 +274,33 @@ struct EngineProgram {
     perf_overlay: bool,
     /// The registered simulated devices (per [`SimConfig::input`]).
     inputs: EngineInputs,
-    /// Themes switched by F12.
-    theme_toggle: Option<crate::ThemeToggle>,
-    /// The dark theme of `theme_toggle` is installed.
-    dark: bool,
     /// Runs instead of `Engine::step` (the declarative `Ui` cycle of [`crate::run`]).
     stepper: Option<StepFn>,
+    /// Runs with the engine when the program is dropped (takes the declarative `Ui` down).
+    teardown: Option<TeardownFn>,
 }
+
+impl Drop for EngineProgram {
+    fn drop(&mut self) {
+        if let Some(f) = self.teardown.take() {
+            f(&mut self.engine);
+        }
+    }
+}
+
+/// Runs once with the engine when an engine app is dropped, before the engine itself (see
+/// [`SimApp::set_teardown_fn`]). A boxed `FnOnce`: it may own the application's state (e.g. a
+/// `UiCore` to dispose).
+///
+/// ```
+/// use twine_sim::TeardownFn;
+///
+/// let teardown: TeardownFn = Box::new(|engine| {
+///     let _ = engine.take_faults(); // e.g. report the faults left at exit
+/// });
+/// # let _ = teardown;
+/// ```
+pub type TeardownFn = Box<dyn FnOnce(&mut Engine)>;
 
 /// An update function replacing `Engine::step` (see [`SimApp::set_step_fn`]).
 pub type StepFn = Box<dyn FnMut(&mut Engine, Instant) -> Wake>;
@@ -479,7 +499,8 @@ impl SimApp {
     /// notified whenever a device changes, like an interrupt line.
     ///
     /// Hotkeys: F2 refresh-area debug overlay, F3 layout bounds, F4 performance overlay (needs
-    /// `EngineConfig::default_font`), F8 tree dump. Keys pressed are also passed to
+    /// `EngineConfig::default_font`), F8 tree dump, F12 next theme mode
+    /// ([`Hotkey::CycleThemeMode`](crate::hotkeys::Hotkey::CycleThemeMode)). Keys pressed are also passed to
     /// [`SimConfig::on_raw_key`].
     pub fn engine(mut cfg: SimConfig, setup: impl FnOnce(&mut Engine)) -> Result<Self, SimError> {
         let mut engine = Engine::new(EngineConfig {
@@ -510,12 +531,7 @@ impl SimApp {
         };
         let devices = SimDevices::new();
         let inputs = register_inputs(&mut engine, display, &cfg, &devices)?;
-        let toggle = cfg.theme_toggle.clone();
-        if let Some(t) = cfg
-            .theme
-            .clone()
-            .or_else(|| toggle.as_ref().map(|t| t.light.clone()))
-        {
+        if let Some(t) = cfg.theme.clone() {
             engine.set_theme(display, t);
         }
         setup(&mut engine);
@@ -528,9 +544,8 @@ impl SimApp {
             raw_key,
             perf_overlay: false,
             inputs,
-            theme_toggle: toggle,
-            dark: false,
             stepper: None,
+            teardown: None,
         }));
         Ok(Self::with_program(cfg, program, devices))
     }
@@ -558,6 +573,33 @@ impl SimApp {
     pub fn set_step_fn(&mut self, f: StepFn) {
         if let Program::Engine(p) = &mut self.program {
             p.stepper = Some(f);
+        }
+    }
+
+    /// Runs `f` with the engine when an engine app is dropped, before the engine (e.g.
+    /// `UiCore::dispose`, so the application's scopes are disposed with the engine lent).
+    ///
+    /// `f` runs at most once: when the app is dropped (e.g. at the end of
+    /// [`run_headless`](Self::run_headless)), never if it is leaked. A second call replaces
+    /// the previous function (only the last one runs). Framebuffer apps
+    /// ([`SimApp::framebuffer`]) have no engine: the call is ignored. Never panics itself; a
+    /// panic in `f` propagates from the drop.
+    ///
+    /// ```
+    /// use std::cell::Cell;
+    /// use std::rc::Rc;
+    /// use twine_sim::{SimApp, SimConfig};
+    ///
+    /// let mut app = SimApp::engine(SimConfig::new(64, 32), |_engine| {}).unwrap();
+    /// let ran = Rc::new(Cell::new(false));
+    /// let r = ran.clone();
+    /// app.set_teardown_fn(Box::new(move |_engine| r.set(true)));
+    /// drop(app);
+    /// assert!(ran.get());
+    /// ```
+    pub fn set_teardown_fn(&mut self, f: TeardownFn) {
+        if let Program::Engine(p) = &mut self.program {
+            p.teardown = Some(f);
         }
     }
 
@@ -1027,7 +1069,7 @@ impl SimApp {
     }
 
     /// Engine hotkeys (F2 refresh debug, F3 layout bounds, F4 performance overlay, F8 tree
-    /// dump). Returns whether `hk` was handled.
+    /// dump, F12 next theme mode). Returns whether `hk` was handled.
     fn engine_hotkey(&mut self, hk: Hotkey) -> bool {
         let Program::Engine(p) = &mut self.program else {
             return false;
@@ -1055,14 +1097,15 @@ impl SimApp {
                 log::info!(target: "twine::sim", "performance overlay {}", if p.perf_overlay { "on" } else { "off" });
             }
             Hotkey::DumpTree => print!("{}", e.dump()),
-            Hotkey::ThemeToggle => {
-                let Some(t) = &p.theme_toggle else {
+            Hotkey::CycleThemeMode => {
+                let modes = e.theme_modes(p.display);
+                if modes.len() < 2 {
+                    // No theme, or a theme with one mode: nothing to cycle.
                     return false;
-                };
-                p.dark = !p.dark;
-                let theme = if p.dark { t.dark.clone() } else { t.light.clone() };
-                log::info!(target: "twine::sim", "theme: {}", theme.name());
-                e.set_theme(p.display, theme);
+                }
+                let next = e.theme_mode(p.display).next_in(modes);
+                log::info!(target: "twine::sim", "theme mode: {next:?}");
+                e.set_theme_mode(p.display, next);
             }
             _ => return false,
         }

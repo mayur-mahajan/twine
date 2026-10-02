@@ -64,30 +64,29 @@ pub fn solve(raw: [(i32, i32); 3], w: i32, h: i32) -> Option<Calibration> {
 /// Size of a crosshair.
 const CROSS: i32 = 21;
 
+// The looks, composed once at compile time (in flash) instead of repeating the modifiers on
+// every node: a bare rectangle without the theme's card border, rounding and padding, and its
+// variants.
+
+/// A bare rectangle: no border, rounding or padding.
+static PLAIN: Style = style! { border: (0, Color::BLACK), radius: 0, padding: 0 };
+/// A bar of a crosshair.
+static BAR: Style = style! { ..PLAIN, bg: Color::hex(0xE5_39_35) };
+/// A transparent layer (a crosshair's box, the verification targets).
+static LAYER: Style = style! { ..PLAIN, bg_opacity: Opa::TRANSP };
+/// The calibration screen: white (a measurement screen, fixed high contrast).
+static SCREEN: Style = style! { ..PLAIN, bg: Color::WHITE };
+
 /// A crosshair centered on `(x, y)` (reactive).
 fn crosshair(x: impl Fn() -> i32 + Clone + 'static, y: impl Fn() -> i32 + Clone + 'static) -> impl View {
     let (x2, y2) = (x.clone(), y.clone());
     container((
-        container(())
-            .size(CROSS, 1)
-            .pos(0, CROSS / 2)
-            .bg(Color::hex(0xE5_39_35))
-            .border(0, Color::BLACK)
-            .radius(0)
-            .padding(0),
-        container(())
-            .size(1, CROSS)
-            .pos(CROSS / 2, 0)
-            .bg(Color::hex(0xE5_39_35))
-            .border(0, Color::BLACK)
-            .radius(0)
-            .padding(0),
+        container(()).size(CROSS, 1).pos(0, CROSS / 2).style(&BAR),
+        container(()).size(1, CROSS).pos(CROSS / 2, 0).style(&BAR),
     ))
     .size(CROSS, CROSS)
     .pos(move || x2() - CROSS / 2, move || y2() - CROSS / 2)
-    .bg_opacity(Opa::TRANSP)
-    .border(0, Color::BLACK)
-    .padding(0)
+    .style(&LAYER)
     .test_id("target")
 }
 
@@ -111,6 +110,24 @@ pub fn app(cx: Scope) -> impl View {
 /// The calibration application; `on_done` receives the calibration (and it is shown). It is a
 /// closure (it may capture e.g. a signal or a storage handle), `FnMut` because it is called
 /// from the touch-message handler, which may run more than once.
+/// The display size is read from the engine's default display (320 × 240 when there is none).
+/// Feed it raw touch points through [`RAW`] (see the [module documentation](self)). Never
+/// panics.
+///
+/// ```
+/// use std::cell::Cell;
+/// use std::rc::Rc;
+/// use twine_demos::calibration::app_with;
+/// use twine_testing::{TestUi, by_id};
+///
+/// let done = Rc::new(Cell::new(false));
+/// let d = done.clone();
+/// // E.g. store the calibration in flash instead of logging it.
+/// let mut t = TestUi::new(320, 240).mount(move |cx| app_with(cx, move |_cal| d.set(true)));
+/// t.run_until_idle();
+/// assert_eq!(t.find(by_id("calibration")).text(), "Tap the center of the cross");
+/// assert!(!done.get()); // no taps yet
+/// ```
 pub fn app_with(cx: Scope, mut on_done: impl FnMut(Calibration) + 'static) -> impl View {
     let (w, h) = twine::view::EngineAccess::with(|e| {
         e.default_display()
@@ -173,18 +190,13 @@ pub fn app_with(cx: Scope, mut on_done: impl FnMut(Calibration) + 'static) -> im
                     crosshair(move || t[3].0, move || t[3].1),
                     crosshair(move || t[4].0, move || t[4].1),
                 ))
-                .size(Length::Pct(100), Length::Pct(100))
-                .bg_opacity(Opa::TRANSP)
-                .border(0, Color::BLACK)
-                .padding(0)
+                .fill()
+                .style(&LAYER)
             },
         ),
     ))
-    .size(Length::Pct(100), Length::Pct(100))
-    .padding(0)
-    .radius(0)
-    .border(0, Color::BLACK)
-    .bg(Color::WHITE)
+    .fill()
+    .style(&SCREEN)
     .scrollable(false)
 }
 

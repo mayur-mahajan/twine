@@ -58,7 +58,8 @@ pub struct PropMeta {
     /// Value when no style sets the property (LVGL `lv_style_prop_get_default`). `Font`
     /// holds `twine_text::EMPTY_FONT`; resolution substitutes the caller's `StyleDefaults::font`.
     pub default: StyleValue,
-    /// Lookup group, `id >> 4` (see `Style::has_group`).
+    /// Lookup group, `id >> 4` (see `Style::has_group`; an index for fast lookups, not the
+    /// property group of [`Props`](crate::Props)).
     pub group: u8,
 }
 
@@ -85,8 +86,9 @@ impl PropMeta {
     }
 }
 
-/// Converts `style!` values of `Length`/`Radius`/`DurationMs` properties (integers or typed values) in
-/// `const` context; every other value is taken as is (typed values only).
+/// Converts `style!` values of `Length`/`Radius`/design-value/`DurationMs`/`GridTracks`
+/// properties (integers, design elements, `'static` track lists or typed values) in `const`
+/// context; every other value is taken as is (typed values only).
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __style_wrap {
@@ -96,8 +98,20 @@ macro_rules! __style_wrap {
     (radius, $v:expr) => {
         $crate::__RadiusArg($v).get()
     };
+    (elem, $v:expr) => {
+        $crate::design::__ElementArg($v).get()
+    };
     (dur, $v:expr) => {
         $crate::__DurationArg($v).get()
+    };
+    (tracks, $v:expr) => {
+        $crate::__TracksArg($v).get()
+    };
+    (trans, $v:expr) => {
+        $crate::__TransitionArg($v).get()
+    };
+    (layout, $v:expr) => {
+        $v
     };
     (val, $v:expr) => {
         $v
@@ -109,15 +123,36 @@ macro_rules! define_props {
     (
         [$d:tt]
         $(
-            $(#[doc = $doc:literal])*
-            $name:ident ( $key:ident ) : $kind:ident [$($ty:tt)+] [ $($flag:ident)* ] $default:ident
-                [ $($alias:literal)* ];
+            $(#[doc = $gdoc:literal])*
+            $group:ident {
+                $(
+                    $(#[doc = $doc:literal])*
+                    $name:ident ( $key:ident ) : $kind:ident [$($ty:tt)+] [ $($flag:ident)* ] $default:ident
+                        [ $($alias:literal)* ];
+                )*
+            }
         )*
     ) => {
+        /// The property groups of the table, one constant per group (see [`Props`](crate::Props)).
+        impl $crate::Props {
+            $(
+                $(#[doc = $gdoc])*
+                ///
+                #[doc = ::core::concat!("Members: ", $("`", ::core::stringify!($name), "` ",)* ".")]
+                pub const $group: $crate::Props = $crate::Props::from_ids(&[$($crate::PropId::$name),*]);
+            )*
+
+            /// Every property group with its name (`"BG"`), in table order. The groups are
+            /// disjoint and together contain every property.
+            pub const GROUPS: &'static [(&'static str, $crate::Props)] = &[
+                $( (::core::stringify!($group), $crate::Props::$group), )*
+            ];
+        }
+
         /// Declaration order (first property = 1), used to number [`PropId`].
         #[allow(dead_code, clippy::enum_variant_names)]
         #[repr(u8)]
-        enum Order { Invalid, $($name),* }
+        enum Order { Invalid, $($($name,)*)* }
 
         /// Identifier of a style property: the fieldless discriminant of [`StyleProp`]
         /// (`1..=PROP_COUNT`; LVGL `lv_style_prop_t`, with Twine's own numbering and names).
@@ -125,15 +160,15 @@ macro_rules! define_props {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
         #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         pub enum PropId {
-            $( $(#[doc = $doc])* $(#[doc(alias = $alias)])* $name = Order::$name as u8, )*
+            $($( $(#[doc = $doc])* $(#[doc(alias = $alias)])* $name = Order::$name as u8, )*)*
         }
 
         /// Number of style properties.
-        pub const PROP_COUNT: usize = [$($crate::PropId::$name),*].len();
+        pub const PROP_COUNT: usize = [$($($crate::PropId::$name,)*)*].len();
 
         impl $crate::PropId {
             /// Every property, in id order.
-            pub const ALL: [$crate::PropId; PROP_COUNT] = [$($crate::PropId::$name),*];
+            pub const ALL: [$crate::PropId; PROP_COUNT] = [$($($crate::PropId::$name,)*)*];
 
             /// The property with id `v` (`None` for 0 and ids past [`PROP_COUNT`]).
             #[must_use]
@@ -148,10 +183,12 @@ macro_rules! define_props {
 
         /// One style property with its value: one variant per [`PropId`], with the natural
         /// payload type. `Copy`; lives in `static` [`Style`](crate::Style)s or in
-        /// [`StyleBuf`](crate::StyleBuf)s.
+        /// [`StyleBuf`](crate::StyleBuf)s. A grid template property holds a
+        /// [`TracksRef`](crate::TracksRef): a `'static` list, or the run-time template its
+        /// container (a `StyleBuf`) holds.
         #[derive(Clone, Copy, Debug)]
         pub enum StyleProp {
-            $( $(#[doc = $doc])* $(#[doc(alias = $alias)])* $name($crate::__prop_ty!($($ty)+)), )*
+            $($( $(#[doc = $doc])* $(#[doc(alias = $alias)])* $name($crate::__prop_ty!($($ty)+)), )*)*
         }
 
         impl $crate::StyleProp {
@@ -160,7 +197,7 @@ macro_rules! define_props {
             #[must_use]
             pub const fn id(&self) -> $crate::PropId {
                 match self {
-                    $( $crate::StyleProp::$name(_) => $crate::PropId::$name, )*
+                    $($( $crate::StyleProp::$name(_) => $crate::PropId::$name, )*)*
                 }
             }
 
@@ -169,7 +206,7 @@ macro_rules! define_props {
             #[must_use]
             pub fn value(&self) -> $crate::StyleValue {
                 match *self {
-                    $( $crate::StyleProp::$name(v) => $crate::PropValue::into_value(v), )*
+                    $($( $crate::StyleProp::$name(v) => $crate::PropValue::into_value(v), )*)*
                 }
             }
 
@@ -178,14 +215,14 @@ macro_rules! define_props {
             #[must_use]
             pub fn from_value(id: $crate::PropId, v: $crate::StyleValue) -> ::core::option::Option<$crate::StyleProp> {
                 match id {
-                    $( $crate::PropId::$name => <$crate::__prop_ty!($($ty)+) as $crate::PropValue>::from_value(v).map($crate::StyleProp::$name), )*
+                    $($( $crate::PropId::$name => <$crate::__prop_ty!($($ty)+) as $crate::PropValue>::from_value(v).map($crate::StyleProp::$name), )*)*
                 }
             }
         }
 
         /// Metadata of every property, indexed by `id as usize - 1` (use [`PropId::meta`]).
         pub static PROP_META: [$crate::PropMeta; PROP_COUNT] = [
-            $(
+            $($(
                 $crate::PropMeta::new(
                     ::core::stringify!($name),
                     ::core::stringify!($key),
@@ -194,7 +231,7 @@ macro_rules! define_props {
                     $crate::__private::$default,
                     $crate::PropId::$name as u8,
                 ),
-            )*
+            )*)*
         ];
 
         /// The former names of every property, indexed like [`PROP_META`]: the previous Twine
@@ -202,31 +239,31 @@ macro_rules! define_props {
         /// property, its builder method and its view modifier, and are listed in
         /// `PROPERTIES.md`; `style!` does not accept them. Kept out of [`PropMeta`] so firmware
         /// that never reads it does not link the strings.
-        pub static PROP_ALIASES: [&[&str]; PROP_COUNT] = [ $( &[$($alias),*], )* ];
+        pub static PROP_ALIASES: [&[&str]; PROP_COUNT] = [ $($( &[$($alias),*], )*)* ];
 
         /// Builder methods, one per property (named like the `style!` keys and the view
         /// modifiers).
         impl $crate::StyleBuf {
-            $(
+            $($(
                 $(#[doc = $doc])*
                 ///
                 #[doc = ::core::concat!("Sets [`StyleProp::", ::core::stringify!($name), "`] and returns the buffer (builder style).")]
                 $(#[doc(alias = $alias)])*
                 #[must_use]
-                pub fn $key(mut self, v: $crate::__builder_ty!($($ty)+)) -> Self {
-                    self.set($crate::StyleProp::$name(::core::convert::Into::into(v)));
+                pub fn $key(mut self, v: impl ::core::convert::Into<$crate::__builder_arg!($kind [$($ty)+])>) -> Self {
+                    $crate::__builder_set!($kind self $name v);
                     self
                 }
-            )*
+            )*)*
         }
 
         /// Maps a `style!` key to its `StyleProp` (generated from the property table).
         #[doc(hidden)]
         #[macro_export]
         macro_rules! __style_prop {
-            $(
+            $($(
                 ($key, $d v:expr) => { $crate::StyleProp::$name($crate::__style_wrap!($kind, $d v)) };
-            )*
+            )*)*
             ($d other:ident, $d v:expr) => {
                 ::core::compile_error!(::core::concat!(
                     "unknown style property: ", ::core::stringify!($d other),
@@ -238,18 +275,33 @@ macro_rules! define_props {
         #[cfg(test)]
         pub(crate) mod generated_tests {
             /// `(id, key)` of every row, for tests.
-            pub(crate) const ROWS: &[($crate::PropId, &str)] = &[$(($crate::PropId::$name, ::core::stringify!($key))),*];
+            pub(crate) const ROWS: &[($crate::PropId, &str)] = &[$($(($crate::PropId::$name, ::core::stringify!($key)),)*)*];
+
+            /// `(group, members)` of every group of the table, for tests.
+            pub(crate) const GROUP_ROWS: &[(&str, &[$crate::PropId])] = &[$((::core::stringify!($group), &[$($crate::PropId::$name),*]),)*];
         }
     };
 }
 
 crate::__prop_table!(define_props $);
 
+impl StyleProp {
+    /// The template of a grid template property (`None` for any other property).
+    #[inline]
+    #[must_use]
+    pub fn tracks_ref(&self) -> Option<crate::TracksRef> {
+        match *self {
+            StyleProp::GridColumnTracks(t) | StyleProp::GridRowTracks(t) => Some(t),
+            _ => None,
+        }
+    }
+}
+
 impl PropId {
     /// The property's metadata.
     #[inline]
     #[must_use]
-    pub fn meta(self) -> &'static PropMeta {
+    pub const fn meta(self) -> &'static PropMeta {
         &PROP_META[self as usize - 1]
     }
 
@@ -287,13 +339,13 @@ const _: () = assert!(core::mem::size_of::<StyleProp>() <= 12);
 
 #[cfg(test)]
 mod tests {
-    use twine_anim::AnimTemplate;
+    use twine_anim::AnimSpec;
     use twine_core::{Color, Opa, Scale};
     use twine_image::ImageSource;
 
     use super::generated_tests::ROWS;
     use super::*;
-    use crate::transition::TransitionDsc;
+    use crate::transition::{Transition, TransitionRef};
     use crate::value_types::{
         Align, BaseDir, ColorFilter, FlexFlow, Gradient, GridTrack, ImageColorkey, LayoutKind, Length,
         TextAlign,
@@ -327,22 +379,17 @@ mod tests {
             high: Color::WHITE,
         };
         static FILTER: ColorFilter = ColorFilter::SHADE;
-        static ANIM: AnimTemplate =
-            AnimTemplate::new(twine_core::Duration::ms(1), twine_anim::Easing::Linear);
-        static TR: TransitionDsc = TransitionDsc::new(
-            &[PropId::BgColor],
-            twine_core::Duration::ms(1),
-            twine_anim::Easing::Linear,
-        );
+        static ANIM: AnimSpec = AnimSpec::new(twine_core::Duration::ms(1));
+        static TR: Transition = Transition::of(crate::Props::BG, twine_core::Duration::ms(1));
         static TRACKS: [GridTrack; 2] = [GridTrack::Px(10), GridTrack::Fr(1)];
         match id.meta().type_name {
             "&'static Gradient" => StyleValue::Grad(&GRAD),
             "&'static ImageSource" => StyleValue::Image(&IMG),
             "&'static ImageColorkey" => StyleValue::Colorkey(&KEY),
             "&'static ColorFilter" => StyleValue::ColorFilter(&FILTER),
-            "&'static AnimTemplate" => StyleValue::AnimTemplate(&ANIM),
-            "&'static TransitionDsc" => StyleValue::Transition(&TR),
-            "&'static [GridTrack]" => StyleValue::GridTracks(&TRACKS),
+            "&'static AnimSpec" => StyleValue::AnimSpec(&ANIM),
+            "TransitionRef" => StyleValue::Transition(TransitionRef::Static(&TR)),
+            "TracksRef" => StyleValue::GridTracks(crate::TracksRef::Static(&TRACKS)),
             _ => id.meta().default,
         }
     }
