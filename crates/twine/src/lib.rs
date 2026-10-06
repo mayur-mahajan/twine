@@ -31,6 +31,10 @@
 //! - [Writing a custom widget](guide::custom_widgets): a gauge with its own class and parts,
 //!   drawing, keypad/encoder input, theming with design elements and theme modes, a typed
 //!   view, animations within the motion preference, and tests (the `gauge` example).
+//! - [Application state](guide::app_state): the store pattern for large applications — a
+//!   `Copy` struct of signals and memos with action methods, provided as context and read by
+//!   any component; scoped stores, testing with `TestUi`, stores fed by ports (the `todos`
+//!   demo and the `todo_list` example).
 //!
 //! ## Features
 //!
@@ -323,6 +327,14 @@ pub use twine_assets::fonts;
 pub use twine_hal::buffer_bytes;
 #[doc(inline)]
 pub use twine_view::draw_buffers;
+
+/// Components: `#[component]` turns a function composing views into a view with a props builder
+/// (required props are arguments, optional ones methods, modifiers apply to its root), used
+/// like a built-in widget. Also in the [`prelude`]. See
+/// [`view::component`](mod@view::component) and the
+/// [custom-widget guide](guide::custom_widgets#8-components).
+#[doc(inline)]
+pub use twine_view::component;
 
 /// Run loops: [`run::blocking`] / [`run::blocking_with`] step a `Ui` and sleep on a
 /// [`Platform`](hal::Platform) (bare metal, an RTOS task, a host thread). The embassy adapter

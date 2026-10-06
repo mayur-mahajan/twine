@@ -215,9 +215,9 @@ fn list_view_for_each_reorder_minimal_moves() {
         list((
             list_text("Numbers"),
             for_each(
-                move || items.get(),
+                items,
                 |k| *k,
-                |_, k| list_button(Symbol::File, format!("Item {k}")),
+                |_, k| list_button(Symbol::File, format!("Item {}", k.get_untracked())),
             ),
         ))
         .test_id("list")
@@ -233,7 +233,10 @@ fn list_view_for_each_reorder_minimal_moves() {
         .map(|l| l.message.clone())
         .find(|m| m.starts_with("for_each reconcile"))
         .unwrap_or_default();
-    assert_eq!(line, "for_each reconcile: kept=3 moved=1 created=0 deleted=0");
+    assert_eq!(
+        line,
+        "for_each reconcile: kept=3 moved=1 created=0 deleted=0 updated=0"
+    );
     let e = t.engine();
     let l = t.find(by_id("list")).id();
     assert_eq!(e.tree().node(l).unwrap().class().name, "list");

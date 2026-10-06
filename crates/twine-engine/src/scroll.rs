@@ -6,7 +6,7 @@
 //!
 //! A node's scroll offset ([`Engine::scroll_offset`], LVGL `lv_obj_get_scroll_x/y`) is how far
 //! its content is scrolled: `0` at the start, positive once the content moved up / left. The
-//! children (except `FLOATING` ones) sit at their layout position minus the offset. Scrolling
+//! children (except `FLOATING` and `DOCK_BOTTOM` ones) sit at their layout position minus the offset. Scrolling
 //! changes the offset and moves the children's coordinates by the difference; it never runs the
 //! layout and invalidates only the container's area (P2).
 //!
@@ -204,7 +204,7 @@ impl Engine {
     }
 
     /// The absolute bounding box of the children that count for scrolling (not hidden, not
-    /// `FLOATING`), margins included; `None` without such children. Cached per node (see
+    /// `FLOATING` or `DOCK_BOTTOM`), margins included; `None` without such children. Cached per node (see
     /// [`ChildrenBox`]).
     pub(crate) fn scroll_children_box(&self, id: NodeId) -> Option<Rect> {
         let n = self.tree.node(id)?;
@@ -215,7 +215,7 @@ impl Engine {
             let mut bb: Option<Rect> = None;
             for c in self.tree.children(id) {
                 let Some(cn) = self.tree.node(c) else { continue };
-                if cn.is_hidden() || cn.flags.contains(ObjFlags::FLOATING) {
+                if cn.is_hidden() || cn.flags.intersects(ObjFlags::OUT_OF_FLOW) {
                     continue;
                 }
                 let m = |p| self.style_i32(c, Part::Main, p);
@@ -347,13 +347,17 @@ impl Engine {
         true
     }
 
-    /// Moves the subtrees of the non-floating children of `id` by `(dx, dy)` (LVGL
+    /// Moves the subtrees of the non-floating (and not docked) children of `id` by `(dx, dy)` (LVGL
     /// `lv_obj_move_children_by(.., ignore_floating = true)`).
     fn move_children_by(&mut self, id: NodeId, dx: i32, dy: i32) {
         let mut child = self.tree.node(id).and_then(crate::Node::first_child);
         while let Some(c) = child {
             let next = self.tree.node(c).and_then(crate::Node::next_sibling);
-            if !self.has_flag(c, ObjFlags::FLOATING) {
+            if !self
+                .tree
+                .node(c)
+                .is_some_and(|n| n.flags.intersects(ObjFlags::OUT_OF_FLOW))
+            {
                 let mut cur = Some(c);
                 while let Some(x) = cur {
                     if let Some(xn) = self.tree.node_mut(x) {
@@ -579,6 +583,12 @@ impl Engine {
             );
             return;
         }
+        self.scroll_ancestors_to_view(child, anim);
+    }
+
+    /// The scrolling of [`scroll_to_view_recursive`](Self::scroll_to_view_recursive), on the
+    /// current layout (`child` exists).
+    pub(crate) fn scroll_ancestors_to_view(&mut self, child: NodeId, anim: bool) {
         let mut p = Point::ZERO;
         let mut cur = child;
         while let Some(parent) = self.tree.parent(cur) {
@@ -798,7 +808,7 @@ impl Engine {
         for ch in self.tree.children(id) {
             let Some(cn) = self.tree.node(ch) else { continue };
             if cn.is_hidden()
-                || cn.flags.contains(ObjFlags::FLOATING)
+                || cn.flags.intersects(ObjFlags::OUT_OF_FLOW)
                 || !cn.flags.contains(ObjFlags::SNAPPABLE)
             {
                 continue;

@@ -14,7 +14,8 @@
 //! - `barcode` (feature `barcode`): `Code128` encodes ASCII text into a Code 128 symbol with
 //!   automatic code set selection; `draw_barcode` paints it horizontally or vertically.
 //! - `i18n` (feature `i18n`): static translation tables (`translations!`), a reactive current
-//!   language (`provide_i18n`, `I18n::set_language`) and translated texts (`tr!`).
+//!   language (`provide_i18n`, `expect_i18n` / `use_i18n`, `I18n::set_language`) and translated
+//!   texts (`tr!`).
 //!
 //! Encoders are pure (`no_std` + `alloc`, no floating point) and allocate only when encoding.
 //! Drawing never allocates and touches only the rows inside the painter's clip, so drawing in

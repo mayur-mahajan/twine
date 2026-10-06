@@ -11,7 +11,7 @@ use twine_engine::{
     Wake,
 };
 use twine_hal::Key;
-use twine_reactive::{Channel, Latest, Outbox, Runtime, Scope};
+use twine_reactive::{Channel, Latest, Outbox, Runtime, Scope, UiWaker};
 use twine_view::{AppConfig, MemoryReport, UiCore, UiError, View};
 use twine_widgets::button::BUTTON_CLASS;
 
@@ -22,7 +22,7 @@ use crate::{EngineHarness, FlushRecord, Query};
 /// declarative `Ui` cycle.
 ///
 /// Defaults: LVGL's light default theme with Montserrat 14, two 40-row partial buffers, the
-/// default engine configuration. Builder methods come before [`mount`](Self::mount). The
+/// default engine configuration, a waker leased from the pool ([`with_waker`](Self::with_waker)). Builder methods come before [`mount`](Self::mount). The
 /// application runs on the calling thread's reactive runtime
 /// ([`Runtime::current_thread`](twine_reactive::Runtime::current_thread)), so a test may mount
 /// several `TestUi`s and still take the thread's token itself.
@@ -55,6 +55,9 @@ pub struct TestUi {
     /// harness engine and display were built with and what the mount applies. `None`: the
     /// harness's own settings, and whatever the test set on the engine, are left as they are.
     app: Option<AppConfig>,
+    /// The application's own waker given with [`with_waker`](Self::with_waker); `None`: the
+    /// mount leases one from the process-wide pool.
+    waker: Option<&'static UiWaker>,
     /// The mounted application, shared with the harness's step and teardown functions
     /// (taken by the teardown, which disposes it with the engine).
     core: Option<Rc<RefCell<Option<UiCore>>>>,
@@ -78,6 +81,7 @@ impl TestUi {
         Self {
             h: RefCell::new(EngineHarness::new(w, h)),
             app: None,
+            waker: None,
             core: None,
             pinned_frame: std::cell::Cell::new(None),
         }
@@ -162,6 +166,7 @@ impl TestUi {
         Self {
             h: RefCell::new(h),
             app: self.app,
+            waker: self.waker,
             core: self.core,
             pinned_frame: std::cell::Cell::new(None),
         }
@@ -269,6 +274,30 @@ impl TestUi {
         t
     }
 
+    /// Mounts with the application's own `waker` (typically a `static UiWaker` of the test)
+    /// instead of one leased from the process-wide pool, like `UiBuilder::waker`.
+    ///
+    /// Tests that count the allocations of a [`mount`](Self::mount) need it: the pool
+    /// ([`WakerLease`](twine_reactive::WakerLease)) is shared by every thread, so while tests
+    /// run in parallel a pooled mount allocates a heap waker or not depending on how many
+    /// other tests' UIs are alive. With a waker of its own the mount allocates the same on
+    /// every run. The waker should not be shared with another live UI.
+    ///
+    /// ```
+    /// use twine_reactive::UiWaker;
+    /// use twine_testing::TestUi;
+    /// use twine_view::prelude::*;
+    ///
+    /// static WAKER: UiWaker = UiWaker::new();
+    /// let t = TestUi::new(64, 32).with_waker(&WAKER).mount(|_| label("hi"));
+    /// assert!(core::ptr::eq(t.waker(), &WAKER));
+    /// ```
+    #[must_use]
+    pub fn with_waker(mut self, waker: &'static UiWaker) -> Self {
+        self.waker = Some(waker);
+        self
+    }
+
     /// Builds `app` (once) on the display, like `Ui::build`: a default focus group for the
     /// keypad and the encoder is created first. Updates then run the `Ui` cycle.
     ///
@@ -306,9 +335,11 @@ impl TestUi {
             }
         }
         let rt = Runtime::current_thread();
-        let core = match &self.app {
-            Some(config) => UiCore::mount_configured(rt, e, display, config, app)?,
-            None => UiCore::mount(rt, e, display, app)?,
+        let core = match (&self.app, self.waker) {
+            (Some(config), None) => UiCore::mount_configured(rt, e, display, config, app)?,
+            (Some(config), Some(w)) => UiCore::mount_configured_with_waker(rt, e, display, config, w, app)?,
+            (None, None) => UiCore::mount(rt, e, display, app)?,
+            (None, Some(w)) => UiCore::mount_with_waker(rt, e, display, w, app)?,
         };
         let core = Rc::new(RefCell::new(Some(core)));
         let c = core.clone();
@@ -348,7 +379,7 @@ impl TestUi {
     /// # Panics
     /// Before [`mount`](Self::mount).
     #[must_use]
-    pub fn waker(&self) -> &'static twine_reactive::UiWaker {
+    pub fn waker(&self) -> &'static UiWaker {
         self.ui(UiCore::waker)
     }
 

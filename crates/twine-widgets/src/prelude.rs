@@ -5,7 +5,7 @@ pub use crate::animimg::{self, ANIMIMG_CLASS, AnimImg};
 pub use crate::arc::{self, ARC_CLASS, Arc, ArcMode};
 pub use crate::bar::{self, BAR_CLASS, Bar, BarMode};
 pub use crate::button::{self, BUTTON_CLASS, Button};
-pub use crate::buttonmatrix::{self, BUTTONMATRIX_CLASS, BtnCtrl, ButtonMatrix, MapSrc};
+pub use crate::buttonmatrix::{self, BUTTONMATRIX_CLASS, BtnCtrl, BtnMap, ButtonMatrix, MapBtn, OwnedMap};
 pub use crate::checkbox::{self, CHECKBOX_CLASS, Checkbox};
 pub use crate::container::{self, CONTAINER_CLASS, Container};
 pub use crate::image::{self, IMAGE_CLASS, Image, ImageAlign};

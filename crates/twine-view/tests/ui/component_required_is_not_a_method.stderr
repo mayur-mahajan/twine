@@ -1,0 +1,8 @@
+error[E0599]: no method named `value` found for struct `MeterProps` in the current scope
+ --> tests/ui/component_required_is_not_a_method.rs:9:22
+  |
+3 | #[component]
+  | ------------ method `value` not found for this struct
+...
+9 |     let _ = meter(1).value(2);
+  |                      ^^^^^ method not found in `MeterProps`

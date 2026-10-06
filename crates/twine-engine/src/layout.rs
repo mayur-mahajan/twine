@@ -50,6 +50,11 @@ pub(crate) struct LayoutState {
     wrappers: Vec<(NodeId, usize)>,
     /// Nodes whose scroll position is checked after the pass (resized, or a child deleted).
     pub(crate) readjust: Vec<NodeId>,
+    /// Nodes scrolled into view after the pass (`scroll_to_view_after_layout`), with their
+    /// `anim` flag.
+    reveal: Vec<(NodeId, bool)>,
+    /// Passes that had work since the engine was created (wrapping; `layout_passes`).
+    passes: u32,
     /// A pass is running (nested calls, e.g. from event handlers, return at once).
     running: bool,
     stats: LayoutStats,
@@ -113,6 +118,7 @@ impl LayoutTree for EngineLayout<'_> {
         out.set(LayoutFlags::HIDDEN, f.contains(ObjFlags::HIDDEN));
         out.set(LayoutFlags::IGNORE_LAYOUT, f.contains(ObjFlags::IGNORE_LAYOUT));
         out.set(LayoutFlags::FLOATING, f.contains(ObjFlags::FLOATING));
+        out.set(LayoutFlags::DOCK_BOTTOM, f.contains(ObjFlags::DOCK_BOTTOM));
         out.set(
             LayoutFlags::FLEX_IN_NEW_TRACK,
             f.contains(ObjFlags::FLEX_IN_NEW_TRACK),
@@ -360,10 +366,11 @@ impl Engine {
             return;
         }
         if !self.layout.pending {
-            self.readjust_scrolls();
+            self.finish_layout();
             return;
         }
         self.layout.running = true;
+        self.layout.passes = self.layout.passes.wrapping_add(1);
         let mut stats = LayoutStats {
             converged: true,
             ..LayoutStats::default()
@@ -397,7 +404,106 @@ impl Engine {
         );
         self.layout.stats = stats;
         self.layout.running = false;
+        self.finish_layout();
+    }
+
+    /// Work that waits for the layout to be final: scroll corrections of resized nodes, then
+    /// the requested [`scroll_to_view_after_layout`](Self::scroll_to_view_after_layout)s.
+    #[inline]
+    fn finish_layout(&mut self) {
         self.readjust_scrolls();
+        if !self.layout.reveal.is_empty() {
+            self.reveal_requested();
+        }
+    }
+
+    /// Scrolls every node of the `reveal` list into view (cold: only after a request).
+    #[cold]
+    #[inline(never)]
+    fn reveal_requested(&mut self) {
+        let mut list = core::mem::take(&mut self.layout.reveal);
+        for &(id, anim) in &list {
+            if self.tree.contains(id) {
+                self.scroll_ancestors_to_view(id, anim);
+            }
+        }
+        list.clear();
+        if self.layout.reveal.is_empty() {
+            // Keep the capacity (no allocation for the next request).
+            self.layout.reveal = list;
+        }
+    }
+
+    /// Scrolls `node` into view through every scrollable ancestor (like
+    /// [`scroll_to_view_recursive`](Self::scroll_to_view_recursive)) once the layout is final:
+    /// at the end of the next layout pass ([`update_layout`](Self::update_layout), run by every
+    /// [`step`](Self::step) before drawing), or of the pass in progress when called from an
+    /// event handler during one (e.g. on `SizeChanged`). Unlike `scroll_to_view_recursive`, it
+    /// never lays out synchronously: a change that moves `node` (a docked keyboard appearing,
+    /// a rotation) and the scroll are laid out once, in the same step.
+    ///
+    /// Requests for the same node merge (the last `anim` wins); a node deleted meanwhile is
+    /// skipped. The request list keeps its capacity, so only the first request allocates.
+    /// Never panics.
+    ///
+    /// ```
+    /// use twine_engine::{Engine, EngineConfig, Obj, ObjFlags};
+    /// use twine_style::{Length, Selector, StyleProp};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let root = e.create_root(Box::new(Obj)).unwrap();
+    /// e.set_size(root, Length::Px(100), Length::Px(100));
+    /// let list = e.create(root, Box::new(Obj)).unwrap();
+    /// e.set_size(list, Length::Px(100), Length::Px(50));
+    /// e.set_local_prop(list, Selector::MAIN, StyleProp::PaddingTop(Length::Px(0).into()));
+    /// e.set_local_prop(list, Selector::MAIN, StyleProp::PaddingBottom(Length::Px(0).into()));
+    /// let item = e.create(list, Box::new(Obj)).unwrap();
+    /// e.set_size(item, Length::Px(20), Length::Px(20));
+    /// e.set_pos(item, 0, 80);
+    /// e.scroll_to_view_after_layout(item, false);
+    /// assert_eq!(e.scroll_offset(list).y, 0); // nothing yet
+    /// e.update_layout();
+    /// assert_eq!(e.scroll_offset(list).y, 50); // item at 80..100, visible in 0..50
+    /// assert!(e.has_flag(list, ObjFlags::SCROLLABLE));
+    /// ```
+    #[doc(alias = "lv_obj_scroll_to_view_recursive")]
+    pub fn scroll_to_view_after_layout(&mut self, node: NodeId, anim: bool) {
+        if !self.tree.contains(node) {
+            twine_core::warn!(
+                target: "twine::scroll",
+                "scroll_to_view_after_layout: node {} not found",
+                fmt_node_id(node)
+            );
+            return;
+        }
+        if let Some(r) = self.layout.reveal.iter_mut().find(|r| r.0 == node) {
+            r.1 = anim;
+        } else {
+            self.layout.reveal.push((node, anim));
+        }
+    }
+
+    /// How many layout passes had work to do since the engine was created (wrapping): a
+    /// [`update_layout`](Self::update_layout) with nothing dirty does not count, one with work
+    /// counts once however many iterations it needed. Lets tests check that an operation
+    /// caused no layout.
+    ///
+    /// ```
+    /// use twine_engine::{Engine, EngineConfig, Obj};
+    /// use twine_style::Length;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let root = e.create_root(Box::new(Obj)).unwrap();
+    /// let before = e.layout_passes();
+    /// e.update_layout(); // nothing dirty
+    /// assert_eq!(e.layout_passes(), before);
+    /// e.set_size(root, Length::Px(10), Length::Px(10));
+    /// e.update_layout();
+    /// assert_eq!(e.layout_passes(), before + 1);
+    /// ```
+    #[must_use]
+    pub fn layout_passes(&self) -> u32 {
+        self.layout.passes
     }
 
     /// Scrolls back the content of resized nodes (and of nodes that lost a child) that ended

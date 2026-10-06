@@ -1,0 +1,53 @@
+error[E0277]: `&str` cannot be used as a property of type `i32`
+ --> tests/ui/component_wrong_prop_type.rs:9:19
+  |
+9 |     let _ = meter("high");
+  |             ----- ^^^^^^ not convertible into `i32`, nor a closure, signal or memo of a value convertible into `i32`
+  |             |
+  |             required by a bound introduced by this call
+  |
+  = help: the trait `IntoProp<i32, _>` is not implemented for `&str`
+  = note: a property of type `i32` accepts every value `V` with `impl From<V> for i32`, as a constant, a closure result or a signal value
+  = help: the following other types implement trait `IntoProp<T, M>`:
+            `&'static [T; N]` implements `IntoProp<&'static [T], twine_view::marker::Slice>`
+            `Memo<U>` implements `IntoProp<T, Reactive<U>>`
+            `ReadSignal<U>` implements `IntoProp<T, Reactive<U>>`
+            `Signal<U>` implements `IntoProp<T, Reactive<U>>`
+            `twine_view::Prop<T>` implements `IntoProp<T, twine_view::marker::Prop>`
+note: required by a bound in `meter`
+ --> tests/ui/component_wrong_prop_type.rs:3:1
+  |
+3 | #[component]
+  | ^^^^^^^^^^^^ required by this bound in `meter`
+4 | fn meter(value: Prop<i32>, #[prop(default)] caption: TextProp) -> impl ViewExt<Widget = Obj> {
+  |    ----- required by a bound in this function
+  = note: this error originates in the attribute macro `component` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `{integer}` cannot be used as a text
+  --> tests/ui/component_wrong_prop_type.rs:10:30
+   |
+10 |     let _ = meter(1).caption(42);
+   |                      ------- ^^ not a `&'static str`, `Symbol`, `String`, `text!`, a closure returning a `String`, `&'static str` or `Symbol`, or a signal or memo of a string
+   |                      |
+   |                      required by a bound introduced by this call
+   |
+   = help: the trait `IntoText<_>` is not implemented for `{integer}`
+   = note: format other values with `text!` (no allocation) or a closure returning a `String`
+   = help: the following other types implement trait `IntoText<M>`:
+             `&'static str` implements `IntoText<Value<&'static str>>`
+             `&String` implements `IntoText<twine_view::marker::Ref<String>>`
+             `&twine_view::prelude::Symbol` implements `IntoText<twine_view::marker::Ref<twine_view::prelude::Symbol>>`
+             `Memo<S>` implements `IntoText<Reactive<S>>`
+             `ReadSignal<S>` implements `IntoText<Reactive<S>>`
+             `Signal<S>` implements `IntoText<Reactive<S>>`
+             `String` implements `IntoText<Value<String>>`
+             `TextFn` implements `IntoText<Value<TextFn>>`
+           and $N others
+note: required by a bound in `MeterProps::caption`
+  --> tests/ui/component_wrong_prop_type.rs:3:1
+   |
+ 3 | #[component]
+   | ^^^^^^^^^^^^ required by this bound in `MeterProps::caption`
+ 4 | fn meter(value: Prop<i32>, #[prop(default)] caption: TextProp) -> impl ViewExt<Widget = Obj> {
+   |                                             ------- required by a bound in this associated function
+   = note: this error originates in the attribute macro `component` (in Nightly builds, run with -Z macro-backtrace for more info)

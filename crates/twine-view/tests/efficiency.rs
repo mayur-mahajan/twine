@@ -225,3 +225,56 @@ fn no_alloc_steady_state_widget_text_bindings() {
     });
     assert_eq!(stats.allocs, 0, "{stats:?}");
 }
+
+/// A dynamic button text (e.g. a translation) rewrites that button's string in place: no new
+/// map, no relayout, the checked states kept, no allocation once the string is large enough.
+#[test]
+fn buttonmatrix_text_change_rewrites_one_button_in_place() {
+    use twine_widgets::buttonmatrix::ButtonMatrix;
+    let mut t = TestUi::new(240, 120).mount(|cx| {
+        let n = cx.signal(10u32);
+        cx.provide(n);
+        buttonmatrix([
+            [btn("A").checkable().checked(), btn(text!("{} %", n.get()))],
+            [btn("C"), btn("D")],
+        ])
+        .size(200, 100)
+        .test_id("m")
+    });
+    t.run_until_idle();
+    let n = t.root_scope().expect_context::<Signal<u32>>();
+    let m = t.find(by_id("m")).id();
+    let areas = |t: &TestUi| {
+        let e = t.engine();
+        let w = e.widget::<ButtonMatrix>(m).unwrap();
+        let mc = twine_engine::MeasureCx::new(&e, m);
+        (0..4).map(|i| w.btn_area(&mc, i)).collect::<Vec<_>>()
+    };
+    let before = areas(&t);
+    // Warm up the button's string and the binding's buffer.
+    n.set(99);
+    t.run_until_idle();
+    let ((), s) = count_allocs(|| {
+        n.set(42);
+        t.run_until_idle();
+    });
+    assert_eq!(s.allocs, 0, "{s:?}");
+    let e = t.engine();
+    let w = e.widget::<ButtonMatrix>(m).unwrap();
+    assert_eq!((w.btn_text(0), w.btn_text(1)), (Some("A"), Some("42 %")));
+    assert!(w.has_btn_ctrl(0, BtnCtrl::CHECKED), "the checked state is kept");
+    drop(e);
+    assert_eq!(areas(&t), before, "no relayout");
+    // Only the changed button is redrawn.
+    let mc_area = {
+        let e = t.engine();
+        let w = e.widget::<ButtonMatrix>(m).unwrap();
+        w.btn_invalidation_area(&twine_engine::MeasureCx::new(&e, m), 1)
+            .unwrap()
+    };
+    n.set(7);
+    t.update();
+    for (r, _) in t.invalidations().iter() {
+        assert!(mc_area.contains_rect(r), "{r:?} outside button 1 {mc_area:?}");
+    }
+}

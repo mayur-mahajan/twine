@@ -19,8 +19,10 @@ pub static SAMPLES: [(&str, &[u8]); 3] = [
 /// Frames of every sample (60 frames at 30 fps).
 const FRAMES: i32 = 60;
 
-/// One sample with its controls.
-fn card(cx: Scope, i: usize) -> impl View {
+/// Sample `i` with its controls: a component with state of its own (`cx` is the scope it is
+/// built in).
+#[component]
+fn sample(cx: Scope, i: usize) -> impl ViewExt<Widget = Obj> {
     let (name, data) = SAMPLES[i];
     let playing = cx.signal(true);
     let looping = cx.signal(true);
@@ -76,8 +78,8 @@ fn card(cx: Scope, i: usize) -> impl View {
 /// t.advance(twine::core::Duration::ms(100));
 /// assert!(t.find(by_id("Loader")).coords().width() == 100);
 /// ```
-pub fn app(cx: Scope) -> impl View {
-    row((card(cx, 0), card(cx, 1), card(cx, 2)))
+pub fn app(_cx: Scope) -> impl View {
+    row((sample(0), sample(1), sample(2)))
         .gap(8)
         .padding(8)
         .fill()

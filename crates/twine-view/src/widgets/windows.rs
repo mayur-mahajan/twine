@@ -162,7 +162,7 @@ fn msgbox_view(title: TextProp, text: TextProp) -> WidgetView<Msgbox> {
     let settings = v.shared::<MsgboxSettings>();
     v.after_children(move |cx, node| {
         let rt = cx.runtime();
-        let modal = cx.scope().use_context::<ModalHandle>();
+        let modal = cx.scope().use_context::<ModalHandle>().ok();
         // No close button for `false` (or none given); a hidden one for a dynamic value.
         let close_button = match settings.close_button.borrow_mut().take() {
             None | Some(Prop::Static(false)) => None,

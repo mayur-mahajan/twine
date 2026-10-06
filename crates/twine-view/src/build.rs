@@ -171,7 +171,7 @@ impl<'a> BuildCx<'a> {
                 .node(self.parent)
                 .code(cause.code()),
         );
-        if let Some(report) = self.scope.use_context::<MountReport>() {
+        if let Ok(report) = self.scope.use_context::<MountReport>() {
             report.record(BuildFault::new(cause, Some(self.parent)));
         }
     }

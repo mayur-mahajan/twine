@@ -33,6 +33,7 @@
 //! |------|------|
 //! | [`Runtime`] | the token of the UI context's runtime ([`Runtime::take`]); root scopes ([`Runtime::create_root`]) and every runtime-wide operation |
 //! | [`Scope`] | owns nodes, child scopes, cleanups, context values |
+//! | [`Scope::provide`], [`Scope::use_context`], [`Scope::expect_context`], [`MissingContext`] | context values: provided by a scope for its descendants, found by type (allocation-free scope-chain walk); `Result` or panicking lookup |
 //! | [`Signal`], [`ReadSignal`], [`WriteSignal`] | reactive values |
 //! | [`Memo`] | lazy, cached, equality-checked derived values |
 //! | [`StoredValue`] | a plain, non-reactive value owned by a scope (`Copy` handle) |
@@ -186,6 +187,7 @@ extern crate std;
 mod ambient;
 mod batch;
 mod channel;
+mod context;
 mod effect;
 mod global;
 mod handles;
@@ -201,6 +203,7 @@ mod stored;
 mod take_once;
 
 pub use channel::{Channel, UiWaker, WakerLease};
+pub use context::MissingContext;
 pub use effect::EffectId;
 pub use global::{Runtime, in_interrupt, interrupt_probe, set_interrupt_probe};
 pub use latest::Latest;

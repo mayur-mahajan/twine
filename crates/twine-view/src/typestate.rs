@@ -2,8 +2,8 @@
 //! can build, checked by the compiler.
 //!
 //! A builder carries one type parameter per required part. It starts with the "missing"
-//! marker ([`NoRuntime`], [`NoClock`], [`NoBuffers`], [`NoPlatform`]); the method that
-//! provides the part ([`runtime`](crate::UiBuilder::runtime),
+//! marker ([`NoRuntime`], [`NoClock`], [`NoBuffers`], and `NoPlatform` for the async
+//! builder); the method that provides the part ([`runtime`](crate::UiBuilder::runtime),
 //! [`clock`](crate::UiBuilder::clock) / [`platform`](crate::UiBuilder::platform),
 //! [`buffers`](crate::UiBuilder::buffers)) replaces the marker by the part itself, and
 //! `build` / `try_build` exist only once every part is there. Forgetting one is a compile
@@ -25,8 +25,19 @@
 //! as before (no `Option` to check), and `build` forwards to one implementation per display
 //! kind — the typestate adds no code per state to the binary.
 //!
-//! The marker traits ([`HasRuntime`], [`HasClock`], [`HasBuffers`], [`HasPlatform`]) are
-//! sealed: only the provided parts implement them.
+//! The marker traits ([`HasRuntime`], [`HasClock`], [`HasBuffers`], and `HasPlatform` for the
+//! async builder) are sealed: only the provided parts implement them.
+//!
+// The async-only markers exist (and can be linked) only with the `async` feature.
+#![cfg_attr(
+    feature = "async",
+    doc = "Async builder (feature `async`): `AsyncUiBuilder` starts with [`NoPlatform`] and \
+           `.platform(&p)` replaces it by the platform, which implements [`HasPlatform`]."
+)]
+#![cfg_attr(
+    not(feature = "async"),
+    doc = "Async builder: `NoPlatform` and `HasPlatform` exist with the feature `async`."
+)]
 //!
 //! ```compile_fail,E0277
 //! // No runtime: "the `Ui` has no reactive runtime".

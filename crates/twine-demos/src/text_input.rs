@@ -3,15 +3,15 @@
 //! is typed.
 //!
 //! Tapping (or focusing) a text field opens the on-screen keyboard attached to it; OK or the
-//! close key hides it. The screen gets a bottom padding as tall as the keyboard while it is
-//! shown and scrolls the field above it. The PC keyboard (keypad) and the encoder (focus the
-//! keyboard, click to edit, turn to pick a key, click to type) type into the same fields.
+//! close key hides it. The keyboard is [docked](twine::view::WidgetView::docked): while it is
+//! shown the page shrinks to the area above it and the field being edited is scrolled into
+//! view; tapping another field moves the keyboard there. The PC keyboard (keypad) and the
+//! encoder (focus the keyboard, click to edit, turn to pick a key, click to type) type into
+//! the same fields.
 
 use alloc::string::String;
 
-use twine::engine::Obj;
 use twine::prelude::*;
-use twine::view::EngineAccess;
 
 /// The height of the on-screen keyboard.
 const KB_H: i32 = 120;
@@ -61,7 +61,6 @@ pub fn app(cx: Scope) -> impl View {
     cx.provide(form);
     let fields: [NodeRef<Textarea>; 3] = [cx.node_ref(), cx.node_ref(), cx.node_ref()];
     let spin: NodeRef<Spinbox> = cx.node_ref();
-    let page: NodeRef<Obj> = cx.node_ref();
     let edit = move |f: u8| move || form.editing.set_if_changed(Some(f));
 
     let content = column((
@@ -137,45 +136,18 @@ pub fn app(cx: Scope) -> impl View {
         scroll_view(Axis::Vertical, content)
             .fill()
             .padding(10)
-            .node_ref(page)
             .test_id("page"),
+        // One keyboard while a field is edited, following the field; docked, it takes the
+        // bottom of the screen and the page the area above it.
         when(
             move || form.editing.with(Option::is_some),
             move |_| {
-                dynamic(move |_| {
-                    let f = form.editing.get().unwrap_or(NAME);
-                    let ta = fields[usize::from(f)];
-                    keyboard(ta)
-                        .height(KB_H)
-                        .on_ready(move || form.editing.set(None))
-                        .on_cancel(move || form.editing.set(None))
-                        .op(move |cx, kb| {
-                            // Room for the keyboard below the fields, and the field above it.
-                            let Some(p) = page.get_untracked() else { return };
-                            let e = cx.engine();
-                            e.set_local_prop(
-                                p,
-                                Selector::MAIN,
-                                StyleProp::PaddingBottom(Length::Px(KB_H + 10).into()),
-                            );
-                            e.update_layout();
-                            if let Some(t) = ta.get_untracked() {
-                                e.scroll_to_view(t, false);
-                            }
-                            let rt = cx.runtime();
-                            cx.on_delete(kb, move || {
-                                EngineAccess::with(rt, |e| {
-                                    e.set_local_prop(
-                                        p,
-                                        Selector::MAIN,
-                                        StyleProp::PaddingBottom(Length::Px(10).into()),
-                                    );
-                                });
-                            });
-                        })
-                        .test_id("keyboard")
-                        .into_any()
-                })
+                keyboard(move || form.editing.get().map(|f| fields[usize::from(f)]))
+                    .docked(true)
+                    .height(KB_H)
+                    .on_ready(move || form.editing.set(None))
+                    .on_cancel(move || form.editing.set(None))
+                    .test_id("keyboard")
             },
         ),
     ))

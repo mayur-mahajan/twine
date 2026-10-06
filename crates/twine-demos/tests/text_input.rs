@@ -1,8 +1,10 @@
 //! The `text_input` demo: the on-screen keyboard, the PC keypad and the encoder produce the
 //! same text in the model; the preview follows the name; OK hides the keyboard; the form is
-//! idle when no field is focused.
+//! idle when no field is focused. Keyboard avoidance (R4.S05): the docked keyboard keeps the
+//! edited field visible (also near the bottom and after a rotation), gives the area back when
+//! closed, and moving it to another field lays nothing out.
 
-use twine::core::Duration;
+use twine::core::{Duration, Rect, Rotation};
 use twine::engine::NodeId;
 use twine::prelude::*;
 use twine::widgets::keyboard::Keyboard;
@@ -142,6 +144,121 @@ fn spinbox_buttons_change_the_quantity() {
     t.run_until_idle();
     assert_eq!(form.quantity.get_untracked(), 2);
     t.assert_idle();
+}
+
+/// The rectangles of the keyboard and the page, and whether `field` is fully visible in the
+/// page above the keyboard.
+fn field_visible(t: &TestUi, field: &'static str) -> bool {
+    let e = t.engine();
+    let kb = e.coords(keyboard(t));
+    let page = e.coords(t.find(by_id("page")).id());
+    let f = e.coords(t.find(by_id(field)).id());
+    f.y0 >= page.y0 && f.y1 <= page.y1 && f.y1 <= kb.y0
+}
+
+fn page_rect(t: &TestUi) -> Rect {
+    t.engine().coords(t.find(by_id("page")).id())
+}
+
+#[test]
+fn docked_keyboard_keeps_a_field_near_the_bottom_visible() {
+    let mut t = TestUi::new(320, 240).app_config(twine_demos::config()).mount(app);
+    t.run_until_idle();
+    let full = page_rect(&t);
+    // The notes are below the fold once the keyboard takes the bottom half.
+    t.find(by_id("notes")).click();
+    settle(&mut t);
+    let kb = t.engine().coords(keyboard(&t));
+    assert_eq!((kb.y0, kb.y1, kb.width()), (120, 240, 320));
+    // The page shrank to the area above the keyboard and scrolled the field into view.
+    assert_eq!(page_rect(&t), Rect::new(full.x0, full.y0, full.x1, kb.y0));
+    assert!(field_visible(&t, "notes"));
+    let page = t.find(by_id("page")).id();
+    assert!(t.engine().scroll_offset(page).y > 0);
+    // Typing still goes to the field.
+    tap_key(&mut t, "x");
+    assert_eq!(t.root_scope().expect_context::<Form>().notes.get_untracked(), "x");
+}
+
+#[test]
+fn closing_the_keyboard_restores_the_layout() {
+    let mut t = TestUi::new(320, 240).app_config(twine_demos::config()).mount(app);
+    t.run_until_idle();
+    let full = page_rect(&t);
+    let name = t.engine().coords(t.find(by_id("name")).id());
+    t.find(by_id("notes")).click();
+    settle(&mut t);
+    assert_ne!(page_rect(&t), full);
+    tap_key(&mut t, Symbol::Ok.as_str());
+    assert!(t.find_all(by_class("keyboard")).is_empty());
+    settle(&mut t);
+    // The page has its whole area again; the content was scrolled back as far as it fits.
+    assert_eq!(page_rect(&t), full);
+    let page = t.find(by_id("page")).id();
+    let e = t.engine();
+    assert!(e.scroll_bottom(page) >= 0, "scrolled beyond the end");
+    let off = e.scroll_offset(page).y;
+    assert_eq!(e.coords(t.find(by_id("name")).id()).y0, name.y0 - off);
+}
+
+#[test]
+fn moving_the_keyboard_to_another_field_lays_nothing_out() {
+    let mut t = TestUi::new(320, 240).app_config(twine_demos::config()).mount(app);
+    t.run_until_idle();
+    let form = t.root_scope().expect_context::<Form>();
+    t.find(by_id("name")).click();
+    settle(&mut t);
+    assert!(field_visible(&t, "name"));
+    let kb = keyboard(&t);
+    let passes = t.engine().layout_passes();
+    // Another field: the same keyboard follows it, the field is scrolled into view, and no
+    // layout pass runs (scrolling moves nodes without a layout).
+    form.editing.set(Some(2));
+    settle(&mut t);
+    assert_eq!(keyboard(&t), kb, "the keyboard was rebuilt");
+    let e = t.engine();
+    let ta = e.widget::<Keyboard>(kb).unwrap().textarea();
+    assert_eq!(ta, Some(t.find(by_id("notes")).id()));
+    drop(e);
+    assert!(field_visible(&t, "notes"));
+    assert_eq!(t.engine().layout_passes(), passes, "focus move caused a layout");
+    // And back by tapping the password field (partly visible above the keyboard).
+    let page = t.find(by_id("page")).id();
+    t.engine_mut().scroll_to_y(page, 0, false);
+    settle(&mut t);
+    let passes = t.engine().layout_passes();
+    t.find(by_id("password")).click();
+    settle(&mut t);
+    assert_eq!(form.editing.get_untracked(), Some(1));
+    assert!(field_visible(&t, "password"));
+    assert_eq!(
+        t.engine().layout_passes(),
+        passes,
+        "tap on another field caused a layout"
+    );
+}
+
+#[test]
+fn rotation_while_open_keeps_the_field_visible() {
+    // A portrait panel turned to landscape while the keyboard is open: the page loses height.
+    let mut t = TestUi::new(240, 320).app_config(twine_demos::config()).mount(app);
+    t.run_until_idle();
+    t.find(by_id("notes")).click();
+    settle(&mut t);
+    assert!(field_visible(&t, "notes"));
+    let d = t.engine().default_display().unwrap();
+    t.engine_mut().reserve_rotation(d).unwrap();
+    t.engine_mut().set_rotation(d, Rotation::Deg90).unwrap();
+    settle(&mut t);
+    let kb = t.engine().coords(keyboard(&t));
+    assert_eq!((kb.y0, kb.y1, kb.width()), (120, 240, 320));
+    assert_eq!(page_rect(&t).y1, 120);
+    assert!(field_visible(&t, "notes"));
+    // Back to portrait.
+    t.engine_mut().set_rotation(d, Rotation::Deg0).unwrap();
+    settle(&mut t);
+    assert_eq!(t.engine().coords(keyboard(&t)).y0, 200);
+    assert!(field_visible(&t, "notes"));
 }
 
 #[test]

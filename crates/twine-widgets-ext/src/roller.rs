@@ -11,10 +11,10 @@ use twine_engine::{
     EventResult, GroupDef, InputKind, Key, MeasureCx, NodeId, OBJ_FLAGS, ObjFlags, Widget, WidgetClass,
     WidgetCx, fmt_node_id,
 };
-use twine_style::{COORD_MAX, Length, Part, PropId, TextAlign};
-use twine_text::{TextDrawFlags, TextLayout};
+use twine_style::{Length, Part, PropId, TextAlign};
+use twine_text::TextDrawFlags;
 
-use crate::options::{self, Options};
+use crate::options::{Options, StaticOptions};
 use crate::util::{self, log_set};
 
 /// The class of [`Roller`]: `"roller"`, parts `Main` and `Selected` (the band in the middle
@@ -126,12 +126,22 @@ impl Roller {
         Self::with_options(ROLLER_DEFAULT_OPTIONS)
     }
 
-    /// A roller of `'static` options in normal mode (stored without copying).
+    /// A roller of `'static` options — a `'\n'`-separated `&'static str` or a `&'static`
+    /// slice of options, stored without copying — in normal mode.
+    ///
+    /// ```
+    /// use twine_widgets_ext::roller::Roller;
+    ///
+    /// static HOURS: [&str; 3] = ["08", "09", "10"];
+    /// assert_eq!(Roller::with_options(&HOURS).option_count(), 3);
+    /// assert_eq!(Roller::with_options("a\nb").options(), "a\nb");
+    /// ```
     #[must_use]
-    pub fn with_options(options: &'static str) -> Self {
+    pub fn with_options(options: impl Into<StaticOptions>) -> Self {
+        let options = Options::from_static(options.into());
         Self {
-            options: Options::from_static(options),
-            real_cnt: options::count(options),
+            real_cnt: options.count(),
+            options,
             mode: RollerMode::Normal,
             pages: 1,
             sel: 0,
@@ -149,15 +159,10 @@ impl Roller {
 
     // ---- Getters --------------------------------------------------------------------------
 
-    /// The options as one `'\n'`-separated string (once, also in infinite mode).
+    /// The options, once also in infinite mode (they compare equal to their `'\n'`-joined
+    /// text and display as it; their storage is the options given, in both modes).
     #[must_use]
-    pub fn options(&self) -> &str {
-        self.options.as_str()
-    }
-
-    /// The option storage (its size is the size of the options given, in both modes).
-    #[must_use]
-    pub fn options_storage(&self) -> &Options {
+    pub fn options(&self) -> &Options {
         &self.options
     }
 
@@ -235,8 +240,31 @@ impl Roller {
         self.update_options(cx, mode);
     }
 
-    /// Sets `'static` options (stored without copying) and the mode. Idempotent.
-    pub fn set_options_static(&mut self, cx: &mut WidgetCx<'_>, options: &'static str, mode: RollerMode) {
+    /// Sets `'static` options — a `'\n'`-separated `&'static str` or a `&'static` slice of
+    /// options, stored without copying — and the mode; selects the first option.
+    /// Idempotent. Never panics.
+    ///
+    /// ```
+    /// use twine_testing::EngineHarness;
+    /// use twine_widgets_ext::roller::{self, Roller, RollerMode};
+    ///
+    /// static DAYS: [&str; 3] = ["Mon", "Tue", "Wed"];
+    /// let mut h = EngineHarness::new(200, 200);
+    /// let screen = h.screen();
+    /// let r = roller::create(h.engine_mut(), screen).unwrap();
+    /// h.engine_mut().with_widget_mut(r, |w: &mut Roller, cx| {
+    ///     w.set_options_static(cx, &DAYS, RollerMode::Normal);
+    /// });
+    /// let w = h.engine().widget::<Roller>(r).unwrap();
+    /// assert_eq!((w.option_count(), w.options().get(2)), (3, Some("Wed")));
+    /// ```
+    pub fn set_options_static(
+        &mut self,
+        cx: &mut WidgetCx<'_>,
+        options: impl Into<StaticOptions>,
+        mode: RollerMode,
+    ) {
+        let options = options.into();
         if self.options.is_static(options) && self.mode == mode {
             return;
         }
@@ -416,10 +444,7 @@ impl Roller {
     /// The width of the widest option in `part`'s text style.
     fn text_width(&self, m: &MeasureCx<'_>, part: Part) -> i32 {
         let d = m.text_dsc(part);
-        let mut l = TextLayout::new(self.options.as_str(), d.font);
-        l.letter_space = d.letter_space;
-        l.max_width = COORD_MAX;
-        l.measure().w
+        self.options.measure(d.font, d.letter_space, 0).w
     }
 
     /// Moves the column to `y` (redrawing the moving area).
@@ -599,10 +624,9 @@ impl Roller {
             return;
         }
         let real = i64::from(self.real_cnt);
-        // Walk the options from the first visible row (one scan of the string per pass).
-        let text = self.options.as_str();
+        // Walk the options from the first visible row (one scan of the options per pass).
         // Rows past the last option start over (the virtual pages).
-        let mut it = text.split('\n').cycle().skip((first % real) as usize);
+        let mut it = self.options.iter().cycle().skip((first % real) as usize);
         for r in first..=last {
             let opt = it.next().unwrap_or("");
             let y = top + (r as i32) * unit;

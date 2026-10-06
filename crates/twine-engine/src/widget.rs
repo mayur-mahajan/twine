@@ -238,6 +238,17 @@ pub struct WidgetClass {
     /// for them nor starts their transitions. The widget invalidates the affected items itself
     /// (on [`EventCode::StateChanged`](crate::EventCode::StateChanged)). Default: none.
     pub item_parts: &'static [Part],
+    /// Parts whose styles only change how the widget draws, never its size or its children's
+    /// layout, like a text field's `Cursor`. A state change that changes layout properties
+    /// (paddings, border width, …) of these parts redraws the node (refreshing its extra draw
+    /// size) instead of laying it out again — so moving the focus between text fields lays
+    /// nothing out. Only for parts the widget's
+    /// [`content_size`](crate::Widget::content_size) does not read; the widget refreshes
+    /// whatever it derives from their styles (e.g. the cursor's area) on
+    /// [`EventCode::StateChanged`](crate::EventCode::StateChanged), as no `StyleChanged`
+    /// follows. Default: none (every part's layout properties lay the node out again, as in
+    /// LVGL).
+    pub draw_parts: &'static [Part],
 }
 
 /// Shows the base by name only (a chain of bases could be long, or even a cycle).
@@ -251,13 +262,14 @@ impl core::fmt::Debug for WidgetClass {
             .field("editable", &self.editable)
             .field("base", &self.base.map(|b| b.name))
             .field("item_parts", &self.item_parts)
+            .field("draw_parts", &self.draw_parts)
             .finish()
     }
 }
 
 impl WidgetClass {
     /// A class with parts `[Main]`, no flags, `GroupDef::Default`, `Editable::Inherit`, no
-    /// base and no item parts.
+    /// base, no item parts and no draw-only parts.
     #[must_use]
     pub const fn new(name: &'static str) -> Self {
         Self {
@@ -268,6 +280,7 @@ impl WidgetClass {
             editable: Editable::Inherit,
             base: None,
             item_parts: &[],
+            draw_parts: &[],
         }
     }
 
@@ -317,6 +330,22 @@ impl WidgetClass {
     #[must_use]
     pub const fn item_parts(mut self, parts: &'static [Part]) -> Self {
         self.item_parts = parts;
+        self
+    }
+
+    /// With these draw-only parts (see [`WidgetClass::draw_parts`]).
+    ///
+    /// ```
+    /// use twine_engine::WidgetClass;
+    /// use twine_style::Part;
+    /// static FIELD: WidgetClass = WidgetClass::new("field")
+    ///     .parts(&[Part::Main, Part::Cursor])
+    ///     .draw_parts(&[Part::Cursor]);
+    /// assert_eq!(FIELD.draw_parts, &[Part::Cursor]);
+    /// ```
+    #[must_use]
+    pub const fn draw_parts(mut self, parts: &'static [Part]) -> Self {
+        self.draw_parts = parts;
         self
     }
 

@@ -1,0 +1,59 @@
+error: a component returns its view: add `-> impl View`, or `-> impl ViewExt<Widget = W>` for modifiers
+ --> tests/ui/component_bad_signatures.rs:4:4
+  |
+4 | fn no_return(value: Prop<i32>) {}
+  |    ^^^^^^^^^
+
+error: name the widget of the returned view's root: `impl ViewExt<Widget = W>` (its modifiers and `node_ref` apply to it)
+ --> tests/ui/component_bad_signatures.rs:7:40
+  |
+7 | fn no_widget(value: Prop<i32>) -> impl ViewExt {
+  |                                        ^^^^^^^
+
+error: an optional prop cannot be `impl Trait` (setting it would change the builder's type): use a `Box<dyn Trait>` or a type parameter of the function
+  --> tests/ui/component_bad_signatures.rs:12:44
+   |
+12 | fn optional_impl(#[prop(default)] content: impl ViewSeq) -> impl View {
+   |                                            ^^^^
+
+error: a component's parameters must be plain names (`value: Prop<i32>`): each one is a prop
+  --> tests/ui/component_bad_signatures.rs:17:12
+   |
+17 | fn pattern((a, b): (i32, i32)) -> impl View {
+   |            ^^^^^^
+
+error: a component cannot have lifetime parameters: views are `'static`
+  --> tests/ui/component_bad_signatures.rs:22:13
+   |
+22 | fn lifetime<'a>(s: &'a str) -> impl View {
+   |             ^^
+
+error: unknown `#[prop]` argument: expected `default`, `default = expr` or `into`
+  --> tests/ui/component_bad_signatures.rs:27:28
+   |
+27 | fn unknown_prop_arg(#[prop(defualt)] v: i32) -> impl View {
+   |                            ^^^^^^^
+
+error: `#[prop(into)]` is for plain types: `Prop`, `TextProp`, `Model`, boxes and `impl Trait` already convert
+  --> tests/ui/component_bad_signatures.rs:32:34
+   |
+32 | fn into_on_prop(#[prop(into)] v: Prop<i32>) -> impl View {
+   |                                  ^^^^
+
+error: only a whole prop type can be `impl Trait`: use a type parameter of the function
+  --> tests/ui/component_bad_signatures.rs:37:26
+   |
+37 | fn nested_impl(v: Option<impl ViewSeq>) -> impl View {
+   |                          ^^^^
+
+error: unknown `#[component]` argument: expected `crate = path` or `props = Name`
+  --> tests/ui/component_bad_signatures.rs:41:13
+   |
+41 | #[component(widget = Obj)]
+   |             ^^^^^^
+
+error: a component cannot be `async`
+  --> tests/ui/component_bad_signatures.rs:47:1
+   |
+47 | async fn not_async() -> impl View {
+   | ^^^^^

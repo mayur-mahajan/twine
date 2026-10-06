@@ -1,6 +1,7 @@
 //! The per-`Ui` queue of engine commands issued while the engine is not lent.
 //!
-//! Scope cleanups (an animation stopped, a timer removed, a modal closed) and handle calls
+//! Scope cleanups (an animation stopped, a timer removed, a modal closed, a navigator's pages
+//! deleted) and handle calls
 //! ([`AnimController`] methods, [`ThemeHandle::set`](crate::ThemeHandle::set),
 //! [`MotionHandle::set`](crate::MotionHandle::set)) act on the engine.
 //! Where the engine is lent ([`EngineAccess`]) they act at once. Where it is not — a scope
@@ -20,7 +21,8 @@
 //!   [`CapacityFault::EngineQueue`] (one record, the number of dropped commands as occurrences);
 //!   the commands already queued are applied. Never a panic.
 //! - **Stale targets are ignored:** animation and timer ids are generational, a modal's backdrop
-//!   is checked for existence, a controller of a disposed scope does nothing.
+//!   and a navigator's screens are checked for existence, a controller of a disposed scope does
+//!   nothing.
 //! - **Cost:** one `Cell<bool>` read per update while the queue is empty.
 //! - **No `Ui` left:** a scope disposed after its `Ui` was dropped has nothing to clean up (the
 //!   root and everything below it were disposed with the `Ui`). A [`UiCore`] dropped without
@@ -45,6 +47,7 @@ use twine_reactive::{Scope, UiWaker};
 use crate::access::EngineAccess;
 use crate::error::CapacityFault;
 use crate::hooks::{AnimController, AnimOp, UiContext};
+use crate::navigator::NavTeardown;
 
 /// Engine commands a `Ui` can hold while the engine is not lent (see the module docs). Sized
 /// for scopes disposed outside `Ui::update` with a few animations, timers and modals each.
@@ -78,6 +81,9 @@ pub(crate) enum CmdArg {
     Mode(ThemeMode),
     /// A motion preference (set on the engine).
     Motion(Motion),
+    /// The screens and focus groups of a disposed navigator (deleted; boxed: rare, and the
+    /// ring's slots stay small).
+    Nav(Box<NavTeardown>),
 }
 
 impl EngineCmd {
@@ -157,6 +163,19 @@ impl EngineCmd {
                 }
             },
             arg: CmdArg::Mode(mode),
+        }
+    }
+
+    /// Deletes the screens and focus groups of a navigator disposed outside an update.
+    #[inline]
+    pub(crate) fn nav_teardown(t: Box<NavTeardown>) -> EngineCmd {
+        EngineCmd {
+            run: |e, _, arg| {
+                if let CmdArg::Nav(t) = arg {
+                    t.apply(e);
+                }
+            },
+            arg: CmdArg::Nav(t),
         }
     }
 
@@ -326,7 +345,7 @@ impl EngineQueue {
 #[cold]
 #[inline(never)]
 pub(crate) fn defer(cx: Scope, cmd: EngineCmd) {
-    if let Some(ui) = cx.use_context::<UiContext>() {
+    if let Ok(ui) = cx.use_context::<UiContext>() {
         ui.queue.push(cmd);
     } else {
         twine_core::warn!(

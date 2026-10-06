@@ -12,11 +12,11 @@ use twine_engine::{
     fmt_node_id,
 };
 use twine_image::{ImageSource, with_pixels};
-use twine_style::{COORD_MAX, Length, Part, PropId, Selector, Side, StyleProp, TextAlign};
+use twine_style::{Length, Part, PropId, Selector, Side, StyleProp, TextAlign};
 use twine_text::{Symbol, TextDrawFlags, TextLayout};
 use twine_widgets::label::LabelText;
 
-use crate::options::{self, Options};
+use crate::options::{self, Options, StaticOptions};
 use crate::util::{self, log_set};
 
 /// The class of [`Dropdown`]: `"dropdown"`, parts `Main`, `Scrollbar` and `Indicator` (the
@@ -61,8 +61,8 @@ pub const DROPDOWN_DEFAULT_SYMBOL: ImageSource = ImageSource::symbol(Symbol::Dow
 /// - **Keypad**: `Up`/`Down` (`Left`/`Right`) open the list, then move the highlighted option;
 ///   `Enter` confirms, `Esc` closes and restores the selection.
 /// - **Encoder**: a click opens the list in edit mode, turning moves, a click confirms.
-/// - The options are one `'\n'`-separated string ([`Options`]): static options need no
-///   allocation. The list node exists only while open (created by [`open`](Self::open),
+/// - The options ([`Options`]) are one `'\n'`-separated string or a `&'static` slice of
+///   options: static options need no allocation. The list node exists only while open (created by [`open`](Self::open),
 ///   deleted by [`close`](Self::close)); opening and closing leaves no garbage.
 /// - Opening sends `Ready`, closing `Cancel` (LVGL, to style the list).
 /// - With a `Main` `anim_duration` on the list (0 in the themes, as LVGL has no animation)
@@ -134,27 +134,32 @@ impl Dropdown {
         }
     }
 
-    /// A dropdown showing `options` (`'\n'`-separated, stored without copying).
+    /// A dropdown showing `options` (a `'\n'`-separated `&'static str` or a `&'static` slice
+    /// of options, stored without copying).
+    ///
+    /// ```
+    /// use twine_widgets_ext::dropdown::Dropdown;
+    ///
+    /// static CITIES: [&str; 3] = ["Berlin", "Paris", "Rome"];
+    /// let d = Dropdown::with_options(&CITIES);
+    /// assert_eq!((d.option_count(), d.options().get(1)), (3, Some("Paris")));
+    /// assert_eq!(Dropdown::with_options("a\nb").options(), "a\nb");
+    /// ```
     #[must_use]
-    pub fn with_options(options: &'static str) -> Self {
+    pub fn with_options(options: impl Into<StaticOptions>) -> Self {
+        let options = Options::from_static(options.into());
         Self {
-            options: Options::from_static(options),
-            option_cnt: options::count(options),
+            option_cnt: options.count(),
+            options,
             ..Self::new()
         }
     }
 
     // ---- Getters --------------------------------------------------------------------------
 
-    /// The options as one `'\n'`-separated string.
+    /// The options (they compare equal to their `'\n'`-joined text and display as it).
     #[must_use]
-    pub fn options(&self) -> &str {
-        self.options.as_str()
-    }
-
-    /// The option storage.
-    #[must_use]
-    pub fn options_storage(&self) -> &Options {
+    pub fn options(&self) -> &Options {
         &self.options
     }
 
@@ -242,9 +247,24 @@ impl Dropdown {
         self.options_changed(cx, true);
     }
 
-    /// Sets `'static` options, stored without copying (LVGL `lv_dropdown_set_options_static`).
-    /// Idempotent.
-    pub fn set_options_static(&mut self, cx: &mut WidgetCx<'_>, options: &'static str) {
+    /// Sets `'static` options — a `'\n'`-separated `&'static str` or a `&'static` slice of
+    /// options — stored without copying (LVGL `lv_dropdown_set_options_static`); the
+    /// selection goes to the first option. Idempotent (the same `'static` data changes
+    /// nothing). Never panics.
+    ///
+    /// ```
+    /// use twine_testing::EngineHarness;
+    /// use twine_widgets_ext::dropdown::{self, Dropdown};
+    ///
+    /// static LEVELS: [&str; 3] = ["Low", "Medium", "High"];
+    /// let mut h = EngineHarness::new(240, 200);
+    /// let screen = h.screen();
+    /// let d = dropdown::create(h.engine_mut(), screen).unwrap();
+    /// h.engine_mut().with_widget_mut(d, |w: &mut Dropdown, cx| w.set_options_static(cx, &LEVELS));
+    /// assert_eq!(h.engine().widget::<Dropdown>(d).unwrap().options(), "Low\nMedium\nHigh");
+    /// ```
+    pub fn set_options_static(&mut self, cx: &mut WidgetCx<'_>, options: impl Into<StaticOptions>) {
+        let options = options.into();
         if self.options.is_static(options) {
             return;
         }
@@ -414,11 +434,7 @@ impl Dropdown {
     /// the list's content-sized label).
     fn list_text_size(&self, e: &Engine, list: NodeId) -> Size {
         let t = MeasureCx::new(e, list).text_dsc(Part::Main);
-        let mut l = TextLayout::new(self.options.as_str(), t.font);
-        l.letter_space = t.letter_space;
-        l.line_space = t.line_space;
-        l.max_width = COORD_MAX;
-        l.measure()
+        self.options.measure(t.font, t.letter_space, t.line_space)
     }
 
     // ---- Open / close ---------------------------------------------------------------------
@@ -954,7 +970,7 @@ impl DropdownList {
     }
 
     /// LVGL `draw_box` + `draw_box_label` for option `id` in `state`.
-    fn draw_option(&self, cx: &mut DrawCx<'_, '_>, text: &str, id: u16, state: State, clip: Rect) {
+    fn draw_option(&self, cx: &mut DrawCx<'_, '_>, options: &Options, id: u16, state: State, clip: Rect) {
         let node = cx.node();
         let e = cx.engine();
         let ta = self.text_area(e, node);
@@ -972,8 +988,18 @@ impl DropdownList {
         dsc.border_post = false;
         let _ = cx.with_clip(clip, |cx| cx.painter().rect(area, &dsc));
         t.align = resolve_align(t.align);
-        let _ = cx.with_clip(box_clip, |cx| cx.draw_text(ta, text, &t));
+        let Some(text) = options.get(id) else {
+            return;
+        };
+        let line = option_area(ta, id, font_h + ls);
+        let _ = cx.with_clip(box_clip, |cx| cx.draw_text(line, text, &t));
     }
+}
+
+/// The text area of option `i` in the options' text area `ta` (lines `unit` apart): from the
+/// option's line to the end of the text, as the line of a label of the joined options.
+fn option_area(ta: Rect, i: u16, unit: i32) -> Rect {
+    Rect::new(ta.x0, ta.y0 + i32::from(i) * unit, ta.x1, ta.y1)
 }
 
 /// `Auto` text alignment as the list draws it: left.
@@ -997,26 +1023,40 @@ impl Widget for DropdownList {
         let Some(dd) = e.widget::<Dropdown>(self.owner) else {
             return;
         };
-        let text = dd.options.as_str();
+        let options = &dd.options;
         let ta = self.text_area(e, node);
         let mut t = cx.text_dsc(Part::Main);
         t.align = resolve_align(t.align);
         let Some(clip) = cx.coords().intersection(&cx.clip()) else {
             return;
         };
-        let _ = cx.with_clip(clip, |cx| cx.draw_text(ta, text, &t));
+        // One line per option; only the lines near the clip are drawn (one line of margin
+        // for glyphs reaching past their line).
+        let unit = (i32::from(t.font.line_height) + t.line_space).max(1);
+        let _ = cx.with_clip(clip, |cx| {
+            for (i, o) in options.iter().enumerate() {
+                let i = u16::try_from(i).unwrap_or(u16::MAX);
+                let line = option_area(ta, i, unit);
+                if line.y0 - unit >= clip.y1 {
+                    break;
+                }
+                if line.y0 + 2 * unit > clip.y0 {
+                    cx.draw_text(line, o, &t);
+                }
+            }
+        });
         let (pr, sel) = (dd.pr_opt, dd.sel);
         if dd.selected_highlight {
             if pr == Some(sel) {
-                self.draw_option(cx, text, sel, State::CHECKED | State::PRESSED, clip);
+                self.draw_option(cx, options, sel, State::CHECKED | State::PRESSED, clip);
             } else {
                 if let Some(p) = pr {
-                    self.draw_option(cx, text, p, State::PRESSED, clip);
+                    self.draw_option(cx, options, p, State::PRESSED, clip);
                 }
-                self.draw_option(cx, text, sel, State::CHECKED, clip);
+                self.draw_option(cx, options, sel, State::CHECKED, clip);
             }
         } else if let Some(p) = pr {
-            self.draw_option(cx, text, p, State::PRESSED, clip);
+            self.draw_option(cx, options, p, State::PRESSED, clip);
         }
     }
 

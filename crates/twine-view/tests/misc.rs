@@ -24,26 +24,36 @@ fn use_theme_switches_the_display_theme() {
     t.assert_idle();
 }
 
-fn first(cx: Scope) -> impl View {
-    let nav = use_navigator(cx);
-    button(label("first")).on_click(move || nav.replace(second, ScreenAnim::FadeIn(Duration::ms(100))))
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Page {
+    First,
+    Second,
 }
 
-fn second(_cx: Scope) -> impl View {
-    label("second").test_id("second")
+fn page(cx: Scope, p: Page) -> AnyView {
+    match p {
+        Page::First => {
+            let nav = expect_navigator::<Page>(cx);
+            button(label("first"))
+                .on_click(move || nav.replace(Page::Second, ScreenAnim::FadeIn(Duration::ms(100))))
+                .into_any()
+        }
+        Page::Second => label("second").test_id("second").into_any(),
+    }
 }
 
 #[test]
 fn navigator_replace_keeps_depth() {
-    let mut t = TestUi::new(200, 100).mount(|cx| navigator(cx, first));
+    let mut t = TestUi::new(200, 100).mount(|cx| navigator(cx, Page::First, page));
     t.run_until_idle();
     t.find(by_text("first")).click();
     t.run_until_idle();
-    let nav = t.root_scope().expect_context::<Navigator>();
+    let nav = expect_navigator::<Page>(t.root_scope());
     assert_eq!(nav.depth(), 1);
+    assert_eq!(nav.stack(), [Page::Second]);
     assert_eq!(t.find(by_id("second")).text(), "second");
     assert!(t.find_all(by_text("first")).is_empty());
-    assert!(!nav.pop(ScreenAnim::None));
+    assert_eq!(nav.pop(ScreenAnim::None), NavOutcome::AtRoot);
 }
 
 #[test]

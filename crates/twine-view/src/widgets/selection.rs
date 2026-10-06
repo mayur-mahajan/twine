@@ -10,7 +10,7 @@ use crate::bind::bind_prop;
 use crate::build::{WidgetView, widget_view};
 use crate::model::{IntoModel, Model, bind_model, event_value, on_value_changed};
 use crate::prop::{Icon, IntoProp, Prop};
-use crate::text::{IntoOptions, IntoText, TextProp, TextRef, bind_str};
+use crate::text::{IntoOptions, IntoText, OptionsProp, TextProp, TextRef, bind_str};
 
 /// Wires the selected index of a dropdown or roller: shown after the other settings, read
 /// back from `ValueChanged`'s `EventParam::Value`.
@@ -40,9 +40,10 @@ fn bind_selected<W: twine_engine::Widget>(
 
 // ---- Dropdown -------------------------------------------------------------------------------
 
-/// A dropdown choosing one of `options` (any [`IntoOptions`]: an array, a `Vec` or an
-/// iterator of texts, or a signal, memo or closure of a `Vec` of strings), with the index of
-/// the chosen option in `selected` (a plain value or a signal kept in sync both ways).
+/// A dropdown choosing one of `options` (any [`IntoOptions`]: a `&'static` slice of
+/// `&'static str`s, stored without copying; an array, a `Vec` or an iterator of texts; or a
+/// signal, memo or closure of a `Vec` of strings), with the index of the chosen option in
+/// `selected` (a plain value or a signal kept in sync both ways).
 ///
 /// When the options change, the selected index is kept (clamped to the new options).
 ///
@@ -52,7 +53,7 @@ fn bind_selected<W: twine_engine::Widget>(
 /// fn picker(cx: Scope) -> impl View {
 ///     let city = cx.signal(0usize);
 ///     column((
-///         dropdown(["Berlin", "Paris", "Rome"], city).dir(Side::Bottom),
+///         dropdown(&["Berlin", "Paris", "Rome"], city).dir(Side::Bottom),
 ///         label(text!("Selected: {}", city.get())),
 ///     ))
 /// }
@@ -63,9 +64,13 @@ pub fn dropdown<MO>(options: impl IntoOptions<MO>, selected: impl IntoModel<usiz
 }
 
 /// [`dropdown`] after the conversions (not generic: one copy whatever the argument types).
-fn dropdown_view(options: TextProp, selected: Model<usize>) -> WidgetView<Dropdown> {
-    let v = widget_view(Dropdown::new).op(move |cx, node| {
-        bind_str(cx, node, options, |e, n, s| {
+fn dropdown_view(options: OptionsProp, selected: Model<usize>) -> WidgetView<Dropdown> {
+    let v = widget_view(Dropdown::new).op(move |cx, node| match options {
+        OptionsProp::Slice(s) => {
+            cx.engine()
+                .with_widget_mut(node, |d: &mut Dropdown, wcx| d.set_options_static(wcx, s));
+        }
+        OptionsProp::Text(t) => bind_str(cx, node, t, |e, n, s| {
             e.with_widget_mut(n, |d: &mut Dropdown, wcx| {
                 let keep = d.selected();
                 match s {
@@ -74,7 +79,7 @@ fn dropdown_view(options: TextProp, selected: Model<usize>) -> WidgetView<Dropdo
                 }
                 d.set_selected(wcx, keep);
             });
-        });
+        }),
     });
     bind_selected(v, selected, set_dropdown_selected, |d| usize::from(d.selected()))
 }
@@ -168,7 +173,7 @@ pub fn roller<MO>(options: impl IntoOptions<MO>, selected: impl IntoModel<usize>
 }
 
 /// [`roller`] after the conversions (not generic: one copy whatever the argument types).
-fn roller_view(options: TextProp, selected: Model<usize>) -> WidgetView<Roller> {
+fn roller_view(options: OptionsProp, selected: Model<usize>) -> WidgetView<Roller> {
     let mut v = widget_view(Roller::new);
     let settings = v.shared::<RollerSettings>();
     let v = v.op(move |cx, node| {
@@ -177,17 +182,25 @@ fn roller_view(options: TextProp, selected: Model<usize>) -> WidgetView<Roller> 
         if let Some(mode) = settings.mode.borrow_mut().take() {
             bind_prop(cx, node, mode, |r: &mut Roller, wcx, m| r.set_mode(wcx, m));
         }
-        bind_str(cx, node, options, |e, n, s| {
-            e.with_widget_mut(n, |r: &mut Roller, wcx| {
-                let keep = r.selected();
-                let mode = r.mode();
-                match s {
-                    TextRef::Static(s) => r.set_options_static(wcx, s, mode),
-                    TextRef::Borrowed(s) => r.set_options(wcx, s, mode),
-                }
-                r.set_selected(wcx, keep, false);
-            });
-        });
+        match options {
+            OptionsProp::Slice(s) => {
+                cx.engine().with_widget_mut(node, |r: &mut Roller, wcx| {
+                    let mode = r.mode();
+                    r.set_options_static(wcx, s, mode);
+                });
+            }
+            OptionsProp::Text(t) => bind_str(cx, node, t, |e, n, s| {
+                e.with_widget_mut(n, |r: &mut Roller, wcx| {
+                    let keep = r.selected();
+                    let mode = r.mode();
+                    match s {
+                        TextRef::Static(s) => r.set_options_static(wcx, s, mode),
+                        TextRef::Borrowed(s) => r.set_options(wcx, s, mode),
+                    }
+                    r.set_selected(wcx, keep, false);
+                });
+            }),
+        }
     });
     bind_selected(v, selected, set_roller_selected, |r| usize::from(r.selected()))
 }

@@ -17,7 +17,7 @@ test (`guide_excerpts_match_the_example`) checks that they still are.
 **Contents:** [1. Parts and the class](#1-parts-and-the-class) ·
 [2. State and setters](#2-state-and-setters) · [3. Drawing and input](#3-drawing-and-input) ·
 [4. Theming](#4-theming) · [5. The view](#5-the-view) · [6. Using it](#6-using-it) ·
-[7. Testing](#7-testing) · [Checklist](#checklist)
+[7. Testing](#7-testing) · [8. Components](#8-components) · [Checklist](#checklist)
 
 # 1. Parts and the class
 
@@ -742,6 +742,111 @@ for mode in ThemeMode::ALL {
 
 The example's full test suite is `tests/gauge.rs`.
 
+# 8. Components
+
+A widget draws; a **component** composes views that already exist — the gauge with a title in a
+card, a labelled slider, a settings row. A component is a function returning a view, and
+[`#[component]`](macro@crate::component) makes it read like a built-in widget: **required props
+are arguments**, optional props (with defaults) are **methods**, and every modifier of
+[`ViewExt`](crate::view::ViewExt) and [`StyleExt`](crate::view::StyleExt) applies to the root
+of the view it returns (`impl ViewExt<Widget = W>` names that root's widget).
+
+```rust
+# #[allow(dead_code)]
+# mod gauge {
+#     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/gauge/gauge.rs"));
+# }
+use core::ops::RangeInclusive;
+use gauge::gauge;
+use twine::prelude::*;
+
+/// A gauge with a title, in a card.
+#[component]
+pub fn gauge_card(
+    /// The title above the gauge.
+    title: TextProp,
+    /// The value shown: a constant, a signal, a memo or a closure.
+    value: Prop<i32>,
+    /// The gauge's range.
+    #[prop(default = 0..=100)]
+    range: Prop<RangeInclusive<i32>>,
+    /// Called with the new value when the user changes it.
+    #[prop(default)]
+    on_change: Option<Box<dyn FnMut(i32)>>,
+) -> impl ViewExt<Widget = Card> {
+    let mut on_change = on_change;
+    card((
+        label(title).text_color(design::ON_SURFACE_MUTED),
+        gauge(value).range(range).on_change(move |v| {
+            if let Some(f) = on_change.as_mut() {
+                f(v);
+            }
+        }),
+    ))
+    .gap(6)
+}
+
+fn app(cx: Scope) -> impl View {
+    let rpm = cx.signal(3200);
+    let setpoint = cx.signal(21);
+    row((
+        gauge_card("Engine", rpm).range(0..=8000).padding(8),
+        gauge_card("Setpoint", setpoint)
+            .range(10..=30)
+            .on_change(move |v| setpoint.set(v))
+            .test_id("setpoint"),
+    ))
+    .gap(12)
+}
+
+let mut t = twine_testing::TestUi::new(320, 240).mount(app);
+t.run_until_idle();
+```
+
+- **What a prop accepts** follows its type: `Prop<T>` takes any
+  [`IntoProp`](crate::view::IntoProp) (constants, signals, memos, closures), `TextProp` any
+  [`IntoText`](crate::view::IntoText), `Model<T>` a value or a two-way signal, `Box<dyn Fn..>`
+  a closure (boxed by the builder), `impl ViewSeq` children (a type parameter: not boxed), and
+  any other type exactly itself. Pass them on unchanged — `label(title)`,
+  `gauge(value).range(range)` accept them as they are — or read one in several places with
+  [`Prop::get`](crate::view::Prop::get) inside a memo.
+- **State of its own:** a first parameter `cx: Scope` is not a prop; it receives the scope the
+  component is built in, so its signals and effects are disposed with it.
+- **Errors at compile time:** leaving out a required prop is the compiler's "argument #1 is
+  missing" at the call; a wrong value is reported by `IntoProp`/`IntoText` with the prop's
+  type; a method that does not exist is "no method named ..".
+- **Cost:** the generated builder is a struct of the props and one method per optional prop,
+  as you would write by hand: constants allocate nothing, nothing is boxed that the prop's
+  type does not box, and modifiers are kept in one `Vec` (empty without modifiers) until the
+  component is built.
+
+**Without the macro.** `#[component]` comes from the `twine-macros` proc-macro crate (host-only:
+nothing of it reaches firmware). A project that avoids procedural macros writes the same
+component as a plain function — required props as arguments, the optional ones as further
+arguments, `Option`s or a second function — or, for typed optional modifiers, as a newtype view
+like `GaugeView` in [section 5](#5-the-view):
+
+```rust
+# #[allow(dead_code)]
+# mod gauge {
+#     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/gauge/gauge.rs"));
+# }
+use core::ops::RangeInclusive;
+use gauge::gauge;
+use twine::prelude::*;
+
+/// A gauge with a title, in a card (every prop is an argument).
+pub fn gauge_card<M1, M2, M3>(
+    title: impl IntoText<M1>,
+    value: impl IntoProp<i32, M2>,
+    range: impl IntoProp<RangeInclusive<i32>, M3>,
+) -> impl ViewExt<Widget = Card> {
+    card((label(title).text_color(design::ON_SURFACE_MUTED), gauge(value).range(range))).gap(6)
+}
+
+let _v = gauge_card("Engine", 3200, 0..=8000).padding(8);
+```
+
 # Checklist
 
 - A `static` [`WidgetClass`](crate::engine::WidgetClass) with every part it draws, a `base`
@@ -759,3 +864,4 @@ The example's full test suite is `tests/gauge.rs`.
   [`ViewExt`](crate::view::ViewExt), typed modifiers taking
   [`IntoProp`](crate::view::IntoProp).
 - Tests: defaults, idempotent setters, input, motion, theme modes, snapshots.
+- Compositions of existing views are components: `#[component]` (or a plain function).

@@ -318,8 +318,60 @@ impl UiCore {
         config: &AppConfig,
         app: impl FnOnce(Scope) -> V,
     ) -> Result<UiCore, UiError> {
+        Self::configured(rt, engine, display, config, None, app)
+    }
+
+    /// [`mount_configured`](Self::mount_configured) with the application's own waker
+    /// (typically a `static UiWaker`) instead of a pooled one, as
+    /// [`mount_with_waker`](Self::mount_with_waker) is to [`mount`](Self::mount). Besides
+    /// letting interrupt handlers name the waker, this makes the mount independent of the
+    /// process-wide [`WakerLease`] pool: what it allocates does not depend on how many other
+    /// UIs (of other threads, e.g. tests running in parallel) hold a lease.
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::MemoryDisplay;
+    /// use twine_view::{UiCore, prelude::*};
+    ///
+    /// static WAKER: UiWaker = UiWaker::new();
+    /// let cfg = AppConfig::new().messages_per_channel(2);
+    /// let mut engine = Engine::new(cfg.engine).unwrap();
+    /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
+    /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let rt = Runtime::take().unwrap();
+    /// let core =
+    ///     UiCore::mount_configured_with_waker(rt, &mut engine, d, &cfg, &WAKER, |_| label("hi")).unwrap();
+    /// assert!(core::ptr::eq(core.waker(), &WAKER));
+    /// assert_eq!(core.messages_per_channel(), 2);
+    /// # core.dispose(&mut engine);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// As [`mount_configured`](Self::mount_configured).
+    pub fn mount_configured_with_waker<V: View>(
+        rt: Runtime,
+        engine: &mut Engine,
+        display: DisplayId,
+        config: &AppConfig,
+        waker: &'static UiWaker,
+        app: impl FnOnce(Scope) -> V,
+    ) -> Result<UiCore, UiError> {
+        Self::configured(rt, engine, display, config, Some(waker), app)
+    }
+
+    /// [`mount_configured`](Self::mount_configured) with an optional application waker.
+    fn configured<V: View>(
+        rt: Runtime,
+        engine: &mut Engine,
+        display: DisplayId,
+        config: &AppConfig,
+        waker: Option<&'static UiWaker>,
+        app: impl FnOnce(Scope) -> V,
+    ) -> Result<UiCore, UiError> {
         config.configure_engine(engine, display)?;
-        let mut core = Self::mount_inner(rt, engine, display, None, config.engine_queue_capacity, app)?;
+        let mut core = Self::mount_inner(rt, engine, display, waker, config.engine_queue_capacity, app)?;
         core.set_messages_per_channel(config.messages_per_channel);
         Ok(core)
     }

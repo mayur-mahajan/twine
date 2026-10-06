@@ -10,7 +10,8 @@ API, `no_std` + `alloc`). Low compute/power is the top priority.
 - `docs/safety/coding-guidelines-deviations.md` — where the code deviates from the Safety-Critical
   Rust Consortium coding guidelines, with impact and the plan step that addresses each gap.
 - `README.md`, `CONTRIBUTING.md` — overview, Definition of Done, hard rules, code guidelines.
-- `twine::guide::custom_widgets` (rustdoc) — the custom-widget guide.
+- `twine::guide::custom_widgets` (rustdoc) — the custom-widget guide; `twine::guide::app_state` —
+  the store pattern (application state as context).
 
 ## Workflow for every step
 1. Read the step in `docs/plan/api-evolution.md`, the §6 deviations of earlier steps, and the code

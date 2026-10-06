@@ -473,6 +473,7 @@ impl Engine {
         let layout_flags = ObjFlags::HIDDEN
             | ObjFlags::IGNORE_LAYOUT
             | ObjFlags::FLOATING
+            | ObjFlags::DOCK_BOTTOM
             | ObjFlags::FLEX_IN_NEW_TRACK
             | ObjFlags::LAYOUT_PASSTHROUGH;
         if changed.intersects(layout_flags) {

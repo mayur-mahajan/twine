@@ -1,0 +1,17 @@
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+  --> tests/ui/component_missing_prop.rs:10:13
+   |
+10 |     let _ = meter().caption("rpm");
+   |             ^^^^^-- argument #1 is missing
+   |
+note: function defined here
+  --> tests/ui/component_missing_prop.rs:4:4
+   |
+ 3 | #[component]
+   | ------------
+ 4 | fn meter(value: Prop<i32>, #[prop(default)] caption: TextProp) -> impl ViewExt<Widget = Obj> {
+   |    ^^^^^
+help: provide the argument
+   |
+10 |     let _ = meter(/* value */).caption("rpm");
+   |                   +++++++++++

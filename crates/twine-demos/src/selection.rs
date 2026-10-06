@@ -104,7 +104,7 @@ pub fn app(cx: Scope) -> impl View {
 fn pickers(s: Selection) -> impl View {
     row((
         column((
-            dropdown(CITIES, s.city).width(120).test_id("dropdown"),
+            dropdown(&CITIES, s.city).width(120).test_id("dropdown"),
             label(move || {
                 let i = s.city.get();
                 format!("City: {}", CITIES.get(i).copied().unwrap_or("?"))
@@ -112,7 +112,7 @@ fn pickers(s: Selection) -> impl View {
             .test_id("city"),
         ))
         .gap(12),
-        roller(CITIES, s.city)
+        roller(&CITIES, s.city)
             .mode(RollerMode::Infinite)
             .visible_rows(3)
             .test_id("roller"),
@@ -146,9 +146,12 @@ fn lists(cx: Scope) -> impl View {
         list((
             list_text("Files"),
             for_each(
-                move || items.get(),
+                items,
                 |i| *i,
-                |_, i| list_button(ICONS[i as usize % ICONS.len()], format!("Item {}", i + 1)),
+                |_, i| {
+                    let i = i.get_untracked();
+                    list_button(ICONS[i as usize % ICONS.len()], format!("Item {}", i + 1))
+                },
             ),
         ))
         .size(Length::pct(100), 120)

@@ -21,6 +21,9 @@
 //!   containers, then shifted by `TranslateX/Y`. Margins are ignored here.
 //! - **Flex** and **grid** containers place their items (children without `HIDDEN`,
 //!   `IGNORE_LAYOUT`, `FLOATING`); the other children are positioned as above.
+//! - **Docking**: a child with [`LayoutFlags::DOCK_BOTTOM`] (e.g. an on-screen keyboard)
+//!   takes the bottom of its parent's content area at full width; the other children —
+//!   positions, `Pct` sizes, flex and grid — share the area above it.
 //! - [`layout_subtree`] runs everything top-down for a subtree; [`LayoutScratch`] keeps its
 //!   buffers so repeated layouts do not allocate.
 //!

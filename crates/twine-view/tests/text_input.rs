@@ -390,3 +390,55 @@ fn buttonmatrix_builder_maps_rows_widths_and_controls() {
     assert_eq!(m.btn_text(3), Some("Done"));
     assert!(m.has_btn_ctrl(3, BtnCtrl::CHECKED));
 }
+
+/// R4.S05: one keyboard following the edited field through a closure target (no rebuild),
+/// `None` detaching it, and `docked` from a signal reserving / giving back its height.
+#[test]
+fn keyboard_follows_a_dynamic_target_and_docks_from_a_signal() {
+    let mut t = TestUi::new(320, 240).mount(|cx| {
+        let fields: [NodeRef<Textarea>; 2] = [cx.node_ref(), cx.node_ref()];
+        let editing = cx.signal(Some(0usize));
+        let docked = cx.signal(false);
+        cx.provide((editing, docked));
+        container((
+            column((
+                textarea(String::new()).node_ref(fields[0]).test_id("a"),
+                textarea(String::new()).node_ref(fields[1]).test_id("b"),
+            ))
+            .fill()
+            .test_id("page"),
+            keyboard(move || editing.get().map(|i| fields[i]))
+                .docked(docked)
+                .height(100)
+                .test_id("kb"),
+        ))
+        .fill()
+        .padding(0)
+        .border_width(0)
+    });
+    settle(&mut t);
+    let (editing, docked) = t
+        .root_scope()
+        .expect_context::<(Signal<Option<usize>>, Signal<bool>)>();
+    let kb = node(&t, "kb");
+    let attached = |t: &TestUi| t.engine().widget::<Keyboard>(kb).unwrap().textarea();
+    assert_eq!(attached(&t), Some(node(&t, "a")));
+
+    editing.set(Some(1));
+    settle(&mut t);
+    assert_eq!(node(&t, "kb"), kb, "the keyboard is kept");
+    assert_eq!(attached(&t), Some(node(&t, "b")));
+    editing.set(None);
+    settle(&mut t);
+    assert_eq!(attached(&t), None);
+
+    // Floating (default): the page keeps the whole screen.
+    assert_eq!(t.engine().coords(node(&t, "page")).y1, 240);
+    docked.set(true);
+    settle(&mut t);
+    assert_eq!(t.engine().coords(node(&t, "page")).y1, 140);
+    assert_eq!(t.engine().coords(kb).y0, 140);
+    docked.set(false);
+    settle(&mut t);
+    assert_eq!(t.engine().coords(node(&t, "page")).y1, 240);
+}

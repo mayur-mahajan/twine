@@ -59,7 +59,15 @@ fn main() {
   [source](crates/twine/src/guide/custom_widgets.md)): a gauge with its own class and parts,
   drawing, keypad/encoder input, theming with design elements in every theme mode, a typed
   view, animations within the motion preference, and tests. The finished widget is the
-  `gauge` example: `cargo xtask sim gauge`.
+  `gauge` example: `cargo xtask sim gauge`. Its last section covers **components**
+  (`#[component]`): a function composing views, used like a built-in widget
+  (`meter(rpm).range(0..=8000).padding(4)`), and the plain-function form without the macro.
+- **Application state** (`twine::guide::app_state`,
+  [source](crates/twine/src/guide/app_state.md)): the store pattern for large applications —
+  a `Copy` struct of signals and memos with action methods, provided as context
+  (`cx.provide(store)`) and read by any component (`cx.expect_context::<Store>()`, or
+  `use_context` returning a `Result`); scoped stores, testing with `TestUi`, stores fed by
+  ports. The `todos` demo shows it in full: `cargo xtask sim todo_list`.
 
 ## Crate map
 
@@ -78,6 +86,7 @@ enforces this).
 | `twine-engine` | widget tree, events, input, scrolling, invalidation, refresh pipeline |
 | `twine-theme`, `twine-widgets`, `twine-widgets-ext` | themes, basic and complex widgets |
 | `twine-view` | declarative view layer, `Ui` runtime and the blocking run loop (`twine::run`) |
+| `twine-macros` | `#[component]` (host-only proc macro, re-exported by `twine-view` and the facade) |
 | `twine` | facade: re-exports and `prelude` |
 | `twine-drivers`, `twine-embassy`, `twine-accel-stm32`, `twine-embedded-graphics` | drivers, embassy run loop (`Ui` and `AsyncUi`), DMA2D, embedded-graphics adapter |
 | `twine-sim`, `twine-testing`, `twine-demos` | desktop simulator, test harnesses, demo apps |

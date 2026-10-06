@@ -1,4 +1,5 @@
-//! Control flow: [`when`], [`dynamic`], [`for_each`], [`virtual_list`].
+//! Control flow: [`when`], [`dynamic`], [`for_each`], [`virtual_list`] (the keyed collections
+//! take their items as [`IntoItems`]).
 //!
 //! Each region owns one **wrapper node** (a `LAYOUT_PASSTHROUGH` node: its children are laid
 //! out as children of the wrapper's parent, it draws nothing and is invisible to hit tests)
@@ -8,6 +9,7 @@
 
 mod dynamic;
 mod for_each;
+mod items;
 mod virtual_list;
 mod when;
 
@@ -21,6 +23,7 @@ use crate::access::EngineAccess;
 
 pub use dynamic::{Dynamic, dynamic};
 pub use for_each::{ForEach, for_each};
+pub use items::{IntoItems, Items};
 pub use virtual_list::{VirtualList, virtual_list};
 pub use when::{When, WhenElse, when};
 
@@ -38,7 +41,7 @@ pub static WHEN_CLASS: WidgetClass = wrapper_class("when");
 pub static DYNAMIC_CLASS: WidgetClass = wrapper_class("dynamic");
 /// Class of the [`for_each`] wrapper.
 pub static FOR_EACH_CLASS: WidgetClass = wrapper_class("for_each");
-/// Class of the [`navigator`](crate::navigator) anchor.
+/// Class of the [`navigator`](crate::navigator()) anchor.
 pub static NAVIGATOR_CLASS: WidgetClass = wrapper_class("navigator");
 
 const fn wrapper_class(name: &'static str) -> WidgetClass {

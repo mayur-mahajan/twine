@@ -102,15 +102,28 @@ impl<I: Copy> Item<I> {
     pub(crate) fn classify<T: LayoutTree<Id = I> + ?Sized>(&mut self, t: &T, kind: LayoutKind) {
         self.flags = t.flags(self.id);
         self.in_flow = kind != LayoutKind::None
-            && !self
-                .flags
-                .intersects(LayoutFlags::HIDDEN | LayoutFlags::IGNORE_LAYOUT | LayoutFlags::FLOATING);
-        self.aligned = !self.in_flow && t.align_to(self.id).is_some();
+            && !self.flags.intersects(
+                LayoutFlags::HIDDEN
+                    | LayoutFlags::IGNORE_LAYOUT
+                    | LayoutFlags::FLOATING
+                    | LayoutFlags::DOCK_BOTTOM,
+            );
+        self.aligned = !self.in_flow && !self.is_docked() && t.align_to(self.id).is_some();
     }
 
     /// A non-layout child that counts for the parent's content size.
     pub(crate) fn counts_for_content(&self) -> bool {
-        !self.in_flow && !self.aligned && !self.flags.intersects(LayoutFlags::HIDDEN | LayoutFlags::FLOATING)
+        !self.in_flow
+            && !self.aligned
+            && !self
+                .flags
+                .intersects(LayoutFlags::HIDDEN | LayoutFlags::FLOATING | LayoutFlags::DOCK_BOTTOM)
+    }
+
+    /// A visible child docked to the bottom of its parent ([`LayoutFlags::DOCK_BOTTOM`]).
+    #[inline]
+    pub(crate) fn is_docked(&self) -> bool {
+        self.flags.contains(LayoutFlags::DOCK_BOTTOM) && !self.flags.contains(LayoutFlags::HIDDEN)
     }
 
     pub(crate) fn set_resolved(&mut self, r: Resolved) {
@@ -206,10 +219,10 @@ pub fn layout_children_with<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScr
 /// tells on which axes the size of `id` was set by its parent's layout (then it is not
 /// content-sized on that axis even if its style says so, as in LVGL).
 fn arrange<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, id: T::Id, ovr: [bool; 2]) {
-    let raw = content_rect(t.coords(id), spaces(&*t, id));
+    let mut raw = content_rect(t.coords(id), spaces(&*t, id));
     let sc = t.scroll(id);
-    let content = Rect::new(raw.x0 - sc.x, raw.y0 - sc.y, raw.x1 - sc.x, raw.y1 - sc.y);
-    let csize = raw_size(raw);
+    let mut content = Rect::new(raw.x0 - sc.x, raw.y0 - sc.y, raw.x1 - sc.x, raw.y1 - sc.y);
+    let mut csize = raw_size(raw);
     let sized = [
         !ovr[0] && t.is_content_sized(id, Axis::X),
         !ovr[1] && t.is_content_sized(id, Axis::Y),
@@ -226,8 +239,17 @@ fn arrange<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, id: 
     if end == frame {
         return;
     }
+    let mut docked = false;
     for i in frame..end {
         Item::classify(&mut s.items[i], &*t, kind);
+        docked |= s.items[i].is_docked();
+    }
+    if docked {
+        // The other children share the area above the docked ones.
+        let used = place_docked(t, s, frame, end, raw);
+        raw.y1 -= used;
+        content.y1 -= used;
+        csize = raw_size(raw);
     }
 
     match kind {
@@ -239,7 +261,7 @@ fn arrange<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, id: 
     // Children not positioned by flex/grid: x/y/align.
     for i in frame..end {
         let it = s.items[i];
-        if it.in_flow || it.aligned {
+        if it.in_flow || it.aligned || it.is_docked() {
             continue;
         }
         let r = resolve_node(&*t, s, it.id, csize, [None; 2]);
@@ -283,6 +305,36 @@ fn arrange<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, id: 
         }
     }
     s.items.truncate(frame);
+}
+
+/// Places the docked children of the container being arranged ([`LayoutFlags::DOCK_BOTTOM`],
+/// `s.items[frame..end]`) at the bottom of its unscrolled content area `raw`, stacking them
+/// upwards in child order, each with the full content width and its own height; returns the
+/// height they take (at most the height of `raw`). Rare (a keyboard on screen): kept out of
+/// line so `arrange` stays small.
+#[cold]
+#[inline(never)]
+fn place_docked<T: LayoutTree + ?Sized>(
+    t: &mut T,
+    s: &mut LayoutScratch<T::Id>,
+    frame: usize,
+    end: usize,
+    raw: Rect,
+) -> i32 {
+    let csize = raw_size(raw);
+    let mut bottom = raw.y1;
+    for i in frame..end {
+        if !s.items[i].is_docked() {
+            continue;
+        }
+        let c = s.items[i].id;
+        let r = resolve_node(&*t, s, c, csize, [Some(csize.w), None]);
+        bottom -= r.size.h.max(0);
+        place(t, c, Rect::new(raw.x0, bottom, raw.x1, bottom + r.size.h.max(0)));
+        // Its width is set by the parent (for its own children's content sizing).
+        s.items[i].ovr = [true, false];
+    }
+    (raw.y1 - bottom).clamp(0, csize.h.max(0))
 }
 
 /// Positions the `align_to` child at `s.items[i]` and lays out its subtree.

@@ -96,6 +96,7 @@ impl StyleAnchor {
 /// The display of the `Ui` that owns `cx` (or the engine's default display).
 pub(crate) fn display_of(cx: Scope, e: &Engine) -> Option<DisplayId> {
     cx.use_context::<UiContext>()
+        .ok()
         .map(|c| c.display)
         .or_else(|| e.default_display())
 }
@@ -391,7 +392,7 @@ impl ThemeHandle {
     /// ```
     #[must_use]
     pub fn mode(&self) -> ThemeMode {
-        if let Some(ui) = self.cx.use_context::<UiContext>() {
+        if let Ok(ui) = self.cx.use_context::<UiContext>() {
             return ui.theme.with(|s| s.mode);
         }
         EngineAccess::with(self.cx, |e| e.default_display().map(|d| e.theme_mode(d)))
@@ -415,7 +416,7 @@ impl ThemeHandle {
     /// ```
     #[must_use]
     pub fn modes(&self) -> &'static [ThemeMode] {
-        if let Some(ui) = self.cx.use_context::<UiContext>() {
+        if let Ok(ui) = self.cx.use_context::<UiContext>() {
             return ui.theme.with(|s| s.modes);
         }
         EngineAccess::with(self.cx, |e| e.default_display().map(|d| e.theme_modes(d)))
@@ -444,7 +445,7 @@ impl ThemeHandle {
     #[must_use]
     pub fn get<T: ElementType>(&self, element: Element<T>) -> Option<T> {
         let cx = self.cx;
-        if let Some(ui) = cx.use_context::<UiContext>() {
+        if let Ok(ui) = cx.use_context::<UiContext>() {
             ui.theme.with(|_| ());
         }
         EngineAccess::with(self.cx, |e| {
@@ -489,7 +490,7 @@ impl MotionHandle {
     /// engine is available, else [`Motion::Full`].
     #[must_use]
     pub fn get(&self) -> Motion {
-        if let Some(ui) = self.cx.use_context::<UiContext>() {
+        if let Ok(ui) = self.cx.use_context::<UiContext>() {
             return ui.motion.get();
         }
         EngineAccess::with(self.cx, |e| e.motion()).unwrap_or_default()
@@ -514,7 +515,7 @@ impl MotionHandle {
     /// ```
     pub fn set(&self, motion: Motion) {
         let cx = self.cx;
-        if let Some(ui) = cx.use_context::<UiContext>() {
+        if let Ok(ui) = cx.use_context::<UiContext>() {
             ui.motion.set_if_changed(motion);
         }
         if EngineAccess::with(self.cx, |e| e.set_motion(motion)).is_none() {
@@ -555,7 +556,8 @@ pub fn use_motion(cx: Scope) -> MotionHandle {
 /// - hooks that create something (`tween`, `animation`, `interval`, `timeout`, `show_modal`),
 ///   signal writes and navigation **defer** their engine work to the next `Ui::update`;
 /// - engine side effects — the cleanups of a disposed scope (stopping its animations,
-///   removing its timers, closing its modals), the [`AnimController`] methods,
+///   removing its timers, closing its modals, deleting its navigator's pages), the
+///   [`AnimController`] methods,
 ///   [`ThemeHandle::set`], [`ThemeHandle::set_mode`] and [`MotionHandle::set`] — are
 ///   **queued** on the `Ui` that owns the scope and applied at the start of its next update
 ///   (bounded: see [`UiBuilder::engine_queue_capacity`](crate::UiBuilder::engine_queue_capacity);

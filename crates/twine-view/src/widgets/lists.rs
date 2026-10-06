@@ -22,9 +22,7 @@ use crate::view::ViewSeq;
 ///     let names = cx.signal(vec!["a.txt".to_string(), "b.txt".to_string()]);
 ///     list((
 ///         list_text("Files"),
-///         for_each(move || names.get(), |n| n.clone(), |_, n| {
-///             list_button(Symbol::File, n)
-///         }),
+///         for_each(names, |n| n.clone(), |_, n| list_button(Symbol::File, n)),
 ///     ))
 /// }
 /// # let _ = files;

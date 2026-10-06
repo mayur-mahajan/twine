@@ -178,7 +178,7 @@ fn wrappers_pass_drags_and_events_to_their_parent() {
         let items = cx.signal((0..30u32).collect::<Vec<_>>());
         scroll_view(
             Axis::Vertical,
-            for_each(move || items.get(), |i| *i, |_, i| label(format!("Row {i}"))),
+            for_each(items, |i| *i, |_, i| label(text!("Row {}", i.get()))),
         )
         .size(200, 120)
         .test_id("col")

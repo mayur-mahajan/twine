@@ -29,12 +29,15 @@
 //! (`static`), is sorted by key (checked at compile time by [`translations!`](crate::translations))
 //! and is searched by binary search. A missing key or translation shows the key itself and
 //! logs one `warn!` (per key and language).
+//!
+//! Code below `provide_i18n` reaches the handle with [`expect_i18n`] (panics outside) or
+//! [`use_i18n`] (a `Result`), following the context convention of `Scope` (§ Context values).
 
 use core::cell::RefCell;
 use core::fmt::{Display, Write};
 
 use alloc::boxed::Box;
-use twine_reactive::{Scope, Signal};
+use twine_reactive::{MissingContext, Scope, Signal};
 use twine_view::text::TextProp;
 
 /// A translation table: `table[i] = (key, [text per language])`, sorted by key.
@@ -242,10 +245,42 @@ pub fn provide_i18n(cx: Scope, table: &'static Translations, initial: &str) -> I
     i18n
 }
 
-/// The [`I18n`] provided to `cx` or an ancestor.
-#[must_use]
-pub fn use_i18n(cx: Scope) -> Option<I18n> {
+/// The [`I18n`] provided to `cx` or an ancestor by [`provide_i18n`], or [`MissingContext`]
+/// naming `I18n` when there is none — the non-panicking form (`.ok()` for code that works
+/// with and without translations; see [`expect_i18n`]). A scope-chain walk without
+/// allocation (`Scope` § Context values): look it up once while building.
+///
+/// Never panics.
+///
+/// ```
+/// use twine_extra::i18n::use_i18n;
+///
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
+/// assert!(use_i18n(cx).is_err()); // no `provide_i18n` above
+/// ```
+pub fn use_i18n(cx: Scope) -> Result<I18n, MissingContext> {
     cx.use_context::<I18n>()
+}
+
+/// The [`I18n`] provided to `cx` or an ancestor by [`provide_i18n`]: the panicking form of
+/// [`use_i18n`], a thin `#[track_caller]` wrapper for application code below `provide_i18n`
+/// (e.g. a language picker).
+///
+/// # Panics
+///
+/// If no ancestor of `cx` called [`provide_i18n`], with `"context twine_extra::i18n::I18n not
+/// provided"` at the caller's location ([`MissingContext`]).
+///
+/// ```should_panic
+/// use twine_extra::i18n::expect_i18n;
+///
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
+/// let _ = expect_i18n(cx); // panics: no `provide_i18n` above
+/// ```
+#[must_use]
+#[track_caller]
+pub fn expect_i18n(cx: Scope) -> I18n {
+    cx.expect_context::<I18n>()
 }
 
 /// Keys (pointer, length, language) already warned about; later warnings pass through once the
@@ -274,7 +309,7 @@ fn no_i18n(key: &str) {
 #[must_use]
 pub fn tr_text(key: &'static str) -> TextProp {
     TextProp::Scoped(Box::new(move |cx| {
-        if let Some(i) = use_i18n(cx) {
+        if let Ok(i) = use_i18n(cx) {
             TextProp::StaticFn(Box::new(move || i.tr(key)))
         } else {
             no_i18n(key);
@@ -289,7 +324,7 @@ pub fn tr_text(key: &'static str) -> TextProp {
 #[must_use]
 pub fn tr_text_with(key: &'static str, args: impl Fn(&'static str, &mut dyn Write) + 'static) -> TextProp {
     TextProp::Scoped(Box::new(move |cx| {
-        let i = use_i18n(cx);
+        let i = use_i18n(cx).ok();
         if i.is_none() {
             no_i18n(key);
         }

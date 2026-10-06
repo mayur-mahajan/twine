@@ -222,7 +222,7 @@ fn roller_set_mode_keeps_options_and_is_idempotent() {
     let w = get::<Roller>(&h, r);
     assert_eq!(w.mode(), RollerMode::Infinite);
     assert!(w.page_count() >= 3);
-    assert_eq!((w.option_count(), w.options()), (7, DAYS));
+    assert_eq!((w.option_count(), w.options().to_string().as_str()), (7, DAYS));
     let offset = w.offset_y();
     with(&mut h, r, |w: &mut Roller, cx| {
         w.set_mode(cx, RollerMode::Infinite);
@@ -235,19 +235,60 @@ fn roller_set_mode_keeps_options_and_is_idempotent() {
 fn roller_infinite_no_string_duplication() {
     let (h, r) = scene(Mode::Light, RollerMode::Infinite);
     let w = get::<Roller>(&h, r);
-    assert_eq!(w.options_storage().len(), DAYS.len());
-    assert!(matches!(
-        w.options_storage(),
-        twine_widgets_ext::Options::Static(_)
-    ));
+    assert_eq!(w.options().len(), DAYS.len());
+    assert!(matches!(w.options(), twine_widgets_ext::Options::Static(_)));
     let (mut h, r) = scene(Mode::Light, RollerMode::Normal);
     let owned = "a\nb\nc\nd";
     with(&mut h, r, |w: &mut Roller, cx| {
         w.set_options(cx, owned, RollerMode::Infinite);
     });
     let w = get::<Roller>(&h, r);
-    assert_eq!(w.options_storage().len(), owned.len());
+    assert_eq!(w.options().len(), owned.len());
     assert_eq!(w.option_count(), 4);
+}
+
+#[test]
+fn roller_slice_options_are_zero_copy_and_draw_like_text() {
+    static DAY_LIST: [&str; 7] = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ];
+    // The same roller with the joined text and with the slice: same size, same pixels.
+    let shot = |slice: bool| {
+        let (mut h, r) = scene(Mode::Light, RollerMode::Infinite);
+        with(&mut h, r, |w: &mut Roller, cx| {
+            if slice {
+                w.set_options_static(cx, &DAY_LIST, RollerMode::Infinite);
+            }
+            w.set_selected(cx, 3, false);
+        });
+        h.run_until_idle();
+        let w = get::<Roller>(&h, r);
+        assert_eq!((w.option_count(), w.options().to_string().as_str()), (7, DAYS));
+        assert_eq!(matches!(w.options(), twine_widgets_ext::Options::Slice(_)), slice);
+        let c = h.engine().coords(r);
+        h.render_full();
+        (c, h.panel_rgb888())
+    };
+    let (text, slice) = (shot(false), shot(true));
+    assert_eq!(text.0, slice.0, "same size");
+    assert!(text.1 == slice.1, "same pixels");
+    // Idempotent: the same slice again changes nothing.
+    let (mut h, r) = scene(Mode::Light, RollerMode::Normal);
+    with(&mut h, r, |w: &mut Roller, cx| {
+        w.set_options_static(cx, &DAY_LIST, RollerMode::Normal);
+    });
+    h.run_until_idle();
+    with(&mut h, r, |w: &mut Roller, cx| {
+        w.set_options_static(cx, &DAY_LIST, RollerMode::Normal);
+    });
+    assert!(h.engine().invalidation_log().is_empty());
+    h.assert_idle();
 }
 
 #[test]

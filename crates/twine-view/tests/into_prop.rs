@@ -409,3 +409,29 @@ fn constants_allocate_nothing_and_dynamic_values_one_box() {
     }
     cx.dispose();
 }
+
+#[test]
+fn option_slices_are_stored_by_reference() {
+    static CITIES: [&str; 2] = ["Oslo", "Lima"];
+    let mut t = TestUi::new(320, 240).mount(|_| {
+        column((
+            dropdown(&CITIES, 0).test_id("array"),
+            dropdown(&CITIES[..], 1).test_id("slice"),
+            roller(&["x", "y", "z"], 2).test_id("literal"),
+        ))
+    });
+    t.run_until_idle();
+    let e = t.engine();
+    for id in ["array", "slice"] {
+        let d = e.widget::<Dropdown>(node(&t, id)).unwrap();
+        assert!(
+            matches!(d.options(), twine_widgets_ext::Options::Slice(s) if std::ptr::eq(*s, CITIES.as_slice())),
+            "{id}: {:?}",
+            d.options()
+        );
+    }
+    assert_eq!(e.widget::<Dropdown>(node(&t, "slice")).unwrap().selected(), 1);
+    let r = e.widget::<Roller>(node(&t, "literal")).unwrap();
+    assert!(matches!(r.options(), twine_widgets_ext::Options::Slice(_)));
+    assert_eq!((r.option_count(), r.selected()), (3, 2));
+}

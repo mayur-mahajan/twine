@@ -1044,6 +1044,135 @@ mod flex_grid_props {
     }
 }
 
+/// `DOCK_BOTTOM`: the docked child takes the bottom of the content area, the others the rest.
+mod dock {
+    use super::*;
+    use twine_core::Point;
+    use twine_style::Align;
+
+    /// A 200 × 100 container (padding 5) without layout at the origin.
+    fn host(t: &mut ToyTree) -> usize {
+        t.add(
+            ToyTree::ROOT,
+            StyleBuf::new()
+                .width(200)
+                .height(100)
+                .padding_left(5)
+                .padding_right(5)
+                .padding_top(5)
+                .padding_bottom(5),
+        )
+    }
+
+    #[test]
+    fn docked_child_takes_the_bottom_and_the_others_the_rest() {
+        let mut t = ToyTree::new(1000, 1000);
+        let c = host(&mut t);
+        let fill = t.add(
+            c,
+            StyleBuf::new().width(Length::pct(100)).height(Length::pct(100)),
+        );
+        let low = t.add(c, StyleBuf::new().width(20).height(10).align(Align::BottomMid));
+        let kb = t.add(c, StyleBuf::new().width(50).height(40).align(Align::TopLeft).x(7));
+        t.set_flags(kb, LayoutFlags::DOCK_BOTTOM);
+        run(&mut t);
+        // Full content width, own height, at the bottom; its width/x/align are ignored.
+        assert_eq!(t.coords(kb), Rect::new(5, 55, 195, 95));
+        // `Pct` sizes and `Align` use the area above it.
+        assert_eq!(t.coords(fill), Rect::new(5, 5, 195, 55));
+        assert_eq!(t.coords(low), Rect::from_xywh(90, 45, 20, 10));
+
+        // Undocked: the area is whole again and the node is placed by its own styles.
+        t.set_flags(kb, LayoutFlags::empty());
+        run(&mut t);
+        assert_eq!(t.coords(fill), Rect::new(5, 5, 195, 95));
+        assert_eq!(t.coords(kb), Rect::from_xywh(12, 5, 50, 40));
+    }
+
+    #[test]
+    fn flex_items_share_the_area_above_and_the_dock_is_no_item() {
+        let (mut t, c) = flex(200, 100, FlexFlow::COLUMN);
+        let a = t.add(c, StyleBuf::new().width(50).height(10));
+        let grow = t.add(c, StyleBuf::new().width(50).height(10).flex_grow(1));
+        let kb = t.add(c, StyleBuf::new().height(Length::pct(30)));
+        t.set_flags(kb, LayoutFlags::DOCK_BOTTOM);
+        run(&mut t);
+        // `Pct` height of the docked node: of the whole content area.
+        assert_eq!(t.coords(kb), Rect::new(0, 70, 200, 100));
+        assert_eq!(t.coords(a), Rect::from_xywh(0, 0, 50, 10));
+        assert_eq!(t.coords(grow), Rect::from_xywh(0, 10, 50, 60));
+    }
+
+    #[test]
+    fn hidden_docked_child_reserves_nothing() {
+        let mut t = ToyTree::new(1000, 1000);
+        let c = host(&mut t);
+        let fill = t.add(
+            c,
+            StyleBuf::new().width(Length::pct(100)).height(Length::pct(100)),
+        );
+        let kb = t.add(c, StyleBuf::new().height(40));
+        t.set_flags(kb, LayoutFlags::DOCK_BOTTOM | LayoutFlags::HIDDEN);
+        run(&mut t);
+        assert_eq!(t.coords(fill), Rect::new(5, 5, 195, 95));
+    }
+
+    #[test]
+    fn several_docked_children_stack_upwards() {
+        let mut t = ToyTree::new(1000, 1000);
+        let c = host(&mut t);
+        let fill = t.add(
+            c,
+            StyleBuf::new().width(Length::pct(100)).height(Length::pct(100)),
+        );
+        let first = t.add(c, StyleBuf::new().height(20));
+        let second = t.add(c, StyleBuf::new().height(30));
+        t.set_flags(first, LayoutFlags::DOCK_BOTTOM);
+        t.set_flags(second, LayoutFlags::DOCK_BOTTOM);
+        run(&mut t);
+        assert_eq!(t.coords(first), Rect::new(5, 75, 195, 95));
+        assert_eq!(t.coords(second), Rect::new(5, 45, 195, 75));
+        assert_eq!(t.coords(fill), Rect::new(5, 5, 195, 45));
+    }
+
+    #[test]
+    fn docked_child_counts_neither_for_content_size_nor_scrolls() {
+        let mut t = ToyTree::new(1000, 1000);
+        let c = t.add(ToyTree::ROOT, StyleBuf::new().width(200).height(Length::Content));
+        t.add(c, StyleBuf::new().width(50).height(30));
+        let kb = t.add(c, StyleBuf::new().height(80));
+        t.set_flags(kb, LayoutFlags::DOCK_BOTTOM);
+        run(&mut t);
+        assert_eq!(t.coords(c).height(), 30);
+
+        // A scrolled parent: the docked child stays at the bottom of the visible area.
+        let mut t = ToyTree::new(1000, 1000);
+        let c = host(&mut t);
+        t.set_scroll(c, Point::new(0, 15));
+        let a = t.add(c, StyleBuf::new().width(50).height(10));
+        let kb = t.add(c, StyleBuf::new().height(40));
+        t.set_flags(kb, LayoutFlags::DOCK_BOTTOM);
+        run(&mut t);
+        assert_eq!(t.coords(kb), Rect::new(5, 55, 195, 95));
+        assert_eq!(t.coords(a).y0, 5 - 15);
+    }
+
+    #[test]
+    fn a_docked_child_taller_than_the_parent_leaves_no_room() {
+        let mut t = ToyTree::new(1000, 1000);
+        let c = host(&mut t);
+        let fill = t.add(
+            c,
+            StyleBuf::new().width(Length::pct(100)).height(Length::pct(100)),
+        );
+        let kb = t.add(c, StyleBuf::new().height(500));
+        t.set_flags(kb, LayoutFlags::DOCK_BOTTOM);
+        run(&mut t);
+        assert_eq!(t.coords(kb).y1, 95);
+        assert_eq!(t.coords(fill).height(), 0);
+    }
+}
+
 /// Captures `twine::layout` warnings through the `log` crate.
 #[cfg(all(feature = "log", not(feature = "defmt")))]
 mod log_capture {

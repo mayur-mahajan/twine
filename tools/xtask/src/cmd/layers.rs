@@ -13,6 +13,9 @@ use crate::util::{R, cargo, output};
 /// Crate → layer. A crate may only depend on crates in lower layers.
 pub const LAYERS: &[(&str, u8)] = &[
     ("twine-core", 0),
+    // Host-only proc macros (`#[component]`); they name no Twine crate (the generated code
+    // does, through the crate using them).
+    ("twine-macros", 0),
     ("twine-hal", 1),
     ("twine-reactive", 1),
     ("twine-anim", 1),

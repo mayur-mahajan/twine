@@ -79,9 +79,24 @@ bitflags::bitflags! {
         const USER_3 = 1 << 29;
         /// Free for the application.
         const USER_4 = 1 << 30;
+        /// Docked to the bottom of the parent (not in LVGL; an on-screen keyboard reserving its
+        /// height, see `Keyboard::set_docked` in `twine-widgets`): the node gets the full
+        /// width of the parent's content area and its own height, at the bottom of that area,
+        /// and the parent's other children are laid out in the area above it (`Pct` sizes,
+        /// `Align`, flex and grid; see `twine_layout::LayoutFlags::DOCK_BOTTOM`). Like
+        /// `FLOATING`, it is not a flex/grid item, does not scroll with the parent and does not
+        /// count for the parent's content size or scroll extents. A `HIDDEN` node reserves
+        /// nothing.
+        const DOCK_BOTTOM = 1 << 31;
         /// Both scroll chain directions.
         const SCROLL_CHAIN = Self::SCROLL_CHAIN_HOR.bits() | Self::SCROLL_CHAIN_VER.bits();
     }
+}
+
+impl ObjFlags {
+    /// Children that neither scroll with their parent nor count for its scroll extents or
+    /// snapping (`FLOATING`, `DOCK_BOTTOM`).
+    pub(crate) const OUT_OF_FLOW: ObjFlags = ObjFlags::FLOATING.union(ObjFlags::DOCK_BOTTOM);
 }
 
 #[cfg(feature = "defmt")]
@@ -164,6 +179,6 @@ mod tests {
             assert_eq!(seen & f.bits(), 0, "{name} overlaps");
             seen |= f.bits();
         }
-        assert_eq!(seen.count_ones(), 31);
+        assert_eq!(seen.count_ones(), 32);
     }
 }

@@ -21,7 +21,9 @@ twine-core = { path = "../../crates/twine-core", features = ["std"] }
 twine-anim = { path = "../../crates/twine-anim", features = ["std"] }
 twine-style = { path = "../../crates/twine-style", features = ["std"] }
 twine-engine = { path = "../../crates/twine-engine", features = ["std", "color-rgb565"] }
-twine-testing = { path = "../../crates/twine-testing", default-features = false, features = ["engine"] }
+twine-testing = { path = "../../crates/twine-testing", default-features = false, features = ["engine", "ui"] }
+twine-reactive = { path = "../../crates/twine-reactive", features = ["std"] }
+twine-view = { path = "../../crates/twine-view", features = ["std"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
@@ -40,4 +42,8 @@ harness = false
 
 [[bench]]
 name = "scroll"
+harness = false
+
+[[bench]]
+name = "collections"
 harness = false

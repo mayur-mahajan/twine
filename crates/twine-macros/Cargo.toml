@@ -1,0 +1,30 @@
+[package]
+name = "twine-macros"
+description = "Procedural macros of Twine (`#[component]`), re-exported by twine-view and the twine facade"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+proc-macro = true
+
+# Host-only (a proc macro never reaches firmware): the generated code is what firmware links.
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "visit"] }
+# Finds how the crate using the macro names `twine-view` (directly, or through the `twine`
+# facade, renamed or not), so generated paths resolve without a `crate = ..` argument.
+proc-macro-crate = "3"
+
+# The doctests use the macro as applications do (a dev-dependency cycle Cargo allows).
+[dev-dependencies]
+twine-view = { path = "../twine-view", features = ["std"] }
+twine-reactive = { path = "../twine-reactive", features = ["std"] }
+# Host implementation for `critical-section` (used by the reactive runtime).
+critical-section = { version = "1", features = ["std"] }

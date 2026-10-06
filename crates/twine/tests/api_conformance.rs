@@ -126,7 +126,7 @@ fn s2_reactive_primitives() {
     cx.on_cleanup(|| {});
     let child = cx.child();
     cx.provide(5u8);
-    assert_eq!(child.use_context::<u8>(), Some(5));
+    assert_eq!(child.use_context::<u8>(), Ok(5));
     assert_eq!(child.expect_context::<u8>(), 5);
     assert_eq!(s.get_untracked(), 1);
     s.with(|v| assert_eq!(*v, 1));
@@ -233,8 +233,11 @@ static FRAMES: [ImageSource; 2] = [
     ImageSource::symbol(Symbol::Pause),
 ];
 static POINTS: [Point; 3] = [Point::new(0, 10), Point::new(20, 0), Point::new(40, 10)];
-static KB_MAP: [&str; 3] = ["a", "b", "c"];
-static KB_CTRL: [BtnCtrl; 3] = [BtnCtrl::empty(), BtnCtrl::empty(), BtnCtrl::empty()];
+static KB_MAP: [&[MapBtn]; 1] = [&[
+    MapBtn::text("a"),
+    MapBtn::text("b"),
+    MapBtn::new("c", BtnCtrl::empty()),
+]];
 
 fn basic_controls(cx: Scope) -> impl View {
     let level = cx.signal(40);
@@ -297,7 +300,7 @@ fn text_entry(cx: Scope) -> impl View {
             .node_ref(ta),
         keyboard(ta)
             .mode(KeyboardMode::TextLower)
-            .custom_map(KeyboardMode::User1, &KB_MAP, &KB_CTRL)
+            .custom_map(KeyboardMode::User1, &KB_MAP)
             .popovers(true),
         spinbox(qty).range(0..=99).digits(2, 0).step(1).rollover(false),
         spangroup((
@@ -339,6 +342,7 @@ fn selection_widgets(cx: Scope) -> impl View {
             .highlight(true)
             .on_change(|i: usize| {}),
         dropdown(["a", "b", "c"], 1usize),
+        dropdown(&["a", "b", "c"], 1usize),
         roller(names, city)
             .mode(RollerMode::Infinite)
             .visible_rows(3)
@@ -427,8 +431,9 @@ fn containers_and_flow(cx: Scope) -> impl View {
                 button(label("y")).into_any()
             }
         }),
-        for_each(move || items.get(), |i| *i, |_cx, i| label(format!("{i}"))),
-        virtual_list(|| 100, 20, |_cx, i| label(format!("row {i}"))).height(60),
+        for_each(items, |i| *i, |_cx, i| label(text!("{}", i.get()))),
+        for_each(move || items.get(), |i| *i, |_cx, i| label(text!("{}", i.get()))),
+        virtual_list(items, |i| *i, 20, |_cx, i| label(text!("row {}", i.get()))).height(60),
     ))
 }
 
@@ -501,16 +506,27 @@ fn s5_themes_run() {
 mod navigation {
     use twine::prelude::*;
 
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    pub enum Route {
+        Home,
+        Settings,
+    }
+
     pub fn app(cx: Scope) -> impl View {
-        navigator(cx, home) // provides Navigator context
+        // Provides the `Navigator<Route>` context.
+        navigator(cx, Route::Home, |cx, route| match route {
+            Route::Home => home(cx).into_any(),
+            Route::Settings => settings(cx).into_any(),
+        })
     }
     fn home(cx: Scope) -> impl View {
-        let nav = use_navigator(cx);
+        let nav = expect_navigator::<Route>(cx);
         button(label("Settings"))
-            .on_click(move || nav.push(settings, ScreenAnim::MoveLeft(Duration::ms(300))))
+            .on_click(move || nav.push(Route::Settings, ScreenAnim::MoveLeft(Duration::ms(300))))
     }
     fn settings(cx: Scope) -> impl View {
-        let nav = use_navigator(cx);
+        let nav = expect_navigator::<Route>(cx);
+        nav.on_leave(cx, |_to: &Route| Leave::Allow);
         column((
             label("Settings"),
             button(label("Back")).on_click(move || nav.pop(ScreenAnim::MoveRight(Duration::ms(300)))),
@@ -530,6 +546,10 @@ fn s6_navigation() {
     let mut t = TestUi::new(240, 160).mount(navigation::app);
     t.find(by_text("Settings")).click();
     t.run_until_idle();
+    assert_eq!(
+        expect_navigator::<navigation::Route>(t.root_scope()).stack(),
+        [navigation::Route::Home, navigation::Route::Settings]
+    );
     t.find(by_text("Back")).click();
     t.run_until_idle();
     assert_eq!(t.find_all(by_text("Settings")).len(), 1);

@@ -53,6 +53,9 @@ pub static TEXTAREA_CLASS: WidgetClass = WidgetClass::new("textarea")
         Part::Cursor,
         PLACEHOLDER,
     ])
+    // The cursor's style (its border and paddings) only changes how it is drawn: focusing a
+    // field lays nothing out.
+    .draw_parts(&[Part::Cursor])
     .default_flags(TEXTAREA_FLAGS)
     .group_def(GroupDef::True)
     .editable(Editable::True);
@@ -946,6 +949,11 @@ impl Textarea {
                 let prev = ev.prev_state().unwrap_or_default();
                 let mut wcx = cx.widget_cx();
                 let now = wcx.state();
+                if now.contains(State::FOCUSED) != prev.contains(State::FOCUSED) {
+                    // `Cursor` is a draw-only part: its (focused) style changes the cursor's
+                    // area, not the layout.
+                    self.refr_cursor_area(&mut wcx);
+                }
                 if now.contains(State::FOCUSED) && !prev.contains(State::FOCUSED) {
                     self.start_blink(&mut wcx);
                 } else if !now.contains(State::FOCUSED) && prev.contains(State::FOCUSED) {

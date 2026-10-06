@@ -696,7 +696,7 @@ impl Engine {
     /// devices are fitted to it again.
     fn apply_geometry(&mut self, d: usize, info: DisplayInfo) {
         if self.displays[d].screen_load.is_some() {
-            self.finish_screen_anim(d);
+            self.finish_screen_anim_at(d);
         }
         let disp = &mut self.displays[d];
         let id = disp.id;

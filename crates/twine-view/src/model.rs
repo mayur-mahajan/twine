@@ -17,6 +17,21 @@ pub enum Model<T: 'static> {
     Bound(Signal<T>),
 }
 
+/// A widget-owned `T::default()`: what `#[prop(default)]` gives a model property of a
+/// [`#[component]`](macro@crate::component).
+///
+/// ```
+/// use twine_view::Model;
+///
+/// assert!(matches!(Model::<i32>::default(), Model::Owned(0)));
+/// ```
+impl<T: Default + 'static> Default for Model<T> {
+    #[inline]
+    fn default() -> Self {
+        Model::Owned(T::default())
+    }
+}
+
 impl<T: core::fmt::Debug + 'static> core::fmt::Debug for Model<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {

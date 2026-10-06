@@ -10,14 +10,14 @@ error[E0277]: `{integer}` cannot be used as a text
   = note: format other values with `text!` (no allocation) or a closure returning a `String`
   = help: the following other types implement trait `IntoText<M>`:
             `&'static str` implements `IntoText<Value<&'static str>>`
-            `&T` implements `IntoText<twine_view::marker::Ref<M>>`
+            `&String` implements `IntoText<twine_view::marker::Ref<String>>`
+            `&twine_view::prelude::Symbol` implements `IntoText<twine_view::marker::Ref<twine_view::prelude::Symbol>>`
             `Memo<S>` implements `IntoText<Reactive<S>>`
             `ReadSignal<S>` implements `IntoText<Reactive<S>>`
             `Signal<S>` implements `IntoText<Reactive<S>>`
             `String` implements `IntoText<Value<String>>`
             `TextFn` implements `IntoText<Value<TextFn>>`
-            `TextProp` implements `IntoText<twine_view::marker::Prop>`
-            `twine_view::prelude::Symbol` implements `IntoText<Value<twine_view::prelude::Symbol>>`
+          and $N others
 note: required by a bound in `twine_view::label`
  --> src/widgets/core.rs
   |

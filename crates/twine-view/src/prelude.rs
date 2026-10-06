@@ -3,11 +3,12 @@
 
 pub use crate::{
     AnimController, AnyView, AppConfig, BuildCx, BuildError, Container, DisplayBuilder, DisplayMut, Dynamic,
-    Flex, ForEach, Grid, Icon, IntoAnyView, IntoModel, IntoOptions, IntoProp, IntoText, LayerBuffer, Layout,
-    MemoryReport, ModalHandle, Model, MotionHandle, Navigator, NodeRef, Prop, ScopeExt, ScreenAnim,
-    ScreenLoad, StyleExt, StyleScope, TextFn, ThemeHandle, Ui, UiBuilder, UiError, View, ViewExt, ViewSeq,
-    VirtualList, Wake, When, WhenElse, WidgetView, button, card, column, container, dynamic, flex, for_each,
-    grid, image, label, navigator, row, scroll_view, spacer, stack, use_motion, use_navigator, use_theme,
+    Flex, ForEach, Grid, Icon, IntoAnyView, IntoItems, IntoModel, IntoOptions, IntoProp, IntoText,
+    LayerBuffer, Layout, Leave, MemoryReport, ModalHandle, Model, MotionHandle, NavOutcome, Navigator,
+    NavigatorView, NodeRef, Prop, ScopeExt, ScreenAnim, ScreenLoad, StyleExt, StyleScope, TextFn, TextProp,
+    ThemeHandle, Ui, UiBuilder, UiError, View, ViewExt, ViewSeq, VirtualList, Wake, When, WhenElse,
+    WidgetView, button, card, column, component, container, dynamic, expect_navigator, flex, for_each, grid,
+    image, label, navigator, row, scroll_view, spacer, stack, use_motion, use_navigator, use_theme,
     virtual_list, when, widget_view,
 };
 pub use crate::{
@@ -30,13 +31,13 @@ pub use twine_core::{
 pub use twine_engine::{
     BufferMode, BufferSpec, DEAD_NODE, DisplayCmd, DisplayControlFault, DisplayHealth, DisplayState, DrawCx,
     Engine, EngineConfig, Event, EventCode, EventCx, EventResult, FaultHook, FaultRecord, FlushPolicy,
-    GroupId, IntoTheme, MeasureCx, NodeId, ObjFlags, StepBudget, Widget, WidgetClass, WidgetCx,
+    GroupId, IntoTheme, MeasureCx, NodeId, Obj, ObjFlags, StepBudget, Widget, WidgetClass, WidgetCx,
 };
 pub use twine_hal::Key;
 pub use twine_image::ImageSource;
 pub use twine_reactive::{
-    Channel, EffectId, Latest, Memo, Outbox, Overflow, ReadSignal, Runtime, Scope, Signal, UiWaker,
-    WriteSignal,
+    Channel, EffectId, Latest, Memo, MissingContext, Outbox, Overflow, ReadSignal, Runtime, Scope, Signal,
+    UiWaker, WriteSignal,
 };
 pub use twine_render::{BlendMode, BorderSide, Gradient, ShadowDsc};
 pub use twine_style::design;
@@ -53,7 +54,7 @@ pub use twine_widgets::Orientation;
 pub use twine_widgets::arc::ArcMode;
 pub use twine_widgets::bar::BarMode;
 pub use twine_widgets::button::Button;
-pub use twine_widgets::buttonmatrix::BtnCtrl;
+pub use twine_widgets::buttonmatrix::{BtnCtrl, MapBtn};
 pub use twine_widgets::container::Card;
 pub use twine_widgets::image::ImageAlign;
 pub use twine_widgets::image_button::ImageButtonState;

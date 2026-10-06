@@ -1,0 +1,24 @@
+error[E0599]: the method `padding` exists for struct `MaybeProps`, but its trait bounds were not satisfied
+ --> tests/ui/component_view_only_has_no_modifiers.rs:9:25
+  |
+3 | #[component]
+  | ------------ method `padding` not found for this struct because it doesn't satisfy `MaybeProps: ViewExt` or `MaybeProps: twine_view::StyleExt`
+...
+9 |     let _ = maybe(true).padding(4);
+  |                         ^^^^^^^ method cannot be called on `MaybeProps` due to unsatisfied trait bounds
+  |
+  = note: the following trait bounds were not satisfied:
+          `MaybeProps: ViewExt`
+          which is required by `MaybeProps: twine_view::StyleExt`
+          `&MaybeProps: ViewExt`
+          which is required by `&MaybeProps: twine_view::StyleExt`
+          `&mut MaybeProps: ViewExt`
+          which is required by `&mut MaybeProps: twine_view::StyleExt`
+note: the trait `ViewExt` must be implemented
+ --> src/modifiers.rs
+  |
+  | pub trait ViewExt: View + Sized {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: items from traits can only be used if the trait is implemented and in scope
+  = note: the following trait defines an item `padding`, perhaps you need to implement it:
+          candidate #1: `twine_view::StyleExt`

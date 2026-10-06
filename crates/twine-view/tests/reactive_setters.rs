@@ -429,15 +429,14 @@ fn selection_setters_accept_signals() {
     t.run_until_idle();
     let e = t.engine();
     let d = e.widget::<Dropdown>(node(&t, "dd")).unwrap();
+    assert_eq!(d.options(), "x\ny\nz");
     assert_eq!(
-        (d.options(), d.dir(), d.text(), d.selected_highlight()),
-        ("x\ny\nz", Side::Top, Some("Choose"), false)
+        (d.dir(), d.text(), d.selected_highlight()),
+        (Side::Top, Some("Choose"), false)
     );
     let r = e.widget::<Roller>(node(&t, "r")).unwrap();
-    assert_eq!(
-        (r.options(), r.mode(), r.visible_row_count()),
-        ("x\ny\nz", RollerMode::Infinite, 5)
-    );
+    assert_eq!(r.options(), "x\ny\nz");
+    assert_eq!((r.mode(), r.visible_row_count()), (RollerMode::Infinite, 5));
 }
 
 // ---- span.rs ----------------------------------------------------------------------------------

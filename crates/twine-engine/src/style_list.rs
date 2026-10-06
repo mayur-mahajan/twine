@@ -524,8 +524,9 @@ impl Engine {
         if old == new {
             return;
         }
-        let items = n.class().item_parts;
-        let (cmp, inherited) = state_compare(n.styles.entries(), old, new, items);
+        let class = n.class();
+        let (cmp, inherited) =
+            state_compare(n.styles.entries(), old, new, class.item_parts, class.draw_parts);
         twine_core::trace!(target: "twine::style", "{} state {:?} -> {:?}: {:?}", fmt_node_id(id), old, new, cmp);
         if let Some(n) = self.tree.node_mut(id) {
             n.state = new;
@@ -649,9 +650,16 @@ impl Engine {
 }
 
 /// Compares which entries apply in `old` and `new` state, ignoring entries of the class's
-/// `item_parts` (the widget redraws those items itself). Returns the strongest effect and
-/// whether an inherited property is involved.
-fn state_compare(entries: &[StyleEntry], old: State, new: State, item_parts: &[Part]) -> (StateCmp, bool) {
+/// `item_parts` (the widget redraws those items itself); layout properties of its
+/// `draw_parts` only redraw. Returns the strongest effect and whether an inherited property
+/// is involved.
+fn state_compare(
+    entries: &[StyleEntry],
+    old: State,
+    new: State,
+    item_parts: &[Part],
+    draw_parts: &[Part],
+) -> (StateCmp, bool) {
     let applies = |sel: &Selector, st: State| sel.state_matches(st);
     let mut res = StateCmp::Same;
     let mut inherited = false;
@@ -662,11 +670,12 @@ fn state_compare(entries: &[StyleEntry], old: State, new: State, item_parts: &[P
         {
             continue;
         }
+        let draw_only = draw_parts.contains(&e.selector.part);
         for_each_prop(&e.style, |p| {
             let m = p.meta();
-            let c = if m.layout {
+            let c = if m.layout && !draw_only {
                 StateCmp::Layout
-            } else if m.ext_draw {
+            } else if m.ext_draw || m.layout {
                 StateCmp::ExtDraw
             } else {
                 StateCmp::Redraw
@@ -752,16 +761,19 @@ mod tests {
         let d = State::DEFAULT;
         let p = State::PRESSED;
         assert_eq!(
-            state_compare(&[e(&PRESSED_COLOR)], d, p, &[]),
+            state_compare(&[e(&PRESSED_COLOR)], d, p, &[], &[]),
             (StateCmp::Redraw, false)
         );
-        assert_eq!(state_compare(&[e(&PRESSED_PAD)], d, p, &[]).0, StateCmp::Layout);
         assert_eq!(
-            state_compare(&[e(&PRESSED_SHADOW)], d, p, &[]).0,
+            state_compare(&[e(&PRESSED_PAD)], d, p, &[], &[]).0,
+            StateCmp::Layout
+        );
+        assert_eq!(
+            state_compare(&[e(&PRESSED_SHADOW)], d, p, &[], &[]).0,
             StateCmp::ExtDraw
         );
         assert_eq!(
-            state_compare(&[e(&PRESSED_COLOR)], d, State::FOCUSED, &[]).0,
+            state_compare(&[e(&PRESSED_COLOR)], d, State::FOCUSED, &[], &[]).0,
             StateCmp::Same
         );
         // Entries of item parts are the widget's business.
@@ -771,10 +783,32 @@ mod tests {
             EntryKind::Theme,
         );
         assert_eq!(
-            state_compare(core::slice::from_ref(&items), d, p, &[]).0,
+            state_compare(core::slice::from_ref(&items), d, p, &[], &[]).0,
             StateCmp::ExtDraw
         );
-        assert_eq!(state_compare(&[items], d, p, &[Part::Items]).0, StateCmp::Same);
+        assert_eq!(
+            state_compare(&[items], d, p, &[Part::Items], &[]).0,
+            StateCmp::Same
+        );
+        // Layout properties of draw-only parts (a text cursor) redraw, they do not lay out.
+        let cursor = StyleEntry::new(
+            Selector::part(Part::Cursor).with_state(State::PRESSED),
+            &PRESSED_PAD,
+            EntryKind::Theme,
+        );
+        assert_eq!(
+            state_compare(core::slice::from_ref(&cursor), d, p, &[], &[]).0,
+            StateCmp::Layout
+        );
+        assert_eq!(
+            state_compare(core::slice::from_ref(&cursor), d, p, &[], &[Part::Cursor]).0,
+            StateCmp::ExtDraw
+        );
+        // The `Main` part is never draw-only for another part's sake.
+        assert_eq!(
+            state_compare(&[e(&PRESSED_PAD)], d, p, &[], &[Part::Cursor]).0,
+            StateCmp::Layout
+        );
         assert_eq!(length_px(StyleValue::Length(Length::Pct(50)), 30), 15);
         assert_eq!(length_px(StyleValue::Length(Length::Px(7)), 30), 7);
     }

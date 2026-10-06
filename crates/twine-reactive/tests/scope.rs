@@ -1,4 +1,4 @@
-//! Scopes — nesting, disposal, cleanup, context.
+//! Scopes — nesting, disposal, cleanup (context values: `tests/context.rs`).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -126,42 +126,6 @@ fn scope_cleanup_can_register_on_disposing_scope() {
 }
 
 #[test]
-fn scope_context_lookup_walks_parents() {
-    let root = rt().create_root();
-    root.provide(7u32);
-    root.provide("theme");
-    let deep = root.child().child().child();
-    assert_eq!(deep.use_context::<u32>(), Some(7));
-    assert_eq!(deep.use_context::<&str>(), Some("theme"));
-    assert_eq!(deep.use_context::<u64>(), None);
-    assert_eq!(deep.expect_context::<u32>(), 7);
-}
-
-#[test]
-fn scope_context_shadowing() {
-    let root = rt().create_root();
-    root.provide(1u8);
-    let child = root.child();
-    child.provide(2u8);
-    let grandchild = child.child();
-    assert_eq!(grandchild.use_context::<u8>(), Some(2));
-    assert_eq!(root.use_context::<u8>(), Some(1));
-    // Providing again in the same scope replaces.
-    root.provide(3u8);
-    assert_eq!(root.use_context::<u8>(), Some(3));
-    assert_eq!(grandchild.use_context::<u8>(), Some(2));
-    child.dispose();
-    assert_eq!(root.use_context::<u8>(), Some(3));
-}
-
-#[test]
-#[should_panic(expected = "context u16 not provided")]
-fn scope_expect_context_panics_with_type_name() {
-    let root = rt().create_root();
-    let _: u16 = root.expect_context();
-}
-
-#[test]
 fn scope_double_dispose_noop() {
     let root = rt().create_root();
     let child = root.child();
@@ -176,7 +140,7 @@ fn scope_double_dispose_noop() {
     // Operations on a dead scope that cannot fail loudly are ignored.
     root.on_cleanup(|| panic!("never runs"));
     root.provide(1u8);
-    assert_eq!(root.use_context::<u8>(), None);
+    assert!(root.use_context::<u8>().is_err());
 }
 
 #[test]

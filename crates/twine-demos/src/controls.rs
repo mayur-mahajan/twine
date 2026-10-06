@@ -40,8 +40,16 @@ static CHART: [Point; 8] = [
 /// The width of a card.
 const CARD_W: i32 = 148;
 
-/// A card with a muted title (the theme's `ON_SURFACE_MUTED`) above its content.
-fn titled_card(title: &'static str, content: impl ViewSeq) -> impl View {
+/// A card with a muted title (the theme's `ON_SURFACE_MUTED`) above its content, a fixed
+/// width and the content's height. A component: modifiers (`.test_id(..)`, `.bg(..)`, …)
+/// apply to the card.
+#[component]
+fn titled_card(
+    /// The title (any text: static, translated, reactive).
+    title: TextProp,
+    /// The views below the title.
+    content: impl ViewSeq,
+) -> impl ViewExt<Widget = Card> {
     card((label(title).text_color(design::ON_SURFACE_MUTED), content))
         .size(CARD_W, Length::Content)
         .padding(8)

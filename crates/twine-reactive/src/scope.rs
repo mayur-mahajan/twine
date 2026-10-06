@@ -1,8 +1,9 @@
-//! [`Scope`]: ownership of reactive nodes, nesting, disposal, cleanups and context.
+//! [`Scope`]: ownership of reactive nodes, nesting, disposal and cleanups (context values:
+//! `context.rs`).
 
 use alloc::boxed::Box;
 use alloc::rc::Rc;
-use core::any::{Any, TypeId};
+use core::any::Any;
 use core::cell::RefCell;
 use core::fmt;
 use core::marker::PhantomData;
@@ -32,6 +33,50 @@ use crate::stored::StoredValue;
 /// root.dispose(); // disposes `child` too
 /// assert!(!child.is_alive());
 /// assert!(!n.is_alive());
+/// ```
+///
+/// # Context values
+///
+/// A scope can [`provide`](Scope::provide) values for itself and all its descendants;
+/// [`use_context`](Scope::use_context) finds the nearest one of a type. Values are keyed by
+/// their type, so give each meaning its own type (`struct Volume(Signal<u8>)`, not a bare
+/// `Signal<u8>`); a descendant providing the same type shadows its ancestors for its subtree,
+/// and a value is dropped with the scope that provided it. The usual use is an application
+/// store — a `Copy` struct of signals and memos with action methods — provided by the root
+/// scope and read by any component (see the facade's `twine::guide::app_state` guide).
+///
+/// **Lookup cost.** `use_context` walks the scope chain from the asking scope to its root:
+/// per scope one arena lookup and a linear scan of the values *that scope* provides, comparing
+/// [`TypeId`](core::any::TypeId)s. It **allocates nothing**: the found value is shared (`Rc`),
+/// its reference count goes up and down once, and `T::clone` runs on it (a `memcpy` for a
+/// `Copy` handle struct). The cost grows with the depth of the asking scope and the number of
+/// values each ancestor provides — a few dozen comparisons in a typical application — so look
+/// a context up **once**, where a component is built, and move the (`Copy`) result into its
+/// closures rather than looking it up in bindings or frequent event handlers. The walk is one
+/// non-generic function shared by every context type. `provide` allocates one `Rc` per value.
+///
+/// **Failure convention.** Lookups that can fail — here and in the hooks built on them
+/// (`twine_view::use_navigator`, `twine_extra::i18n::use_i18n`) — come in two forms:
+///
+/// - `use_*` returns a `Result` whose error, [`MissingContext`](crate::MissingContext), names the
+///   missing type: the form for code that must not panic (`.ok()` makes an optional context an
+///   `Option`);
+/// - `expect_*` ([`expect_context`](Scope::expect_context), `expect_navigator`, `expect_i18n`)
+///   is a thin `#[track_caller]` wrapper that panics with the same message at the caller's
+///   location: for application code where a missing context is a bug.
+///
+/// ```
+/// use twine_reactive::{MissingContext, Runtime, Signal};
+///
+/// #[derive(Clone, Copy)]
+/// struct Volume(Signal<u8>);
+///
+/// let root = Runtime::take().unwrap().create_root();
+/// root.provide(Volume(root.signal(5)));
+/// let page = root.child();
+/// let Volume(v) = page.expect_context::<Volume>(); // found in the root
+/// v.set(6);
+/// assert_eq!(page.use_context::<u32>(), Err(MissingContext::of::<u32>()));
 /// ```
 ///
 /// Scopes cannot be sent to another thread:
@@ -251,79 +296,6 @@ impl Scope {
         if let Err(f) = with_runtime(|rt| rt.add_cleanup(self.key, Box::new(f))) {
             warn!(target: "twine::reactive", "on_cleanup on disposed scope {:?}; ignored", self.key);
             drop(f);
-        }
-    }
-
-    /// Makes `value` available to this scope and its descendants via
-    /// [`use_context`](Scope::use_context). Providing the same type again in the same scope
-    /// replaces the value. On a dead scope this is a no-op with a warning.
-    ///
-    /// ```
-    /// #[derive(Clone, PartialEq, Debug)]
-    /// struct Theme(&'static str);
-    /// let root = twine_reactive::Runtime::take().unwrap().create_root();
-    /// root.provide(Theme("dark"));
-    /// let child = root.child();
-    /// assert_eq!(child.use_context::<Theme>(), Some(Theme("dark")));
-    /// assert_eq!(child.use_context::<u8>(), None);
-    /// ```
-    pub fn provide<T: Clone + 'static>(self, value: T) {
-        let value: Rc<dyn Any> = Rc::new(value);
-        let old = with_runtime(|rt| {
-            let mut inner = rt.inner.borrow_mut();
-            let Some(data) = inner.scopes.get_mut(self.key) else {
-                return Err(value);
-            };
-            let id = TypeId::of::<T>();
-            if let Some(slot) = data.contexts.iter_mut().find(|(t, _)| *t == id) {
-                Ok(Some(core::mem::replace(&mut slot.1, value)))
-            } else {
-                data.contexts.push((id, value));
-                Ok(None)
-            }
-        });
-        match old {
-            Ok(old) => drop(old), // dropped outside the borrow (R1)
-            Err(value) => {
-                warn!(target: "twine::reactive", "provide on disposed scope {:?}; ignored", self.key);
-                drop(value);
-            }
-        }
-    }
-
-    /// The nearest value of type `T` provided by this scope or an ancestor.
-    pub fn use_context<T: Clone + 'static>(self) -> Option<T> {
-        let id = TypeId::of::<T>();
-        let found: Option<Rc<dyn Any>> = with_runtime(|rt| {
-            let inner = rt.inner.borrow();
-            let mut cur = Some(self.key);
-            while let Some(s) = cur {
-                let data = inner.scopes.get(s)?;
-                if let Some((_, v)) = data.contexts.iter().find(|(t, _)| *t == id) {
-                    return Some(v.clone());
-                }
-                cur = data.parent;
-            }
-            None
-        });
-        // `T::clone` is user code: called without the runtime borrowed (R1).
-        found.map(|rc| match rc.downcast_ref::<T>() {
-            Some(v) => v.clone(),
-            None => type_mismatch(),
-        })
-    }
-
-    /// Like [`use_context`](Scope::use_context), but panics if no `T` was provided.
-    ///
-    /// # Panics
-    ///
-    /// With `"context {type_name} not provided"` if neither this scope nor an ancestor
-    /// provides a `T`.
-    #[track_caller]
-    pub fn expect_context<T: Clone + 'static>(self) -> T {
-        match self.use_context::<T>() {
-            Some(v) => v,
-            None => panic!("context {} not provided", core::any::type_name::<T>()),
         }
     }
 

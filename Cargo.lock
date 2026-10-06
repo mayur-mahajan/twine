@@ -3111,8 +3111,10 @@ dependencies = [
  "twine-anim",
  "twine-core",
  "twine-engine",
+ "twine-reactive",
  "twine-style",
  "twine-testing",
+ "twine-view",
 ]
 
 [[package]]
@@ -3336,6 +3338,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "twine-macros"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "twine-reactive",
+ "twine-view",
+]
+
+[[package]]
 name = "twine-reactive"
 version = "0.1.0"
 dependencies = [
@@ -3496,6 +3511,7 @@ dependencies = [
  "twine-engine",
  "twine-hal",
  "twine-image",
+ "twine-macros",
  "twine-reactive",
  "twine-render",
  "twine-style",

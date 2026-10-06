@@ -11,6 +11,7 @@
 //! | [`calibration`] | touch calibration for resistive touch (raw readings through a channel) |
 //! | [`counter`] | signals, `text!`, dynamic properties (`disabled`), click handlers |
 //! | [`thermostat`] | data from another task or interrupt ([`Latest`](twine::prelude::Latest)), commands out ([`Outbox`](twine::prelude::Outbox)), the ports pattern ([`thermostat::Ports`]), tweens, memos |
+//! | [`todos`] | the store pattern: app state as a `Copy` struct of signals and memos provided as context ([`todos::Todos`]), components reading it, actions as methods, commands from outside through ports; a keyed list |
 //! | [`controls`] | every basic control; value widgets sharing signals (two-way bindings) |
 //! | [`text_input`] | text fields, the on-screen keyboard, a spinbox and a rich-text preview |
 //! | [`selection`] | dropdown, roller, list, menu, tabview, tileview, window and message box |
@@ -40,6 +41,7 @@ pub mod multilang;
 pub mod selection;
 pub mod text_input;
 pub mod thermostat;
+pub mod todos;
 #[cfg(feature = "vector")]
 pub mod vector;
 

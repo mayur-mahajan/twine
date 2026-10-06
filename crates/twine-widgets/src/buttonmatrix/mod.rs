@@ -1,9 +1,9 @@
 //! [`ButtonMatrix`]: a grid of text buttons drawn by one widget (LVGL `lv_buttonmatrix`).
 
+mod map;
 mod popover;
 
 use alloc::boxed::Box;
-use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -20,6 +20,7 @@ use twine_text::TextLayout;
 use crate::log_set;
 use crate::util::{self, Area};
 
+pub use map::{BtnMap, BtnTexts, MapBtn, OwnedMap};
 pub use popover::POPOVER_CLASS;
 
 bitflags! {
@@ -98,66 +99,11 @@ impl BtnCtrl {
     }
 }
 
-/// The texts of a button matrix: rows of button labels separated by `"\n"` entries (LVGL's
-/// map format). The map ends at the end of the slice; in a static map an empty string also
-/// ends it (LVGL's `""` terminator, accepted for compatibility).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum MapSrc {
-    /// A map in flash (no allocation).
-    Static(&'static [&'static str]),
-    /// An owned map (built at run time, e.g. by `twine-view`): every entry is a button or a
-    /// row break; an empty string is a button without text, not a terminator.
-    Owned(Vec<String>),
-}
-
-impl MapSrc {
-    /// The number of entries (row breaks included; in a static map the terminator and
-    /// anything after it excluded).
-    #[must_use]
-    pub fn len(&self) -> usize {
-        match self {
-            MapSrc::Static(m) => m.iter().position(|s| s.is_empty()).unwrap_or(m.len()),
-            MapSrc::Owned(m) => m.len(),
-        }
-    }
-
-    /// Whether the map has no entries.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Entry `i` (`""` past the end).
-    #[must_use]
-    pub fn get(&self, i: usize) -> &str {
-        match self {
-            MapSrc::Static(m) => m.get(i).copied().unwrap_or(""),
-            MapSrc::Owned(m) => m.get(i).map_or("", String::as_str),
-        }
-    }
-
-    fn same(&self, other: &MapSrc) -> bool {
-        match (self, other) {
-            (MapSrc::Static(a), MapSrc::Static(b)) => core::ptr::eq(*a, *b) || a == b,
-            _ => (0..self.len().max(other.len())).all(|i| self.get(i) == other.get(i)),
-        }
-    }
-}
-
-impl From<&'static [&'static str]> for MapSrc {
-    fn from(m: &'static [&'static str]) -> Self {
-        MapSrc::Static(m)
-    }
-}
-
-impl<const N: usize> From<&'static [&'static str; N]> for MapSrc {
-    fn from(m: &'static [&'static str; N]) -> Self {
-        MapSrc::Static(m)
-    }
-}
-
 /// LVGL `lv_buttonmatrix_def_map` (`LV_WIDGETS_HAS_DEFAULT_VALUE`).
-pub const BUTTONMATRIX_DEFAULT_MAP: &[&str] = &["Btn1", "Btn2", "Btn3", "\n", "Btn4", "Btn5"];
+pub static BUTTONMATRIX_DEFAULT_MAP: [&[MapBtn]; 2] = [
+    &[MapBtn::text("Btn1"), MapBtn::text("Btn2"), MapBtn::text("Btn3")],
+    &[MapBtn::text("Btn4"), MapBtn::text("Btn5")],
+];
 
 /// The class of [`ButtonMatrix`]: `"buttonmatrix"`, parts `Main` and `Items` (the buttons),
 /// editable with an encoder and always in the default focus group (LVGL
@@ -188,10 +134,12 @@ static WARN_RECOLOR: AtomicBool = AtomicBool::new(false);
 /// A matrix of text buttons drawn by one widget (LVGL `lv_buttonmatrix`): no node per
 /// button, so a keyboard of 40 keys costs one node.
 ///
-/// - **Map**: rows of labels separated by `"\n"` ([`MapSrc`]). Buttons have relative widths
-///   (the [`BtnCtrl`] width bits); a row's content width minus the column gaps is shared
-///   by units, like LVGL (`(w − (n − 1)·pad_column) · units / total`), rows are equally tall
-///   with `pad_row` between them.
+/// - **Map**: rows of buttons, each with its text and initial [`BtnCtrl`] bits ([`BtnMap`]:
+///   a [`MapBtn`] table in flash or an [`OwnedMap`]). Buttons have relative widths (the
+///   [`BtnCtrl`] width bits); a row's content width minus the column gaps is shared by units,
+///   like LVGL (`(w − (n − 1)·pad_column) · units / total`), rows are equally tall with
+///   `pad_row` between them. A button's text can be changed alone
+///   ([`set_btn_text`](Self::set_btn_text), in place).
 /// - **Drawing**: `Main` is the background; each button is an `Items` rectangle with its
 ///   text centered, drawn with the `Items` styles of the button's own state: `CHECKED`,
 ///   `DISABLED`, and for the selected button the widget's `PRESSED`, `FOCUSED`,
@@ -210,9 +158,9 @@ static WARN_RECOLOR: AtomicBool = AtomicBool::new(false);
 ///
 /// ```
 /// use twine_testing::EngineHarness;
-/// use twine_widgets::buttonmatrix::{self, BtnCtrl, ButtonMatrix};
+/// use twine_widgets::buttonmatrix::{self, BtnCtrl, ButtonMatrix, MapBtn};
 ///
-/// static MAP: [&str; 5] = ["1", "2", "\n", "OK", ""];
+/// static MAP: [&[MapBtn]; 2] = [&[MapBtn::text("1"), MapBtn::text("2")], &[MapBtn::text("OK")]];
 /// let mut h = EngineHarness::new(200, 100);
 /// let screen = h.screen();
 /// let m = buttonmatrix::create(h.engine_mut(), screen).unwrap();
@@ -226,9 +174,9 @@ static WARN_RECOLOR: AtomicBool = AtomicBool::new(false);
 /// ```
 #[derive(Debug)]
 pub struct ButtonMatrix {
-    map: MapSrc,
-    /// The map index of every button's text.
-    text_idx: Vec<u16>,
+    map: BtnMap,
+    /// The current control bits of every button (from the map's, then changed by the
+    /// setters and by checking).
     ctrl: Vec<BtnCtrl>,
     /// Button areas relative to the widget's top-left corner (inclusive, like LVGL).
     areas: Vec<Area>,
@@ -242,17 +190,16 @@ pub struct ButtonMatrix {
 
 impl Default for ButtonMatrix {
     fn default() -> Self {
-        Self::new(MapSrc::Static(BUTTONMATRIX_DEFAULT_MAP))
+        Self::new(BtnMap::from(&BUTTONMATRIX_DEFAULT_MAP))
     }
 }
 
 impl ButtonMatrix {
     /// A button matrix with `map` (no areas until it is laid out).
     #[must_use]
-    pub fn new(map: MapSrc) -> Self {
+    pub fn new(map: BtnMap) -> Self {
         let mut m = Self {
-            map: MapSrc::Static(&[]),
-            text_idx: Vec::new(),
+            map: BtnMap::default(),
             ctrl: Vec::new(),
             areas: Vec::new(),
             row_cnt: 1,
@@ -265,9 +212,10 @@ impl ButtonMatrix {
         m
     }
 
-    /// The map.
+    /// The map (the buttons' texts and initial control bits; the current bits are
+    /// [`btn_ctrl`](Self::btn_ctrl)).
     #[must_use]
-    pub fn map(&self) -> &MapSrc {
+    pub fn map(&self) -> &BtnMap {
         &self.map
     }
 
@@ -286,9 +234,7 @@ impl ButtonMatrix {
     /// The text of button `idx` (LVGL `lv_buttonmatrix_get_button_text`).
     #[must_use]
     pub fn btn_text(&self, idx: u16) -> Option<&str> {
-        self.text_idx
-            .get(usize::from(idx))
-            .map(|&i| self.map.get(usize::from(i)))
+        self.map.text(usize::from(idx))
     }
 
     /// The control bits of button `idx`.
@@ -331,12 +277,14 @@ impl ButtonMatrix {
         self.popover
     }
 
-    /// Sets the map (LVGL `lv_buttonmatrix_set_map`). Idempotent. The control bits are kept
-    /// when the button count is unchanged (LVGL), else cleared. The selection is kept on the
-    /// button that now occupies its position.
-    pub fn set_map(&mut self, cx: &mut WidgetCx<'_>, map: MapSrc) {
+    /// Sets the map (LVGL `lv_buttonmatrix_set_map` and `lv_buttonmatrix_set_ctrl_map`
+    /// in one): the buttons, their texts and their control bits, which replace the current
+    /// ones. Idempotent: the same map (the same static table, or an equal one) changes
+    /// nothing, also not the control bits changed since. The selection is kept on the button
+    /// that now occupies its position. Never panics.
+    pub fn set_map(&mut self, cx: &mut WidgetCx<'_>, map: BtnMap) {
         if self.map.same(&map) {
-            if let (MapSrc::Static(_), MapSrc::Static(_)) = (&self.map, &map) {
+            if let (BtnMap::Static(_), BtnMap::Static(_)) = (&self.map, &map) {
                 self.map = map;
             }
             return;
@@ -362,10 +310,30 @@ impl ButtonMatrix {
         }
     }
 
-    /// Sets the control bits of every button from `ctrl` (LVGL
-    /// `lv_buttonmatrix_set_ctrl_map`; missing entries are cleared). Idempotent.
-    pub fn set_ctrl_map(&mut self, cx: &mut WidgetCx<'_>, ctrl: &[BtnCtrl]) {
-        self.set_ctrl_map_with(cx, |i| ctrl.get(i).copied().unwrap_or_default());
+    /// Replaces the text of button `idx` in place (a static map is copied into an owned one
+    /// first, once; after that the button's string is reused, so a text that fits its
+    /// capacity allocates nothing). Redraws only that button; the layout is unchanged.
+    /// Idempotent; an index out of range is ignored with a warning. Never panics.
+    ///
+    /// ```
+    /// use twine_testing::EngineHarness;
+    /// use twine_widgets::buttonmatrix::{self, ButtonMatrix};
+    ///
+    /// let mut h = EngineHarness::new(200, 100);
+    /// let screen = h.screen();
+    /// let m = buttonmatrix::create(h.engine_mut(), screen).unwrap(); // "Btn1" … "Btn5"
+    /// h.engine_mut().with_widget_mut(m, |w: &mut ButtonMatrix, cx| w.set_btn_text(cx, 1, "Two"));
+    /// assert_eq!(h.engine().widget::<ButtonMatrix>(m).unwrap().btn_text(1), Some("Two"));
+    /// ```
+    pub fn set_btn_text(&mut self, cx: &mut WidgetCx<'_>, idx: u16, text: &str) {
+        if idx >= self.btn_count() {
+            twine_core::warn!(target: "twine::engine", "buttonmatrix: button {} out of range", idx);
+            return;
+        }
+        if self.map.set_text(usize::from(idx), text) {
+            log_set(BUTTONMATRIX_CLASS.name, cx.node(), "btn_text");
+            self.invalidate_btn(cx, Some(idx));
+        }
     }
 
     /// Sets the control bits of every button to `f(index)`. Idempotent.
@@ -501,25 +469,15 @@ impl ButtonMatrix {
         }
     }
 
-    /// Counts buttons and rows (LVGL `allocate_button_areas_and_controls`): the control
-    /// bits are kept when the count is unchanged.
+    /// Takes the buttons, rows and control bits of the map (LVGL
+    /// `allocate_button_areas_and_controls` + `set_ctrl_map`).
     fn parse_map(&mut self) {
-        let len = self.map.len();
-        let mut rows = 1u16;
-        self.text_idx.clear();
-        for i in 0..len {
-            if self.map.get(i) == "\n" {
-                rows = rows.saturating_add(1);
-            } else {
-                self.text_idx.push(u16::try_from(i).unwrap_or(u16::MAX));
-            }
-        }
-        self.row_cnt = rows;
-        let n = self.text_idx.len();
-        if n != self.ctrl.len() {
-            self.ctrl.clear();
-            self.ctrl.resize(n, BtnCtrl::empty());
-        }
+        self.row_cnt = u16::try_from(self.map.row_count()).unwrap_or(u16::MAX);
+        let n = self.map.btn_count().min(usize::from(u16::MAX));
+        self.ctrl.clear();
+        self.ctrl
+            .extend((0..n).map(|i| self.map.initial_ctrl(i).unwrap_or_default()));
+        self.warn_recolor();
         self.areas.resize(n, Area::default());
     }
 
@@ -541,20 +499,20 @@ impl ButtonMatrix {
         let max_w = content.width();
         let max_h = content.height();
         let row_cnt = i32::from(self.row_cnt);
+        if row_cnt == 0 {
+            return;
+        }
         let max_h_no_gap = max_h - prow * (row_cnt - 1);
         let mut btn_tot = 0usize;
-        let mut map_i = 0usize;
-        let len = self.map.len();
-        for row in 0..row_cnt {
-            // Count the buttons and units of this row.
-            let mut units = 0u32;
-            let mut btn_cnt = 0usize;
-            while map_i + btn_cnt < len && self.map.get(map_i + btn_cnt) != "\n" {
-                units += self.ctrl[btn_tot + btn_cnt].width_units();
-                btn_cnt += 1;
-            }
+        let n_btns = self.ctrl.len();
+        for (row, btn_cnt) in (0..row_cnt).zip(self.map.row_lens()) {
+            // The units of this row.
+            let btn_cnt = btn_cnt.min(n_btns - btn_tot);
+            let units: u32 = self.ctrl[btn_tot..btn_tot + btn_cnt]
+                .iter()
+                .map(|c| c.width_units())
+                .sum();
             if btn_cnt == 0 {
-                map_i += 1;
                 continue;
             }
             let row_y1 = stop + (max_h_no_gap * row) / row_cnt + row * prow;
@@ -581,7 +539,6 @@ impl ButtonMatrix {
                 row_unit += u;
                 btn_tot += 1;
             }
-            map_i += btn_cnt + 1;
         }
     }
 
@@ -912,7 +869,7 @@ impl ButtonMatrix {
             .max(m.style_i32(Part::Main, PropId::ColumnGap).max(dpi_margin));
         let def_rect = e.rect_dsc_for_state(node, Part::Items, State::DEFAULT, opa);
         let def_text = e.text_dsc_for_state(node, Part::Items, State::DEFAULT, opa);
-        for (i, a) in self.areas.iter().enumerate() {
+        for (i, (a, txt)) in self.areas.iter().zip(self.map.texts()).enumerate() {
             let c = self.ctrl[i];
             if c.contains(BtnCtrl::HIDDEN) {
                 continue;
@@ -956,7 +913,6 @@ impl ButtonMatrix {
                 dsc.border_side = BorderSide(side);
             }
             cx.painter().rect(btn.to_rect(), &dsc);
-            let txt = self.btn_text(u16::try_from(i).unwrap_or(u16::MAX)).unwrap_or("");
             let mut l = TextLayout::new(txt, text.font);
             l.letter_space = text.letter_space;
             l.line_space = text.line_space;
@@ -1004,7 +960,7 @@ pub fn create(engine: &mut Engine, parent: NodeId) -> Result<NodeId, EngineError
 ///
 /// # Errors
 /// [`EngineError::NodeNotFound`] if `parent` does not exist (logged).
-pub fn create_with(engine: &mut Engine, parent: NodeId, map: MapSrc) -> Result<NodeId, EngineError> {
+pub fn create_with(engine: &mut Engine, parent: NodeId, map: BtnMap) -> Result<NodeId, EngineError> {
     engine.create(parent, Box::new(ButtonMatrix::new(map)))
 }
 
@@ -1040,14 +996,17 @@ mod tests {
 
     #[test]
     fn map_parsing_counts_rows_and_buttons() {
-        let m = ButtonMatrix::new(MapSrc::Static(&["a", "b", "\n", "c", ""]));
+        static MAP: [&[MapBtn]; 2] = [
+            &[MapBtn::text("a"), MapBtn::text("")],
+            &[MapBtn::new("c", BtnCtrl::CHECKED)],
+        ];
+        let m = ButtonMatrix::new(BtnMap::from(&MAP));
         assert_eq!(m.btn_count(), 3);
         assert_eq!(m.row_count(), 2);
+        assert_eq!(m.btn_text(1), Some(""), "an empty text is a button");
         assert_eq!(m.btn_text(2), Some("c"));
         assert_eq!(m.btn_text(3), None);
-        // The first "" ends the map (LVGL).
-        let m = ButtonMatrix::new(MapSrc::Static(&["a", "", "b"]));
-        assert_eq!(m.btn_count(), 1);
+        assert_eq!(m.btn_ctrl(2), Some(BtnCtrl::CHECKED), "the map's control bits");
     }
 
     #[test]

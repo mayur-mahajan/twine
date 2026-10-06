@@ -80,18 +80,24 @@ fn snapshot_mono_theme() {
     }
 }
 
-static KEYS: [&str; 7] = ["1", "2", "3", "\n", "4", "5", "6"];
+static KEYS: [&[twine_widgets::buttonmatrix::MapBtn]; 2] = {
+    use twine_widgets::buttonmatrix::MapBtn as B;
+    [
+        &[B::text("1"), B::text("2"), B::text("3")],
+        &[B::text("4"), B::text("5"), B::text("6")],
+    ]
+};
 
 /// The text input widgets: a button matrix, a textarea, a spinbox, a span group and a
 /// keyboard (nothing focused, so nothing blinks).
 fn text_inputs(h: &mut EngineHarness) {
-    use twine_widgets::buttonmatrix::{self, BtnCtrl, ButtonMatrix, MapSrc};
+    use twine_widgets::buttonmatrix::{self, BtnCtrl, BtnMap, ButtonMatrix};
     use twine_widgets::spangroup::{self, SpanGroup};
     use twine_widgets::textarea::{self, Textarea};
     use twine_widgets::{keyboard, spinbox};
     let screen = h.screen();
     let e: &mut Engine = h.engine_mut();
-    let m = buttonmatrix::create_with(e, screen, MapSrc::Static(&KEYS)).unwrap();
+    let m = buttonmatrix::create_with(e, screen, BtnMap::Static(&KEYS)).unwrap();
     e.set_size(m, 110, 60);
     e.align(m, twine_style::Align::TopLeft, 4, 4);
     let ta = textarea::create(e, screen).unwrap();

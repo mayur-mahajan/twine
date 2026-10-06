@@ -13,7 +13,7 @@ use twine_engine::{EventCode, EventFilter, EventResult, MeasureCx, NodeId, ObjFl
 use twine_style::Align;
 use twine_testing::{EngineHarness, capture_logs};
 use twine_text::Symbol;
-use twine_widgets::buttonmatrix::BtnCtrl;
+use twine_widgets::buttonmatrix::{BtnCtrl, MapBtn};
 use twine_widgets::keyboard::{self, KEYBOARD_CLASS, Keyboard, KeyboardMode};
 use twine_widgets::textarea::{self, Textarea};
 
@@ -124,8 +124,7 @@ fn kb_backspace_deletes() {
 
 #[test]
 fn kb_mode_switch_maps() {
-    static MAP: [&str; 3] = ["A", "\n", "B"];
-    static CTRL: [BtnCtrl; 2] = [BtnCtrl::empty(), BtnCtrl::CHECKED];
+    static MAP: [&[MapBtn]; 2] = [&[MapBtn::text("A")], &[MapBtn::new("B", BtnCtrl::CHECKED)]];
     let (mut h, _ta, kb) = scene(Mode::Light);
     tap_key(&mut h, kb, keyboard::MODE_TEXT_UPPER);
     let k = get::<Keyboard>(&h, kb);
@@ -145,7 +144,7 @@ fn kb_mode_switch_maps() {
     assert_eq!((m.btn_count(), m.row_count()), (17, 4));
     // A custom map for a user mode.
     with(&mut h, kb, |k: &mut Keyboard, cx| {
-        k.set_map(cx, KeyboardMode::User1, &MAP, &CTRL);
+        k.set_map(cx, KeyboardMode::User1, &MAP);
         k.set_mode(cx, KeyboardMode::User1);
     });
     let m = get::<Keyboard>(&h, kb).buttonmatrix();
@@ -356,4 +355,55 @@ fn kb_delete_keeps_group_focused_textarea() {
             .state()
             .contains(State::FOCUSED)
     );
+}
+
+#[test]
+fn kb_docked_reserves_its_height_and_reveals_the_textarea() {
+    let mut h = harness(320, 240, Mode::Light);
+    let screen = h.screen();
+    let e = h.engine_mut();
+    // A page filling the screen, holding two fields; the lower one is below the keyboard.
+    let page = e.create(screen, Box::new(twine_engine::Obj)).unwrap();
+    e.set_size(page, twine_style::Length::pct(100), twine_style::Length::pct(100));
+    let top = textarea::create(e, page).unwrap();
+    e.set_size(top, 200, 40);
+    let low = textarea::create(e, page).unwrap();
+    e.set_size(low, 200, 40);
+    e.set_pos(low, 0, 170);
+    let kb = keyboard::create(e, screen).unwrap();
+    with(&mut h, kb, |k: &mut Keyboard, cx| {
+        k.set_docked(cx, true);
+        k.set_textarea(cx, Some(low));
+    });
+    h.advance(Duration::ms(50));
+    let visible = |h: &EngineHarness, ta: NodeId| {
+        let e = h.engine();
+        let (t, p, k) = (e.coords(ta), e.coords(page), e.coords(kb));
+        t.y0 >= p.y0 && t.y1 <= p.y1 && t.y1 <= k.y0
+    };
+    let e = h.engine();
+    assert!(e.has_flag(kb, ObjFlags::DOCK_BOTTOM));
+    assert_eq!((e.coords(kb).y0, e.coords(kb).y1), (120, 240));
+    assert_eq!(e.coords(page).y1, 120);
+    assert!(visible(&h, low));
+    assert!(h.engine().scroll_offset(page).y > 0);
+
+    // Idempotent: docking again changes nothing.
+    with(&mut h, kb, |k: &mut Keyboard, cx| k.set_docked(cx, true));
+    assert!(!h.engine().layout_pending());
+
+    // Another field: scrolled into view, no layout pass.
+    let passes = h.engine().layout_passes();
+    with(&mut h, kb, |k: &mut Keyboard, cx| k.set_textarea(cx, Some(top)));
+    h.advance(Duration::ms(50));
+    assert!(visible(&h, top));
+    assert_eq!(h.engine().layout_passes(), passes);
+
+    // Undocked: the page gets the whole screen back; the keyboard covers its bottom half.
+    with(&mut h, kb, |k: &mut Keyboard, cx| k.set_docked(cx, false));
+    h.advance(Duration::ms(50));
+    let e = h.engine();
+    assert!(!e.has_flag(kb, ObjFlags::DOCK_BOTTOM));
+    assert_eq!(e.coords(page).y1, 240);
+    assert_eq!(e.coords(kb).y0, 120);
 }

@@ -23,6 +23,55 @@ impl<T> core::fmt::Debug for Prop<T> {
     }
 }
 
+/// A constant `T::default()` (no binding, no allocation): what `#[prop(default)]` gives a
+/// property of a [`#[component]`](macro@crate::component).
+///
+/// ```
+/// use twine_view::prelude::*;
+///
+/// assert_eq!(Prop::<i32>::default().get(), 0);
+/// ```
+impl<T: Default> Default for Prop<T> {
+    #[inline]
+    fn default() -> Self {
+        Prop::Static(T::default())
+    }
+}
+
+impl<T: Clone> Prop<T> {
+    /// The current value: a clone of a constant, or the result of a dynamic prop's closure.
+    /// Inside a binding, effect or memo the closure's reads are tracked like any other read,
+    /// so a component can turn a property it uses in several places into a `Copy` memo:
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    ///
+    /// /// Shows `value` twice: as a bar and as a number.
+    /// fn meter(cx: Scope, value: Prop<i32>) -> impl View {
+    ///     let value = cx.memo(move || value.get()); // `Copy`: read it anywhere
+    ///     column((bar(move || value.get()), label(text!("{}", value.get()))))
+    /// }
+    ///
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
+    /// let n = cx.signal(3);
+    /// let p: Prop<i32> = n.into_prop();
+    /// assert_eq!(p.get(), 3);
+    /// let _v = meter(cx, p);
+    /// cx.dispose();
+    /// ```
+    ///
+    /// A constant is cloned (no allocation); a dynamic prop runs its closure on every call.
+    /// Never panics (unless the closure does).
+    #[must_use]
+    #[inline]
+    pub fn get(&self) -> T {
+        match self {
+            Prop::Static(v) => v.clone(),
+            Prop::Dynamic(f) => f(),
+        }
+    }
+}
+
 impl<T: 'static> Prop<T> {
     /// Maps the value (lazily for dynamic props).
     #[must_use]
@@ -144,8 +193,9 @@ pub trait IntoProp<T, M> {
 }
 
 /// The markers of the conversion traits' impls, one per form of value: [`IntoProp`],
-/// [`IntoText`](crate::IntoText) and [`IntoOptions`](crate::IntoOptions) share them (e.g.
-/// `marker::Reactive` marks a signal for all three). They are only type parameters: the
+/// [`IntoText`](crate::IntoText), [`IntoOptions`](crate::IntoOptions) and
+/// [`IntoItems`](crate::IntoItems) share them (e.g. `marker::Reactive` marks a signal for all
+/// four). They are only type parameters: the
 /// compiler infers them; they are never written or created.
 pub mod marker {
     use core::marker::PhantomData;
@@ -157,7 +207,8 @@ pub mod marker {
     /// A [`Signal`](twine_reactive::Signal), [`ReadSignal`](twine_reactive::ReadSignal) or
     /// [`Memo`](twine_reactive::Memo) of `U: Into<T>`.
     pub struct Reactive<U>(PhantomData<fn() -> U>);
-    /// A `&'static [T; N]` as a `&'static [T]` (an unsizing coercion, which has no `From`).
+    /// A `&'static` slice or array, stored by reference (e.g. a `&'static [T; N]` as a
+    /// `&'static [T]`, an unsizing coercion, which has no `From`).
     pub struct Slice(());
     /// A [`Prop`](crate::Prop) (or a [`TextProp`](crate::TextProp)) passed on as is.
     pub struct Prop(());

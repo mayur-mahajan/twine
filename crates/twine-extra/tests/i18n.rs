@@ -144,3 +144,21 @@ fn translations_const_check_accepts_sorted_keys() {
     assert_eq!(TEXTS.lookup("zzz", 0), None);
     assert_eq!(TEXTS.lang_index("zh"), Some(2));
 }
+
+#[test]
+fn use_i18n_finds_the_provided_handle_and_names_it_when_missing() {
+    let t = TestUi::new(120, 60).mount(|cx| {
+        provide_i18n(cx, &TEXTS, "de");
+        label("x")
+    });
+    let i = twine_extra::i18n::use_i18n(t.root_scope()).expect("provided by the app");
+    assert_eq!(
+        i.tr("hello"),
+        twine_extra::i18n::expect_i18n(t.root_scope().child()).tr("hello")
+    );
+    let bare = TestUi::new(120, 60).mount(|_cx| label("x"));
+    let Err(err) = twine_extra::i18n::use_i18n(bare.root_scope()) else {
+        panic!("not provided")
+    };
+    assert_eq!(err.type_name(), "twine_extra::i18n::I18n");
+}

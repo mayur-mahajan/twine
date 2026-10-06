@@ -14,20 +14,30 @@ use twine_engine::{
 };
 use twine_style::{Align, Length, Part, Selector, StyleProp};
 use twine_testing::EngineHarness;
-use twine_widgets::buttonmatrix::{self, BUTTONMATRIX_CLASS, BtnCtrl, ButtonMatrix, MapSrc};
+use twine_widgets::buttonmatrix::{
+    self, BUTTONMATRIX_CLASS, BtnCtrl, BtnMap, ButtonMatrix, MapBtn, OwnedMap,
+};
 
-static MAP_3X4: [&str; 15] = [
-    "1", "2", "3", "\n", "4", "5", "6", "\n", "7", "8", "9", "\n", "*", "0", "#",
+/// Buttons showing `t`.
+const fn b(t: &'static str) -> MapBtn {
+    MapBtn::text(t)
+}
+
+static MAP_3X4: [&[MapBtn]; 4] = [
+    &[b("1"), b("2"), b("3")],
+    &[b("4"), b("5"), b("6")],
+    &[b("7"), b("8"), b("9")],
+    &[b("*"), b("0"), b("#")],
 ];
 
 /// A 200 × 120 matrix of `map` centered on a 240 × 160 screen, in the default group.
-fn scene(mode: Mode, map: &'static [&'static str]) -> (EngineHarness, NodeId) {
+fn scene(mode: Mode, map: &'static [&'static [MapBtn]]) -> (EngineHarness, NodeId) {
     let mut h = harness(240, 160, mode);
     let g = h.engine_mut().create_group().unwrap();
     h.engine_mut().set_default_group(Some(g));
     let screen = h.screen();
     let e = h.engine_mut();
-    let m = buttonmatrix::create_with(e, screen, MapSrc::Static(map)).unwrap();
+    let m = buttonmatrix::create_with(e, screen, BtnMap::Static(map)).unwrap();
     e.set_size(m, 200, 120);
     e.align(m, Align::Center, 0, 0);
     h.run_until_idle();
@@ -88,8 +98,8 @@ fn btnm_defaults() {
 fn btnm_setters_same_value_no_invalidate() {
     let (mut h, m) = scene(Mode::Light, &MAP_3X4);
     with(&mut h, m, |w: &mut ButtonMatrix, cx| {
-        w.set_map(cx, MapSrc::Static(&MAP_3X4));
-        w.set_ctrl_map(cx, &[BtnCtrl::empty(); 12]);
+        w.set_map(cx, BtnMap::Static(&MAP_3X4));
+        w.set_btn_text(cx, 4, "5");
         w.set_one_checked(cx, false);
         w.set_selected_btn(cx, None);
         w.clear_btn_ctrl(cx, 3, BtnCtrl::CHECKED);
@@ -110,7 +120,7 @@ fn btnm_setters_same_value_no_invalidate() {
 
 #[test]
 fn btnm_layout_widths_units() {
-    static MAP: [&str; 3] = ["a", "b", "c"];
+    static MAP: [&[MapBtn]; 1] = [&[b("a"), b("b"), b("c")]];
     let (mut h, m) = scene(Mode::Light, &MAP);
     // Units 1 : 2 : 3 of the content width minus two column gaps.
     with(&mut h, m, |w: &mut ButtonMatrix, cx| {
@@ -136,8 +146,8 @@ fn btnm_layout_widths_units() {
 }
 
 #[test]
-fn btnm_row_split_on_newline() {
-    static WITH_END: [&str; 4] = ["x", "\n", "y", ""];
+fn btnm_rows_of_the_map() {
+    static EMPTY_ROW: [&[MapBtn]; 3] = [&[b("x")], &[], &[b("")]];
     let (h, m) = scene(Mode::Light, &MAP_3X4);
     let w = get::<ButtonMatrix>(&h, m);
     assert_eq!(w.btn_count(), 12);
@@ -155,12 +165,18 @@ fn btnm_row_split_on_newline() {
     // Buttons of a row share the row.
     assert_eq!(area(&h, m, 4).y0, rows[1].y0);
     assert_eq!(w.btn_text(9), Some("*"));
-    // A trailing "" (LVGL's terminator) is accepted.
-    let m2 = ButtonMatrix::new(MapSrc::Static(&WITH_END));
-    assert_eq!((m2.btn_count(), m2.row_count()), (2, 2));
+    // An empty row takes its height; an empty text is a button (no LVGL terminator).
+    let m2 = ButtonMatrix::new(BtnMap::Static(&EMPTY_ROW));
+    assert_eq!((m2.btn_count(), m2.row_count()), (2, 3));
+    assert_eq!(m2.btn_text(1), Some(""));
     // Owned maps work the same.
-    let owned = ButtonMatrix::new(MapSrc::Owned(vec!["p".into(), "\n".into(), "q".into()]));
+    let mut o = OwnedMap::new();
+    o.push("p", BtnCtrl::empty());
+    o.new_row();
+    o.push("q", BtnCtrl::CHECKED);
+    let owned = ButtonMatrix::new(BtnMap::Owned(o));
     assert_eq!(owned.btn_text(1), Some("q"));
+    assert_eq!(owned.btn_ctrl(1), Some(BtnCtrl::CHECKED));
 }
 
 #[test]
@@ -208,7 +224,7 @@ fn btnm_press_invalidates_only_button() {
     let mut h = EngineHarness::new(240, 160).no_theme();
     let screen = h.screen();
     let e = h.engine_mut();
-    let m = buttonmatrix::create_with(e, screen, MapSrc::Static(&MAP_3X4)).unwrap();
+    let m = buttonmatrix::create_with(e, screen, BtnMap::Static(&MAP_3X4)).unwrap();
     e.set_size(m, 200, 120);
     e.align(m, Align::Center, 0, 0);
     e.set_local_prop(m, Selector::MAIN, StyleProp::RowGap(Length::Px(4).into()));
@@ -489,7 +505,7 @@ fn snapshot_btnm_3x4() {
 
 #[test]
 fn snapshot_btnm_checked_disabled_mix() {
-    static MAP: [&str; 8] = ["A", "B", "C", "\n", "D", "E", "F", "G"];
+    static MAP: [&[MapBtn]; 2] = [&[b("A"), b("B"), b("C")], &[b("D"), b("E"), b("F"), b("G")]];
     let (mut h, m) = scene(Mode::Light, &MAP);
     with(&mut h, m, |w: &mut ButtonMatrix, cx| {
         w.set_btn_ctrl(cx, 0, BtnCtrl::CHECKED);

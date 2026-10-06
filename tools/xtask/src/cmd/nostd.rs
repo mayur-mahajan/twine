@@ -1,35 +1,20 @@
 //! `cargo xtask nostd`: builds every `no_std` crate for every embedded target (P4, P11).
 
+use crate::cmd::layers::LAYERS;
 use crate::util::{R, cargo_ci, has_target, run as run_cmd};
 
-/// Every layered crate except the std-only ones (`twine-sim`, `twine-testing`).
-pub const NOSTD_CRATES: &[&str] = &[
-    "twine-core",
-    "twine-hal",
-    "twine-reactive",
-    "twine-anim",
-    "twine-render",
-    "twine-text",
-    "twine-image",
-    "twine-vector",
-    "twine-fs",
-    "twine-style",
-    "twine-layout",
-    "twine-engine",
-    "twine-theme",
-    "twine-widgets",
-    "twine-widgets-ext",
-    "twine-view",
-    "twine-extra",
-    "twine-lottie",
-    "twine-assets",
-    "twine",
-    "twine-drivers",
-    "twine-embassy",
-    "twine-accel-stm32",
-    "twine-embedded-graphics",
-    "twine-demos",
-];
+/// Layered crates that only ever build for the host: the std-only simulator and test kit, and
+/// the proc-macro crate (proc macros run inside the compiler, never on a target).
+pub const HOST_CRATES: &[&str] = &["twine-sim", "twine-testing", "twine-macros"];
+
+/// The crates `nostd` builds: every crate of the layer table ([`LAYERS`]) except the
+/// [`HOST_CRATES`], so a new layered crate is built for the embedded targets by default.
+pub fn nostd_crates() -> impl Iterator<Item = &'static str> {
+    LAYERS
+        .iter()
+        .map(|(n, _)| *n)
+        .filter(|n| !HOST_CRATES.contains(n))
+}
 
 /// Embedded targets from `rust-toolchain.toml`.
 pub const TARGETS: &[&str] = &[
@@ -176,7 +161,7 @@ pub fn run() -> R {
     for t in TARGETS {
         let mut cmd = target_cargo(t);
         cmd.args(["build", "--target", t]);
-        for c in NOSTD_CRATES {
+        for c in nostd_crates() {
             cmd.args(["-p", c]);
         }
         run_cmd(&mut cmd)?;
@@ -189,7 +174,7 @@ pub fn run() -> R {
     }
     println!(
         "nostd: {} crates built for {} targets",
-        NOSTD_CRATES.len(),
+        nostd_crates().count(),
         TARGETS.len()
     );
     Ok(())
@@ -198,19 +183,22 @@ pub fn run() -> R {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cmd::layers::LAYERS;
 
     #[test]
-    fn nostd_crates_are_layered_crates_minus_std_ones() {
-        let expected: Vec<_> = LAYERS
-            .iter()
-            .map(|(n, _)| *n)
-            .filter(|n| !matches!(*n, "twine-sim" | "twine-testing"))
-            .collect();
-        let mut a = expected.clone();
-        let mut b = NOSTD_CRATES.to_vec();
-        a.sort_unstable();
-        b.sort_unstable();
-        assert_eq!(a, b);
+    fn host_crates_are_layered_crates() {
+        for h in HOST_CRATES {
+            assert!(
+                LAYERS.iter().any(|(n, _)| n == h),
+                "{h} is not in the layer table"
+            );
+        }
+    }
+
+    #[test]
+    fn nostd_crates_exclude_host_crates() {
+        let crates: Vec<_> = nostd_crates().collect();
+        assert_eq!(crates.len(), LAYERS.len() - HOST_CRATES.len());
+        assert!(crates.contains(&"twine-core") && crates.contains(&"twine"));
+        assert!(!crates.iter().any(|c| HOST_CRATES.contains(c)));
     }
 }

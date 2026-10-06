@@ -30,29 +30,31 @@
 //! | [`BuildCx`], [`WidgetView`], [`widget_view`] | building nodes; the generic widget builder every widget view wraps |
 //! | [`WidgetView::bind_after_children`], [`bind_model`], [`on_value_changed`], [`event_value`] | the pieces of a value widget's view: a value applied after its other settings, two-way binding, `.on_change` (the built-in views use them; so can custom widget views outside this crate) |
 //! | [`IntoProp`], [`Prop`], [`Icon`], [`IntoText`], [`text!`], [`IntoModel`] | constant, signal, memo or closure property values (any type, converted with `From`); zero-allocation text; two-way bindings |
+//! | [`#[component]`](macro@component), [`component::Modifiers`] | components: a function becomes a view with a props builder, used like a built-in widget (`meter(rpm).range(0..=8000).padding(4)`) |
 //! | [`ViewExt`] | flag, per-part / per-state style ([`ViewExt::part`], [`ViewExt::on_state`]), style, event and identity modifiers |
 //! | [`StyleExt`], [`StyleScope`] | one modifier per style property and shorthand (generated from the property table), on every view and in part/state scopes; colors, lengths, radii, opacities and fonts also take [design elements](twine_style::design) (`design::SURFACE`) |
+//! | [`Scope::provide`](twine_reactive::Scope::provide), [`Scope::expect_context`](twine_reactive::Scope::expect_context) / [`Scope::use_context`](twine_reactive::Scope::use_context), [`MissingContext`](twine_reactive::MissingContext) | context values: application stores (a `Copy` struct of signals and memos) provided by a scope and read by any component below it; allocation-free lookup, panicking or `Result` form (facade guide `twine::guide::app_state`) |
 //! | [`use_theme`], [`ThemeHandle`], [`IntoTheme`](twine_engine::IntoTheme) | switch the theme (a value or a shared `Rc`, the same parameter everywhere) or its mode (`set_mode`: light ↔ dark without rebuilding), read the mode and design element values (tracked) |
 //! | [`use_motion`], [`MotionHandle`], [`UiBuilder::motion`] | the global motion preference ([`Motion`](twine_anim::Motion): full, reduced, none), honoured by tweens, animations, style transitions, screen loads and scroll animations |
 //! | [`column()`], [`row`], [`grid`], [`container`], [`card`], [`stack`], [`spacer`], [`scroll_view`], [`Layout`] | layout containers |
 //! | [`label`], [`button`], [`image`], [`image_button`], [`animimg`] | core widget views |
 //! | [`bar`], [`slider`], [`switch`], [`checkbox`], [`arc`], [`led`], [`line()`], [`spinner`] | basic controls (value widgets take an [`IntoModel`]: two-way with a signal) |
-//! | [`textarea`], [`keyboard`], [`spinbox`], [`buttonmatrix`], [`spangroup`] + [`span`] | text and number entry, rich text |
-//! | [`dropdown`], [`roller`] (options: [`IntoOptions`]) | selection widgets (`twine-widgets-ext`) |
+//! | [`textarea`], [`keyboard`], [`spinbox`], [`buttonmatrix`] + [`btn`], [`spangroup`] + [`span`] | text and number entry (button matrix and keyboard maps are rows of buttons; a [docked](WidgetView::docked) keyboard keeps the edited field visible), rich text |
+//! | [`dropdown`], [`roller`] (options: [`IntoOptions`], [`OptionsProp`]; a `&'static` slice is stored without copying) | selection widgets (`twine-widgets-ext`) |
 //! | [`list`], [`menu`], [`tabview`], [`tileview`], [`window`], [`msgbox`] | containers (`twine-widgets-ext`) |
-//! | [`when`], [`dynamic`], [`for_each`], [`virtual_list`] | structural reactivity limited to one region |
+//! | [`when`], [`dynamic`], [`for_each`], [`virtual_list`] (items: [`IntoItems`], [`Items`]) | structural reactivity limited to one region; keyed collections with one item signal per row, updated in place |
 //! | [`NodeRef`], [`ScopeExt`] | the imperative escape hatch, tweens and animations of any [`Interpolate`](twine_anim::Interpolate) value (timed by an [`AnimSpec`](twine_anim::AnimSpec)), timers, modals |
 //! | [`Ui`], [`UiBuilder`], [`UiCore`] | the runtime: the update cycle, [`Wake`], [`StepBudget`] |
 //! | [`UiBuilder::display`], [`Ui::mount_on`], [`DisplayBuilder`], [`Ui::display_mut`], [`DisplayMut`] | several displays in one `Ui`: each with its own buffers, inputs, theme and application, updated by the same loop |
 //! | [`Ui::set_rotation`], [`Ui::set_brightness`], [`Ui::set_display_sleep`], [`UiBuilder::display_commands`], [`DisplayCmd`](twine_engine::DisplayCmd) | display control at run time (rotation, brightness, sleep / wake), also from other tasks and interrupts through a command channel |
 //! | [`BuildReport`], [`BuildFault`], [`BuildError`] | widgets that could not be created while mounting: the per-mount report and the error that fails the mount |
-//! | [`AppConfig`], [`UiBuilder::app_config`], [`UiCore::mount_configured`] | the application's configuration (engine, theme, motion, rotation, budgets, fault hook), one value for firmware, simulator and tests |
+//! | [`AppConfig`], [`UiBuilder::app_config`], [`UiCore::mount_configured`], [`UiCore::mount_configured_with_waker`] | the application's configuration (engine, theme, motion, rotation, budgets, fault hook), one value for firmware, simulator and tests |
 //! | [`typestate`] | the builder's required parts (runtime, clock / platform, draw buffers), checked at compile time |
 //! | [`run::blocking`], [`run::blocking_with`], [`run::LoopEvent`] | the run loop over a [`Platform`](twine_hal::Platform) (bare metal, an RTOS task, a host thread) |
 //! | [`draw_buffers!`], [`DrawBuffers`] | `static` draw buffers sized at compile time and taken once ([`UiBuilder::buffers`]) |
 //! | [`LayerBuffer`] | a `static` layer buffer taken once ([`UiBuilder::layer_buf`]), so the engine's layer buffer stays out of the heap |
 //! | [`Ui::memory_report`], [`MemoryReport`] | what the memory is used for: engine (tree, caches, layer and draw buffers), reactive runtime, command queues, waker pool |
-//! | [`Navigator`], [`navigator`], [`ScreenAnim`] | a stack of screens with LVGL screen-load animations |
+//! | [`navigator()`], [`Navigator`], [`expect_navigator`] / [`use_navigator`], [`NavigatorView::restore`], [`Leave`], [`NavOutcome`], [`ScreenAnim`] | typed navigation: a stack of routes (an application enum) shown as screens with LVGL screen-load animations; push / pop / replace / pop-to / reset, leave guards, stack inspection and restore |
 //!
 //! ## How bindings reach the engine
 //!
@@ -67,7 +69,8 @@
 //! methods or post a message. Hooks that create something (timers, tweens, animations,
 //! modals) and navigation defer their engine work to the next update. Engine side effects —
 //! the cleanups of a scope disposed outside an update (stopping its animations, removing its
-//! timers, closing its modals), the [`AnimController`] methods, [`ThemeHandle::set`],
+//! timers, closing its modals, deleting its navigator's pages), the [`AnimController`] methods,
+//! [`ThemeHandle::set`],
 //! [`ThemeHandle::set_mode`] and [`MotionHandle::set`] — are
 //! queued on the `Ui` that owns the scope and applied at the start of its next update (a
 //! bounded, allocation-free queue: see [`UiCore`] § Engine commands). The queue is bounded:
@@ -126,6 +129,7 @@ mod access;
 mod async_ui;
 mod bind;
 mod build;
+pub mod component;
 mod config;
 mod containers;
 mod display;
@@ -138,6 +142,7 @@ mod memory;
 mod model;
 mod modifiers;
 mod nav;
+pub mod navigator;
 mod node_ref;
 pub mod prelude;
 mod prop;
@@ -161,16 +166,24 @@ pub use display::{DisplayBuilder, DisplayMut};
 pub use draw_buffers::{DrawBuffers, LayerBuffer};
 pub use engine_queue::DEFAULT_ENGINE_QUEUE_CAPACITY;
 pub use error::{BuildError, BuildFailure, BuildFault, BuildReport, CapacityFault, UiError};
-pub use flow::{Dynamic, ForEach, VirtualList, When, WhenElse, dynamic, for_each, virtual_list, when};
+pub use flow::{
+    Dynamic, ForEach, IntoItems, Items, VirtualList, When, WhenElse, dynamic, for_each, virtual_list, when,
+};
 pub use hooks::{AnimController, MotionHandle, ScopeExt, ThemeHandle, use_motion, use_theme};
 pub use memory::MemoryReport;
 pub use model::{IntoModel, Model, bind_model, event_value, on_value_changed};
 pub use modifiers::ViewExt;
-pub use nav::{ModalHandle, Navigator, navigator, use_navigator};
+pub use nav::ModalHandle;
+pub use navigator::{
+    Leave, NavOutcome, Navigator, NavigatorView, expect_navigator, navigator, use_navigator,
+};
 pub use node_ref::NodeRef;
 pub use prop::{Icon, IntoProp, Prop, marker};
 pub use style_ext::{StyleExt, StyleScope};
-pub use text::{IntoOptions, IntoText, TextFn, TextProp};
+pub use text::{IntoOptions, IntoText, OptionsProp, TextFn, TextProp};
+/// Turns a function into a component: a view with a props builder (see the [`component`](mod@component)
+/// module). Defined in `twine-macros`.
+pub use twine_macros::component;
 pub use typestate::{HasBuffers, HasClock, HasRuntime, NoBuffers, NoClock, NoRuntime};
 #[cfg(feature = "async")]
 pub use typestate::{HasPlatform, NoPlatform};
@@ -201,6 +214,7 @@ pub mod __private {
     //! Items used by the exported macros.
     pub use alloc::boxed::Box;
     pub use twine_core::ColorFormat;
+    pub use twine_engine::NodeId;
     pub use twine_hal::{DrawBuffer, buffer_bytes};
     pub use twine_reactive::TakeOnce;
 }

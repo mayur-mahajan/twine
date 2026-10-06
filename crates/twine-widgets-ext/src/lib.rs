@@ -56,5 +56,5 @@ mod util;
 pub mod vector_view;
 pub mod window;
 
-pub use options::Options;
+pub use options::{Options, OptionsIter, StaticOptions};
 pub use util::ClassObj;

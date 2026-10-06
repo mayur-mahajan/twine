@@ -8,7 +8,7 @@ use core::cell::RefCell;
 use core::ops::RangeInclusive;
 
 use twine_engine::{EventCode, NodeId};
-use twine_widgets::buttonmatrix::{BtnCtrl, ButtonMatrix, MapSrc};
+use twine_widgets::buttonmatrix::{BtnCtrl, BtnMap, ButtonMatrix, MapBtn, OwnedMap};
 use twine_widgets::keyboard::{Keyboard, KeyboardMode};
 use twine_widgets::spinbox::Spinbox;
 use twine_widgets::textarea::{AcceptedChars, InsertCx, Textarea, text_of};
@@ -40,8 +40,9 @@ impl core::fmt::Debug for Btn {
     }
 }
 
-/// A button of a [`buttonmatrix`] showing `text` (any [`IntoText`]; dynamic texts, e.g.
-/// translations, update the matrix's map when they change). One width unit by default.
+/// A button of a [`buttonmatrix`] showing `text` (any [`IntoText`]; a dynamic text, e.g. a
+/// translation, rewrites that button's text in place when it changes). One width unit by
+/// default.
 pub fn btn<MT>(text: impl IntoText<MT>) -> Btn {
     Btn {
         text: text.into_text(),
@@ -108,38 +109,18 @@ impl Btn {
     }
 }
 
-/// The map of a button matrix: the buttons' texts with `"\n"` entries between rows (the
-/// widget's compact format), written into `map` (whose strings are reused).
-fn write_map(rows: &[Vec<TextProp>], map: &mut Vec<String>) {
-    let mut i = 0;
-    let mut next = |map: &mut Vec<String>| {
-        if map.len() <= i {
-            map.push(String::new());
-        }
-        let s = &mut map[i];
-        s.clear();
-        i += 1;
-        i - 1
-    };
-    for (r, row) in rows.iter().enumerate() {
-        if r > 0 {
-            let k = next(map);
-            map[k].push('\n');
-        }
-        for t in row {
-            let k = next(map);
-            t.write_to(&mut map[k]);
-        }
-    }
-    map.truncate(i);
-}
-
 /// A matrix of buttons drawn by one widget (no node per button): `rows` of [`btn`]s, each
 /// with its text and settings. Rows of equal length can be arrays; rows of different lengths
 /// are `Vec`s (any iterable of iterables works).
 ///
 /// The buttons are numbered in reading order (the index [`on_select`](WidgetView::on_select)
 /// reports).
+///
+/// **Cost.** The map is built once (one string per button). Constant texts are written then;
+/// the dynamic ones are kept up to date by one binding, which formats each into a reused
+/// buffer and replaces only the texts that changed, in place
+/// ([`ButtonMatrix::set_btn_text`]: no allocation once a button's string is large enough, no
+/// relayout, only the changed buttons are redrawn; the checked states are kept).
 ///
 /// ```
 /// use twine_view::prelude::*;
@@ -155,55 +136,66 @@ where
     R: IntoIterator<Item = I>,
     I: IntoIterator<Item = Btn>,
 {
-    let mut ctrl: Vec<BtnCtrl> = Vec::new();
-    let rows: Vec<Vec<TextProp>> = rows
-        .into_iter()
-        .map(|row| {
-            row.into_iter()
-                .map(|b| {
-                    ctrl.push(b.ctrl);
-                    b.text
-                })
-                .collect()
-        })
-        .collect();
-    widget_view(|| ButtonMatrix::new(MapSrc::Static(&[]))).op(move |cx, node| {
+    let mut btns: Vec<Btn> = Vec::new();
+    let mut row_lens: Vec<usize> = Vec::new();
+    for row in rows {
+        let n = btns.len();
+        btns.extend(row);
+        row_lens.push(btns.len() - n);
+    }
+    buttonmatrix_view(btns, row_lens)
+}
+
+/// [`buttonmatrix`] after the conversions (not generic).
+fn buttonmatrix_view(btns: Vec<Btn>, row_lens: Vec<usize>) -> WidgetView<ButtonMatrix> {
+    widget_view(|| ButtonMatrix::new(BtnMap::default())).op(move |cx, node| {
         let scope = cx.scope();
-        let rows: Vec<Vec<TextProp>> = rows
-            .into_iter()
-            .map(|r| r.into_iter().map(|t| t.resolve(scope)).collect())
-            .collect();
-        let set_map = |e: &mut twine_engine::Engine, n: NodeId, map: &[String]| {
-            e.with_widget_mut(n, |m: &mut ButtonMatrix, wcx| {
-                let m_map = m.map();
-                let same = m_map.len() == map.len() && map.iter().enumerate().all(|(i, s)| m_map.get(i) == s);
-                if !same {
-                    m.set_map(wcx, MapSrc::Owned(map.to_vec()));
+        let mut map = OwnedMap::with_capacity(btns.len(), row_lens.len());
+        // The dynamic texts: `(button index, text)`.
+        let mut dynamic: Vec<(u16, TextProp)> = Vec::new();
+        let mut btns = btns.into_iter();
+        let mut idx: u16 = 0;
+        for len in row_lens {
+            map.new_row();
+            for b in btns.by_ref().take(len) {
+                match b.text.resolve(scope) {
+                    TextProp::Static(s) => map.push(s, b.ctrl),
+                    TextProp::Owned(s) => map.push(&s, b.ctrl),
+                    t => {
+                        map.push("", b.ctrl);
+                        dynamic.push((idx, t));
+                    }
                 }
-            });
-        };
-        if rows.iter().flatten().all(TextProp::is_constant) {
-            let mut map = Vec::new();
-            write_map(&rows, &mut map);
-            set_map(cx.engine(), node, &map);
-        } else {
-            // One binding for the whole map: the texts are written into reused strings, the
-            // widget's map is replaced only when one of them changed.
-            let scratch = Rc::new(RefCell::new(Vec::<String>::new()));
-            cx.provide(|| {
-                bind_effect(
-                    scope,
-                    node,
-                    move || {
-                        write_map(&rows, &mut scratch.borrow_mut());
-                        scratch.clone()
-                    },
-                    move |e, n, map: Rc<RefCell<Vec<String>>>| set_map(e, n, &map.borrow()),
-                );
-            });
+                idx = idx.saturating_add(1);
+            }
         }
-        cx.engine()
-            .with_widget_mut(node, |m: &mut ButtonMatrix, wcx| m.set_ctrl_map(wcx, &ctrl));
+        cx.engine().with_widget_mut(node, |m: &mut ButtonMatrix, wcx| {
+            m.set_map(wcx, BtnMap::Owned(map));
+        });
+        if dynamic.is_empty() {
+            return;
+        }
+        // One binding for every dynamic text; each is formatted into the same scratch buffer
+        // and written in place when it changed.
+        let scratch = Rc::new(RefCell::new(String::new()));
+        let texts = Rc::new(dynamic);
+        cx.provide(|| {
+            bind_effect(
+                scope,
+                node,
+                move || texts.clone(),
+                move |e, n, texts: Rc<Vec<(u16, TextProp)>>| {
+                    e.with_widget_mut(n, |m: &mut ButtonMatrix, wcx| {
+                        let mut buf = scratch.borrow_mut();
+                        for (i, t) in texts.iter() {
+                            buf.clear();
+                            t.write_to(&mut *buf);
+                            m.set_btn_text(wcx, *i, &buf);
+                        }
+                    });
+                },
+            );
+        });
     })
 }
 
@@ -253,6 +245,11 @@ impl WidgetView<ButtonMatrix> {
 /// the reference is filled; the textarea gets the focus look and its cursor blinks while
 /// attached).
 ///
+/// `target` is a [`NodeRef<Textarea>`], or anything giving an `Option<NodeRef<Textarea>>`
+/// ([`IntoProp`]: a closure, signal or memo): one keyboard then follows the field being
+/// edited — switching fields moves the keyboard to the new field without rebuilding it or
+/// laying anything out; `None` detaches it.
+///
 /// A common pattern shows the keyboard only while a field is focused:
 ///
 /// ```
@@ -271,13 +268,18 @@ impl WidgetView<ButtonMatrix> {
 /// }
 /// # let _ = form;
 /// ```
-pub fn keyboard(target: NodeRef<Textarea>) -> WidgetView<Keyboard> {
+///
+/// On a small screen, [`docked`](WidgetView::docked) keyboards avoid covering
+/// the field being edited: the page shrinks to the area above the keyboard and the field is
+/// scrolled into view (see [`docked`](WidgetView::docked) for a full form).
+pub fn keyboard<M>(target: impl IntoProp<Option<NodeRef<Textarea>>, M>) -> WidgetView<Keyboard> {
+    let target = target.into_prop();
     widget_view(Keyboard::new).op(move |cx, node| {
         let rt = cx.runtime();
         crate::bind::bind_node(
             cx,
             node,
-            Prop::Dynamic(Box::new(move || target.get())),
+            Prop::Dynamic(Box::new(move || target.get().and_then(|r| r.get()))),
             |e, n, ta: Option<NodeId>| {
                 e.with_widget_mut(n, |k: &mut Keyboard, wcx| {
                     if k.textarea() != ta {
@@ -309,18 +311,91 @@ impl WidgetView<Keyboard> {
         self.bind(m, |k: &mut Keyboard, cx, m| k.set_mode(cx, m))
     }
 
-    /// Replaces the map (and its control bits, one per button) of `mode` for this keyboard.
+    /// Replaces the map of `mode` for this keyboard: a `'static` table of rows of keys, each
+    /// with its text and control bits ([`MapBtn`]; stored by reference).
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    ///
+    /// static HEX: [&[MapBtn]; 2] = [
+    ///     &[MapBtn::text("A"), MapBtn::text("B"), MapBtn::text("C")],
+    ///     &[MapBtn::text("D"), MapBtn::text("E"), MapBtn::text("F")],
+    /// ];
+    ///
+    /// fn hex_pad(cx: Scope) -> impl View {
+    ///     let ta: NodeRef<Textarea> = cx.node_ref();
+    ///     column((
+    ///         textarea(String::new()).node_ref(ta),
+    ///         keyboard(ta).custom_map(KeyboardMode::User1, &HEX).mode(KeyboardMode::User1),
+    ///     ))
+    /// }
+    /// # let _ = hex_pad;
+    /// ```
     #[must_use]
-    pub fn custom_map(
-        self,
-        mode: KeyboardMode,
-        map: &'static [&'static str],
-        ctrl: &'static [BtnCtrl],
-    ) -> Self {
+    pub fn custom_map(self, mode: KeyboardMode, map: &'static [&'static [MapBtn]]) -> Self {
         self.op(move |cx, node| {
             cx.engine()
-                .with_widget_mut(node, |k: &mut Keyboard, wcx| k.set_map(wcx, mode, map, ctrl));
+                .with_widget_mut(node, |k: &mut Keyboard, wcx| k.set_map(wcx, mode, map));
         })
+    }
+
+    /// Docks the keyboard to the bottom of its parent (keyboard avoidance): instead of
+    /// covering the bottom of the parent, it reserves its height there, the parent's other
+    /// children are laid out in the area above it (a page with [`fill`](crate::StyleExt::fill)
+    /// shrinks), and the field being edited is scrolled into view after the layout pass that
+    /// makes room — when the keyboard appears, when it changes size (a display rotation) and
+    /// when it moves to another field (that causes no layout). Hiding the keyboard gives the
+    /// area back. No engine code is needed in the application.
+    ///
+    /// Put a docked keyboard in the page's root (whose height must not depend on its content),
+    /// next to the scrolling content; a [`navigator`](crate::navigator()) page or a modal
+    /// gets its own. Default: `false` (the keyboard floats over the parent's children, as in
+    /// LVGL). See [`Keyboard::set_docked`].
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    ///
+    /// fn form(cx: Scope) -> impl View {
+    ///     let fields: [NodeRef<Textarea>; 2] = [cx.node_ref(), cx.node_ref()];
+    ///     let editing = cx.signal(None::<usize>);
+    ///     let field = move |i: usize, hint: &'static str| {
+    ///         textarea(String::new())
+    ///             .one_line(true)
+    ///             .placeholder(hint)
+    ///             .fill_width()
+    ///             .node_ref(fields[i])
+    ///             .test_id(hint)
+    ///             .on_click(move || editing.set(Some(i)))
+    ///     };
+    ///     container((
+    ///         scroll_view(Axis::Vertical, column((field(0, "Name"), field(1, "City"))).fill_width())
+    ///             .fill()
+    ///             .test_id("page"),
+    ///         when(move || editing.with(Option::is_some), move |_| {
+    ///             keyboard(move || editing.get().map(|i| fields[i]))
+    ///                 .docked(true)
+    ///                 .height(120)
+    ///                 .on_ready(move || editing.set(None))
+    ///         }),
+    ///     ))
+    ///     .fill()
+    ///     .padding(0)
+    /// }
+    ///
+    /// use twine_testing::{TestUi, by_class, by_id};
+    ///
+    /// let mut t = TestUi::new(320, 240).mount(form);
+    /// t.find(by_id("City")).click();
+    /// t.advance(Duration::ms(50)); // the cursor blinks: never idle
+    /// let kb = t.find(by_class("keyboard")).id();
+    /// let page = t.find(by_id("page")).id();
+    /// let (kb, page) = (t.engine().coords(kb), t.engine().coords(page));
+    /// assert_eq!(kb.height(), 120);
+    /// assert_eq!(page.y1, kb.y0); // the page takes the area above the keyboard
+    /// ```
+    #[must_use]
+    pub fn docked<M>(self, on: impl IntoProp<bool, M>) -> Self {
+        self.bind(on, |k: &mut Keyboard, cx, on| k.set_docked(cx, on))
     }
 
     /// Shows the pressed key enlarged above it.

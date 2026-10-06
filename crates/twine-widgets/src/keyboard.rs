@@ -9,7 +9,7 @@ use twine_engine::{
 use twine_style::{Align, BaseDir, Length, Part, Selector, StyleProp};
 use twine_text::Symbol;
 
-use crate::buttonmatrix::{BtnCtrl, ButtonMatrix, MapSrc};
+use crate::buttonmatrix::{BtnCtrl, BtnMap, ButtonMatrix, MapBtn};
 use crate::log_set;
 use crate::textarea::{self, with_textarea};
 
@@ -52,284 +52,194 @@ const fn w(w: u16) -> BtnCtrl {
     BtnCtrl::from_bits_retain(w)
 }
 
-/// LVGL `default_kb_map_lc`.
-pub static MAP_LOWER: [&str; 43] = [
-    MODE_SPECIAL,
-    "q",
-    "w",
-    "e",
-    "r",
-    "t",
-    "y",
-    "u",
-    "i",
-    "o",
-    "p",
-    Symbol::Backspace.as_str(),
-    "\n",
-    MODE_TEXT_UPPER,
-    "a",
-    "s",
-    "d",
-    "f",
-    "g",
-    "h",
-    "j",
-    "k",
-    "l",
-    Symbol::NewLine.as_str(),
-    "\n",
-    "_",
-    "-",
-    "z",
-    "x",
-    "c",
-    "v",
-    "b",
-    "n",
-    "m",
-    ".",
-    ",",
-    ":",
-    "\n",
-    Symbol::Keyboard.as_str(),
-    Symbol::Left.as_str(),
-    " ",
-    Symbol::Right.as_str(),
-    Symbol::Ok.as_str(),
+/// A key of a map: `text` with control bits `ctrl`.
+const fn k(text: &'static str, ctrl: BtnCtrl) -> MapBtn {
+    MapBtn::new(text, ctrl)
+}
+
+/// LVGL `default_kb_map_lc` with `default_kb_ctrl_lc_map`.
+pub static MAP_LOWER: [&[MapBtn]; 4] = [
+    &[
+        k(MODE_SPECIAL, ctl(5)),
+        k("q", kb(4)),
+        k("w", kb(4)),
+        k("e", kb(4)),
+        k("r", kb(4)),
+        k("t", kb(4)),
+        k("y", kb(4)),
+        k("u", kb(4)),
+        k("i", kb(4)),
+        k("o", kb(4)),
+        k("p", kb(4)),
+        k(Symbol::Backspace.as_str(), chk(7)),
+    ],
+    &[
+        k(MODE_TEXT_UPPER, ctl(6)),
+        k("a", kb(3)),
+        k("s", kb(3)),
+        k("d", kb(3)),
+        k("f", kb(3)),
+        k("g", kb(3)),
+        k("h", kb(3)),
+        k("j", kb(3)),
+        k("k", kb(3)),
+        k("l", kb(3)),
+        k(Symbol::NewLine.as_str(), chk(7)),
+    ],
+    &[
+        k("_", chk_kb(1)),
+        k("-", chk_kb(1)),
+        k("z", kb(1)),
+        k("x", kb(1)),
+        k("c", kb(1)),
+        k("v", kb(1)),
+        k("b", kb(1)),
+        k("n", kb(1)),
+        k("m", kb(1)),
+        k(".", chk_kb(1)),
+        k(",", chk_kb(1)),
+        k(":", chk_kb(1)),
+    ],
+    &[
+        k(Symbol::Keyboard.as_str(), ctl(2)),
+        k(Symbol::Left.as_str(), chk(2)),
+        k(" ", w(6)),
+        k(Symbol::Right.as_str(), chk(2)),
+        k(Symbol::Ok.as_str(), ctl(2)),
+    ],
 ];
 
-/// LVGL `default_kb_ctrl_lc_map` (`default_kb_ctrl_uc_map` is identical).
-const CTRL_LC: [BtnCtrl; 40] = [
-    ctl(5),
-    kb(4),
-    kb(4),
-    kb(4),
-    kb(4),
-    kb(4),
-    kb(4),
-    kb(4),
-    kb(4),
-    kb(4),
-    kb(4),
-    chk(7),
-    ctl(6),
-    kb(3),
-    kb(3),
-    kb(3),
-    kb(3),
-    kb(3),
-    kb(3),
-    kb(3),
-    kb(3),
-    kb(3),
-    chk(7),
-    chk_kb(1),
-    chk_kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    chk_kb(1),
-    chk_kb(1),
-    chk_kb(1),
-    ctl(2),
-    chk(2),
-    w(6),
-    chk(2),
-    ctl(2),
+/// LVGL `default_kb_map_uc` with `default_kb_ctrl_uc_map` (the lower case control bits).
+pub static MAP_UPPER: [&[MapBtn]; 4] = [
+    &[
+        k(MODE_SPECIAL, ctl(5)),
+        k("Q", kb(4)),
+        k("W", kb(4)),
+        k("E", kb(4)),
+        k("R", kb(4)),
+        k("T", kb(4)),
+        k("Y", kb(4)),
+        k("U", kb(4)),
+        k("I", kb(4)),
+        k("O", kb(4)),
+        k("P", kb(4)),
+        k(Symbol::Backspace.as_str(), chk(7)),
+    ],
+    &[
+        k(MODE_TEXT_LOWER, ctl(6)),
+        k("A", kb(3)),
+        k("S", kb(3)),
+        k("D", kb(3)),
+        k("F", kb(3)),
+        k("G", kb(3)),
+        k("H", kb(3)),
+        k("J", kb(3)),
+        k("K", kb(3)),
+        k("L", kb(3)),
+        k(Symbol::NewLine.as_str(), chk(7)),
+    ],
+    &[
+        k("_", chk_kb(1)),
+        k("-", chk_kb(1)),
+        k("Z", kb(1)),
+        k("X", kb(1)),
+        k("C", kb(1)),
+        k("V", kb(1)),
+        k("B", kb(1)),
+        k("N", kb(1)),
+        k("M", kb(1)),
+        k(".", chk_kb(1)),
+        k(",", chk_kb(1)),
+        k(":", chk_kb(1)),
+    ],
+    &[
+        k(Symbol::Close.as_str(), ctl(2)),
+        k(Symbol::Left.as_str(), chk(2)),
+        k(" ", w(6)),
+        k(Symbol::Right.as_str(), chk(2)),
+        k(Symbol::Ok.as_str(), ctl(2)),
+    ],
 ];
 
-/// LVGL `default_kb_ctrl_lc_map`.
-pub static CTRL_LOWER: [BtnCtrl; 40] = CTRL_LC;
-
-/// LVGL `default_kb_map_uc`.
-pub static MAP_UPPER: [&str; 43] = [
-    MODE_SPECIAL,
-    "Q",
-    "W",
-    "E",
-    "R",
-    "T",
-    "Y",
-    "U",
-    "I",
-    "O",
-    "P",
-    Symbol::Backspace.as_str(),
-    "\n",
-    MODE_TEXT_LOWER,
-    "A",
-    "S",
-    "D",
-    "F",
-    "G",
-    "H",
-    "J",
-    "K",
-    "L",
-    Symbol::NewLine.as_str(),
-    "\n",
-    "_",
-    "-",
-    "Z",
-    "X",
-    "C",
-    "V",
-    "B",
-    "N",
-    "M",
-    ".",
-    ",",
-    ":",
-    "\n",
-    Symbol::Close.as_str(),
-    Symbol::Left.as_str(),
-    " ",
-    Symbol::Right.as_str(),
-    Symbol::Ok.as_str(),
+/// LVGL `default_kb_map_spec` with `default_kb_ctrl_spec_map`.
+pub static MAP_SPECIAL: [&[MapBtn]; 4] = [
+    &[
+        k("1", kb(1)),
+        k("2", kb(1)),
+        k("3", kb(1)),
+        k("4", kb(1)),
+        k("5", kb(1)),
+        k("6", kb(1)),
+        k("7", kb(1)),
+        k("8", kb(1)),
+        k("9", kb(1)),
+        k("0", kb(1)),
+        k(Symbol::Backspace.as_str(), chk(2)),
+    ],
+    &[
+        k(MODE_TEXT_LOWER, ctl(2)),
+        k("+", kb(1)),
+        k("&", kb(1)),
+        k("/", kb(1)),
+        k("*", kb(1)),
+        k("=", kb(1)),
+        k("%", kb(1)),
+        k("!", kb(1)),
+        k("?", kb(1)),
+        k("#", kb(1)),
+        k("<", kb(1)),
+        k(">", kb(1)),
+    ],
+    &[
+        k("\\", kb(1)),
+        k("@", kb(1)),
+        k("$", kb(1)),
+        k("(", kb(1)),
+        k(")", kb(1)),
+        k("{", kb(1)),
+        k("}", kb(1)),
+        k("[", kb(1)),
+        k("]", kb(1)),
+        k(";", kb(1)),
+        k("\"", kb(1)),
+        k("'", kb(1)),
+    ],
+    &[
+        k(Symbol::Keyboard.as_str(), ctl(2)),
+        k(Symbol::Left.as_str(), chk(2)),
+        k(" ", w(6)),
+        k(Symbol::Right.as_str(), chk(2)),
+        k(Symbol::Ok.as_str(), ctl(2)),
+    ],
 ];
 
-/// LVGL `default_kb_ctrl_uc_map` (the same as the lower case one).
-pub static CTRL_UPPER: [BtnCtrl; 40] = CTRL_LC;
-
-/// LVGL `default_kb_map_spec`.
-pub static MAP_SPECIAL: [&str; 43] = [
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-    "0",
-    Symbol::Backspace.as_str(),
-    "\n",
-    MODE_TEXT_LOWER,
-    "+",
-    "&",
-    "/",
-    "*",
-    "=",
-    "%",
-    "!",
-    "?",
-    "#",
-    "<",
-    ">",
-    "\n",
-    "\\",
-    "@",
-    "$",
-    "(",
-    ")",
-    "{",
-    "}",
-    "[",
-    "]",
-    ";",
-    "\"",
-    "'",
-    "\n",
-    Symbol::Keyboard.as_str(),
-    Symbol::Left.as_str(),
-    " ",
-    Symbol::Right.as_str(),
-    Symbol::Ok.as_str(),
-];
-
-/// LVGL `default_kb_ctrl_spec_map`.
-pub static CTRL_SPECIAL: [BtnCtrl; 40] = [
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    chk(2),
-    ctl(2),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    kb(1),
-    ctl(2),
-    chk(2),
-    w(6),
-    chk(2),
-    ctl(2),
-];
-
-/// LVGL `default_kb_map_num`.
-pub static MAP_NUMBER: [&str; 20] = [
-    "1",
-    "2",
-    "3",
-    Symbol::Keyboard.as_str(),
-    "\n",
-    "4",
-    "5",
-    "6",
-    Symbol::Ok.as_str(),
-    "\n",
-    "7",
-    "8",
-    "9",
-    Symbol::Backspace.as_str(),
-    "\n",
-    "+/-",
-    "0",
-    ".",
-    Symbol::Left.as_str(),
-    Symbol::Right.as_str(),
-];
-
-/// LVGL `default_kb_ctrl_num_map`.
-pub static CTRL_NUMBER: [BtnCtrl; 17] = [
-    w(1),
-    w(1),
-    w(1),
-    ctl(2),
-    w(1),
-    w(1),
-    w(1),
-    ctl(2),
-    w(1),
-    w(1),
-    w(1),
-    w(2),
-    w(1),
-    w(1),
-    w(1),
-    w(1),
-    w(1),
+/// LVGL `default_kb_map_num` with `default_kb_ctrl_num_map`.
+pub static MAP_NUMBER: [&[MapBtn]; 4] = [
+    &[
+        k("1", w(1)),
+        k("2", w(1)),
+        k("3", w(1)),
+        k(Symbol::Keyboard.as_str(), ctl(2)),
+    ],
+    &[
+        k("4", w(1)),
+        k("5", w(1)),
+        k("6", w(1)),
+        k(Symbol::Ok.as_str(), ctl(2)),
+    ],
+    &[
+        k("7", w(1)),
+        k("8", w(1)),
+        k("9", w(1)),
+        k(Symbol::Backspace.as_str(), w(2)),
+    ],
+    &[
+        k("+/-", w(1)),
+        k("0", w(1)),
+        k(".", w(1)),
+        k(Symbol::Left.as_str(), w(1)),
+        k(Symbol::Right.as_str(), w(1)),
+    ],
 ];
 
 /// The mode of a [`Keyboard`] (LVGL `lv_keyboard_mode_t`).
@@ -372,19 +282,19 @@ impl KeyboardMode {
     }
 }
 
-/// A key map with its control bits.
-type KbMap = (&'static [&'static str], &'static [BtnCtrl]);
+/// A key map: rows of keys with their control bits.
+type KbMap = &'static [&'static [MapBtn]];
 
 /// LVGL's `kb_map` / `kb_ctrl` tables (the user modes start with the lower case map).
 const DEFAULT_MAPS: [KbMap; 8] = [
-    (&MAP_LOWER, &CTRL_LOWER),
-    (&MAP_UPPER, &CTRL_UPPER),
-    (&MAP_SPECIAL, &CTRL_SPECIAL),
-    (&MAP_NUMBER, &CTRL_NUMBER),
-    (&MAP_LOWER, &CTRL_LOWER),
-    (&MAP_LOWER, &CTRL_LOWER),
-    (&MAP_LOWER, &CTRL_LOWER),
-    (&MAP_LOWER, &CTRL_LOWER),
+    &MAP_LOWER,
+    &MAP_UPPER,
+    &MAP_SPECIAL,
+    &MAP_NUMBER,
+    &MAP_LOWER,
+    &MAP_LOWER,
+    &MAP_LOWER,
+    &MAP_LOWER,
 ];
 
 /// Default flags of [`KEYBOARD_CLASS`] (LVGL `lv_keyboard_constructor`:
@@ -412,7 +322,12 @@ pub static KEYBOARD_CLASS: WidgetClass = WidgetClass::new("keyboard")
 /// - With [popovers](Self::set_popovers), pressed character keys show an enlarged copy on
 ///   the top layer.
 /// - The default size is the parent's full width and half its height, at the bottom
-///   (LVGL). Keypad and encoder navigate like a button matrix.
+///   (LVGL), drawn over the parent's other children. Keypad and encoder navigate like a
+///   button matrix.
+/// - [Docked](Self::set_docked), it reserves its height instead: the parent's other
+///   children are laid out in the area above it, and the attached textarea is scrolled into
+///   view whenever the keyboard appears or changes size (a rotation) and whenever another
+///   textarea is attached — keyboard avoidance without application code.
 ///
 /// ```
 /// use twine_testing::EngineHarness;
@@ -449,7 +364,7 @@ impl Keyboard {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            btnm: ButtonMatrix::new(MapSrc::Static(&MAP_LOWER)),
+            btnm: ButtonMatrix::new(BtnMap::Static(&MAP_LOWER)),
             ta: None,
             mode: KeyboardMode::TextLower,
             popovers: false,
@@ -488,7 +403,8 @@ impl Keyboard {
         if self.ta == ta {
             return;
         }
-        log_set(KEYBOARD_CLASS.name, cx.node(), "textarea");
+        let node = cx.node();
+        log_set(KEYBOARD_CLASS.name, node, "textarea");
         let e = cx.engine_mut();
         if let Some(old) = self.ta.filter(|t| e.tree().contains(*t)) {
             // `StateChanged` stops the old cursor's blink.
@@ -499,6 +415,9 @@ impl Keyboard {
             if e.tree().contains(new) {
                 // `StateChanged` starts the new cursor's blink.
                 e.add_state(new, State::FOCUSED);
+                if e.has_flag(node, ObjFlags::DOCK_BOTTOM) {
+                    e.scroll_to_view_after_layout(new, false);
+                }
             } else {
                 twine_core::warn!(target: "twine::engine", "keyboard: textarea {} not found", fmt_node_id(new));
                 self.ta = None;
@@ -516,6 +435,70 @@ impl Keyboard {
         let group_focus = e.group_of(ta).is_some_and(|g| e.focused(g) == Some(ta));
         if !group_focus {
             e.clear_state(ta, State::FOCUSED);
+        }
+    }
+
+    /// Docks the keyboard to the bottom of its parent (`on`), or lets it float over the
+    /// parent's other children as in LVGL (`off`, the default). Idempotent; never panics.
+    ///
+    /// Docked, the keyboard sets [`ObjFlags::DOCK_BOTTOM`]: it gets the full width of the
+    /// parent's content area and its own height at the bottom, and the parent's other
+    /// children are laid out in the area above it (a `Pct(100)` page shrinks, so everything
+    /// stays reachable by scrolling). The attached textarea is then scrolled into view — through
+    /// every scrollable ancestor, without animation — after the layout pass that places the
+    /// keyboard ([`Engine::scroll_to_view_after_layout`]): when the keyboard appears, when its
+    /// size changes (a rotation of the display) and when another textarea is attached. Moving
+    /// the keyboard to another textarea causes no layout. Removing (or hiding) the keyboard
+    /// gives the parent's area back in the next layout pass.
+    ///
+    /// Place a docked keyboard in the node whose area it should share, typically the page's
+    /// root container (or the screen), whose height does not depend on its content; the
+    /// page's scrolling content then fills the rest.
+    ///
+    /// ```
+    /// use twine_engine::ObjFlags;
+    /// use twine_style::Length;
+    /// use twine_testing::EngineHarness;
+    /// use twine_widgets::keyboard::{self, Keyboard};
+    /// use twine_widgets::textarea;
+    ///
+    /// let mut h = EngineHarness::new(320, 240);
+    /// let screen = h.screen();
+    /// let page = h.engine_mut().create(screen, Box::new(twine_engine::Obj)).unwrap();
+    /// h.engine_mut().set_size(page, Length::pct(100), Length::pct(100));
+    /// let ta = textarea::create(h.engine_mut(), page).unwrap();
+    /// let kb = keyboard::create(h.engine_mut(), screen).unwrap();
+    /// h.engine_mut().with_widget_mut(kb, |k: &mut Keyboard, cx| {
+    ///     k.set_docked(cx, true);
+    ///     k.set_textarea(cx, Some(ta));
+    /// });
+    /// h.update();
+    /// let e = h.engine();
+    /// assert!(e.has_flag(kb, ObjFlags::DOCK_BOTTOM));
+    /// // Half the screen at the bottom; the page takes the half above it.
+    /// assert_eq!((e.coords(kb).y0, e.coords(kb).y1), (120, 240));
+    /// assert_eq!(e.coords(page).y1, 120);
+    /// ```
+    pub fn set_docked(&mut self, cx: &mut WidgetCx<'_>, on: bool) {
+        let node = cx.node();
+        let e = cx.engine_mut();
+        if e.has_flag(node, ObjFlags::DOCK_BOTTOM) == on {
+            return;
+        }
+        log_set(KEYBOARD_CLASS.name, node, "docked");
+        e.set_flag(node, ObjFlags::DOCK_BOTTOM, on);
+        if on {
+            self.reveal_textarea(e, node);
+        }
+    }
+
+    /// Scrolls the attached textarea into view after the layout pass, if the keyboard is
+    /// docked.
+    fn reveal_textarea(&self, e: &mut Engine, node: NodeId) {
+        if let Some(ta) = self.ta.filter(|t| e.tree().contains(*t)) {
+            if e.has_flag(node, ObjFlags::DOCK_BOTTOM) {
+                e.scroll_to_view_after_layout(ta, false);
+            }
         }
     }
 
@@ -539,22 +522,37 @@ impl Keyboard {
         self.update_ctrl_map(cx);
     }
 
-    /// Sets the map and control bits of `mode` for this keyboard (LVGL
-    /// `lv_keyboard_set_map`, which changes a global table; here per keyboard). `ctrl` has
-    /// one entry per button.
-    pub fn set_map(
-        &mut self,
-        cx: &mut WidgetCx<'_>,
-        mode: KeyboardMode,
-        map: &'static [&'static str],
-        ctrl: &'static [BtnCtrl],
-    ) {
+    /// Sets the map of `mode` for this keyboard: rows of keys, each with its text and
+    /// control bits (LVGL `lv_keyboard_set_map`, which changes a global table and takes the
+    /// texts and the control bits as two parallel arrays; here per keyboard, one table).
+    /// Idempotent (the same table changes nothing). Never panics.
+    ///
+    /// ```
+    /// use twine_testing::EngineHarness;
+    /// use twine_widgets::buttonmatrix::{BtnCtrl, MapBtn};
+    /// use twine_widgets::keyboard::{self, Keyboard, KeyboardMode};
+    ///
+    /// static HEX: [&[MapBtn]; 2] = [
+    ///     &[MapBtn::text("A"), MapBtn::text("B"), MapBtn::text("C")],
+    ///     &[MapBtn::new("abc", keyboard::KEYBOARD_CTRL_BUTTON_FLAGS.union(BtnCtrl::width(3)))],
+    /// ];
+    /// let mut h = EngineHarness::new(320, 240);
+    /// let screen = h.screen();
+    /// let kb = keyboard::create(h.engine_mut(), screen).unwrap();
+    /// h.engine_mut().with_widget_mut(kb, |k: &mut Keyboard, cx| {
+    ///     k.set_map(cx, KeyboardMode::User1, &HEX);
+    ///     k.set_mode(cx, KeyboardMode::User1);
+    /// });
+    /// let m = h.engine().widget::<Keyboard>(kb).unwrap().buttonmatrix();
+    /// assert_eq!((m.btn_count(), m.btn_text(3)), (4, Some("abc")));
+    /// ```
+    pub fn set_map(&mut self, cx: &mut WidgetCx<'_>, mode: KeyboardMode, map: &'static [&'static [MapBtn]]) {
         let i = mode.index();
-        if core::ptr::eq(self.maps[i].0, map) && core::ptr::eq(self.maps[i].1, ctrl) {
+        if core::ptr::eq(self.maps[i], map) {
             return;
         }
         log_set(KEYBOARD_CLASS.name, cx.node(), "map");
-        self.maps[i] = (map, ctrl);
+        self.maps[i] = map;
         if self.mode == mode {
             self.update_map(cx);
         }
@@ -562,32 +560,28 @@ impl Keyboard {
 
     /// LVGL `lv_keyboard_update_map`.
     fn update_map(&mut self, cx: &mut WidgetCx<'_>) {
-        let (map, _) = self.maps[self.mode.index()];
-        self.btnm.set_map(cx, MapSrc::Static(map));
+        let map = self.maps[self.mode.index()];
+        self.btnm.set_map(cx, BtnMap::Static(map));
         self.update_ctrl_map(cx);
     }
 
     /// LVGL `lv_keyboard_update_ctrl_map`: the mode's control bits, without `POPOVER` when
     /// popovers are off.
     fn update_ctrl_map(&mut self, cx: &mut WidgetCx<'_>) {
-        let (_, ctrl) = self.maps[self.mode.index()];
+        let map = self.maps[self.mode.index()];
         let mask = if self.popovers {
             BtnCtrl::all()
         } else {
             !BtnCtrl::POPOVER
         };
-        self.btnm
-            .set_ctrl_map_with(cx, |i| ctrl.get(i).copied().unwrap_or_default() & mask);
+        self.btnm.set_ctrl_map_with(cx, |i| {
+            nth_key(map, i).map_or(BtnCtrl::empty(), |b| b.ctrl) & mask
+        });
     }
 
-    /// The text of button `idx` in the current (static) map.
+    /// The text of key `idx` in the current (static) map.
     fn key_text(&self, idx: u16) -> Option<&'static str> {
-        let (map, _) = self.maps[self.mode.index()];
-        map.iter()
-            .copied()
-            .take_while(|s| !s.is_empty())
-            .filter(|s| *s != "\n")
-            .nth(usize::from(idx))
+        nth_key(self.maps[self.mode.index()], usize::from(idx)).map(|b| b.text)
     }
 
     /// The attached textarea if it still exists; a dead one is warned about and cleared.
@@ -681,6 +675,17 @@ impl Keyboard {
     }
 }
 
+/// Key `i` of `map`, in reading order.
+fn nth_key(map: KbMap, mut i: usize) -> Option<&'static MapBtn> {
+    for row in map {
+        if let Some(b) = row.get(i) {
+            return Some(b);
+        }
+        i -= row.len();
+    }
+    None
+}
+
 /// Creates a keyboard (lower case, full width, half the parent's height, at the bottom) as
 /// the last child of `parent` (LVGL `lv_keyboard_create`).
 ///
@@ -709,8 +714,13 @@ impl Widget for Keyboard {
     }
 
     fn event(&mut self, cx: &mut EventCx<'_>, ev: &Event) -> EventResult {
-        if ev.code == EventCode::Delete && ev.target == cx.node() {
-            self.release_textarea(cx.engine_mut());
+        if ev.target == cx.node() {
+            match ev.code {
+                EventCode::Delete => self.release_textarea(cx.engine_mut()),
+                // Placed or resized (shown, rotated): keep the textarea visible above it.
+                EventCode::SizeChanged => self.reveal_textarea(cx.engine_mut(), ev.target),
+                _ => {}
+            }
         }
         if let Some(b) = self.btnm.handle(cx, ev) {
             // LVGL: the keyboard's own handler runs before the application's.
@@ -728,23 +738,21 @@ impl Widget for Keyboard {
 mod tests {
     use super::*;
 
-    fn counts(map: &[&str]) -> (usize, usize) {
-        let rows = map.iter().filter(|s| **s == "\n").count() + 1;
-        (rows, map.len() + 1 - rows)
+    fn counts(map: &[&[MapBtn]]) -> (usize, usize) {
+        (map.len(), map.iter().map(|r| r.len()).sum())
     }
 
     #[test]
     fn default_maps_match_lvgl_tables() {
-        // Rows and keys of LVGL's `default_kb_map_*` tables.
+        // Rows and keys of LVGL's `default_kb_map_*` / `default_kb_ctrl_*_map` tables.
         assert_eq!(counts(&MAP_LOWER), (4, 40));
         assert_eq!(counts(&MAP_UPPER), (4, 40));
         assert_eq!(counts(&MAP_SPECIAL), (4, 40));
         assert_eq!(counts(&MAP_NUMBER), (4, 17));
-        assert_eq!(CTRL_LOWER.len(), 40);
-        assert_eq!(CTRL_SPECIAL.len(), 40);
-        assert_eq!(CTRL_NUMBER.len(), 17);
-        assert_eq!(CTRL_LOWER[0].width_units(), 5);
-        assert!(CTRL_LOWER[1].contains(BtnCtrl::POPOVER));
-        assert!(CTRL_LOWER[0].contains(KEYBOARD_CTRL_BUTTON_FLAGS));
+        assert_eq!(MAP_LOWER[0][0].ctrl.width_units(), 5);
+        assert!(MAP_LOWER[0][1].ctrl.contains(BtnCtrl::POPOVER));
+        assert!(MAP_LOWER[0][0].ctrl.contains(KEYBOARD_CTRL_BUTTON_FLAGS));
+        assert_eq!(MAP_NUMBER[2][3].ctrl.width_units(), 2);
+        assert_eq!(MAP_NUMBER[3][0].text, "+/-");
     }
 }

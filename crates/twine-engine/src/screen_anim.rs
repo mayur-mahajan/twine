@@ -332,7 +332,7 @@ impl Engine {
             return;
         }
         if self.displays[d].screen_load.is_some() {
-            self.finish_screen_anim(d);
+            self.finish_screen_anim_at(d);
         }
         let Some(d) = self.displays.iter().position(|x| x.screens.contains(&screen)) else {
             return;
@@ -415,6 +415,47 @@ impl Engine {
         self.displays
             .get(display.index())
             .is_some_and(|d| d.screen_load.is_some())
+    }
+
+    /// Finishes the screen load animation of `display` at once, if one runs (or waits for its
+    /// delay): the new screen becomes active and every event and the `auto_delete` of the end
+    /// are applied now, as if the animation had ended. [`load_screen_anim`](Self::load_screen_anim)
+    /// does this itself before it starts another animation; call it first when the caller needs
+    /// to know which screen the next load will leave (the active screen afterwards), as the
+    /// view layer's navigator does. Does nothing without an animation or for an unknown
+    /// display. Never panics.
+    ///
+    /// ```
+    /// use twine_core::Duration;
+    /// use twine_engine::{Engine, EngineConfig, ScreenAnim};
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_engine::BufferMode;
+    /// # use twine_hal::{DisplayDriver, DisplayInfo, DrawBufferMem};
+    /// # struct Panel(Option<DrawBufferMem>);
+    /// # impl DisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     fn begin_flush(&mut self, _: Rect, b: DrawBufferMem) -> Result<(), ()> { self.0 = Some(b); Ok(()) }
+    /// #     fn poll_flush(&mut self) -> Option<DrawBufferMem> { self.0.take() }
+    /// # }
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
+    /// # let d = e.add_display(Panel(None), BufferMode::partial_single(buf)).unwrap();
+    /// let first = e.active_screen(d).unwrap();
+    /// let second = e.create_screen(d).unwrap();
+    /// e.load_screen_anim(second, ScreenAnim::FadeIn(Duration::ms(100)).delay(Duration::ms(50)).auto_delete(true));
+    /// assert!(e.screen_anim_running(d));
+    /// e.finish_screen_anim(d);
+    /// assert!(!e.screen_anim_running(d));
+    /// assert_eq!(e.active_screen(d), Some(second));
+    /// assert!(!e.tree().contains(first)); // auto-deleted at the end
+    /// ```
+    pub fn finish_screen_anim(&mut self, display: DisplayId) {
+        let d = display.index();
+        if self.displays.get(d).is_some_and(|x| x.screen_load.is_some()) {
+            self.finish_screen_anim_at(d);
+        }
     }
 
     /// The screen shown below or above the active one during a screen load animation (LVGL
@@ -522,7 +563,7 @@ impl Engine {
     }
 
     /// Finishes the screen load animation of display `d` at once (its end state and events).
-    pub(crate) fn finish_screen_anim(&mut self, d: usize) {
+    pub(crate) fn finish_screen_anim_at(&mut self, d: usize) {
         let Some(run) = self.displays[d].screen_load else {
             return;
         };

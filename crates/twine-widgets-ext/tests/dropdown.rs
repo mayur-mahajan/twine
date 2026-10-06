@@ -627,3 +627,42 @@ fn snapshot_dropdown() {
     h.run_until_idle();
     h.assert_snapshot("dd_open_up");
 }
+
+#[test]
+fn dd_slice_options_are_zero_copy_and_draw_like_text() {
+    static CITY_LIST: [&str; 6] = ["Berlin", "London", "Madrid", "Paris", "Rome", "Vienna"];
+    // The open list with the joined text and with the slice (selected and pressed rows
+    // highlighted): same size, same pixels.
+    let shot = |slice: bool| {
+        let (mut h, d) = scene(Mode::Light, Align::TopMid);
+        with(&mut h, d, |w: &mut Dropdown, cx| {
+            if slice {
+                w.set_options_static(cx, &CITY_LIST);
+            }
+            w.set_selected(cx, 2);
+        });
+        h.tap(center(&h, d));
+        h.run_until_idle();
+        let w = get::<Dropdown>(&h, d);
+        assert_eq!((w.option_count(), w.options().to_string().as_str()), (6, CITIES));
+        assert_eq!(matches!(w.options(), twine_widgets_ext::Options::Slice(_)), slice);
+        let l = list_of(&h, d).expect("open");
+        let c = h.engine().coords(l);
+        h.render_full();
+        (c, h.panel_rgb888())
+    };
+    let (text, slice) = (shot(false), shot(true));
+    assert_eq!(text.0, slice.0, "same list size");
+    assert!(text.1 == slice.1, "same pixels");
+    // Idempotent: the same slice again changes nothing.
+    let (mut h, d) = scene(Mode::Light, Align::TopMid);
+    with(&mut h, d, |w: &mut Dropdown, cx| {
+        w.set_options_static(cx, &CITY_LIST);
+    });
+    h.run_until_idle();
+    with(&mut h, d, |w: &mut Dropdown, cx| {
+        w.set_options_static(cx, &CITY_LIST);
+    });
+    assert!(h.engine().invalidation_log().is_empty());
+    h.assert_idle();
+}

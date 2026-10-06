@@ -65,6 +65,16 @@ bitflags::bitflags! {
         /// The node's content may be scrolled (informational for the widget tree's scroll
         /// bounds; the layout itself only uses [`LayoutTree::scroll`]).
         const SCROLLABLE_CONTENT = 1 << 4;
+        /// The node is docked to the bottom of its parent (not in LVGL; e.g. an on-screen
+        /// keyboard reserving its height): it gets the full width of the parent's content
+        /// area and its own height, and sits at the bottom of that area without scrolling
+        /// with the parent. The parent's other children are then sized and positioned in the
+        /// area above it, as if the parent's bottom padding were that much larger: `Pct`
+        /// sizes, `Align`, flex and grid all use the reduced area. The node is neither a
+        /// flex/grid item nor `align_to`-positioned, and it does not count for the parent's
+        /// content size. Several docked children stack upwards in child order; a `HIDDEN`
+        /// one reserves nothing and is placed like any hidden child.
+        const DOCK_BOTTOM = 1 << 5;
     }
 }
 

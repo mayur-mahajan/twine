@@ -339,6 +339,9 @@ fn avatar(i: usize) -> ImageSource {
 /// Height of a card row of the list.
 const ROW_H: i32 = 78;
 
+/// The rows of the list: the indices of [`PEOPLE`] (a table in flash, read without copying).
+static CARDS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+
 /// Card `i`: avatar, name and description, in the card's language direction.
 fn card(i: usize) -> impl View {
     let p = &PEOPLE[i];
@@ -400,7 +403,7 @@ pub fn app(cx: Scope) -> impl View {
                 .font(heading_font())
                 .flex_grow(1)
                 .test_id("title"),
-            dropdown(LANGUAGE_NAMES, lang).width(130).test_id("language"),
+            dropdown(&LANGUAGE_NAMES, lang).width(130).test_id("language"),
             button(label(Symbol::Right))
                 .on_click(move || lang.update(|l| *l = (*l + 1) % CODES.len()))
                 .test_id("next"),
@@ -410,7 +413,7 @@ pub fn app(cx: Scope) -> impl View {
         .gap(8)
         .align_items(CrossAlign::Center),
         label(tr!("people")).base_dir(dir).fill_width().test_id("people"),
-        virtual_list(|| PEOPLE.len(), ROW_H, |_cx, i| card(i))
+        virtual_list(&CARDS, |i| *i, ROW_H, |_cx, i| card(i.get_untracked()))
             .node_ref(list)
             .fill_width()
             .flex_grow(1),

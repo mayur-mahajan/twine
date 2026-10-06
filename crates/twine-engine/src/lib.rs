@@ -49,11 +49,11 @@
 //! | refresh | [`Engine::step`], [`Engine::step_budgeted`], [`StepBudget`], [`Wake`] ([`Wake::IdleFor`]), [`RefreshStats`], [`PerfMonitor`], [`InvalidateReason`] |
 //! | events | [`Engine::send_event`], [`Engine::add_event_handler`], [`Event`], [`EventCode`], [`EventCx`] |
 //! | input | [`Engine::add_input`], [`Engine::notify_input`], [`Engine::read_inputs`], [`Engine::inactive_for`], [`Engine::trigger_activity`], [`InputId`] |
-//! | layout | [`Engine::set_size`], [`Engine::set_pos`], [`Engine::align`], [`Engine::align_to`], [`Engine::set_flex_flow`], [`Engine::set_grid_tracks`], [`Engine::set_local_grid_tracks`] (grid tracks: [`GridTracks`](twine_style::GridTracks)), [`Engine::set_grid_cell`], [`Engine::update_layout`], [`LayoutStats`] |
-//! | animation | [`Engine::anim_start`], [`Engine::anim_start_fn`], [`Engine::timer_add`], [`Engine::load_screen_anim`], [`Engine::set_motion`], [`Engine::motion`], [`Motion`], [`AnimProp`], [`AnimSpec`], [`ScreenAnim`], [`Deferred`] |
+//! | layout | [`Engine::set_size`], [`Engine::set_pos`], [`Engine::align`], [`Engine::align_to`], [`Engine::set_flex_flow`], [`Engine::set_grid_tracks`], [`Engine::set_local_grid_tracks`] (grid tracks: [`GridTracks`](twine_style::GridTracks)), [`Engine::set_grid_cell`], [`Engine::update_layout`], [`Engine::layout_passes`], [`LayoutStats`]; docking (keyboard avoidance): [`ObjFlags::DOCK_BOTTOM`] |
+//! | animation | [`Engine::anim_start`], [`Engine::anim_start_fn`], [`Engine::timer_add`], [`Engine::load_screen_anim`], [`Engine::finish_screen_anim`], [`Engine::set_motion`], [`Engine::motion`], [`Motion`], [`AnimProp`], [`AnimSpec`], [`ScreenAnim`], [`Deferred`] |
 //! | focus | [`Engine::create_group`], [`Engine::group_add`], [`Engine::focus_next`], [`gridnav`] |
 //! | faults | [`Engine::raise_fault`], [`Engine::take_faults`], [`Engine::set_fault_hook`], [`FaultRecord`], [`FaultKind`](twine_core::fault::FaultKind) |
-//! | scrolling | [`Engine::scroll_by`], [`Engine::scroll_to`], [`Engine::scroll_to_view`], [`Engine::scroll_top`], [`Engine::set_scroll_snap_x`], [`Engine::update_snap`], [`Engine::scrollbar_areas`], [`ScrollbarMode`] |
+//! | scrolling | [`Engine::scroll_by`], [`Engine::scroll_to`], [`Engine::scroll_to_view`], [`Engine::scroll_to_view_after_layout`], [`Engine::scroll_top`], [`Engine::set_scroll_snap_x`], [`Engine::update_snap`], [`Engine::scrollbar_areas`], [`ScrollbarMode`] |
 //! | memory | [`Engine::memory_report`], [`EngineMemory`], [`HeapPeak`], [`MemInfo`], [`Engine::with_layer_buf`] |
 //! | draw acceleration | [`Engine::set_accel`], [`Engine::clear_accel`] |
 //!
