@@ -120,18 +120,22 @@ impl defmt::Format for Easing {
 
 /// LVGL `lv_anim_path_bounce` pieces (lines 330–381, segment table at 339–369): the bezier input `t` and the divisor of the value range
 /// for progress `t` (`0..=1024`).
+///
+/// Callers pass `t` in `0..=1024` ([`Easing::apply`] and [`Easing::value`] clamp it), so every
+/// term below stays within `±2^22`: the `wrapping_*` operations are exact (and cost nothing over
+/// plain operators in any profile).
 const fn bounce_segment(t: i32) -> (i32, i32) {
     // 3 bounces have 5 parts: 3 down and 2 up.
     let (t, div) = if t < 408 {
-        (EASING_ONE - ((t * 2500) >> 10), 1) // go down
+        (EASING_ONE.wrapping_sub(t.wrapping_mul(2500) >> 10), 1) // go down
     } else if t < 614 {
-        ((t - 408) * 5, 20) // first bounce back
+        (t.wrapping_sub(408).wrapping_mul(5), 20) // first bounce back
     } else if t < 819 {
-        (EASING_ONE - (t - 614) * 5, 20) // fall back
+        (EASING_ONE.wrapping_sub(t.wrapping_sub(614).wrapping_mul(5)), 20) // fall back
     } else if t < 921 {
-        ((t - 819) * 10, 40) // second bounce back
+        (t.wrapping_sub(819).wrapping_mul(10), 40) // second bounce back
     } else {
-        (EASING_ONE - (t - 921) * 10, 40) // fall back
+        (EASING_ONE.wrapping_sub(t.wrapping_sub(921).wrapping_mul(10)), 40) // fall back
     };
     let t = if t > EASING_ONE {
         EASING_ONE
@@ -166,7 +170,11 @@ impl Easing {
             Easing::Overshoot => bezier(t, OVERSHOOT),
             Easing::Bounce => {
                 let (bt, div) = bounce_segment(t);
-                EASING_ONE - ((bounce_step(bt) * (EASING_ONE / div)) >> 10)
+                // `div` is 1, 20 or 40 (`bounce_segment`), so `EASING_ONE / div` is never a
+                // division by zero, and `bounce_step` of `0..=1024` stays in `0..=1024`: the
+                // product is below 2^21.
+                let scale = EASING_ONE.checked_div(div).unwrap_or(EASING_ONE);
+                EASING_ONE.wrapping_sub(bounce_step(bt).wrapping_mul(scale) >> 10)
             }
             Easing::Step => {
                 if t >= EASING_ONE {
@@ -188,14 +196,17 @@ impl Easing {
     /// intermediates, so it never overflows; the result saturates to `i32`.
     #[must_use]
     pub fn value(self, t: u16, start: i32, end: i32) -> i32 {
-        let diff = i64::from(end) - i64::from(start);
+        // Ranges: `|diff| < 2^32` and `|eased| ≤ 2^31` (any `i32`, also from custom curves),
+        // so `eased · diff` has magnitude below 2^63 and every `i64` step below is exact.
+        let diff = i64::from(end).wrapping_sub(i64::from(start));
         let v = match self {
             Easing::Bounce => {
                 let (bt, div) = bounce_segment(i32::from(t).min(EASING_ONE));
-                // C integer division truncates toward zero, as Rust's `/`.
-                i64::from(end) - ((i64::from(bounce_step(bt)) * (diff / i64::from(div))) >> 10)
+                // C integer division truncates toward zero, as Rust's `/`; `div` is 1, 20 or 40.
+                let part = diff.checked_div(i64::from(div)).unwrap_or(diff);
+                i64::from(end).wrapping_sub(i64::from(bounce_step(bt)).wrapping_mul(part) >> 10)
             }
-            _ => i64::from(start) + ((i64::from(self.apply(t)) * diff) >> 10),
+            _ => i64::from(start).wrapping_add(i64::from(self.apply(t)).wrapping_mul(diff) >> 10),
         };
         v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
     }

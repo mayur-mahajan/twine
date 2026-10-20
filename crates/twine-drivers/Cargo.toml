@@ -16,6 +16,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []
+## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
+## safety lints of library code and the refusal of excluded features.
+safety = ["twine-core/safety", "twine-hal/safety"]
 ## Every driver and interface (CI, documentation, host tests).
 all = [
     "spi", "spi-dma", "i2c", "i80", "qspi", "mipi-dcs",

@@ -36,6 +36,10 @@ pub struct Painter<'a> {
     masks: MaskStack<'a>,
     accel_pending: bool,
     touched: Option<Rect>,
+    /// This painter draws a layer's content into the layer buffer (set by
+    /// [`layer`](Self::layer) for its child painter).
+    #[cfg(feature = "display-integrity")]
+    pub(crate) in_layer: bool,
 }
 
 impl core::fmt::Debug for Painter<'_> {
@@ -93,7 +97,33 @@ impl<'a> Painter<'a> {
             masks: MaskStack::default(),
             accel_pending: false,
             touched: None,
+            #[cfg(feature = "display-integrity")]
+            in_layer: false,
         }
+    }
+
+    /// Whether this painter draws the content of a [`layer`](Self::layer) into the layer
+    /// buffer (which is then composited with the layer's opacity, blend mode or transform).
+    /// `false` for the painter of a draw buffer, and for content a layer draws directly (no
+    /// layer buffer, or one too small). The engine uses it to keep safety-critical nodes out of
+    /// layers. Never panics.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Opa, Rect};
+    /// use twine_render::{DrawBuf, LayerDsc, Painter, RenderCaches};
+    ///
+    /// let mut caches = RenderCaches::default();
+    /// let mut data = vec![0u8; 4 * 4];
+    /// let buf = DrawBuf::new_packed(&mut data, ColorFormat::L8, Rect::from_xywh(0, 0, 4, 4)).unwrap();
+    /// let mut p = Painter::new(buf, &mut caches);
+    /// assert!(!p.in_layer());
+    /// let dsc = LayerDsc { opa: Opa::P50, ..LayerDsc::default() };
+    /// p.layer(Rect::from_xywh(0, 0, 4, 4), &dsc, |inner| assert!(inner.in_layer()));
+    /// ```
+    #[cfg(feature = "display-integrity")]
+    #[must_use]
+    pub fn in_layer(&self) -> bool {
+        self.in_layer
     }
 
     /// Uses `accel` for the operations it supports.
@@ -107,6 +137,28 @@ impl<'a> Painter<'a> {
     #[must_use]
     pub fn clip(&self) -> Rect {
         self.clip
+    }
+
+    /// Whether [`layer`](Self::layer) would render into the layer buffer now: `false` inside
+    /// another layer's content (the buffer is in use) or without a layer buffer, where
+    /// `layer` draws its content directly, without opacity, blend mode or transform. Lets a
+    /// recursive caller skip the layer set-up for such nested layers. Never panics.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Opa, Rect};
+    /// use twine_render::{DrawBuf, LayerDsc, Painter, RenderCaches};
+    ///
+    /// let mut caches = RenderCaches::default();
+    /// let mut data = vec![0u8; 4 * 4];
+    /// let buf = DrawBuf::new_packed(&mut data, ColorFormat::L8, Rect::from_xywh(0, 0, 4, 4)).unwrap();
+    /// let mut p = Painter::new(buf, &mut caches);
+    /// assert!(p.layer_available());
+    /// let dsc = LayerDsc { opa: Opa::P50, ..LayerDsc::default() };
+    /// p.layer(Rect::from_xywh(0, 0, 4, 4), &dsc, |inner| assert!(!inner.layer_available()));
+    /// ```
+    #[must_use]
+    pub fn layer_available(&self) -> bool {
+        !self.caches.layer_buf.is_empty()
     }
 
     /// Runs `f` with the clip intersected with `clip`, then restores the previous clip.

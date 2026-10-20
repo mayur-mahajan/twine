@@ -406,6 +406,12 @@ impl Widget for Slider {
         &SLIDER_CLASS
     }
 
+    /// As a bar's ([`Bar`]'s range, value and start value).
+    #[cfg(feature = "display-integrity")]
+    fn value_digest(&self, crc: &mut twine_core::crc::Crc32) {
+        self.bar.value_digest(crc);
+    }
+
     fn init(&mut self, cx: &mut WidgetCx<'_>) {
         let id = cx.node();
         cx.engine_mut()

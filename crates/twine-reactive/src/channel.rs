@@ -433,14 +433,16 @@ impl WakerLease {
     /// The default of [`heap_limit`](Self::heap_limit): heap wakers that may be allocated
     /// beyond the [`STATIC_SLOTS`](Self::STATIC_SLOTS) (so up to 64 UIs alive at once get a
     /// waker of their own). Devices run a handful of UIs; the bound turns a leak — UIs that are
-    /// never dropped — into a reported fault instead of unbounded heap growth.
-    pub const DEFAULT_HEAP_LIMIT: u16 = 60;
+    /// never dropped — into a reported fault instead of unbounded heap growth. Equal to
+    /// [`Limits::DEFAULT.max_heap_wakers`](twine_core::Limits::max_heap_wakers).
+    pub const DEFAULT_HEAP_LIMIT: u16 = twine_core::Limits::DEFAULT.max_heap_wakers;
 
     /// Sets how many wakers the pool may allocate on the heap in total (process-wide; `0`
     /// forbids heap wakers, e.g. for a profile without dynamic allocation after start-up).
     /// Wakers already allocated stay in the pool and are still reused; lowering the limit below
-    /// their number only stops further allocations. Callable from any context (one critical
-    /// section); never panics.
+    /// their number only stops further allocations. The `Ui` builders set it from
+    /// [`Limits::max_heap_wakers`](twine_core::Limits::max_heap_wakers) (`AppConfig::limits`).
+    /// Callable from any context (one critical section); never panics.
     ///
     /// ```
     /// use twine_reactive::{UiWaker, WakerLease};
@@ -516,7 +518,8 @@ impl WakerLease {
             let allocated = HEAP_ALLOCATED.borrow(cs);
             if allocated.get() < HEAP_LIMIT.borrow(cs).get() {
                 // Counted now, allocated after the critical section.
-                allocated.set(allocated.get() + 1);
+                // Below the limit, so below `usize::MAX`.
+                allocated.set(allocated.get().saturating_add(1));
                 Acquired::Allocate
             } else {
                 Acquired::Slot(Slot::Shared)
@@ -528,7 +531,8 @@ impl WakerLease {
             Acquired::Allocate => Self::allocate(),
         };
         let waker = match slot {
-            Slot::Static(i) => &POOL[usize::from(i)],
+            // `i < STATIC_SLOTS` (a bit of `POOL_USED`); the shared waker is the safe fallback.
+            Slot::Static(i) => POOL.get(usize::from(i)).unwrap_or(&SHARED),
             Slot::Heap(h) => &h.waker,
             Slot::Shared => &SHARED,
         };
@@ -540,6 +544,7 @@ impl WakerLease {
     #[cold]
     #[inline(never)]
     fn allocate() -> Slot {
+        twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::Waker);
         debug!(
             target: "twine::reactive",
             "waker pool: {} static slots leased; allocating a waker",
@@ -832,29 +837,18 @@ fn same_channel(a: &'static dyn Source, b: &'static dyn Source) -> bool {
     core::ptr::addr_eq(a, b)
 }
 
-/// Removes the registrations of scope `s`; the caller passes them to [`release_channels`]
-/// after releasing the borrow.
-pub(crate) fn take_scope_channels(inner: &mut Inner, s: ScopeKey) -> Vec<ChannelReg> {
-    let mut removed = Vec::new();
-    let mut i = 0;
-    while i < inner.channels.len() {
-        if inner.channels[i].scope == s {
-            removed.push(inner.channels.remove(i));
-        } else {
-            i += 1;
-        }
-    }
-    removed
+/// Removes the first registration of scope `s` (`None` when it has none left); the caller
+/// passes it to [`release_channel`] after releasing the borrow. Allocates nothing.
+pub(crate) fn take_scope_channel(inner: &mut Inner, s: ScopeKey) -> Option<ChannelReg> {
+    let i = inner.channels.iter().position(|reg| reg.scope == s)?;
+    Some(inner.channels.remove(i))
 }
 
-/// Undoes the wake-up routing of removed registrations (the runtime must not be borrowed):
+/// Undoes the wake-up routing of a removed registration (the runtime must not be borrowed):
 /// a channel still handled elsewhere wakes the UI of its remaining handler, any other channel
-/// stops waking the UI of the removed one. Drops the registrations.
-pub(crate) fn release_channels(removed: Vec<ChannelReg>) {
-    for reg in removed {
-        let Some(w) = reg.waker else {
-            continue;
-        };
+/// stops waking the UI of the removed one. Drops the registration.
+pub(crate) fn release_channel(reg: ChannelReg) {
+    if let Some(w) = reg.waker {
         let other = with_runtime(|rt| {
             rt.inner
                 .borrow()
@@ -870,8 +864,8 @@ pub(crate) fn release_channels(removed: Vec<ChannelReg>) {
                 reg.chan.ui_waker().unregister(&w.task_waker());
             }
         }
-        drop(reg); // the handler is user code: dropped without the runtime borrowed (R1)
     }
+    drop(reg); // the handler is user code: dropped without the runtime borrowed (R1)
 }
 
 impl Scope {
@@ -930,15 +924,13 @@ impl Scope {
             if dropped > 0 {
                 report_overflow(dropped);
             }
-            let mut n = 0;
-            while n < max {
+            for n in 0..max {
                 let Some(v) = ch.try_recv() else {
-                    break;
+                    return n;
                 };
                 f(v);
-                n += 1;
             }
-            n
+            max
         });
         self.register_source(ch, drain);
     }
@@ -1032,14 +1024,21 @@ impl Scope {
             waker = inner.root_waker(root);
             let id = inner.next_channel_id;
             inner.next_channel_id = id.wrapping_add(1);
-            inner.channels.push(ChannelReg {
+            // The handler was boxed by the caller: a registration always allocated.
+            twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::ChannelHandler);
+            let reg = ChannelReg {
                 id,
                 scope,
                 root,
                 chan: src,
                 waker,
                 drain: Some(drain),
-            });
+            };
+            twine_core::alloc_guard::push(
+                &mut inner.channels,
+                reg,
+                twine_core::alloc_guard::AllocSite::ChannelHandler,
+            );
             None
         });
         if let Some(d) = rejected {
@@ -1080,7 +1079,11 @@ impl Scope {
             }
             match inner.root_wakers.iter_mut().find(|(k, _)| *k == root) {
                 Some(e) => e.1 = waker,
-                None => inner.root_wakers.push((root, waker)),
+                None => twine_core::alloc_guard::push(
+                    &mut inner.root_wakers,
+                    (root, waker),
+                    twine_core::alloc_guard::AllocSite::ReactiveScope,
+                ),
             }
             // Registrations of this root's tree: point them (and their channels) at `waker`.
             let mut targets: Vec<&'static dyn Source> = Vec::new();
@@ -1226,7 +1229,7 @@ fn drain_channels(root: Option<ScopeKey>, max_per_channel: usize) -> usize {
             let Some(last_id) = rt.inner.borrow().channels.last().map(|r| r.id) else {
                 return 0;
             };
-            let mut total = 0;
+            let mut total = 0usize;
             let mut i = 0;
             loop {
                 let (id, drain) = {
@@ -1241,14 +1244,17 @@ fn drain_channels(root: Option<ScopeKey>, max_per_channel: usize) -> usize {
                     (reg.id, if mine { reg.drain.take() } else { None })
                 };
                 if let Some(mut d) = drain {
-                    total += d(max_per_channel);
+                    total = total.saturating_add(d(max_per_channel));
                     let leftover = {
                         let mut inner = rt.inner.borrow_mut();
                         match inner.channels.binary_search_by_key(&id, |r| r.id) {
-                            Ok(p) => {
-                                inner.channels[p].drain = Some(d);
-                                None
-                            }
+                            Ok(p) => match inner.channels.get_mut(p) {
+                                Some(reg) => {
+                                    reg.drain = Some(d);
+                                    None
+                                }
+                                None => Some(d),
+                            },
                             Err(_) => Some(d), // unregistered by its own handler
                         }
                     };

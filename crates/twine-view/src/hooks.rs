@@ -8,9 +8,15 @@ use core::cell::{Cell, RefCell};
 
 use twine_anim::{Anim, AnimId, AnimSpec, EASING_ONE, Interpolate, Motion, TimerId};
 use twine_core::Duration;
+#[cfg(feature = "display-integrity")]
+use twine_core::Instant;
+#[cfg(feature = "display-integrity")]
+use twine_core::validity::Validity;
 use twine_engine::{
     DisplayId, Engine, EventCode, EventFilter, EventResult, IntoTheme, NodeId, ThemeHook, ThemeMode, Widget,
 };
+#[cfg(feature = "display-integrity")]
+use twine_reactive::Latest;
 use twine_reactive::{ReadSignal, Scope, Signal, StoredValue};
 use twine_style::design::{Element, ElementType};
 
@@ -182,7 +188,7 @@ impl AnimController {
     /// Runs `op` now with the engine, or queues it for the next update of the `Ui`.
     fn control(self, op: AnimOp) {
         if EngineAccess::with(self.state.runtime(), |e| self.apply(e, op)).is_none() {
-            if let Some(cx) = self.state.try_with(|s| s.cx) {
+            if let Ok(cx) = self.state.try_with(|s| s.cx) {
                 defer(cx, EngineCmd::anim(self, op));
             }
         }
@@ -190,16 +196,16 @@ impl AnimController {
 
     /// The running animation (`None` when stopped or disposed).
     fn id(self) -> Option<AnimId> {
-        self.state.try_with(|s| s.id).flatten()
+        self.state.try_with(|s| s.id).ok().flatten()
     }
 
     /// Takes the running animation's id.
     fn take_id(self) -> Option<AnimId> {
-        self.state.try_with_mut(|s| s.id.take()).flatten()
+        self.state.try_with_mut(|s| s.id.take()).ok().flatten()
     }
 
     fn start(e: &mut Engine, ctl: Self) {
-        let Some((spec, apply)) = ctl.state.try_with(|s| (s.spec, s.apply.clone())) else {
+        let Some((spec, apply)) = ctl.state.try_with(|s| (s.spec, s.apply.clone())).ok() else {
             return; // disposed with its scope
         };
         let motion = e.motion();
@@ -216,7 +222,10 @@ impl AnimController {
     /// engine's current one (a restart then starts it anew, with the full spec adjusted to
     /// the current preference).
     fn motion_changed(self, e: &Engine) -> bool {
-        self.state.try_with(|s| s.motion != e.motion()).unwrap_or(false)
+        self.state
+            .try_with(|s| s.motion != e.motion())
+            .ok()
+            .unwrap_or(false)
     }
 
     /// Applies `op` (a controller of a disposed scope does nothing).
@@ -560,7 +569,7 @@ pub fn use_motion(cx: Scope) -> MotionHandle {
 ///   [`AnimController`] methods,
 ///   [`ThemeHandle::set`], [`ThemeHandle::set_mode`] and [`MotionHandle::set`] — are
 ///   **queued** on the `Ui` that owns the scope and applied at the start of its next update
-///   (bounded: see [`UiBuilder::engine_queue_capacity`](crate::UiBuilder::engine_queue_capacity);
+///   (bounded: see [`Limits::engine_queue`](twine_core::Limits::engine_queue);
 ///   a command that does not fit is dropped and reported as a
 ///   [`CapacityFault::EngineQueue`](crate::CapacityFault::EngineQueue) fault);
 /// - calls that must return what the engine holds — [`NodeRef::with_mut`],
@@ -650,6 +659,37 @@ pub trait ScopeExt: Copy {
 
     /// Calls `f` once after `delay`, unless the scope is disposed before.
     fn timeout(self, delay: Duration, f: impl FnOnce() + 'static);
+
+    #[cfg(feature = "display-integrity")]
+    /// A signal that follows `latest` (like [`Scope::watch`]) and adds **freshness**: the
+    /// producer stores what it knows — `Validity::Valid(v)`, `Validity::Failed`, or the initial
+    /// `Validity::NoData` — and a valid value that is older than `max_age` (no newer one
+    /// arrived) becomes `Validity::Stale { value, age }`. The age is measured on the `Ui`'s
+    /// clock (the platform clock) from the update that received the value; while the value
+    /// stays stale, its age is updated every `max_age` (one engine timer, re-armed by every
+    /// new value — no polling while values keep coming). Show it with
+    /// `label(v).validity(v)` (the standard valid / stale / invalid look).
+    ///
+    /// Allocates at creation only (the signal, the handler, the timer); a new value is a
+    /// clone of `T` (no allocation for heap-free `T`).
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    ///
+    /// /// Written by the sensor task: `SPEED.set(Validity::Valid(88))` or `Validity::Failed`.
+    /// static SPEED: Latest<Validity<u16>> = Latest::new(Validity::NoData);
+    ///
+    /// fn app(cx: Scope) -> impl View {
+    ///     let speed = cx.watch_fresh(&SPEED, Duration::ms(500));
+    ///     label(speed).validity(speed)
+    /// }
+    /// # let _ = app;
+    /// ```
+    fn watch_fresh<T: Clone + 'static>(
+        self,
+        latest: &'static Latest<Validity<T>>,
+        max_age: Duration,
+    ) -> ReadSignal<Validity<T>>;
 
     /// Shows `view` in a modal on the display's top layer: a full-screen semi-transparent
     /// backdrop blocking the input below, the view centered, and a focus group of its own for
@@ -815,6 +855,60 @@ impl ScopeExt for Scope {
 
     fn show_modal<V: View>(self, view: impl FnOnce(Scope, ModalHandle) -> V + 'static) -> ModalHandle {
         show_modal(self, view)
+    }
+
+    #[cfg(feature = "display-integrity")]
+    fn watch_fresh<T: Clone + 'static>(
+        self,
+        latest: &'static Latest<Validity<T>>,
+        max_age: Duration,
+    ) -> ReadSignal<Validity<T>> {
+        let rt = self.runtime();
+        let out = self.signal(latest.get());
+        // When the current value was received (`None`: at start-up, before the timer ran).
+        let seen_at: Rc<Cell<Option<Instant>>> = Rc::default();
+        let timer: Rc<Cell<Option<TimerId>>> = Rc::default();
+        let (seen, t) = (seen_at.clone(), timer.clone());
+        self.on_latest(latest, move |v| {
+            let now = EngineAccess::with(rt, |e| {
+                if let Some(id) = t.get() {
+                    e.timer_reset(id);
+                }
+                e.now()
+            });
+            seen.set(now);
+            out.set(v);
+        });
+        let id = timer.clone();
+        with_engine_once(self, move |e| {
+            let t = e.timer_add(max_age, move |e, tid| {
+                if !out.is_alive() {
+                    e.timer_remove(tid);
+                    return;
+                }
+                let now = e.now();
+                let at = *seen_at.get().get_or_insert(now);
+                let age = now.saturating_duration_since(at).max(max_age);
+                EngineAccess::provide(rt, e, || {
+                    rt.batch(|| {
+                        out.update(|v| {
+                            if let Some(value) = v.value().cloned() {
+                                *v = Validity::Stale { value, age };
+                            }
+                        });
+                    });
+                });
+            });
+            id.set(Some(t));
+        });
+        self.on_cleanup(move || {
+            if let Some(t) = timer.take() {
+                if EngineAccess::with(rt, |e| e.timer_remove(t)).is_none() {
+                    defer(self, EngineCmd::timer_remove(t));
+                }
+            }
+        });
+        out.read_only()
     }
 
     fn use_theme(self) -> ThemeHandle {

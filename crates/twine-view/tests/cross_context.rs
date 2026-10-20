@@ -37,13 +37,14 @@ fn app(cx: Scope, p: Ports) -> impl View {
     ))
 }
 
-fn ui(p: Ports, messages_per_channel: usize) -> Ui {
+fn ui(p: Ports, messages_per_channel: u16) -> Ui {
     Ui::builder(MemoryDisplay::new(DisplayInfo::new(96, 48, ColorFormat::Rgb565)))
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }))
         .clock(MockClock::new())
-        .messages_per_channel(messages_per_channel)
-        .build(move |cx| app(cx, p))
+        .limits(twine_testing::HARNESS_LIMITS.messages_per_channel(messages_per_channel))
+        .try_build(move |cx| app(cx, p))
+        .unwrap()
 }
 
 fn update_until_idle(ui: &mut Ui) -> u32 {
@@ -137,12 +138,14 @@ fn default_messages_per_channel() {
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }))
         .clock(MockClock::new())
-        .build(move |cx| app(cx, p));
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(move |cx| app(cx, p))
+        .unwrap();
     assert_eq!(
         ui.messages_per_channel(),
-        twine_view::DEFAULT_MESSAGES_PER_CHANNEL
+        usize::from(Limits::DEFAULT.messages_per_channel)
     );
-    assert_eq!(twine_view::DEFAULT_MESSAGES_PER_CHANNEL, 16);
+    assert_eq!(Limits::DEFAULT.messages_per_channel, 16);
 }
 
 #[test]

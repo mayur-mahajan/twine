@@ -128,9 +128,11 @@ impl Engine {
             }
             None => {
                 twine_core::warn!(target: "twine::input", "create_group: more than {} groups", MAX_GROUPS);
+                self.capacity_refused(twine_core::fault::CapacityFault::FocusGroups, None);
                 return Err(EngineError::TooManyGroups);
             }
         };
+        twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::FocusGroup);
         self.groups[idx] = Some(Group::new());
         let g = GroupId(idx as u8);
         twine_core::debug!(target: "twine::input", "group {} created", g);
@@ -197,7 +199,11 @@ impl Engine {
         let Some(group) = self.group_mut(g) else {
             return;
         };
-        group.nodes.push(id);
+        twine_core::alloc_guard::push(
+            &mut group.nodes,
+            id,
+            twine_core::alloc_guard::AllocSite::FocusGroup,
+        );
         let first = group.nodes.len() == 1;
         if let Some(n) = self.tree.node_mut(id) {
             n.group = Some(g);

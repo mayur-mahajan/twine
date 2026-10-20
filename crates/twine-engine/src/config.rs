@@ -4,7 +4,7 @@ use twine_core::{Duration, Instant};
 use twine_render::RenderConfig;
 use twine_text::Font;
 
-use crate::{EngineError, FlushPolicy, MemInfo};
+use crate::{EngineError, FlushPolicy, MemInfo, StepBudget};
 
 /// Engine configuration. Construct with `EngineConfig::default()` and change fields:
 ///
@@ -109,15 +109,53 @@ pub struct EngineConfig {
     /// pattern with `embedded-alloc` / `esp-alloc` and [`HeapPeak`](crate::HeapPeak)). Default
     /// `None`.
     pub mem_info: Option<fn() -> MemInfo>,
-    /// High-resolution time source for intra-frame timing (render / flush durations). `None`:
-    /// the timing fields of [`RefreshStats`](crate::RefreshStats) stay 0.
+    /// High-resolution time source for intra-frame timing (render / flush durations, the
+    /// worst-case timings of [`Engine::timing`](crate::Engine::timing), the time limit of
+    /// [`step_budget`](Self::step_budget)). `None`: the timing fields of
+    /// [`RefreshStats`](crate::RefreshStats) and [`TimingReport`](crate::TimingReport) stay 0
+    /// and nothing is measured.
     pub hires_timer: Option<fn() -> Instant>,
-    /// Maximum number of live nodes, screens and layers included (1..=65 535, default 65 535:
-    /// the tree's capacity). Creating a node beyond it fails with
-    /// [`EngineError::TooManyNodes`] and raises
-    /// [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity).
-    // NOTE(R5.S03): moves into `Limits` with the other capacity bounds.
-    pub max_nodes: u16,
+    /// How much one [`Engine::step`](crate::Engine::step) (the view layer's `Ui::update`) may
+    /// render: a chunk limit and/or a time limit ([`StepBudget`]); the rest of a frame
+    /// continues in the next step ([`Wake::Now`](crate::Wake::Now)), and a step that uses up
+    /// its time raises [`FaultKind::FrameOverrun`](twine_core::fault::FaultKind::FrameOverrun).
+    /// `Engine::step_budgeted` / `Ui::update_budgeted` override it per call. Default
+    /// [`StepBudget::UNLIMITED`]. A time limit needs [`hires_timer`](Self::hires_timer)
+    /// (checked by [`validate`](Self::validate)).
+    ///
+    /// ```
+    /// use twine_core::{Duration, Instant};
+    /// use twine_engine::{EngineConfig, StepBudget};
+    ///
+    /// fn hires() -> Instant { Instant::from_micros(0) } // the board's microsecond timer
+    /// let cfg = EngineConfig {
+    ///     step_budget: StepBudget::time(Duration::ms(12)).with_chunks(8),
+    ///     hires_timer: Some(hires),
+    ///     ..EngineConfig::default()
+    /// };
+    /// assert!(cfg.validate().is_ok());
+    /// ```
+    #[doc(alias = "frame_budget")]
+    #[doc(alias = "max_chunks_per_update")]
+    pub step_budget: StepBudget,
+    /// Called between the chunks of a frame — after each chunk is rendered and handed to the
+    /// driver (and after each chunk of the chunk-level API): the place to feed a watchdog or
+    /// yield to a scheduler during a long frame. A plain `fn` (no allocation, no state in
+    /// the engine); it must not touch the engine. Default `None` (one branch per chunk).
+    ///
+    /// ```
+    /// use core::sync::atomic::{AtomicU32, Ordering};
+    /// use twine_engine::EngineConfig;
+    ///
+    /// static FED: AtomicU32 = AtomicU32::new(0);
+    /// fn feed_watchdog() {
+    ///     FED.fetch_add(1, Ordering::Relaxed); // e.g. `wdt.feed()` on the board
+    /// }
+    /// let cfg = EngineConfig { on_chunk: Some(feed_watchdog), ..EngineConfig::default() };
+    /// assert!(cfg.on_chunk.is_some());
+    /// ```
+    #[doc(alias = "watchdog")]
+    pub on_chunk: Option<fn()>,
     /// Press duration that triggers a long press (default 400 ms).
     pub long_press_time: Duration,
     /// Repeat period of long-press-repeat events (default 100 ms).
@@ -165,7 +203,8 @@ impl Default for EngineConfig {
             perf_log_period: Duration::secs(5),
             mem_info: None,
             hires_timer: None,
-            max_nodes: u16::MAX,
+            step_budget: StepBudget::UNLIMITED,
+            on_chunk: None,
             long_press_time: Duration::ms(400),
             long_press_repeat: Duration::ms(100),
             scroll_limit: 10,
@@ -182,8 +221,10 @@ impl Default for EngineConfig {
 
 impl EngineConfig {
     /// Checks the values: `refr_period > 0`, `max_dirty_areas` in `1..=32`,
-    /// `layer_buf_bytes ≥ 4096`, `max_nodes ≥ 1`, `max_consecutive_flush_errors ≥ 1`,
-    /// `flush_timeout > 0` and `idle_timeout > 0` (when set). [`Engine::new`](crate::Engine::new) calls it.
+    /// `layer_buf_bytes ≥ 4096`, `max_consecutive_flush_errors ≥ 1`,
+    /// `flush_timeout > 0` and `idle_timeout > 0` (when set), and that a time limit in
+    /// [`step_budget`](Self::step_budget) has a [`hires_timer`](Self::hires_timer) to measure
+    /// it with. [`Engine::new`](crate::Engine::new) calls it.
     ///
     /// # Errors
     /// [`EngineError::InvalidConfig`] naming the first value out of range. Never panics.
@@ -192,7 +233,7 @@ impl EngineConfig {
     /// use twine_engine::{EngineConfig, EngineError};
     ///
     /// assert!(EngineConfig::default().validate().is_ok());
-    /// let c = EngineConfig { max_nodes: 0, ..EngineConfig::default() };
+    /// let c = EngineConfig { max_dirty_areas: 0, ..EngineConfig::default() };
     /// assert!(matches!(c.validate(), Err(EngineError::InvalidConfig(_))));
     /// ```
     pub fn validate(&self) -> Result<(), EngineError> {
@@ -205,9 +246,6 @@ impl EngineConfig {
         if self.layer_buf_bytes < 4 * 1024 {
             return Err(EngineError::InvalidConfig("layer_buf_bytes must be >= 4096"));
         }
-        if self.max_nodes == 0 {
-            return Err(EngineError::InvalidConfig("max_nodes must be >= 1"));
-        }
         if self.max_consecutive_flush_errors == 0 {
             return Err(EngineError::InvalidConfig(
                 "max_consecutive_flush_errors must be >= 1",
@@ -218,6 +256,11 @@ impl EngineConfig {
         }
         if self.idle_timeout.is_some_and(|t| t.as_micros() == 0) {
             return Err(EngineError::InvalidConfig("idle_timeout must be > 0"));
+        }
+        if self.step_budget.max_time().is_some() && self.hires_timer.is_none() {
+            return Err(EngineError::InvalidConfig(
+                "step_budget has a time limit but there is no hires_timer to measure it",
+            ));
         }
         Ok(())
     }
@@ -241,6 +284,90 @@ impl EngineConfig {
             layer_buf_bytes: u32::try_from(self.layer_buf_bytes).unwrap_or(u32::MAX),
             ..RenderConfig::default()
         }
+    }
+}
+
+impl twine_core::audit::Audit for EngineConfig {
+    /// Every field as `engine.<field>` (durations in µs as `<field>_us`, `None` as `none`;
+    /// the `mem_info` / `hires_timer` / `on_chunk` / `default_font` hooks as whether they are
+    /// set; `step_budget` as `step_budget_chunks` and `step_budget_time_us`), in declaration
+    /// order. Part of `AppConfig::audit_report`.
+    ///
+    /// ```
+    /// use twine_core::audit::KeyValues;
+    /// use twine_engine::EngineConfig;
+    ///
+    /// let s = KeyValues(&EngineConfig::default()).to_string();
+    /// assert!(s.contains("engine.refr_period_us=16000\n"));
+    /// assert!(s.contains("engine.flush_policy=reinvalidate\n"));
+    /// assert!(s.contains("engine.idle_timeout_us=none\n"));
+    /// ```
+    fn audit(&self, out: &mut dyn twine_core::audit::AuditSink) {
+        use twine_core::audit::AuditValue as V;
+        let us = |d: Duration| V::Uint(d.as_micros());
+        let opt_us = |d: Option<Duration>| d.map_or(V::Absent, |d| V::Uint(d.as_micros()));
+        let int = |v: i32| V::Int(i64::from(v));
+        let e = "engine";
+        out.entry(e, "refr_period_us", us(self.refr_period));
+        out.entry(e, "max_dirty_areas", V::from_usize(self.max_dirty_areas));
+        out.entry(e, "cooperative_flush", V::Bool(self.cooperative_flush));
+        out.entry(e, "flush_timeout_us", opt_us(self.flush_timeout));
+        out.entry(
+            e,
+            "flush_policy",
+            V::Text(match self.flush_policy {
+                FlushPolicy::Reinvalidate => "reinvalidate",
+                FlushPolicy::Halt => "halt",
+                FlushPolicy::Ignore => "ignore",
+            }),
+        );
+        out.entry(
+            e,
+            "max_consecutive_flush_errors",
+            V::Uint(u64::from(self.max_consecutive_flush_errors)),
+        );
+        out.entry(e, "debug_refresh", V::Bool(self.debug_refresh));
+        out.entry(e, "layer_buf_bytes", V::from_usize(self.layer_buf_bytes));
+        out.entry(e, "glyph_cache_bytes", V::from_usize(self.glyph_cache_bytes));
+        out.entry(e, "image_cache_bytes", V::from_usize(self.image_cache_bytes));
+        out.entry(
+            e,
+            "circle_cache_entries",
+            V::Uint(u64::from(self.circle_cache_entries)),
+        );
+        out.entry(
+            e,
+            "gradient_cache_entries",
+            V::Uint(u64::from(self.gradient_cache_entries)),
+        );
+        out.entry(
+            e,
+            "shadow_cache_entries",
+            V::Uint(u64::from(self.shadow_cache_entries)),
+        );
+        out.entry(e, "default_font", V::Bool(self.default_font.is_some()));
+        out.entry(e, "perf_log_period_us", us(self.perf_log_period));
+        out.entry(e, "mem_info", V::Bool(self.mem_info.is_some()));
+        out.entry(e, "hires_timer", V::Bool(self.hires_timer.is_some()));
+        out.entry(
+            e,
+            "step_budget_chunks",
+            self.step_budget
+                .max_chunks()
+                .map_or(V::Absent, |n| V::Uint(u64::from(n))),
+        );
+        out.entry(e, "step_budget_time_us", opt_us(self.step_budget.max_time()));
+        out.entry(e, "on_chunk", V::Bool(self.on_chunk.is_some()));
+        out.entry(e, "long_press_time_us", us(self.long_press_time));
+        out.entry(e, "long_press_repeat_us", us(self.long_press_repeat));
+        out.entry(e, "scroll_limit", int(self.scroll_limit));
+        out.entry(e, "scroll_throw", V::Uint(u64::from(self.scroll_throw)));
+        out.entry(e, "gesture_limit", int(self.gesture_limit));
+        out.entry(e, "gesture_min_velocity", int(self.gesture_min_velocity));
+        out.entry(e, "multi_click_time_us", us(self.multi_click_time));
+        out.entry(e, "multi_click_distance", int(self.multi_click_distance));
+        out.entry(e, "read_period_us", us(self.read_period));
+        out.entry(e, "idle_timeout_us", opt_us(self.idle_timeout));
     }
 }
 
@@ -293,6 +420,29 @@ mod tests {
         assert!(c.validate().is_err());
         let c = EngineConfig {
             flush_timeout: None,
+            ..EngineConfig::default()
+        };
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn config_validate_requires_a_timer_for_a_time_budget() {
+        fn hires() -> Instant {
+            Instant::from_micros(0)
+        }
+        let c = EngineConfig {
+            step_budget: StepBudget::time(Duration::ms(5)),
+            ..EngineConfig::default()
+        };
+        assert!(matches!(c.validate(), Err(EngineError::InvalidConfig(_))));
+        let c = EngineConfig {
+            hires_timer: Some(hires),
+            ..c
+        };
+        assert!(c.validate().is_ok());
+        // A chunk limit needs no timer.
+        let c = EngineConfig {
+            step_budget: StepBudget::chunks(2),
             ..EngineConfig::default()
         };
         assert!(c.validate().is_ok());

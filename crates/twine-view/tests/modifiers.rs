@@ -446,7 +446,10 @@ fn dynamic_modifier_updates() {
         label("x").width(w).bg(c).test_id("n").into_any()
     });
     assert_eq!(t.find(by_id("n")).coords().width(), 20);
-    let (w, c) = t.root_scope().expect_context::<(Signal<i32>, Signal<Color>)>();
+    let (w, c) = t
+        .root_scope()
+        .use_context::<(Signal<i32>, Signal<Color>)>()
+        .unwrap();
     w.set(33);
     c.set(Color::BLUE);
     t.run_until_idle();
@@ -727,7 +730,7 @@ fn modifier_idempotency_all() {
             f(tick)
         });
         t.run_until_idle();
-        let tick = t.root_scope().expect_context::<Signal<u32>>();
+        let tick = t.root_scope().use_context::<Signal<u32>>().unwrap();
         let runs = rt().stats().effect_runs;
         tick.set(1);
         t.update();

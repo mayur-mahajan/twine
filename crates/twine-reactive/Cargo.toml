@@ -12,6 +12,13 @@ workspace = true
 
 [features]
 default = []
+## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
+## safety lints of library code, the refusal of excluded features, `no-panic-runtime`, and no
+## panicking context lookups (`Scope::expect_context`, `MissingContext::panic`).
+safety = ["twine-core/safety", "no-panic-runtime"]
+## Failed writes and creations, capacity exhaustion and memo cycles are skipped with a `warn!`
+## and a fault instead of panicking (crate docs § Failures).
+no-panic-runtime = []
 ## Thread-local runtime (host, simulator, tests): one runtime per thread. Without it the
 ## runtime lives in a `static`, owned by the context that took its `Runtime` token.
 std = ["twine-core/std"]

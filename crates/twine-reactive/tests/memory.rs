@@ -1,4 +1,5 @@
-//! Memory per signal (target: ≤ 96 bytes per `u32` signal incl. its `Rc`).
+//! Memory per signal (target: ≤ 96 bytes per `u32` signal incl. its `Rc`; ≤ 128 in the safety
+//! profile, whose node keys are twice as wide).
 //!
 //! `twine_testing::alloc::CountingAllocator` counts requested bytes (every `realloc` step
 //! included), which over-states the live footprint of growing vectors; this binary installs a
@@ -74,7 +75,14 @@ fn signal_memory_bytes() {
     .join()
     .unwrap();
     println!("memory per u32 signal: {per_signal} bytes");
-    assert!(per_signal <= 96, "{per_signal} bytes per signal (budget 96)");
+    // The safety profile's node keys are 8 bytes instead of 4 (48-bit arena generations,
+    // R5.S04): the node's scope key, its slot generation, the three inline subscriber keys and
+    // its entry in the scope's node list grow, ≈ 30 bytes per signal on a 64-bit host.
+    let budget = if cfg!(feature = "safety") { 128 } else { 96 };
+    assert!(
+        per_signal <= budget,
+        "{per_signal} bytes per signal (budget {budget})"
+    );
 }
 
 // Not built under Miri: reaching the arenas' steady state takes 20 000 create/dispose cycles

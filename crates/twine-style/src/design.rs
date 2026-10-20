@@ -170,6 +170,23 @@ impl ThemeMode {
         ThemeMode::HighContrast,
     ];
 
+    /// A stable `snake_case` name for logs and audit reports (`"light"`, `"dark"`, `"night"`,
+    /// `"high_contrast"`).
+    ///
+    /// ```
+    /// use twine_style::ThemeMode;
+    /// assert_eq!(ThemeMode::HighContrast.name(), "high_contrast");
+    /// ```
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            ThemeMode::Light => "light",
+            ThemeMode::Dark => "dark",
+            ThemeMode::Night => "night",
+            ThemeMode::HighContrast => "high_contrast",
+        }
+    }
+
     /// The minimum WCAG contrast ratio `pair` must reach in this mode (`None`: no requirement
     /// in this mode). The requirements, as hundredths-exact ratios:
     ///

@@ -1,0 +1,17 @@
+# Types whose arithmetic operators are total by design (they saturate, or are set operations), so
+# the safety profile's `clippy::arithmetic_side_effects` does not flag their use
+# (`docs/safety/profile.md` § 4.1). A type joins this list only when every operator it
+# implements saturates or cannot fail, as its documentation states. Names are the public
+# (re-exported) paths, which is how clippy matches them.
+#
+# Clippy does not track this file: after editing it, touch the profile crates' `lib.rs` (or
+# `cargo clean`) before `cargo xtask safety-lints`, or cached results are counted.
+arithmetic-side-effects-allowed = [
+    "twine_core::Duration",
+    "twine_core::Instant",
+    "twine_core::Angle",
+    "twine_core::Fx",
+    "twine_core::Point",
+    "twine_vector::FxPoint",
+    "twine_style::Props",
+]

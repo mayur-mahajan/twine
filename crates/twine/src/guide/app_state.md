@@ -98,6 +98,11 @@ of a [`navigator`](crate::view::navigator()), `when` branches, `for_each` rows â
 [`#[component]`](macro@crate::component) the scope is passed in, not a prop) and looks the
 store up **once**, while it is built; its closures capture the `Copy` handle.
 
+In the `safety` profile `expect_context` does not exist (no panicking lookups): look the store
+up with [`Scope::use_context`](crate::reactive::Scope::use_context) and handle the
+[`MissingContext`](crate::reactive::MissingContext) error â€” e.g. build a fallback view, or
+make the store a parameter of the components that need it.
+
 ```rust
 # use twine::prelude::*;
 #

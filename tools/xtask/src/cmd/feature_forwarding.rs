@@ -1,6 +1,6 @@
 //! Feature forwarding (run by `cargo xtask layers`).
 //!
-//! A crate that offers a cross-cutting feature (`std`, `log`, `defmt`, `async`) must forward it
+//! A crate that offers a cross-cutting feature (`std`, `log`, `defmt`, `async`, `safety`) must forward it
 //! to **every** workspace crate it depends on that has the same feature — directly, not by
 //! relying on another dependency to forward it (that indirection is how a crate ends up built
 //! without `defmt` while its siblings have it). The facade `twine` is held to a stricter rule:
@@ -16,7 +16,7 @@ use serde_json::{Map, Value};
 use super::layers::EXEMPT;
 
 /// Features every crate forwards to its dependencies.
-pub const PROPAGATED: &[&str] = &["std", "log", "defmt", "async"];
+pub const PROPAGATED: &[&str] = &["std", "log", "defmt", "async", "safety"];
 
 /// The facade crate.
 const FACADE: &str = "twine";
@@ -30,9 +30,12 @@ const MIRRORED: &[(&str, &str, &[&str])] = &[
     ("twine-hal", "platform-", &[]),
 ];
 
-/// Driver features the facade does not offer as `drivers-<name>` (logging and `async` are
-/// forwarded instead; `all` would also need every colour; `testkit` is for tests).
-const DRIVERS_NOT_OFFERED: &[&str] = &["default", "all", "async", "defmt", "log", "std", "testkit"];
+/// Driver features the facade does not offer as `drivers-<name>` (logging, `async` and the
+/// `safety` profile are forwarded instead; `all` would also need every colour; `testkit` is for
+/// tests).
+const DRIVERS_NOT_OFFERED: &[&str] = &[
+    "default", "all", "async", "defmt", "log", "std", "safety", "testkit",
+];
 
 /// Whether `list` (a feature's enable list) forwards `feature` to `dep` (`dep/feature` or
 /// `dep?/feature`).

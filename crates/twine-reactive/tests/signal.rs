@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use twine_reactive::Runtime;
+use twine_reactive::{HandleKind, ReactiveError, Runtime};
 
 /// The calling thread's reactive runtime.
 fn rt() -> Runtime {
@@ -17,7 +17,7 @@ fn signal_get_set_roundtrip() {
     s.set(42);
     assert_eq!(s.get(), 42);
     assert_eq!(s.get_untracked(), 42);
-    assert_eq!(s.try_get(), Some(42));
+    assert_eq!(s.try_get(), Ok(42));
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn signal_split_handles_share_value() {
     assert_eq!(s.get(), "bc");
     assert_eq!(r.with(String::len), 2);
     assert!(r.is_alive() && w.is_alive());
-    assert_eq!(r.try_get().as_deref(), Some("bc"));
+    assert_eq!(r.try_get().as_deref(), Ok("bc"));
     assert_eq!(s.read_only(), r);
     assert_eq!(s.write_only(), w);
 }
@@ -81,8 +81,8 @@ fn signal_try_get_after_reset_is_none() {
     let s = cx.signal(1);
     let r = s.read_only();
     rt().reset();
-    assert_eq!(s.try_get(), None);
-    assert_eq!(r.try_get(), None);
+    assert_eq!(s.try_get(), Err(ReactiveError::Disposed(HandleKind::Signal)));
+    assert_eq!(r.try_get(), Err(ReactiveError::Disposed(HandleKind::Signal)));
     assert!(!s.is_alive());
     assert!(!s.write_only().is_alive());
 }
@@ -96,6 +96,8 @@ fn signal_use_after_dispose_panics_with_location() {
     let _ = s.get();
 }
 
+// With `no-panic-runtime` the write is skipped (tests/no_panic_runtime.rs).
+#[cfg(not(feature = "no-panic-runtime"))]
 #[cfg(debug_assertions)]
 #[test]
 fn signal_use_after_dispose_message_names_creation_site() {
@@ -131,6 +133,8 @@ fn signals_of_different_types_coexist() {
     assert_eq!(rt().stats().nodes, 5);
 }
 
+// With `no-panic-runtime` the write is skipped (tests/no_panic_runtime.rs).
+#[cfg(not(feature = "no-panic-runtime"))]
 #[test]
 #[should_panic(expected = "already")]
 fn signal_set_inside_with_of_same_signal_panics() {

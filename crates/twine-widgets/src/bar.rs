@@ -703,6 +703,15 @@ impl Widget for Bar {
         &BAR_CLASS
     }
 
+    /// The range, the value and the start value (little-endian `i32`s), for display-integrity
+    /// cross-checks.
+    #[cfg(feature = "display-integrity")]
+    fn value_digest(&self, crc: &mut twine_core::crc::Crc32) {
+        for v in [self.min, self.max, self.value, self.start_value] {
+            crc.update(&v.to_le_bytes());
+        }
+    }
+
     fn init(&mut self, cx: &mut WidgetCx<'_>) {
         let id = cx.node();
         cx.engine_mut()

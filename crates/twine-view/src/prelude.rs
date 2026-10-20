@@ -7,9 +7,9 @@ pub use crate::{
     LayerBuffer, Layout, Leave, MemoryReport, ModalHandle, Model, MotionHandle, NavOutcome, Navigator,
     NavigatorView, NodeRef, Prop, ScopeExt, ScreenAnim, ScreenLoad, StyleExt, StyleScope, TextFn, TextProp,
     ThemeHandle, Ui, UiBuilder, UiError, View, ViewExt, ViewSeq, VirtualList, Wake, When, WhenElse,
-    WidgetView, button, card, column, component, container, dynamic, expect_navigator, flex, for_each, grid,
-    image, label, navigator, row, scroll_view, spacer, stack, use_motion, use_navigator, use_theme,
-    virtual_list, when, widget_view,
+    WidgetView, button, card, column, component, container, dynamic, flex, for_each, grid, image, label,
+    navigator, row, scroll_view, spacer, stack, use_motion, use_navigator, use_theme, virtual_list, when,
+    widget_view,
 };
 pub use crate::{
     Btn, MenuPageRef, MenuPageView, SpanView, TabView, TilePos, TileView, animimg, arc, bar, btn,
@@ -19,20 +19,27 @@ pub use crate::{
 };
 pub use crate::{draw_buffers, text};
 
+// Panicking lookups are not part of the `safety` profile.
+#[cfg(not(feature = "safety"))]
+pub use crate::expect_navigator;
 #[cfg(feature = "async")]
 pub use crate::{AsyncUi, AsyncUiBuilder};
 #[cfg(feature = "vector")]
 pub use crate::{VectorCanvas, vector_canvas};
 pub use twine_anim::{Anim, AnimSpec, Easing, Interpolate, Motion, Repeat};
-pub use twine_core::fault::{FaultCounts, FaultKind, Faults};
+pub use twine_core::fault::{CapacityFault, FaultCounts, FaultKind, Faults};
 pub use twine_core::{
-    Angle, AngularSpeed, Color, Duration, Fraction, Insets, Instant, Opa, Point, Rect, Rotation, Scale, Size,
+    Angle, AngularSpeed, Color, Duration, Fraction, Insets, Instant, Limits, Opa, Point, Rect, Rotation,
+    Scale, Size, Validity, ValidityStatus,
 };
 pub use twine_engine::{
     BufferMode, BufferSpec, DEAD_NODE, DisplayCmd, DisplayControlFault, DisplayHealth, DisplayState, DrawCx,
     Engine, EngineConfig, Event, EventCode, EventCx, EventResult, FaultHook, FaultRecord, FlushPolicy,
-    GroupId, IntoTheme, MeasureCx, NodeId, Obj, ObjFlags, StepBudget, Widget, WidgetClass, WidgetCx,
+    GroupId, IntoTheme, MeasureCx, NodeId, Obj, ObjFlags, StepBudget, TimingReport, Widget, WidgetClass,
+    WidgetCx,
 };
+#[cfg(feature = "display-integrity")]
+pub use twine_engine::{FrameChunk, FrameObserver, FrameReport};
 pub use twine_hal::Key;
 pub use twine_image::ImageSource;
 pub use twine_reactive::{

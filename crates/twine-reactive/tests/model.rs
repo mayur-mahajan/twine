@@ -9,6 +9,8 @@
 //!   short-circuit) — except that a memo read *inside* a batch may already have propagated an
 //!   intermediate change, which allows one extra run; its last recorded values equal the model,
 //! - disposed effects never run again.
+//!
+//! req: SAF-021
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;

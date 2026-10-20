@@ -46,7 +46,7 @@ fn fifty(cx: Scope) -> impl View {
 fn signal_update_runs_one_binding() {
     let mut t = TestUi::new(320, 240).mount(fifty);
     t.run_until_idle();
-    let signals = t.root_scope().expect_context::<Vec<Signal<i32>>>();
+    let signals = t.root_scope().use_context::<Vec<Signal<i32>>>().unwrap();
     signals[17].set(1000); // outside the Ui: deferred to the next update
     let runs = rt().stats().effect_runs;
     t.run_until_idle();
@@ -58,7 +58,7 @@ fn signal_update_runs_one_binding() {
 fn signal_update_invalidates_only_its_rect() {
     let mut t = TestUi::new(320, 240).mount(fifty);
     t.run_until_idle();
-    let signals = t.root_scope().expect_context::<Vec<Signal<i32>>>();
+    let signals = t.root_scope().use_context::<Vec<Signal<i32>>>().unwrap();
     let id = t.find(by_id("l23")).id();
     let area = {
         let e = t.engine();
@@ -130,6 +130,16 @@ fn no_alloc_steady_state_frames() {
         }
     });
     assert_eq!(stats.allocs, 0, "{stats:?}");
+    // R5.S03: the same steady state sealed — the counting allocator and Twine's own
+    // allocation guard agree, and no `AllocAfterSeal` fault is raised.
+    t.seal();
+    twine_testing::alloc::assert_no_alloc_after_seal(|| {
+        for _ in 0..100 {
+            t.advance(period);
+        }
+    });
+    twine_core::alloc_guard::unseal();
+    assert_eq!(t.engine().fault_counts().get(FaultKind::AllocAfterSeal), 0);
     let _ = EngineConfig::default();
 }
 
@@ -141,7 +151,7 @@ fn unchanged_value_no_work() {
         label(text!("{}", n.get()))
     });
     t.run_until_idle();
-    let n = t.root_scope().expect_context::<Signal<i32>>();
+    let n = t.root_scope().use_context::<Signal<i32>>().unwrap();
     let runs = rt().stats().effect_runs;
     n.set_if_changed(5);
     t.update();
@@ -180,7 +190,14 @@ fn counter_heap_usage() {
     };
     let counter_only = app - empty;
     println!("counter heap usage (app only): {counter_only} bytes");
-    assert!(counter_only <= 8 * 1024, "{counter_only} bytes");
+    // The safety profile's wider ids and preallocated limits (each label reserves its text
+    // buffer to `max_text_len` when it first owns a text) cost more.
+    let budget = if twine_core::SAFETY_PROFILE {
+        16 * 1024
+    } else {
+        8 * 1024
+    };
+    assert!(counter_only <= budget, "{counter_only} bytes");
 }
 
 /// R1.S03: the text bindings of the widget views (dropdown options with dynamic items, a
@@ -208,7 +225,8 @@ fn no_alloc_steady_state_widget_text_bindings() {
     t.run_until_idle();
     let (n, names) = t
         .root_scope()
-        .expect_context::<(Signal<u32>, Signal<Vec<String>>)>();
+        .use_context::<(Signal<u32>, Signal<Vec<String>>)>()
+        .unwrap();
     let step = |t: &mut TestUi, i: u32| {
         n.set(i);
         // Same lengths: the reused buffers never grow; the list is replaced in place.
@@ -242,7 +260,7 @@ fn buttonmatrix_text_change_rewrites_one_button_in_place() {
         .test_id("m")
     });
     t.run_until_idle();
-    let n = t.root_scope().expect_context::<Signal<u32>>();
+    let n = t.root_scope().use_context::<Signal<u32>>().unwrap();
     let m = t.find(by_id("m")).id();
     let areas = |t: &TestUi| {
         let e = t.engine();

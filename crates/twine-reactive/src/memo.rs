@@ -3,11 +3,12 @@
 use core::fmt;
 use core::hash::{Hash, Hasher};
 
+use crate::error::{HandleKind, ReactiveError};
 use crate::global::with_runtime;
-use crate::handles::{NodeHandle, type_mismatch, with_value};
-use crate::signal::{handle_impls, owner_scope};
+use crate::handles::{NodeHandle, with_value};
+use crate::signal::{handle_impls, map_in_owner};
 
-const WHAT: &str = "memo";
+const KIND: HandleKind = HandleKind::Memo;
 
 /// A derived value computed from signals and other memos (created with
 /// [`Scope::memo`](crate::Scope::memo) or `map`).
@@ -34,6 +35,12 @@ const WHAT: &str = "memo";
 /// assert_eq!(parity.get(), 1);
 /// assert_eq!(runs.get(), 1); // cached
 /// ```
+///
+/// **Failures** as for [`Signal`](crate::Signal) (see its § Failures): reading a memo whose
+/// scope was disposed, or a memo that reads itself (a dependency cycle), fails. The `try_*`
+/// forms return a [`ReactiveError`]; the others panic — except that with the
+/// `no-panic-runtime` feature a cyclic read returns the memo's previous value, with a `warn!`
+/// and a [`MemoCycle`](crate::FaultKind::MemoCycle) fault, when it has one.
 pub struct Memo<T> {
     h: NodeHandle<T>,
 }
@@ -45,19 +52,48 @@ impl<T: 'static> Memo<T> {
         Memo { h }
     }
 
-    /// Brings the memo up to date, then borrows its value.
+    /// Brings the memo up to date, then calls `f` with its value.
+    ///
+    /// `stale_on_cycle` (the panicking forms under `no-panic-runtime`): when the memo is part
+    /// of a cycle, use its previous value if it has one, reporting the cycle as a fault.
+    #[inline]
+    #[track_caller]
+    fn read_with<R>(
+        self,
+        track: bool,
+        stale_on_cycle: bool,
+        f: impl FnOnce(&T) -> R,
+    ) -> Result<R, ReactiveError> {
+        let (up, rc) = with_runtime(|rt| {
+            let up = rt.update_if_necessary(self.h.key, &mut ());
+            (up, rt.read_node(self.h.key, track))
+        });
+        let rc = rc.ok_or(ReactiveError::Disposed(KIND))?;
+        let stale = match up {
+            Ok(()) => false,
+            Err(_) if stale_on_cycle => true,
+            Err(e) => return Err(e),
+        };
+        // `None`: the memo never finished a computation (a cycle on its first one).
+        match with_value::<Option<T>, Option<R>>(&rc, KIND, |v| v.as_ref().map(f))? {
+            Some(r) => {
+                if stale {
+                    self.h.skip(ReactiveError::Cycle);
+                }
+                Ok(r)
+            }
+            None => Err(ReactiveError::Cycle),
+        }
+    }
+
+    /// The panicking form of [`read_with`](Self::read_with) (failure out of line).
+    #[inline]
     #[track_caller]
     fn read<R>(self, track: bool, f: impl FnOnce(&T) -> R) -> R {
-        let Some(rc) = with_runtime(|rt| {
-            rt.update_if_necessary(self.h.key, &mut ());
-            rt.read_node(self.h.key, track)
-        }) else {
-            self.h.disposed(WHAT)
-        };
-        with_value::<Option<T>, R>(&rc, |v| match v {
-            Some(v) => f(v),
-            None => type_mismatch(),
-        })
+        match self.read_with(track, cfg!(feature = "no-panic-runtime"), f) {
+            Ok(r) => r,
+            Err(e) => self.h.fail(e),
+        }
     }
 
     /// The current value (tracked).
@@ -70,7 +106,12 @@ impl<T: 'static> Memo<T> {
     ///
     /// # Panics
     ///
-    /// If the memo's scope was disposed, or on a dependency cycle (the memo reads itself).
+    /// If the memo's scope was disposed, or on a dependency cycle (the memo reads itself) —
+    /// with `no-panic-runtime`, a cycle returns the previous value (and raises
+    /// [`MemoCycle`](crate::FaultKind::MemoCycle)) when there is one. Also when the value is
+    /// mutably borrowed (cannot happen through this API: memo values are never borrowed
+    /// mutably while user code runs). [`try_get`](Memo::try_get) returns the error instead.
+    #[inline]
     #[track_caller]
     pub fn get(&self) -> T
     where
@@ -90,6 +131,7 @@ impl<T: 'static> Memo<T> {
     /// # Panics
     ///
     /// Like [`get`](Memo::get).
+    #[inline]
     #[track_caller]
     pub fn get_untracked(&self) -> T
     where
@@ -109,6 +151,7 @@ impl<T: 'static> Memo<T> {
     /// # Panics
     ///
     /// Like [`get`](Memo::get).
+    #[inline]
     #[track_caller]
     pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         self.read(true, f)
@@ -125,29 +168,52 @@ impl<T: 'static> Memo<T> {
     /// # Panics
     ///
     /// Like [`get`](Memo::get).
+    #[inline]
     #[track_caller]
     pub fn with_untracked<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         self.read(false, f)
     }
 
-    /// The current value (tracked), or `None` if the memo was disposed.
+    /// The current value (tracked), or the reason there is none: the memo's scope was disposed
+    /// ([`ReactiveError::Disposed`]) or the memo is part of a dependency cycle
+    /// ([`ReactiveError::Cycle`]: it reads itself, directly or through other memos). Never
+    /// panics (unless the memo's computation or `T::clone` does); raises no fault.
     ///
     /// ```
+    /// use twine_reactive::{HandleKind, ReactiveError};
     /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
     /// let m = cx.memo(|| 7);
-    /// assert_eq!(m.try_get(), Some(7));
+    /// assert_eq!(m.try_get(), Ok(7));
     /// cx.dispose();
-    /// assert_eq!(m.try_get(), None);
+    /// assert_eq!(m.try_get(), Err(ReactiveError::Disposed(HandleKind::Memo)));
     /// ```
-    pub fn try_get(&self) -> Option<T>
+    ///
+    /// # Errors
+    ///
+    /// [`ReactiveError::Disposed`] or [`ReactiveError::Cycle`].
+    #[inline]
+    pub fn try_get(&self) -> Result<T, ReactiveError>
     where
         T: Clone,
     {
-        if self.is_alive() {
-            Some(self.read(true, T::clone))
-        } else {
-            None
-        }
+        self.read_with(true, false, T::clone)
+    }
+
+    /// Calls `f` with a reference to the current value (tracked), or returns the reason it
+    /// cannot (as [`try_get`](Memo::try_get); `f` is then not called). Raises no fault.
+    ///
+    /// ```
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
+    /// let m = cx.memo(|| vec![1, 2, 3]);
+    /// assert_eq!(m.try_with(Vec::len), Ok(3));
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`ReactiveError::Disposed`] or [`ReactiveError::Cycle`].
+    #[inline]
+    pub fn try_with<R>(&self, f: impl FnOnce(&T) -> R) -> Result<R, ReactiveError> {
+        self.read_with(true, false, f)
     }
 
     /// Whether the memo's scope is still alive.
@@ -172,10 +238,11 @@ impl<T: 'static> Memo<T> {
     ///
     /// # Panics
     ///
-    /// If the memo's scope was disposed.
+    /// If the memo's scope was disposed, like [`Signal::map`](crate::Signal::map) (with
+    /// `no-panic-runtime`: a memo that is never alive is returned, with a fault).
     #[track_caller]
     pub fn map<U: PartialEq + 'static>(&self, f: impl Fn(&T) -> U + 'static) -> Memo<U> {
         let m = *self;
-        owner_scope(self.h, WHAT).memo(move || m.with(|v| f(v)))
+        map_in_owner(self.h, KIND, move || m.with(|v| f(v)))
     }
 }

@@ -186,6 +186,10 @@ pub struct CircleCache {
     arena: Vec<u8>,
     tick: u32,
     stats: CacheStats,
+    /// Fresh mode ([`RenderCaches::set_fresh`](crate::RenderCaches::set_fresh)): the cache is
+    /// neither read nor filled; every quarter is computed per row.
+    #[cfg(feature = "display-integrity")]
+    fresh: bool,
 }
 
 impl CircleCache {
@@ -198,7 +202,15 @@ impl CircleCache {
             arena: Vec::with_capacity(n * ARENA_BYTES_PER_ENTRY),
             tick: 0,
             stats: CacheStats::default(),
+            #[cfg(feature = "display-integrity")]
+            fresh: false,
         }
+    }
+
+    /// Fresh mode: [`ensure`](Self::ensure) and [`quarter`](Self::quarter) bypass the cache.
+    #[cfg(feature = "display-integrity")]
+    pub(crate) fn set_fresh(&mut self, on: bool) {
+        self.fresh = on;
     }
 
     /// Reserved bytes.
@@ -246,6 +258,10 @@ impl CircleCache {
     /// Makes sure radius `r` is cached if possible (counts a hit or a miss).
     pub(crate) fn ensure(&mut self, r: i32) {
         if r <= 0 {
+            return;
+        }
+        #[cfg(feature = "display-integrity")]
+        if self.fresh {
             return;
         }
         self.tick = self.tick.wrapping_add(1);
@@ -298,6 +314,10 @@ impl CircleCache {
     pub(crate) fn quarter(&self, r: i32) -> Quarter<'_> {
         if r <= 0 {
             return Quarter::Square;
+        }
+        #[cfg(feature = "display-integrity")]
+        if self.fresh {
+            return Quarter::Computed { r };
         }
         match self.find(r) {
             Some(i) => {

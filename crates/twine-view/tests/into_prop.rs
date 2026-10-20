@@ -102,7 +102,8 @@ fn user_type_converts_through_from_only() {
         StyleValue::Color(Color::BLUE)
     );
     t.root_scope()
-        .expect_context::<Signal<Brand>>()
+        .use_context::<Signal<Brand>>()
+        .unwrap()
         .set(Brand::Danger);
     t.run_until_idle();
     assert_eq!(
@@ -214,7 +215,7 @@ fn count_setters_clamp_and_warn_out_of_range_values() {
     // In-range values (also dynamic ones) warn nothing.
     assert!(!logs.iter().any(|l| l.message.contains("was 2")), "{logs:?}");
     let ((), logs) = capture_logs(|| {
-        t.root_scope().expect_context::<Signal<i32>>().set(-5);
+        t.root_scope().use_context::<Signal<i32>>().unwrap().set(-5);
         t.run_until_idle();
     });
     assert_eq!(
@@ -246,7 +247,7 @@ fn signals_of_convertible_types() {
     t.run_until_idle();
     assert_eq!(prop(&t, "l", PropId::Width), StyleValue::Length(Length::Px(40)));
     assert_eq!(prop(&t, "l", PropId::Height), StyleValue::Length(Length::Px(20)));
-    let (w, v) = t.root_scope().expect_context::<(Signal<i32>, Signal<u8>)>();
+    let (w, v) = t.root_scope().use_context::<(Signal<i32>, Signal<u8>)>().unwrap();
     w.set(60);
     v.set(9);
     t.run_until_idle();
@@ -293,7 +294,7 @@ fn grid_spans_from_integers_ranges_and_signals() {
     assert_eq!(cell(&t, "signal"), (StyleValue::Int(1), StyleValue::Int(1)));
     assert_eq!(cell(&t, "closure"), (StyleValue::Int(0), StyleValue::Int(1)));
     assert_eq!(prop(&t, "signal", PropId::GridCellRowSpan), StyleValue::Int(2));
-    t.root_scope().expect_context::<Signal<i32>>().set(2);
+    t.root_scope().use_context::<Signal<i32>>().unwrap().set(2);
     t.run_until_idle();
     assert_eq!(cell(&t, "signal"), (StyleValue::Int(2), StyleValue::Int(1)));
     assert_eq!(cell(&t, "closure"), (StyleValue::Int(0), StyleValue::Int(2)));
@@ -334,7 +335,7 @@ fn option_lists_from_any_iterable_and_reactive_lists() {
     assert_eq!(ro(&t, "iter"), "2 h\n4 h\n6 h");
     assert_eq!(ro(&t, "signal"), "x\ny");
     assert_eq!(ro(&t, "closure"), "0\n1\n2");
-    t.root_scope().expect_context::<Signal<usize>>().set(2);
+    t.root_scope().use_context::<Signal<usize>>().unwrap().set(2);
     t.run_until_idle();
     assert_eq!(ro(&t, "closure"), "0\n1");
 }
@@ -369,7 +370,8 @@ fn texts_from_static_closures_signals_and_references() {
     assert_eq!(t.find(by_id("signal")).text(), "Hi");
     let (on, word) = t
         .root_scope()
-        .expect_context::<(Signal<bool>, Signal<&'static str>)>();
+        .use_context::<(Signal<bool>, Signal<&'static str>)>()
+        .unwrap();
     on.set(false);
     word.set("Bye");
     t.run_until_idle();

@@ -200,7 +200,8 @@ impl DrawBufferMem {
     /// `align` of 0 is treated as 1 (always aligned).
     #[must_use]
     pub fn is_aligned(&self, align: usize) -> bool {
-        self.addr() % align.max(1) == 0
+        // `align == 0` has no remainder: treated as 1.
+        self.addr().checked_rem(align).is_none_or(|r| r == 0)
     }
 
     /// The start address, used to identify buffers in logs and tests (e.g. which of the two

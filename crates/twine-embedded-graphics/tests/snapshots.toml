@@ -1,0 +1,8 @@
+# Golden-image manifest (R5.S08): one entry per snapshot test image,
+#   <name> = "<width>x<height> xxh64:<hash>"
+# the XXH64 (seed 0) of the image's 8-bit RGB pixels, row-major (`xxhsum -H64` of the raw RGB
+# bytes). Written by `cargo xtask snapshots --update | --propose | --accept`; do not edit by hand.
+# Reference PNGs are not committed: `tests/snapshots/*.png` is a local cache used for diffs.
+
+[approved]
+eg_circle = "64x48 xxh64:8ce7af61387b194b"

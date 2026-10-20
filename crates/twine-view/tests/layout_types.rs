@@ -135,7 +135,7 @@ fn a_swipe_reports_the_side_it_moved_towards() {
     t.run_until_idle();
     t.drag(Point::new(180, 75), Point::new(20, 75), Duration::ms(200));
     t.run_until_idle();
-    let got = t.root_scope().expect_context::<Signal<Option<Side>>>();
+    let got = t.root_scope().use_context::<Signal<Option<Side>>>().unwrap();
     assert_eq!(got.get(), Some(Side::Left));
     // The engine event carries the same `Side`.
     let n = node(&t, "g");
@@ -252,7 +252,7 @@ fn reactive_grid_tracks_relayout_only_on_change() {
         Some(&[GridTrack::Px(50), GridTrack::Px(60)][..])
     );
 
-    let Tracks(cols) = t.root_scope().expect_context::<Tracks>();
+    let Tracks(cols) = t.root_scope().use_context::<Tracks>().unwrap();
     cols.set(grid_tracks![px(70), content]);
     t.run_until_idle();
     assert_eq!(x(&t), 70);
@@ -277,7 +277,7 @@ fn deleting_a_grid_drops_its_tracks() {
     t.run_until_idle();
     let g = node(&t, "g");
     assert!(t.engine().grid_row_tracks(g).is_some());
-    t.root_scope().expect_context::<Signal<bool>>().set(false);
+    t.root_scope().use_context::<Signal<bool>>().unwrap().set(false);
     t.run_until_idle();
     assert!(!t.engine().tree().contains(g));
     assert_eq!(t.engine().grid_row_tracks(g), None);

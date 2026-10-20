@@ -13,11 +13,13 @@ use alloc::vec::Vec;
 use core::any::{Any, TypeId};
 use core::cell::RefCell;
 
-use twine_core::fault::{FaultCounts, FaultKind};
+use twine_core::alloc_guard::{self, AllocSite};
+use twine_core::fault::{CapacityFault, FaultCounts, FaultKind};
 use twine_core::log::{debug, error, trace};
-use twine_core::{Arena, Id, SmallVec};
+use twine_core::{Arena, Id, Limits, SmallVec};
 
 use crate::channel::ChannelReg;
+use crate::error::{HandleKind, ReactiveError};
 use crate::key_list::KeyList;
 
 /// Key of a reactive node (signal, memo or effect).
@@ -43,8 +45,9 @@ pub(crate) enum NodeState {
     Dirty,
 }
 
-/// Memo body: computes, compares with and stores into the value cell; returns `changed`.
-pub(crate) type MemoFn = Rc<dyn Fn(&RefCell<dyn Any>) -> bool>;
+/// Memo body: computes, compares with and stores into the value cell; returns `changed`, or
+/// `None` when the cell was borrowed (the new value is then dropped).
+pub(crate) type MemoFn = Rc<dyn Fn(&RefCell<dyn Any>) -> Option<bool>>;
 /// Effect body, called with the flush context.
 pub(crate) type EffectFn = Rc<RefCell<dyn FnMut(&mut dyn Any)>>;
 /// A type-erased value cell (`T` for signals, `Option<T>` for memos).
@@ -122,6 +125,14 @@ pub(crate) struct Counters {
     pub(crate) memo_runs: u64,
 }
 
+/// The runtime's bounds that can be reached ([`CapacityFault`] codes of its `Capacity`
+/// faults), in the order of [`FaultState::capacity`].
+pub(crate) const RUNTIME_BOUNDS: [CapacityFault; 3] = [
+    CapacityFault::ReactiveNodes,
+    CapacityFault::ReactiveScopes,
+    CapacityFault::PendingEffects,
+];
+
 /// Fault bookkeeping, touched only when a fault is recorded or read: kept out of [`Inner`]
 /// (in its own cell) so the hot runtime state stays compact.
 pub(crate) struct FaultState {
@@ -129,6 +140,9 @@ pub(crate) struct FaultState {
     pub(crate) total: FaultCounts,
     /// Faults since the last [`crate::Runtime::take_faults`].
     pub(crate) new: FaultCounts,
+    /// `Capacity` occurrences per bound ([`RUNTIME_BOUNDS`]) since the last
+    /// [`crate::Runtime::take_capacity_faults`].
+    pub(crate) capacity: [u32; 3],
     pub(crate) hook: Option<FaultHook>,
 }
 
@@ -137,7 +151,26 @@ impl FaultState {
         FaultState {
             total: FaultCounts::new(),
             new: FaultCounts::new(),
+            capacity: [0; 3],
             hook: None,
+        }
+    }
+}
+
+/// The runtime's share of [`Limits`] (as `usize`, compared at the insertion points).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RuntimeLimits {
+    pub(crate) nodes: usize,
+    pub(crate) scopes: usize,
+    pub(crate) pending: usize,
+}
+
+impl RuntimeLimits {
+    const fn of(l: &Limits) -> Self {
+        RuntimeLimits {
+            nodes: l.max_reactive_nodes as usize,
+            scopes: l.max_scopes as usize,
+            pending: l.max_pending_effects as usize,
         }
     }
 }
@@ -180,6 +213,11 @@ pub(crate) struct Inner {
     /// The waker of each root scope that has one ([`Scope::set_ui_waker`](crate::Scope::set_ui_waker));
     /// one entry per `Ui`, so a linear search.
     pub(crate) root_wakers: Vec<(ScopeKey, &'static crate::UiWaker)>,
+    /// The bounds ([`crate::Runtime::set_limits`]).
+    pub(crate) limits: RuntimeLimits,
+    /// Effects not queued since the last report because `pending`/`deferred` were full
+    /// (reported as `Capacity` faults once the borrow is released).
+    pub(crate) pending_overflow: u32,
 }
 
 impl Inner {
@@ -207,6 +245,57 @@ impl Inner {
             ambient: None,
             active_root: None,
             root_wakers: Vec::new(),
+            limits: RuntimeLimits::of(&Limits::DEFAULT),
+            pending_overflow: 0,
+        }
+    }
+
+    /// Applies `limits` (validated by the caller): the bounds, and with
+    /// [`Limits::preallocate`] the storage of the arenas, both effect queues and the
+    /// propagation stack.
+    pub(crate) fn set_limits(&mut self, limits: &Limits) {
+        self.limits = RuntimeLimits::of(limits);
+        if limits.preallocate {
+            self.nodes.reserve(limits.max_reactive_nodes);
+            self.scopes.reserve(limits.max_scopes);
+            let pending = usize::from(limits.max_pending_effects);
+            self.pending
+                .reserve_exact(pending.saturating_sub(self.pending.len()));
+            self.deferred
+                .reserve_exact(pending.saturating_sub(self.deferred.len()));
+            let nodes = usize::from(limits.max_reactive_nodes);
+            self.stack.reserve_exact(nodes.saturating_sub(self.stack.len()));
+        }
+    }
+
+    /// Queues effect `k` (flagged `QUEUED`) unless `pending` holds
+    /// [`max_pending_effects`](Limits::max_pending_effects) already: then the effect is not
+    /// queued and the overflow is counted for a `Capacity` fault. Returns whether it was
+    /// queued.
+    #[inline]
+    fn queue_effect(
+        pending: &mut VecDeque<NodeKey>,
+        limits: RuntimeLimits,
+        overflow: &mut u32,
+        node: &mut ReactiveNode,
+        k: NodeKey,
+    ) -> bool {
+        if pending.len() >= limits.pending {
+            *overflow = overflow.saturating_add(1);
+            return false;
+        }
+        node.flags |= QUEUED;
+        alloc_guard::push_back(pending, k, AllocSite::EffectQueue);
+        true
+    }
+
+    /// The overflow counted since the last call, clearing it (`0` almost always: one load).
+    #[inline]
+    pub(crate) fn take_overflow(&mut self) -> u32 {
+        if self.pending_overflow == 0 {
+            0
+        } else {
+            core::mem::take(&mut self.pending_overflow)
         }
     }
 
@@ -220,6 +309,15 @@ impl Inner {
                 .extend(core::alloc::Layout::for_value(v))
                 .map_or(0, |(l, _)| l.pad_to_align().size())
         }
+        /// Bytes reserved by a vector's buffer.
+        fn vec_bytes<T>(v: &Vec<T>) -> usize {
+            core::mem::size_of::<T>().saturating_mul(v.capacity())
+        }
+        /// Sum of byte counts. The parts are sizes of live allocations in one address space, so
+        /// the sum cannot overflow; saturating keeps the report total without a proof per term.
+        fn add_bytes(parts: &[usize]) -> usize {
+            parts.iter().fold(0, |sum, &b| sum.saturating_add(b))
+        }
         let values = self
             .nodes
             .iter()
@@ -230,34 +328,45 @@ impl Inner {
                         Kind::Memo(f) => rc_bytes(&**f),
                         Kind::Effect(f) => rc_bytes(&**f),
                     };
-                    core::mem::size_of::<Computation>() + c.sources.heap_bytes() + f
+                    add_bytes(&[core::mem::size_of::<Computation>(), c.sources.heap_bytes(), f])
                 });
-                value + comp + n.subscribers.heap_bytes()
+                add_bytes(&[value, comp, n.subscribers.heap_bytes()])
             })
-            .sum();
+            .fold(0, usize::saturating_add);
         let scope_data = self
             .scopes
             .iter()
             .map(|(_, d)| {
-                d.children.capacity() * core::mem::size_of::<ScopeKey>()
-                    + d.nodes.capacity() * core::mem::size_of::<NodeKey>()
-                    + d.cleanups.capacity() * core::mem::size_of::<Box<dyn FnOnce()>>()
-                    + d.cleanups
+                add_bytes(&[
+                    vec_bytes(&d.children),
+                    vec_bytes(&d.nodes),
+                    vec_bytes(&d.cleanups),
+                    d.cleanups
                         .iter()
                         .map(|c| core::mem::size_of_val(&**c))
-                        .sum::<usize>()
-                    + d.contexts.capacity() * core::mem::size_of::<(TypeId, Rc<dyn Any>)>()
-                    + d.contexts.iter().map(|(_, v)| rc_bytes(&**v)).sum::<usize>()
+                        .fold(0, usize::saturating_add),
+                    vec_bytes(&d.contexts),
+                    d.contexts
+                        .iter()
+                        .map(|(_, v)| rc_bytes(&**v))
+                        .fold(0, usize::saturating_add),
+                ])
             })
-            .sum();
-        let queues = (self.pending.capacity() + self.deferred.capacity()) * core::mem::size_of::<NodeKey>()
-            + self.channels.capacity() * core::mem::size_of::<ChannelReg>()
-            + self.stack.capacity() * core::mem::size_of::<(NodeKey, NodeState)>()
-            + self.root_wakers.capacity() * core::mem::size_of::<(ScopeKey, &'static crate::UiWaker)>();
+            .fold(0, usize::saturating_add);
+        let queues = add_bytes(&[
+            core::mem::size_of::<NodeKey>().saturating_mul(self.pending.capacity()),
+            core::mem::size_of::<NodeKey>().saturating_mul(self.deferred.capacity()),
+            vec_bytes(&self.channels),
+            vec_bytes(&self.stack),
+            vec_bytes(&self.root_wakers),
+        ]);
         crate::RuntimeMemory {
             nodes: self.nodes.len(),
             scopes: self.scopes.len(),
-            arenas: self.nodes.bytes_reserved() + self.scopes.bytes_reserved(),
+            arenas: self
+                .nodes
+                .bytes_reserved()
+                .saturating_add(self.scopes.bytes_reserved()),
             values,
             scope_data,
             queues,
@@ -271,18 +380,16 @@ impl Inner {
             nodes,
             stack,
             pending,
+            limits,
+            pending_overflow,
             ..
         } = self;
         stack.clear();
         if let Some(n) = nodes.get(key) {
             // Reverse so that subscribers are visited (and effects queued) in subscription order.
-            stack.extend(
-                n.subscribers
-                    .as_slice()
-                    .iter()
-                    .rev()
-                    .map(|&s| (s, NodeState::Dirty)),
-            );
+            let subs = n.subscribers.as_slice();
+            alloc_guard::reserve(stack, subs.len(), AllocSite::ReactiveScratch);
+            stack.extend(subs.iter().rev().map(|&s| (s, NodeState::Dirty)));
         }
         while let Some((k, st)) = stack.pop() {
             let Some(node) = nodes.get_mut(k) else {
@@ -295,17 +402,12 @@ impl Inner {
             node.state = st;
             if node.is_effect() {
                 if node.flags & (QUEUED | DEFERRED) == 0 {
-                    node.flags |= QUEUED;
-                    pending.push_back(k);
+                    Self::queue_effect(pending, *limits, pending_overflow, node, k);
                 }
             } else if was_clean {
-                stack.extend(
-                    node.subscribers
-                        .as_slice()
-                        .iter()
-                        .rev()
-                        .map(|&s| (s, NodeState::Check)),
-                );
+                let subs = node.subscribers.as_slice();
+                alloc_guard::reserve(stack, subs.len(), AllocSite::ReactiveScratch);
+                stack.extend(subs.iter().rev().map(|&s| (s, NodeState::Check)));
             }
         }
     }
@@ -439,13 +541,6 @@ impl Drop for FlushGuard<'_> {
     }
 }
 
-/// Panics for an arena that is full (65 535 live nodes or scopes).
-#[cold]
-fn capacity_panic(what: &str) -> ! {
-    error!(target: "twine::reactive", "too many reactive {} (limit 65535)", what);
-    panic!("twine-reactive: too many reactive {what} (limit 65535)")
-}
-
 impl RuntimeState {
     /// Records `n` occurrences of `kind` and calls the fault hook (without any borrow held:
     /// the hook is foreign code, rule R1). Cold and out of line: faults are rare, and keeping
@@ -462,6 +557,35 @@ impl RuntimeState {
         if let Some(hook) = hook {
             hook(kind, n);
         }
+    }
+
+    /// Records `n` `Capacity` faults of the runtime's bound `bound` (one of
+    /// [`RUNTIME_BOUNDS`]): counted per bound for [`crate::Runtime::take_capacity_faults`],
+    /// then as [`record_fault`](Self::record_fault). Cold.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn record_capacity(&self, bound: CapacityFault, n: u32) {
+        {
+            let mut f = self.faults.borrow_mut();
+            if let Some(i) = RUNTIME_BOUNDS.iter().position(|b| *b == bound) {
+                if let Some(c) = f.capacity.get_mut(i) {
+                    *c = c.saturating_add(n);
+                }
+            }
+        }
+        self.record_fault(FaultKind::Capacity, n);
+    }
+
+    /// Reports `n` effects that found their queue full (no borrow held: the hook runs).
+    #[cold]
+    #[inline(never)]
+    fn report_overflow(&self, n: u32) {
+        error!(
+            target: "twine::reactive",
+            "{} effect(s) not queued: Limits::max_pending_effects reached",
+            n
+        );
+        self.record_capacity(CapacityFault::PendingEffects, n);
     }
 
     /// An empty runtime (usable in `static` and `const` thread-local initializers).
@@ -483,14 +607,18 @@ impl RuntimeState {
 
     // ----- scopes -------------------------------------------------------------------------
 
-    /// Creates a scope, optionally as a child of `parent`. Returns `None` if the parent is dead.
-    pub(crate) fn create_scope(&self, parent: Option<ScopeKey>) -> Option<ScopeKey> {
+    /// Creates a scope, optionally as a child of `parent`: `Disposed(Scope)` if the parent is
+    /// dead, `Capacity(Scope)` if [`Limits::max_scopes`] scopes are live.
+    pub(crate) fn create_scope(&self, parent: Option<ScopeKey>) -> Result<ScopeKey, ReactiveError> {
         self.log_created();
         let mut inner = self.inner.borrow_mut();
         if let Some(p) = parent {
             if !inner.scopes.contains(p) {
-                return None;
+                return Err(ReactiveError::Disposed(HandleKind::Scope));
             }
+        }
+        if inner.scopes.len() >= inner.limits.scopes {
+            return Err(ReactiveError::Capacity(HandleKind::Scope));
         }
         let root = parent.and_then(|p| inner.root_of(p));
         let key = inner
@@ -500,11 +628,11 @@ impl RuntimeState {
                 root,
                 ..ScopeData::default()
             })
-            .unwrap_or_else(|_| capacity_panic("scopes"));
+            .map_err(|_| ReactiveError::Capacity(HandleKind::Scope))?;
         if let Some(p) = parent.and_then(|p| inner.scopes.get_mut(p)) {
-            p.children.push(key);
+            alloc_guard::push(&mut p.children, key, AllocSite::ReactiveScope);
         }
-        Some(key)
+        Ok(key)
     }
 
     /// Whether scope `s` is alive.
@@ -512,71 +640,109 @@ impl RuntimeState {
         self.inner.borrow().scopes.contains(s)
     }
 
-    /// Disposes scope `s`. The caller wraps this in a batch.
+    /// Disposes scope `s` and its descendants. The caller wraps this in a batch.
+    ///
+    /// Order: a scope's children first (most recent first, each with its own subtree), then
+    /// its cleanups (most recent first; a cleanup may create children or cleanups on the
+    /// scope, which are disposed or run before the scope goes), then its nodes and channel
+    /// registrations, then its contexts.
+    ///
+    /// **Iterative and allocation-free.** The walk follows the scope tree's own links — a
+    /// scope's `children` list down, its `parent` link back up — so it needs no recursion
+    /// (constant stack, whatever the tree depth) and no work list. Nodes and channel
+    /// registrations are released one at a time, each dropped after the borrow is released
+    /// (rule R1), so no garbage buffer is needed either: disposal allocates nothing, before
+    /// or after a seal. User code that runs meanwhile (a cleanup, a `Drop`) may dispose
+    /// scopes itself, including ones on the walk's path: the walk then restarts from `s`
+    /// (still alive) or ends (`s` disposed).
     pub(crate) fn dispose_scope(&self, s: ScopeKey) {
         if !self.scope_alive(s) {
             debug!(target: "twine::reactive", "dispose scope {:?}: already disposed", s);
             return;
         }
-        let mut children_disposed = 0usize;
-        // Cleanups may register new children or cleanups on `s`; loop until both are empty.
+        let mut cur = s;
         loop {
-            let (children, cleanups) = {
+            let cleanups = {
                 let mut inner = self.inner.borrow_mut();
-                let Some(data) = inner.scopes.get_mut(s) else {
-                    return;
+                let Some(data) = inner.scopes.get_mut(cur) else {
+                    // `cur` was disposed by user code meanwhile.
+                    if cur == s || !inner.scopes.contains(s) {
+                        return;
+                    }
+                    cur = s;
+                    continue;
                 };
-                (
-                    core::mem::take(&mut data.children),
-                    core::mem::take(&mut data.cleanups),
-                )
+                if let Some(&child) = data.children.last() {
+                    if inner.scopes.contains(child) {
+                        cur = child;
+                    } else if let Some(data) = inner.scopes.get_mut(cur) {
+                        // Not reachable (a removed scope leaves its parent's list); keeps
+                        // the walk finite should it happen.
+                        data.children.pop();
+                    }
+                    continue;
+                }
+                core::mem::take(&mut data.cleanups)
             };
-            if children.is_empty() && cleanups.is_empty() {
-                break;
+            if !cleanups.is_empty() {
+                // Outside the borrow (R1); then look at `cur` again: a cleanup may have
+                // added children or cleanups.
+                for f in cleanups.into_iter().rev() {
+                    f();
+                }
+                continue;
             }
-            children_disposed += children.len();
-            for &c in children.iter().rev() {
-                self.dispose_scope(c);
-            }
-            for f in cleanups.into_iter().rev() {
-                f();
-            }
-        }
-        let (data, garbage) = {
-            let mut inner = self.inner.borrow_mut();
-            let Some(data) = inner.scopes.remove(s) else {
+            // No children, no cleanups: release `cur` and go back up.
+            let parent = self.release_scope(cur);
+            if cur == s {
                 return;
-            };
-            if let Some(p) = data.parent.and_then(|p| inner.scopes.get_mut(p)) {
-                p.children.retain(|&c| c != s);
             }
-            let mut garbage: Vec<ReactiveNode> = Vec::with_capacity(data.nodes.len());
-            for &k in &data.nodes {
-                if let Some(n) = inner.unlink_node(k) {
-                    garbage.push(n);
+            // A dead parent (disposed by a `Drop` meanwhile) restarts the walk from `s`.
+            cur = parent.unwrap_or(s);
+        }
+    }
+
+    /// Removes scope `s` (which has no children and no cleanups left) from the arena and its
+    /// parent's child list, then releases its nodes, its channel registrations and finally
+    /// its contexts, each dropped without the borrow (rule R1). Returns the parent. Allocates
+    /// nothing.
+    fn release_scope(&self, s: ScopeKey) -> Option<ScopeKey> {
+        let data = {
+            let mut inner = self.inner.borrow_mut();
+            let data = inner.scopes.remove(s)?;
+            if let Some(p) = data.parent.and_then(|p| inner.scopes.get_mut(p)) {
+                // The disposal walk removes the last child: O(1) then.
+                if p.children.last() == Some(&s) {
+                    p.children.pop();
+                } else {
+                    p.children.retain(|&c| c != s);
                 }
             }
-            inner.prune_queues();
-            let channels = crate::channel::take_scope_channels(&mut inner, s);
             if data.parent.is_none() && !inner.root_wakers.is_empty() {
                 inner.root_wakers.retain(|&(k, _)| k != s);
             }
-            drop(inner);
-            (data, (garbage, channels))
+            data
         };
-        debug!(
-            target: "twine::reactive",
-            "dispose scope {:?}: {} nodes, {} children",
-            s,
-            garbage.0.len(),
-            children_disposed
-        );
-        // Drop user values and closures outside the borrow (R1): nodes, channel handlers, then
-        // contexts.
-        let (nodes, channels) = garbage;
-        drop(nodes);
-        crate::channel::release_channels(channels);
-        drop(data);
+        // One node at a time: the statement's borrow ends before the node (user values and
+        // closures) is dropped.
+        for &k in &data.nodes {
+            let node = self.inner.borrow_mut().unlink_node(k);
+            drop(node);
+        }
+        // Dead keys in the queues are skipped by a flush (none runs inside the caller's
+        // batch); pruning once frees their room.
+        self.inner.borrow_mut().prune_queues();
+        loop {
+            let reg = crate::channel::take_scope_channel(&mut self.inner.borrow_mut(), s);
+            let Some(reg) = reg else {
+                break;
+            };
+            crate::channel::release_channel(reg);
+        }
+        debug!(target: "twine::reactive", "dispose scope {:?}: {} nodes", s, data.nodes.len());
+        let parent = data.parent;
+        drop(data); // contexts: user values
+        parent
     }
 
     /// Registers `f` as a cleanup of `s`; returns it back if the scope is dead.
@@ -584,7 +750,10 @@ impl RuntimeState {
         let mut inner = self.inner.borrow_mut();
         match inner.scopes.get_mut(s) {
             Some(d) => {
-                d.cleanups.push(f);
+                if core::mem::size_of_val(&*f) != 0 {
+                    alloc_guard::note(AllocSite::ReactiveCleanup);
+                }
+                alloc_guard::push(&mut d.cleanups, f, AllocSite::ReactiveCleanup);
                 Ok(())
             }
             None => Err(f),
@@ -593,15 +762,25 @@ impl RuntimeState {
 
     // ----- nodes --------------------------------------------------------------------------
 
-    /// Inserts a node owned by scope `s`. `None` if the scope is dead.
+    /// Inserts a node owned by scope `s`: `Disposed(Scope)` if the scope is dead,
+    /// `Capacity(what)` if [`Limits::max_reactive_nodes`] nodes are live. On failure `value` and
+    /// `kind` are dropped by the caller's frame, after the borrow is released (rule R1).
     pub(crate) fn create_node(
         &self,
         s: ScopeKey,
         value: Option<ValueRc>,
         kind: Option<Kind>,
-    ) -> Option<NodeKey> {
+        what: HandleKind,
+    ) -> Result<NodeKey, (ReactiveError, Option<ValueRc>, Option<Kind>)> {
         let mut inner = self.inner.borrow_mut();
-        let root = inner.root_of(s)?;
+        let Some(root) = inner.root_of(s) else {
+            return Err((ReactiveError::Disposed(HandleKind::Scope), value, kind));
+        };
+        if inner.nodes.len() >= inner.limits.nodes || inner.nodes.is_full() {
+            return Err((ReactiveError::Capacity(what), value, kind));
+        }
+        // A node always comes with a heap value: its value cell or its computation.
+        alloc_guard::note(AllocSite::ReactiveNode);
         let comp = kind.map(|kind| {
             Box::new(Computation {
                 kind,
@@ -614,21 +793,24 @@ impl RuntimeState {
         } else {
             NodeState::Clean
         };
-        let key = inner
-            .nodes
-            .insert(ReactiveNode {
-                value,
-                subscribers: KeyList::new(),
-                comp,
-                scope: s,
-                state,
-                flags: 0,
-            })
-            .unwrap_or_else(|_| capacity_panic("nodes"));
+        let node = ReactiveNode {
+            value,
+            subscribers: KeyList::new(),
+            comp,
+            scope: s,
+            state,
+            flags: 0,
+        };
+        // Cannot fail: the arena is not full (checked above, before the node was built, so a
+        // refused value is handed back and dropped outside this borrow, rule R1). Should it
+        // fail anyway, `insert` drops the node and the creation reports the capacity error.
+        let Ok(key) = inner.nodes.insert(node) else {
+            return Err((ReactiveError::Capacity(what), None, None));
+        };
         if let Some(d) = inner.scopes.get_mut(s) {
-            d.nodes.push(key);
+            alloc_guard::push(&mut d.nodes, key, AllocSite::ReactiveScope);
         }
-        Some(key)
+        Ok(key)
     }
 
     /// Whether node `k` is alive.
@@ -688,12 +870,17 @@ impl RuntimeState {
 
     /// Records a write to `k` and propagates it; flushes when outside batch and flush.
     pub(crate) fn notify(&self, k: NodeKey) {
-        let flush = {
+        let (flush, overflow) = {
             let mut inner = self.inner.borrow_mut();
-            inner.counters.writes += 1;
+            // Statistics: a `u64` count never wraps in a product's lifetime.
+            inner.counters.writes = inner.counters.writes.wrapping_add(1);
             inner.mark_stale(k);
-            inner.batch_depth == 0 && !inner.running_flush && !inner.pending.is_empty()
+            let flush = inner.batch_depth == 0 && !inner.running_flush && !inner.pending.is_empty();
+            (flush, inner.take_overflow())
         };
+        if overflow != 0 {
+            self.report_overflow(overflow);
+        }
         if flush {
             self.flush(&mut ());
         }
@@ -703,25 +890,29 @@ impl RuntimeState {
 
     /// Brings computation `k` up to date. Effects that need to run are run
     /// with `ctx`; memos ignore it.
-    pub(crate) fn update_if_necessary(&self, k: NodeKey, ctx: &mut dyn Any) {
+    ///
+    /// [`ReactiveError::Cycle`] when `k` is a memo whose computation is running (it reads
+    /// itself), or when bringing one of its sources up to date hit such a memo; `k` is then
+    /// left as it was (not recomputed, still to be checked). A dead or plain node is `Ok`.
+    pub(crate) fn update_if_necessary(&self, k: NodeKey, ctx: &mut dyn Any) -> Result<(), ReactiveError> {
         let (state, depth) = {
             let mut inner = self.inner.borrow_mut();
             let Some(node) = inner.nodes.get(k) else {
-                return;
+                return Ok(());
             };
             if node.comp.is_none() {
-                return;
+                return Ok(());
             }
             if node.flags & RUNNING != 0 && !node.is_effect() {
                 drop(inner);
                 error!(target: "twine::reactive", "cycle: memo {:?} reads itself", k);
-                panic!("twine-reactive: cycle detected (a memo reads itself, directly or indirectly)");
+                return Err(ReactiveError::Cycle);
             }
             if node.state == NodeState::Clean {
-                return;
+                return Ok(());
             }
             let state = node.state;
-            inner.update_depth += 1;
+            inner.update_depth = inner.update_depth.saturating_add(1);
             (state, inner.update_depth)
         };
         let _depth = DepthGuard(self);
@@ -745,7 +936,7 @@ impl RuntimeState {
                     let src = {
                         let inner = self.inner.borrow();
                         let Some(node) = inner.nodes.get(k) else {
-                            return;
+                            return Ok(());
                         };
                         if node.state != NodeState::Check {
                             break;
@@ -755,15 +946,15 @@ impl RuntimeState {
                             None => break,
                         }
                     };
-                    self.update_if_necessary(src, &mut ());
-                    i += 1;
+                    self.update_if_necessary(src, &mut ())?;
+                    i = i.saturating_add(1);
                 }
             }
         }
         let dirty = {
             let mut inner = self.inner.borrow_mut();
             let Some(node) = inner.nodes.get_mut(k) else {
-                return;
+                return Ok(());
             };
             if node.state == NodeState::Dirty {
                 true
@@ -775,6 +966,7 @@ impl RuntimeState {
         if dirty {
             self.recompute(k, ctx);
         }
+        Ok(())
     }
 
     /// Re-runs computation `k`: re-tracks its sources and, for a memo whose value changed,
@@ -816,9 +1008,9 @@ impl RuntimeState {
             let prev_observer = inner.observer.replace(k);
             let prev_effect = inner.running_effect;
             match job {
-                Job::Memo(..) => inner.counters.memo_runs += 1,
+                Job::Memo(..) => inner.counters.memo_runs = inner.counters.memo_runs.wrapping_add(1),
                 Job::Effect(..) => {
-                    inner.counters.effect_runs += 1;
+                    inner.counters.effect_runs = inner.counters.effect_runs.wrapping_add(1);
                     inner.running_effect = Some(k);
                 }
             }
@@ -834,6 +1026,15 @@ impl RuntimeState {
             Job::Memo(f, value) => {
                 let changed = f(&value);
                 drop(guard);
+                let Some(changed) = changed else {
+                    // The value cell is borrowed by a `with` of this memo further up the stack:
+                    // the new value was dropped. Recompute on the next read.
+                    if let Some(n) = self.inner.borrow_mut().nodes.get_mut(k) {
+                        n.state = NodeState::Dirty;
+                    }
+                    ReactiveError::Borrowed(HandleKind::Memo).skip(None);
+                    return;
+                };
                 if changed {
                     let mut inner = self.inner.borrow_mut();
                     let count = inner.nodes.get(k).map_or(0, |n| n.subscribers.len());
@@ -885,25 +1086,36 @@ impl RuntimeState {
     /// Runs a freshly created effect once (outside a flush) with a `()` context, as if in a
     /// flush, then flushes whatever it queued (unless batching).
     pub(crate) fn run_new_effect(&self, k: NodeKey) {
-        let queue_only = {
+        let (queue_only, overflow) = {
             let mut inner = self.inner.borrow_mut();
             if inner.running_flush {
-                if let Some(n) = inner.nodes.get_mut(k) {
-                    n.flags |= QUEUED;
+                let Inner {
+                    nodes,
+                    pending,
+                    limits,
+                    pending_overflow,
+                    ..
+                } = &mut *inner;
+                if let Some(n) = nodes.get_mut(k) {
+                    Inner::queue_effect(pending, *limits, pending_overflow, n, k);
                 }
-                inner.pending.push_back(k);
-                true
+                (true, inner.take_overflow())
             } else {
                 inner.running_flush = true;
-                false
+                (false, 0)
             }
         };
         if queue_only {
+            if overflow != 0 {
+                self.report_overflow(overflow);
+            }
             return;
         }
         {
             let _flush = FlushGuard(self);
-            self.update_if_necessary(k, &mut ());
+            if let Err(e) = self.update_if_necessary(k, &mut ()) {
+                e.skip(None);
+            }
         }
         let flush = {
             let inner = self.inner.borrow();
@@ -924,6 +1136,11 @@ impl RuntimeState {
             inner.running_flush = true;
             if !ctx.is::<()>() && !inner.deferred.is_empty() {
                 Self::requeue_deferred(&mut inner);
+                let overflow = inner.take_overflow();
+                if overflow != 0 {
+                    drop(inner);
+                    self.report_overflow(overflow);
+                }
             }
         }
         let _flush = FlushGuard(self);
@@ -938,7 +1155,7 @@ impl RuntimeState {
                     if inner.pending.is_empty() {
                         break;
                     }
-                    rounds += 1;
+                    rounds = rounds.saturating_add(1);
                     left_in_round = inner.pending.len();
                     if rounds > inner.flush_iterations_limit {
                         let limit = inner.flush_iterations_limit;
@@ -961,7 +1178,8 @@ impl RuntimeState {
                         break;
                     }
                 }
-                left_in_round -= 1;
+                // Not 0 here (a new round started above otherwise).
+                left_in_round = left_in_round.saturating_sub(1);
                 let Some(k) = inner.pending.pop_front() else {
                     break;
                 };
@@ -974,7 +1192,9 @@ impl RuntimeState {
                 }
                 k
             };
-            self.update_if_necessary(key, ctx);
+            if let Err(e) = self.update_if_necessary(key, ctx) {
+                e.skip(None);
+            }
         }
     }
 
@@ -987,6 +1207,8 @@ impl RuntimeState {
             nodes,
             deferred,
             pending,
+            limits,
+            pending_overflow,
             ..
         } = inner;
         deferred.retain(|&k| {
@@ -996,11 +1218,11 @@ impl RuntimeState {
             if active.is_some_and(|a| n.comp.as_deref().is_some_and(|c| c.root != a)) {
                 return true;
             }
-            n.flags &= !DEFERRED;
-            if n.flags & QUEUED == 0 {
-                n.flags |= QUEUED;
-                pending.push_back(k);
+            if n.flags & QUEUED == 0 && !Inner::queue_effect(pending, *limits, pending_overflow, n, k) {
+                // No room: stays deferred for the next flush with a context.
+                return true;
             }
+            n.flags &= !DEFERRED;
             false
         });
     }
@@ -1019,24 +1241,37 @@ impl RuntimeState {
     /// An effect deferred outside its own root's update (no root active, or another one)
     /// wakes its root's waker, so the UI that can run it updates.
     pub(crate) fn defer_current_effect(&self) -> bool {
-        let wake = {
+        let (wake, full) = {
             let mut inner = self.inner.borrow_mut();
             let Some(k) = inner.running_effect else {
                 return false;
             };
             let active = inner.active_root;
-            let Some(node) = inner.nodes.get_mut(k) else {
+            let max = inner.limits.pending;
+            let Inner { nodes, deferred, .. } = &mut *inner;
+            let Some(node) = nodes.get_mut(k) else {
                 return false;
             };
             node.state = NodeState::Dirty;
             let root = node.comp.as_deref().map(|c| c.root);
+            let mut full = false;
             if node.flags & DEFERRED == 0 {
-                node.flags |= DEFERRED;
-                inner.deferred.push(k);
+                if deferred.len() < max {
+                    node.flags |= DEFERRED;
+                    alloc_guard::push(deferred, k, AllocSite::EffectQueue);
+                } else {
+                    full = true;
+                }
             }
-            root.filter(|&r| Some(r) != active)
-                .and_then(|r| inner.root_waker(r))
+            (
+                root.filter(|&r| Some(r) != active)
+                    .and_then(|r| inner.root_waker(r)),
+                full,
+            )
         };
+        if full {
+            self.report_overflow(1);
+        }
         // Outside the borrow: `wake` may call the platform's notify function (rule R1).
         if let Some(w) = wake {
             w.wake();
@@ -1072,12 +1307,16 @@ impl RuntimeState {
             inner.ambient = None;
             inner.active_root = None;
             inner.root_wakers.clear();
+            inner.limits = RuntimeLimits::of(&Limits::DEFAULT);
+            inner.pending_overflow = 0;
             (nodes, scopes, channels)
         };
         *self.faults.borrow_mut() = FaultState::new();
         let (nodes, scopes, channels) = garbage;
         drop(nodes);
-        crate::channel::release_channels(channels);
+        for reg in channels {
+            crate::channel::release_channel(reg);
+        }
         drop(scopes);
     }
 }

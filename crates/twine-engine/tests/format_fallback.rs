@@ -16,6 +16,9 @@ fn leak(len: usize) -> &'static mut [u8] {
 
 /// Two engines: the one adding a display in a disabled format gets the fault (with no display:
 /// it was not added); the other one, rendering normally, never sees it.
+///
+/// fault: `FormatDisabled`
+/// req: SAF-005, SAF-031
 #[test]
 fn format_disabled_is_credited_to_the_engine_that_refused_the_display() {
     let mut a = Engine::new(EngineConfig::default()).unwrap();

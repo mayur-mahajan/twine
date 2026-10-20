@@ -224,8 +224,8 @@ impl SimConfig {
     /// use twine_engine::EngineConfig;
     /// use twine_sim::SimConfig;
     ///
-    /// let cfg = SimConfig::new(320, 240).engine_config(EngineConfig { max_nodes: 512, ..EngineConfig::default() });
-    /// assert_eq!(cfg.app.engine.max_nodes, 512);
+    /// let cfg = SimConfig::new(320, 240).engine_config(EngineConfig { glyph_cache_bytes: 16 * 1024, ..EngineConfig::default() });
+    /// assert_eq!(cfg.app.engine.glyph_cache_bytes, 16 * 1024);
     /// ```
     #[must_use]
     pub fn engine_config(mut self, cfg: twine_engine::EngineConfig) -> Self {

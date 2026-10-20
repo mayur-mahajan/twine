@@ -34,7 +34,7 @@
 //!   UI's own work or livelock: the UI returns `Now` only while work is pending, and every
 //!   update makes progress on it (the rest of a frame — at least one chunk with a
 //!   [`StepBudget`](crate::StepBudget) —, the next
-//!   [`messages_per_channel`](crate::UiBuilder::messages_per_channel) messages of a channel
+//!   [`messages_per_channel`](twine_core::Limits::messages_per_channel) messages of a channel
 //!   (at least one), the pending
 //!   effects, a flush that is measured against `EngineConfig::flush_timeout` with the time of
 //!   each step). Wake-ups that arrive meanwhile are taken by the next update without a wait;

@@ -123,8 +123,23 @@
 //!   [`SimpleTheme::new`] exist. Without it, set a font with the builders' `fonts` / `font`
 //!   (a theme built without one draws no text and logs a warning).
 //! - `std`, `log`, `defmt`: as in every Twine crate.
+//! - `safety`: the safety profile (enabled by the `twine` facade's `safety` feature, see
+//!   `docs/safety/profile.md` in the repository): the profile's lints.
 #![no_std]
 #![forbid(unsafe_code)]
+// The safety profile's lints (`docs/safety/profile.md` § Lints): denied in library code under
+// the `safety` feature (`cargo xtask ci` stage `clippy-safety`).
+#![cfg_attr(
+    all(feature = "safety", not(test)),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::arithmetic_side_effects,
+    )
+)]
 #![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 
 extern crate alloc;

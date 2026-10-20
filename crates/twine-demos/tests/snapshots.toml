@@ -1,0 +1,35 @@
+# Golden-image manifest (R5.S08): one entry per snapshot test image,
+#   <name> = "<width>x<height> xxh64:<hash>"
+# the XXH64 (seed 0) of the image's 8-bit RGB pixels, row-major (`xxhsum -H64` of the raw RGB
+# bytes). Written by `cargo xtask snapshots --update | --propose | --accept`; do not edit by hand.
+# Reference PNGs are not committed: `tests/snapshots/*.png` is a local cache used for diffs.
+
+[approved]
+calibration_first_target = "320x240 xxh64:d5daa6656ef62989"
+calibration_verify = "320x240 xxh64:0556829a2a6649c2"
+controls_initial_dark = "320x240 xxh64:7ec0bc8e35286757"
+controls_initial_light = "320x240 xxh64:1f44c14732ad3d72"
+controls_mode_dark = "320x240 xxh64:9b1b012f71ee360d"
+controls_mode_high_contrast = "320x240 xxh64:09eb89eccb053bab"
+controls_mode_light = "320x240 xxh64:a7c4f0d45bc4ce98"
+controls_mode_night = "320x240 xxh64:aa5d8cd90032a93c"
+lottie_demo_500ms = "480x320 xxh64:cb56aac04b2880c6"
+multilang_ar = "480x320 xxh64:5ac99d20016e301b"
+multilang_de = "480x320 xxh64:9a5da3b7c3a15e19"
+multilang_en = "480x320 xxh64:8f5cdba73490733a"
+multilang_fa = "480x320 xxh64:af3e92ee75fad232"
+multilang_fr = "480x320 xxh64:e6d3f23e08b64419"
+multilang_he = "480x320 xxh64:47d01c3fadb601fd"
+multilang_ja = "480x320 xxh64:5dea93da0ac41fb8"
+multilang_zh = "480x320 xxh64:abb13a4661db7b4a"
+selection_lists_dark = "320x240 xxh64:08399d2b5691bd1c"
+selection_lists_light = "320x240 xxh64:c0f3f3df01f977e3"
+selection_pickers_dark = "320x240 xxh64:529edc3202ac6b12"
+selection_pickers_light = "320x240 xxh64:1c0d02667365f43a"
+selection_tiles_dark = "320x240 xxh64:e9e97dd59dd2e777"
+selection_tiles_light = "320x240 xxh64:a1b9cf884b97b3aa"
+text_input_keyboard_open_dark = "320x240 xxh64:42b8904631c525f3"
+text_input_keyboard_open_light = "320x240 xxh64:185f35a2dee61494"
+vector_gradients = "480x320 xxh64:c78e10ed88c74d4d"
+vector_shapes = "480x320 xxh64:287007721b6d6ddc"
+vector_strokes = "480x320 xxh64:a83b4a03918b85af"

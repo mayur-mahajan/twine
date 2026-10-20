@@ -1,5 +1,6 @@
-//! Frame statistics ([`RefreshStats`]), the one-second performance window ([`PerfMonitor`])
-//! and memory statistics ([`MemInfo`], [`HeapPeak`]).
+//! Frame statistics ([`RefreshStats`]), the one-second performance window ([`PerfMonitor`]),
+//! the worst-case timings ([`TimingReport`]) and memory statistics ([`MemInfo`],
+//! [`HeapPeak`]).
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -224,6 +225,125 @@ impl PerfMonitor {
     #[must_use]
     pub fn cpu_percent(&self) -> u8 {
         self.cpu
+    }
+}
+
+/// The longest update, chunk render and chunk flush the engine has measured since it was
+/// created or since [`Engine::reset_worst`](crate::Engine::reset_worst) (high-water marks, in
+/// µs): evidence for a time budget, and the numbers to size
+/// [`StepBudget`](crate::StepBudget)'s time limit and an external watchdog with. Read with
+/// [`Engine::timing`](crate::Engine::timing) (the view layer's `Ui::timing`).
+///
+/// Measured with [`EngineConfig::hires_timer`](crate::EngineConfig::hires_timer); without one
+/// every field stays `0` and measuring costs nothing (one branch per update and per chunk).
+/// Values saturate at `u32::MAX` µs.
+///
+/// Part of the audit evidence: `impl Audit` writes the `timing.*` entries
+/// (`twine_core::audit::KeyValues(&engine.timing())`).
+///
+/// ```
+/// use twine_core::audit::KeyValues;
+/// use twine_engine::TimingReport;
+///
+/// let t = TimingReport { worst_update_us: 900, worst_render_us: 400, worst_flush_us: 250 };
+/// let lines = KeyValues(&t).to_string();
+/// assert_eq!(lines, "timing.worst_update_us=900\ntiming.worst_render_us=400\ntiming.worst_flush_us=250\n");
+/// ```
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct TimingReport {
+    /// The longest update: from [`Engine::begin_step`](crate::Engine::begin_step) (the start of
+    /// `Ui::update`, so messages, timers, animations and bindings count) to the end of
+    /// [`finish_step`](crate::Engine::finish_step) (layout and refresh). Displays added with
+    /// [`add_chunked_display`](crate::Engine::add_chunked_display) are rendered by their caller
+    /// after the update and count in [`worst_render_us`](Self::worst_render_us) only.
+    pub worst_update_us: u32,
+    /// The longest drawing of one chunk (a partial buffer's rows, a framebuffer area, or a
+    /// chunk of the chunk-level API), software re-renders after an accelerator timeout
+    /// included: the indivisible unit of rendering, by which a step can overrun its time
+    /// budget.
+    pub worst_render_us: u32,
+    /// The longest flush of one chunk as the step sees it: waiting for a free draw buffer,
+    /// rotating / converting the chunk and handing it to the driver (with a blocking driver,
+    /// the whole transfer); for framebuffer displays the present at the end of a frame; for
+    /// chunk-level displays (`AsyncUi`) the transfer time their caller reports
+    /// ([`refresh_add_flush_time`](crate::Engine::refresh_add_flush_time)).
+    pub worst_flush_us: u32,
+}
+
+impl TimingReport {
+    /// Raises `mark` to `us` (saturated to `u32::MAX`).
+    #[inline]
+    pub(crate) fn raise(mark: &mut u32, us: u64) {
+        let us = u32::try_from(us).unwrap_or(u32::MAX);
+        if us > *mark {
+            *mark = us;
+        }
+    }
+}
+
+impl twine_core::audit::Audit for TimingReport {
+    /// `timing.worst_update_us`, `timing.worst_render_us` and `timing.worst_flush_us`.
+    fn audit(&self, out: &mut dyn twine_core::audit::AuditSink) {
+        use twine_core::audit::AuditValue as V;
+        out.entry(
+            "timing",
+            "worst_update_us",
+            V::Uint(u64::from(self.worst_update_us)),
+        );
+        out.entry(
+            "timing",
+            "worst_render_us",
+            V::Uint(u64::from(self.worst_render_us)),
+        );
+        out.entry(
+            "timing",
+            "worst_flush_us",
+            V::Uint(u64::from(self.worst_flush_us)),
+        );
+    }
+}
+
+impl crate::Engine {
+    /// The worst-case timings measured so far ([`TimingReport`]; all `0` without a
+    /// `hires_timer`). Never panics; allocates nothing.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Instant};
+    /// use twine_engine::{BufferMode, BufferSpec, Engine, EngineConfig};
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::MemoryDisplay;
+    ///
+    /// fn hires() -> Instant {
+    ///     // A clock that advances 100 µs per reading.
+    ///     thread_local!(static T: std::cell::Cell<u64> = const { std::cell::Cell::new(0) });
+    ///     T.with(|t| { t.set(t.get() + 100); Instant::from_micros(t.get()) })
+    /// }
+    /// let mut e = Engine::new(EngineConfig { hires_timer: Some(hires), ..EngineConfig::default() }).unwrap();
+    /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
+    /// e.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// e.step(Instant::from_millis(0));
+    /// let t = e.timing();
+    /// assert!(t.worst_update_us > 0 && t.worst_render_us > 0 && t.worst_flush_us > 0);
+    /// assert!(t.worst_update_us >= t.worst_render_us);
+    /// ```
+    #[must_use]
+    pub fn timing(&self) -> TimingReport {
+        self.timing
+    }
+
+    /// Clears the high-water marks of [`timing`](Self::timing) (e.g. after start-up, so the
+    /// first frames' one-off work — caches, the first full redraw — does not count, or at the
+    /// start of each reporting period). Never panics.
+    ///
+    /// ```
+    /// use twine_engine::{Engine, EngineConfig, TimingReport};
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// e.reset_worst();
+    /// assert_eq!(e.timing(), TimingReport::default());
+    /// ```
+    pub fn reset_worst(&mut self) {
+        self.timing = TimingReport::default();
     }
 }
 

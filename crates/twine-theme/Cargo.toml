@@ -12,6 +12,18 @@ workspace = true
 
 [features]
 default = ["assets"]
+## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
+## safety lints of library code and the refusal of excluded features.
+safety = [
+    "twine-assets?/safety",
+    "twine-core/safety",
+    "twine-engine/safety",
+    "twine-image/safety",
+    "twine-style/safety",
+    "twine-text/safety",
+    "twine-widgets/safety",
+    "twine-widgets-ext/safety",
+]
 ## The ready-made constructors (`DefaultTheme::light()` …) with the built-in Montserrat 14 font.
 assets = ["dep:twine-assets"]
 ## std-only conveniences.

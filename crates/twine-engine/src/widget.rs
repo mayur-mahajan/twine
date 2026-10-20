@@ -110,6 +110,33 @@ pub trait Widget: AsAny {
         None
     }
 
+    /// Adds the value the widget shows to `crc` — its text, its numeric value and range —
+    /// for display-integrity cross-checks of safety-critical nodes
+    /// ([`Engine::critical_report`](crate::Engine::critical_report): an independent monitor
+    /// compares it with the value the application meant to show). Only what decides the
+    /// shown value, never styles. Default: [`text`](Self::text)'s bytes, if any (so a label
+    /// needs no override); widgets showing a number override it.
+    ///
+    /// ```
+    /// use twine_core::crc::Crc32;
+    /// use twine_engine::{OBJ_CLASS, Widget, WidgetClass};
+    ///
+    /// struct Gauge { value: i32 }
+    /// impl Widget for Gauge {
+    ///     fn class(&self) -> &'static WidgetClass { &OBJ_CLASS }
+    ///     fn value_digest(&self, crc: &mut Crc32) { crc.update(&self.value.to_le_bytes()) }
+    /// }
+    /// let mut a = Crc32::new();
+    /// Gauge { value: 7 }.value_digest(&mut a);
+    /// assert_eq!(a, Crc32::of(&7i32.to_le_bytes()));
+    /// ```
+    #[cfg(feature = "display-integrity")]
+    fn value_digest(&self, crc: &mut twine_core::crc::Crc32) {
+        if let Some(t) = self.text() {
+            crc.update(t.as_bytes());
+        }
+    }
+
     /// Reacts to an event sent to (or bubbling through) the node, after the built-in object
     /// behaviour (pressed / checked / focused states) and before the user handlers. Returning
     /// [`EventResult::Consumed`] skips the user handlers. Default: [`EventResult::Continue`].
@@ -773,6 +800,193 @@ impl<'a> WidgetCx<'a> {
     /// The engine, mutably.
     pub fn engine_mut(&mut self) -> &mut Engine {
         self.engine
+    }
+
+    /// `s` within [`Limits::max_text_len`](twine_core::Limits::max_text_len) bytes: `s`
+    /// itself, or its longest prefix ending on a character boundary within the limit — then
+    /// a [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity) fault (code
+    /// `TextLen`, with the node) is raised. For widgets that store texts (label, checkbox,
+    /// span, button-matrix button, dropdown/roller options).
+    /// One comparison when the text fits; never panics, allocates nothing.
+    ///
+    /// ```
+    /// use twine_core::Limits;
+    /// use twine_engine::{Engine, EngineConfig, Obj};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// e.set_limits(&Limits::DEFAULT.max_text_len(4)).unwrap();
+    /// let n = e.create_root(Box::new(Obj)).unwrap();
+    /// e.with_widget_mut(n, |_: &mut Obj, cx| {
+    ///     assert_eq!(cx.fit_text("abc"), "abc");
+    ///     assert_eq!(cx.fit_text("abcdé"), "abcd");
+    ///     assert_eq!(cx.fit_text("abcé"), "abc"); // `é` is two bytes
+    /// });
+    /// ```
+    pub fn fit_text<'s>(&mut self, s: &'s str) -> &'s str {
+        let max = usize::from(self.engine.limits.max_text_len);
+        if s.len() <= max { s } else { self.cut_text(s, max) }
+    }
+
+    /// The cold half of [`fit_text`](Self::fit_text).
+    #[cold]
+    #[inline(never)]
+    fn cut_text<'s>(&mut self, s: &'s str, max: usize) -> &'s str {
+        let end = (0..=max).rev().find(|&i| s.is_char_boundary(i)).unwrap_or(0);
+        twine_core::warn!(
+            target: "twine::widget",
+            "text of {} cut from {} to {} bytes (Limits::max_text_len)",
+            crate::fmt_node_id(self.node),
+            s.len(),
+            end
+        );
+        let node = self.node;
+        self.engine
+            .capacity_refused(twine_core::fault::CapacityFault::TextLen, Some(node));
+        s.get(..end).unwrap_or("")
+    }
+
+    /// Whether a text of `len` bytes is within
+    /// [`Limits::max_text_len`](twine_core::Limits::max_text_len); when it is not, a
+    /// [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity) fault (code `TextLen`,
+    /// with the node) is raised. For edits that cannot be cut (e.g. inserting a dropdown
+    /// option): the caller refuses them. One comparison when the text fits; never panics.
+    ///
+    /// ```
+    /// use twine_core::Limits;
+    /// use twine_engine::{Engine, EngineConfig, Obj};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// e.set_limits(&Limits::DEFAULT.max_text_len(8)).unwrap();
+    /// let n = e.create_root(Box::new(Obj)).unwrap();
+    /// e.with_widget_mut(n, |_: &mut Obj, cx| {
+    ///     assert!(cx.text_len_fits(8));
+    ///     assert!(!cx.text_len_fits(9)); // refused: a `TextLen` fault
+    /// });
+    /// ```
+    pub fn text_len_fits(&mut self, len: usize) -> bool {
+        let max = usize::from(self.engine.limits.max_text_len);
+        if len <= max {
+            return true;
+        }
+        self.refuse_text(len, max);
+        false
+    }
+
+    /// The cold half of [`text_len_fits`](Self::text_len_fits).
+    #[cold]
+    #[inline(never)]
+    fn refuse_text(&mut self, len: usize, max: usize) {
+        twine_core::warn!(
+            target: "twine::widget",
+            "text of {} refused: {} bytes > {} (Limits::max_text_len)",
+            crate::fmt_node_id(self.node),
+            len,
+            max
+        );
+        let node = self.node;
+        self.engine
+            .capacity_refused(twine_core::fault::CapacityFault::TextLen, Some(node));
+    }
+
+    /// Replaces the content of the text buffer `buf` with `s` (call [`fit_text`](Self::fit_text)
+    /// first). Allocates only when `buf` is too small; with
+    /// [`Limits::preallocate`](twine_core::Limits::preallocate) a buffer below the full
+    /// [`max_text_len`](twine_core::Limits::max_text_len) is reserved to it at once, so a
+    /// text set at start-up leaves room for every later text. Growth is noted for the allocation guard
+    /// ([`AllocSite::Text`](twine_core::alloc_guard::AllocSite::Text)). Never panics.
+    ///
+    /// ```
+    /// use twine_core::Limits;
+    /// use twine_engine::{Engine, EngineConfig, Obj};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// e.set_limits(&Limits::DEFAULT.max_text_len(32).preallocated()).unwrap();
+    /// let n = e.create_root(Box::new(Obj)).unwrap();
+    /// let mut buf = String::new();
+    /// e.with_widget_mut(n, |_: &mut Obj, cx| cx.store_text(&mut buf, "hi"));
+    /// assert_eq!(buf, "hi");
+    /// assert!(buf.capacity() >= 32);
+    /// ```
+    pub fn store_text(&mut self, buf: &mut alloc::string::String, s: &str) {
+        buf.clear();
+        let limits = &self.engine.limits;
+        // With `preallocate`, a buffer smaller than the limit (e.g. a copy sized to its first
+        // text) is reserved now, before a seal, not when a longer text comes.
+        let floor = if limits.preallocate {
+            usize::from(limits.max_text_len)
+        } else {
+            0
+        };
+        if buf.capacity() < s.len().max(floor) {
+            self.grow_text(buf, s.len());
+        }
+        buf.push_str(s);
+    }
+
+    /// Reserves `buf` (empty) for a text of `len` bytes: the full `max_text_len` with
+    /// `preallocate`. Cold.
+    #[cold]
+    #[inline(never)]
+    fn grow_text(&mut self, buf: &mut alloc::string::String, len: usize) {
+        twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
+        let limits = &self.engine.limits;
+        let want = if limits.preallocate {
+            len.max(usize::from(limits.max_text_len))
+        } else {
+            len
+        };
+        buf.reserve(want);
+    }
+
+    /// After a text buffer was edited in place (formatted or edited by a closure): notes its
+    /// growth since its capacity was `cap_before` for the allocation guard, and cuts it to
+    /// [`Limits::max_text_len`](twine_core::Limits::max_text_len) as
+    /// [`fit_text`](Self::fit_text) would (raising the same fault). Never panics.
+    ///
+    /// ```
+    /// use twine_core::Limits;
+    /// use twine_engine::{Engine, EngineConfig, Obj};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// e.set_limits(&Limits::DEFAULT.max_text_len(3)).unwrap();
+    /// let n = e.create_root(Box::new(Obj)).unwrap();
+    /// let mut buf = String::from("abcdef");
+    /// let cap = buf.capacity();
+    /// e.with_widget_mut(n, |_: &mut Obj, cx| cx.limit_text(&mut buf, cap));
+    /// assert_eq!(buf, "abc");
+    /// ```
+    pub fn limit_text(&mut self, buf: &mut alloc::string::String, cap_before: usize) {
+        if buf.capacity() != cap_before {
+            twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
+        }
+        let max = usize::from(self.engine.limits.max_text_len);
+        if buf.len() > max {
+            let end = self.cut_text(buf, max).len();
+            buf.truncate(end);
+        }
+    }
+
+    /// Reserves an empty text buffer for [`max_text_len`](twine_core::Limits::max_text_len)
+    /// bytes when the limits are preallocated and it is smaller (e.g. a formatting buffer
+    /// before its first use, so formatting after a seal allocates nothing). Nothing
+    /// otherwise; never panics.
+    ///
+    /// ```
+    /// use twine_core::Limits;
+    /// use twine_engine::{Engine, EngineConfig, Obj};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// e.set_limits(&Limits::DEFAULT.max_text_len(16).preallocated()).unwrap();
+    /// let n = e.create_root(Box::new(Obj)).unwrap();
+    /// let mut buf = String::new();
+    /// e.with_widget_mut(n, |_: &mut Obj, cx| cx.reserve_text(&mut buf));
+    /// assert!(buf.capacity() >= 16);
+    /// ```
+    pub fn reserve_text(&mut self, buf: &mut alloc::string::String) {
+        let limits = &self.engine.limits;
+        if limits.preallocate && buf.capacity() < usize::from(limits.max_text_len) {
+            self.grow_text(buf, 0);
+        }
     }
 }
 

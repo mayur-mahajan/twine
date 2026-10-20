@@ -7,6 +7,15 @@ API, `no_std` + `alloc`). Low compute/power is the top priority.
 - `docs/plan/api-evolution.md` — the current plan: decisions (§1), platform-neutrality rules (§2),
   phases R0–R6 with steps `Rn.Smm`, definition of done (§4), progress (§5), and every deviation
   from the plan with its rationale (§6). Pick the first unchecked step of the current phase.
+- `docs/safety/profile.md` — the `safety` profile: excluded parts, feature propagation, the
+  safety lints with their per-crate status table, release profile, panic-handler contract and
+  no-reachable-panics rules (§ 7), bounded memory (§ 8), bounded time and the measured stack per
+  tree level (§ 10), display integrity (§ 11). `docs/safety/panics.md` — the generated panic inventory.
+- `docs/safety/manual.md` — the safety manual (assumptions of use, configuration constraints,
+  known limitations, evidence index); `docs/safety/requirements.md` — the SAF requirements,
+  traced to tests in the generated `docs/safety/traceability.md`.
+- `docs/design/principles.md` — the design principles P1–P11 cited as `(Pn)` in the code
+  (reconstructed in R5.S08; P8 and P10 inferred, awaiting review).
 - `docs/safety/coding-guidelines-deviations.md` — where the code deviates from the Safety-Critical
   Rust Consortium coding guidelines, with impact and the plan step that addresses each gap.
 - `README.md`, `CONTRIBUTING.md` — overview, Definition of Done, hard rules, code guidelines.
@@ -32,14 +41,38 @@ API, `no_std` + `alloc`). Low compute/power is the top priority.
 - `cargo xtask ci` — everything CI runs (fmt, clippy, tests, no_std builds, docs, todo-check, layers).
   Clippy runs three ways: default features (`clippy`), every feature except `defmt`
   (`clippy-all-features`), and each library crate with `defmt` as its logging backend plus every
-  `no_std` feature (`clippy-defmt`, one `cargo clippy -p` per crate).
+  `no_std` feature (`clippy-defmt`, one `cargo clippy -p` per crate). A fourth pass lints the facade
+  in the safety profile (`clippy-safety`: panic/index/overflow lints denied, then the lint-status
+  ratchet and the panic-inventory check); `safety-exclusions` checks that each excluded part
+  fails to compile with `safety` and that the removed panicking APIs are absent
+  (`tools/safety-api/`).
+- `cargo xtask safety-lints [--update]` — count the remaining safety-lint sites per crate and
+  compare (or rewrite) the table in `docs/safety/profile.md`; a lint with no site left must move
+  from the crate's allow-list to `deny`.
+- `cargo xtask panics [--check]` — write (or verify) the panic inventory `docs/safety/panics.md`;
+  every explicit panic site needs a `// PANIC: …` justification above it.
+- `cargo xtask stack-budget [--update]` — measure (release build) the stack each recursive tree
+  walk (draw, cover search, hit test, layout) costs per tree level and fail when the worst case
+  at the reference depth exceeds the budget; `--update` rewrites the table in
+  `docs/safety/profile.md` § 10.4 (also a slow CI stage).
 - `cargo xtask progress` — plan progress per phase and the next step (from §5 of
   `docs/plan/api-evolution.md`); fails if §5 and the step headings disagree (also a CI stage).
 - `cargo xtask sim <example>` — run a simulator example (Cargo examples of `twine`:
   `crates/twine/examples/<example>.rs` or `<example>/main.rs`; = `cargo run -p twine --example <example>`).
 - `cargo xtask sim-smoke` — run every simulator example headless.
-- `cargo xtask snapshots [--update]` — run/refresh snapshot tests (review diffs before updating).
-- `cargo xtask nostd` — build no_std crates for all embedded targets.
+- `cargo xtask snapshots [--update | --propose | --accept | --check]` — golden images: run the
+  snapshot tests against the hash manifests `crates/*/tests/snapshots.toml` and report; `--update`
+  approves every rendered image (user-approved only, after reviewing the diffs), `--propose` adds
+  new images as pending entries, `--accept` approves pending entries, `--check` (CI) fails on
+  pending entries.
+- `cargo xtask traceability [--check]` — write (or verify) `docs/safety/traceability.md` from
+  `docs/safety/requirements.md` and the tests' `req:` / `fault:` doc lines.
+- `cargo xtask coverage [--mcdc]` — line coverage with thresholds; `--mcdc`: MC/DC of core,
+  reactive, engine, render, layout, style (nightly + llvm-tools; falls back to line coverage).
+- `cargo xtask fuzz <target>` — cargo-fuzz targets in `fuzz/` (decoders; `tree_ops`,
+  `input_events`, `reactive_ops`).
+- `cargo xtask nostd` — build no_std crates for all embedded targets (and the facade in the
+  safety profile for each target).
 - `cargo xtask firmware [board]` — build firmware crates.
 - `RUST_LOG=twine=debug` — enable logs in simulator/tests (`twine::refresh=trace` for invalidations).
 
@@ -50,5 +83,9 @@ API, `no_std` + `alloc`). Low compute/power is the top priority.
 - Widget setters are idempotent: unchanged value → no invalidation, no layout.
 - No heap allocation during rendering/flush in steady state.
 - Never panic on user input in release; log `warn!` and no-op.
+- Safety-profile crates must not regress: a lint denied under `safety` stays denied; never
+  `#[allow]` a safety lint on a single site (`docs/safety/profile.md` § 4).
 - Respect crate layering (`cargo xtask layers`). Only dependencies from the allowed list.
-- Snapshot PNGs are regenerated only intentionally (`cargo xtask snapshots --update`) after reviewing diffs.
+- Golden-image manifests change only intentionally: `cargo xtask snapshots --update` after
+  reviewing the diffs (with the user's approval); new images go in as pending
+  (`--propose`) for the user to approve.

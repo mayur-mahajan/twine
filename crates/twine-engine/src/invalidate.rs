@@ -106,10 +106,23 @@ impl Engine {
         }
     }
 
-    /// Invalidates `area` (absolute) as far as it is visible through `id`'s clipping.
+    /// Invalidates `area` (absolute) as far as it is visible through `id`'s clipping. A
+    /// safety-critical node (`ObjFlags::SAFETY_CRITICAL`, feature `display-integrity`) is
+    /// invalidated whole: it is never redrawn in parts.
     pub fn invalidate_node_area(&mut self, id: NodeId, area: Rect, reason: InvalidateReason) {
         if let Some((d, vis)) = self.visible_area(id) {
-            if let Some(a) = vis.intersection(&area) {
+            #[cfg(feature = "display-integrity")]
+            let area = if self
+                .tree
+                .node(id)
+                .is_some_and(|n| n.flags.contains(ObjFlags::SAFETY_CRITICAL))
+            {
+                vis
+            } else {
+                area
+            };
+            let part = vis.intersection(&area);
+            if let Some(a) = part {
                 self.add_dirty(d, a, reason);
             }
         }
@@ -327,6 +340,9 @@ impl Engine {
     /// Whether `id` and its children must be rendered into a layer first: `opa_layered` below
     /// cover, a transform, a blend mode other than normal, or a bitmap mask.
     #[must_use]
+    // Out of line: four style resolutions, called once per drawn node; inlined, their frames
+    // would sit in every level of the recursive draw traversal.
+    #[inline(never)]
     pub fn needs_layer(&self, id: NodeId) -> bool {
         let m = Part::Main;
         !self.style_opa(id, m, PropId::Opacity).is_cover()
@@ -466,6 +482,10 @@ impl Engine {
         }
         if let Some(n) = self.tree.node_mut(id) {
             n.flags = new;
+        }
+        #[cfg(feature = "display-integrity")]
+        if changed.contains(ObjFlags::SAFETY_CRITICAL) {
+            self.critical_changed(id, on);
         }
         if changed.contains(ObjFlags::HIDDEN) && !on {
             self.invalidate_subtree(id, crate::InvalidateReason::Explicit);

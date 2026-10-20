@@ -16,6 +16,9 @@ pub const TARGETS: &[&str] = &[
     "svg_parse",
     "path_raster",
     "lottie_load",
+    "tree_ops",
+    "input_events",
+    "reactive_ops",
 ];
 
 /// Runs `target` for `secs` seconds.

@@ -229,14 +229,17 @@ impl Roller {
     // ---- Setters --------------------------------------------------------------------------
 
     /// Sets the options (copied into the owned buffer, its capacity reused) and the mode;
-    /// selects the first option (LVGL `lv_roller_set_options`). Idempotent: the same options
+    /// selects the first option (LVGL `lv_roller_set_options`). The options are one widget
+    /// text: cut to [`Limits::max_text_len`](twine_core::Limits::max_text_len) bytes like a
+    /// label's text (a `Capacity` fault, code `TextLen`; reserved for the limit with
+    /// [`Limits::preallocate`](twine_core::Limits::preallocate)). Idempotent: the same options
     /// and mode change nothing.
     pub fn set_options(&mut self, cx: &mut WidgetCx<'_>, options: &str, mode: RollerMode) {
         if self.options.same_as(options) && self.mode == mode {
             return;
         }
         log_set(ROLLER_CLASS.name, cx.node(), "options");
-        self.options.set_owned(options);
+        self.options.set_owned(cx, options);
         self.update_options(cx, mode);
     }
 

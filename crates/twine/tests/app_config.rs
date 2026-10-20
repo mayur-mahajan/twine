@@ -18,10 +18,13 @@ const H: u16 = 120;
 fn config() -> AppConfig {
     twine_demos::config()
         .motion(Motion::Reduced)
-        .messages_per_channel(4)
-        .engine_queue_capacity(24)
+        .limits(
+            Limits::DEFAULT
+                .messages_per_channel(4)
+                .engine_queue(24)
+                .max_nodes(300),
+        )
         .engine(EngineConfig {
-            max_nodes: 300,
             refr_period: Duration::ms(20),
             ..EngineConfig::default()
         })
@@ -68,7 +71,7 @@ fn shared_config_gives_identical_settings_on_ui_and_test_ui() {
     let (a, b) = (ui.engine(), t.engine());
     for e in [a, &*b] {
         assert_eq!(e.motion(), Motion::Reduced);
-        assert_eq!(e.config().max_nodes, 300);
+        assert_eq!(e.limits().max_nodes, 300);
         assert_eq!(e.config().refr_period, Duration::ms(20));
         let d = e.default_display().unwrap();
         assert_eq!(

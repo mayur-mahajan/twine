@@ -149,7 +149,16 @@ impl LayoutTree for EngineLayout<'_> {
                 cur = e.next_in_subtree(id, c);
             }
         }
-        e.layout.moved.push((id, old, r));
+        twine_core::alloc_guard::push(
+            &mut e.layout.moved,
+            (id, old, r),
+            twine_core::alloc_guard::AllocSite::EngineScratch,
+        );
+    }
+
+    fn slot(&self, id: NodeId) -> u32 {
+        // The arena index: dense, unique among live nodes.
+        u32::from(id.index())
     }
 
     fn coords(&self, id: NodeId) -> Rect {
@@ -179,16 +188,42 @@ impl LayoutTree for EngineLayout<'_> {
 impl Engine {
     /// The children of `id` as the layout sees them: `LAYOUT_PASSTHROUGH` wrappers are
     /// replaced by their own (layout) children; hidden wrappers contribute nothing.
+    ///
+    /// Iterative (a pre-order walk that descends into visible wrappers and climbs back to
+    /// the next sibling), so nested wrappers cost no stack.
     pub(crate) fn layout_children_of(&self, id: NodeId, out: &mut dyn FnMut(NodeId)) {
-        for c in self.tree.children(id) {
-            match self.tree.node(c) {
-                Some(n) if n.flags.contains(ObjFlags::LAYOUT_PASSTHROUGH) => {
-                    if !n.flags.contains(ObjFlags::HIDDEN) {
-                        self.layout_children_of(c, out);
+        let mut cur = self.tree.node(id).and_then(crate::Node::first_child);
+        while let Some(c) = cur {
+            let Some(n) = self.tree.node(c) else { return };
+            if n.flags.contains(ObjFlags::LAYOUT_PASSTHROUGH) {
+                if !n.flags.contains(ObjFlags::HIDDEN) {
+                    if let Some(first) = n.first_child() {
+                        cur = Some(first);
+                        continue;
                     }
                 }
-                _ => out(c),
+            } else {
+                out(c);
             }
+            cur = self.next_layout_sibling(id, c);
+        }
+    }
+
+    /// The node after `c` in [`layout_children_of`](Self::layout_children_of)'s walk under
+    /// `id`: `c`'s next sibling, else the next sibling of the closest wrapper above it, `None`
+    /// at the end of `id`'s children.
+    fn next_layout_sibling(&self, id: NodeId, c: NodeId) -> Option<NodeId> {
+        let mut x = c;
+        loop {
+            let n = self.tree.node(x)?;
+            if let Some(s) = n.next_sibling() {
+                return Some(s);
+            }
+            let p = n.parent()?;
+            if p == id {
+                return None;
+            }
+            x = p;
         }
     }
 
@@ -222,7 +257,11 @@ impl Engine {
             let mut cur = self.tree.parent(id);
             while let Some(p) = cur.filter(|p| self.is_passthrough(*p)) {
                 if !wrappers.iter().any(|(w, _)| *w == p) {
-                    wrappers.push((p, self.tree.ancestors(p).count()));
+                    twine_core::alloc_guard::push(
+                        &mut wrappers,
+                        (p, self.tree.ancestors(p).count()),
+                        twine_core::alloc_guard::AllocSite::EngineScratch,
+                    );
                 }
                 cur = self.tree.parent(p);
             }
@@ -479,7 +518,11 @@ impl Engine {
         if let Some(r) = self.layout.reveal.iter_mut().find(|r| r.0 == node) {
             r.1 = anim;
         } else {
-            self.layout.reveal.push((node, anim));
+            twine_core::alloc_guard::push(
+                &mut self.layout.reveal,
+                (node, anim),
+                twine_core::alloc_guard::AllocSite::EngineScratch,
+            );
         }
     }
 
@@ -546,7 +589,11 @@ impl Engine {
                     // Wrappers do not lay out anything: their parent does.
                     let target = self.layout_owner(target);
                     if targets.last() != Some(&target) {
-                        targets.push(target);
+                        twine_core::alloc_guard::push(
+                            &mut targets,
+                            target,
+                            twine_core::alloc_guard::AllocSite::EngineScratch,
+                        );
                     }
                     self.clear_layout_flags(c);
                     cur = self.skip_subtree(root, c);
@@ -645,7 +692,11 @@ impl Engine {
             }
             if let Some(p) = parent {
                 if !parents.contains(&p) {
-                    parents.push(p);
+                    twine_core::alloc_guard::push(
+                        &mut parents,
+                        p,
+                        twine_core::alloc_guard::AllocSite::EngineScratch,
+                    );
                 }
             }
             if is_base {
@@ -654,7 +705,11 @@ impl Engine {
         }
         for &(id, old, new) in &moved {
             if old.size() != new.size() && self.tree.contains(id) {
-                self.layout.readjust.push(id);
+                twine_core::alloc_guard::push(
+                    &mut self.layout.readjust,
+                    id,
+                    twine_core::alloc_guard::AllocSite::EngineScratch,
+                );
                 self.send_event(id, EventCode::SizeChanged, EventParam::Area(old));
             }
         }
@@ -676,7 +731,11 @@ impl Engine {
         let mut hit = Vec::new();
         for (id, n) in self.tree.all_nodes() {
             if n.align_to().is_some_and(|a| a.base == base) {
-                hit.push(id);
+                twine_core::alloc_guard::push(
+                    &mut hit,
+                    id,
+                    twine_core::alloc_guard::AllocSite::EngineScratch,
+                );
             }
         }
         for id in hit {
@@ -987,7 +1046,10 @@ impl Engine {
             self.remove_transitions(id, part, Some(prop), None);
         }
         let Some(n) = self.tree.node_mut(id) else { return };
-        if n.styles.local_mut(selector).set_tracks(prop, tracks) {
+        if n.styles
+            .local_mut(selector)
+            .is_some_and(|s| s.set_tracks(prop, tracks))
+        {
             self.refresh_style(id, selector.part, Some(prop));
         }
     }

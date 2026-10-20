@@ -1,5 +1,7 @@
 //! Runtime faults (R0.S01): effect loop cuts, the depth guard and dropped channel messages are
 //! recorded, counted, reported to the hook and returned by `take_faults`.
+//!
+//! req: SAF-001
 
 use std::cell::Cell;
 
@@ -26,6 +28,8 @@ fn hook(kind: FaultKind, n: u32) {
 
 static CH: Channel<u8, 2> = Channel::new();
 
+/// fault: `ChannelOverflow`
+/// req: SAF-028, SAF-031
 #[test]
 fn dropped_channel_messages_are_a_fault() {
     let _ = rt().take_faults();
@@ -46,6 +50,8 @@ fn dropped_channel_messages_are_a_fault() {
     cx.dispose();
 }
 
+/// fault: `EffectLoopCut`
+/// req: SAF-027, SAF-031
 #[test]
 fn effect_loop_cut_is_a_fault() {
     let _ = rt().take_faults();
@@ -64,6 +70,8 @@ fn effect_loop_cut_is_a_fault() {
     cx.dispose();
 }
 
+/// fault: `DepthGuard`
+/// req: SAF-027, SAF-031
 #[test]
 fn depth_guard_is_a_fault() {
     // Deep check recursion: run on a thread with a large stack (it has its own runtime).

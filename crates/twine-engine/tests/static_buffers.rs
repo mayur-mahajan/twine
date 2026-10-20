@@ -157,17 +157,24 @@ fn regression_refused_display_allocates_no_buffers() {
     assert_eq!((stats.allocs, stats.bytes), (0, 0), "{stats:?}");
 }
 
+/// `n` nodes and small timer/animation tables, preallocated: the safety profile accepts nothing
+/// else.
+fn limits(n: u16) -> twine_core::Limits {
+    twine_core::Limits::DEFAULT
+        .max_nodes(n)
+        .max_timers(4)
+        .max_anims(4)
+        .preallocated()
+}
+
 /// F10b: a node budget without room for the display's 4 layer/screen nodes refuses the display
 /// before its heap buffers are allocated (they used to be allocated, then leaked when the
 /// layer nodes could not be created).
 #[test]
 fn regression_node_budget_refuses_display_before_allocating() {
     let attempt = |rows: u16| {
-        let mut e = Engine::new(EngineConfig {
-            max_nodes: 3,
-            ..EngineConfig::default()
-        })
-        .unwrap();
+        let mut e = Engine::new(EngineConfig::default()).unwrap();
+        e.set_limits(&limits(3)).unwrap();
         let p = panel();
         let (r, stats) =
             count_allocs(|| e.add_display(p, BufferMode::alloc(BufferSpec::PartialDouble { rows })));
@@ -182,11 +189,8 @@ fn regression_node_budget_refuses_display_before_allocating() {
     assert_eq!(small.bytes, big.bytes, "{small:?} vs {big:?}");
 
     // Exactly 4 free nodes are enough.
-    let mut e = Engine::new(EngineConfig {
-        max_nodes: 4,
-        ..EngineConfig::default()
-    })
-    .unwrap();
+    let mut e = Engine::new(EngineConfig::default()).unwrap();
+    e.set_limits(&limits(4)).unwrap();
     e.add_display(panel(), BufferMode::alloc(BufferSpec::default()))
         .unwrap();
 }

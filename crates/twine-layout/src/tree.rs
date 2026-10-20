@@ -3,6 +3,8 @@
 use twine_core::{Insets, Point, Rect, Size};
 use twine_style::{Anchor, BaseDir, BorderSide, GridTrack, Length, PropId, StyleValue};
 
+use crate::LayoutScratch;
+
 /// A layout axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -133,7 +135,19 @@ pub trait LayoutTree {
 
     /// The size of the widget's own content (text, image…) without padding: LVGL's "self
     /// size". Containers without own content return [`Size::ZERO`](Size).
+    ///
+    /// It may depend on the node's styles and content and on the sizes of the node's own and
+    /// its parent's content areas (e.g. a label wrapping at its width), not on other nodes'
+    /// rectangles: one layout call remembers each content-sized node's measurement and
+    /// measures again only after that node or its parent was placed (which keeps measuring
+    /// nested content-sized nodes linear in time).
     fn content_size(&self, id: Self::Id) -> Size;
+
+    /// A number identifying `id` among the tree's live nodes (e.g. its arena index), small
+    /// and dense: the index of the layout call's measurement memo (8 bytes per slot up to the
+    /// largest one measured, kept by [`LayoutScratch`](crate::LayoutScratch)). Two live nodes
+    /// never share a slot; a slot may be reused once its node is removed.
+    fn slot(&self, id: Self::Id) -> u32;
 
     /// Layout-relevant flags of `id`.
     fn flags(&self, id: Self::Id) -> LayoutFlags;
@@ -278,10 +292,17 @@ pub(crate) const fn sum(i: Insets, axis: Axis) -> i32 {
     start(i, axis) + end(i, axis)
 }
 
-/// Sets the coordinates of `id` only if they change.
-pub(crate) fn place<T: LayoutTree + ?Sized>(t: &mut T, id: T::Id, r: Rect) {
+/// Sets the coordinates of `id` only if they change, then forgets the measurements that may
+/// depend on them: those of `id` and of its children (see [`LayoutTree::content_size`]).
+pub(crate) fn place<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, id: T::Id, r: Rect) {
     if t.coords(id) != r {
         t.set_coords(id, r);
+        if !s.memo.is_empty() {
+            let t = &*t;
+            let memo = &mut s.memo;
+            memo.forget(t.slot(id));
+            t.children(id, &mut |c| memo.forget(t.slot(c)));
+        }
     }
 }
 

@@ -34,7 +34,7 @@ impl MenuPageRef {
     /// The page, once built.
     #[must_use]
     pub fn get(&self) -> Option<NodeId> {
-        self.cell.try_get().flatten()
+        self.cell.try_get().ok().flatten()
     }
 }
 
@@ -156,7 +156,7 @@ impl WidgetView<MenuPage> {
     #[must_use]
     pub fn page_ref(self, r: MenuPageRef) -> Self {
         self.op(move |_, node| {
-            let _ = r.cell.try_with_mut(|c| *c = Some(node));
+            let _ = r.cell.try_with_mut(|c| *c = Some(node)).ok();
         })
     }
 }

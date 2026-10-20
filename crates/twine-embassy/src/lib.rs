@@ -18,6 +18,8 @@
 //! The loop is a thin adapter like `twine::run::blocking` (bare metal, RTOS, host threads),
 //! with the same events. Applications usually reach this crate through the facade:
 //! `twine::embassy` (feature `embassy`, which also enables `async` and `platform-embassy`).
+//! Its features: `log` / `defmt` (logging backend) and `safety` (the safety profile, forwarded
+//! by the facade; see `docs/safety/profile.md` in the repository).
 //!
 //! **Several displays.** A [`Ui`] with several displays (`UiBuilder::display`,
 //! `Ui::mount_on`) is one UI to the loop: one `run` drives all its displays (one engine, one
@@ -63,6 +65,20 @@
 //! ```
 #![no_std]
 #![forbid(unsafe_code)]
+#![cfg_attr(not(test), deny(clippy::float_arithmetic))]
+// The safety profile's lints (`docs/safety/profile.md` § Lints): denied in library code under
+// the `safety` feature (`cargo xtask ci` stage `clippy-safety`).
+#![cfg_attr(
+    all(feature = "safety", not(test)),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::arithmetic_side_effects,
+    )
+)]
 
 extern crate alloc;
 

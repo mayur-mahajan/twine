@@ -1,6 +1,8 @@
 //! Bounded waits (R0.S03): a display driver that never hands a buffer back (hung DMA) cannot
 //! hang the step. `EngineConfig::flush_timeout` raises `FlushTimeout`, marks the display
 //! failed and the step returns; a draw accelerator's timeouts become `AccelTimeout` faults.
+//!
+//! req: SAF-003
 
 use std::cell::Cell;
 
@@ -82,6 +84,8 @@ fn pixel(e: &Engine, d: DisplayId, x: u32, y: u32) -> Color {
     e.driver::<MemoryDisplay>(d).unwrap().pixel(x, y)
 }
 
+/// fault: `FlushTimeout`
+/// req: SAF-031
 #[test]
 fn regression_hung_flush_does_not_hang_the_step() {
     let (mut e, d) = engine(hires(FlushPolicy::Reinvalidate));
@@ -314,6 +318,8 @@ impl DrawAccel for TimingOut {
     }
 }
 
+/// fault: `AccelTimeout`
+/// req: SAF-031
 #[test]
 fn accelerator_timeouts_are_raised_and_drawn_in_software() {
     let mut e = Engine::new(EngineConfig::default()).unwrap();

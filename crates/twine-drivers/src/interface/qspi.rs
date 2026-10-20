@@ -68,7 +68,7 @@ pub fn split_write(instr: u8, addr: u32, data: &[u8], max: usize) -> impl Iterat
     } else {
         usize::MAX
     };
-    let first = core::iter::once((addr, &data[..data.len().min(step)]));
+    let first = core::iter::once((addr, data.get(..step).unwrap_or(data)));
     let rest = data
         .get(step..)
         .unwrap_or(&[])

@@ -104,6 +104,11 @@ impl Engine {
         if !n.rendered.get() {
             return;
         }
+        // Safety-critical nodes change at once: their look never lags their state.
+        #[cfg(feature = "display-integrity")]
+        if n.flags.contains(crate::ObjFlags::SAFETY_CRITICAL) {
+            return;
+        }
         // Items are drawn in their own states without transitions.
         let items = n.class().item_parts;
         let applies = |e: &StyleEntry, s: State| e.selector.state_matches(s);
@@ -245,6 +250,11 @@ impl Engine {
             v2,
             spec.duration
         );
+        twine_core::alloc_guard::before_push(
+            self.trans.list.len(),
+            self.trans.list.capacity(),
+            twine_core::alloc_guard::AllocSite::EngineScratch,
+        );
         self.trans.list.push(Running {
             serial,
             node: id,
@@ -374,7 +384,10 @@ impl Engine {
         let Some(n) = self.tree.node_mut(id) else {
             return false;
         };
-        let changed = n.styles.transition_mut(part, &mut self.trans.pool).set(p);
+        let changed = n
+            .styles
+            .transition_mut(part, &mut self.trans.pool)
+            .is_some_and(|s| s.set(p));
         if changed {
             n.style_cache.invalidate();
         }
@@ -399,7 +412,10 @@ impl Engine {
             debug_assert!(false, "transition: {prop:?} template not found");
             return false;
         };
-        let changed = src.copy_tracks_to(prop, n.styles.transition_mut(part, &mut self.trans.pool));
+        let changed = n
+            .styles
+            .transition_mut(part, &mut self.trans.pool)
+            .is_some_and(|dst| src.copy_tracks_to(prop, dst));
         if changed {
             n.style_cache.invalidate();
         }
@@ -417,26 +433,25 @@ impl Engine {
 
 impl crate::StyleList {
     /// The transition style of `part`, created when missing (from `pool` when it has a
-    /// buffer).
-    pub(crate) fn transition_mut(&mut self, part: Part, pool: &mut Vec<Rc<StyleBuf>>) -> &mut StyleBuf {
-        let find = |l: &Self| {
-            l.entries().iter().position(|e| {
-                e.kind == EntryKind::Transition
-                    && e.selector.part == part
-                    && matches!(e.style, StyleRef::Shared(_))
-            })
-        };
-        let pos = if let Some(p) = find(self) {
+    /// buffer). Always `Some`, like [`local_mut`](Self::local_mut): `None` would only mean a
+    /// broken invariant, and the callers then skip the change.
+    pub(crate) fn transition_mut(
+        &mut self,
+        part: Part,
+        pool: &mut Vec<Rc<StyleBuf>>,
+    ) -> Option<&mut StyleBuf> {
+        let found = self.entries().iter().position(|e| {
+            e.kind == EntryKind::Transition
+                && e.selector.part == part
+                && matches!(e.style, StyleRef::Shared(_))
+        });
+        let pos = if let Some(p) = found {
             p
         } else {
             let buf = pool.pop().unwrap_or_default();
-            self.insert(StyleEntry::new(Selector::part(part), buf, EntryKind::Transition));
-            find(self).unwrap_or(0)
+            self.insert(StyleEntry::new(Selector::part(part), buf, EntryKind::Transition))
         };
-        match &mut self.entries_mut()[pos].style {
-            StyleRef::Shared(rc) => Rc::make_mut(rc),
-            StyleRef::Static(_) => unreachable!("transition entries are shared buffers"),
-        }
+        crate::style_list::shared_mut(self.entries_mut().get_mut(pos))
     }
 
     /// Removes `prop` from the transition entries of `part` (`None` = all parts); empty

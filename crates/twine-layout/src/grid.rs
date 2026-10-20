@@ -166,6 +166,9 @@ fn grid_align(
 /// Content extent of a grid container on `axis`: Σ tracks + gaps (tracks sized as on a
 /// content-sized axis), or the extent of the non-grid children if larger.
 #[allow(clippy::too_many_arguments)]
+// Out of line: kept off the frames of the recursive layout walk (`arrange` / `resolve_node`),
+// whose stack use per tree level is measured (`docs/safety/profile.md` § 10).
+#[inline(never)]
 pub(crate) fn extent<T: LayoutTree + ?Sized>(
     t: &T,
     s: &mut LayoutScratch<T::Id>,
@@ -233,6 +236,9 @@ fn cell_offset(align: GridAlign, cell: i32, size: i32, m_start: i32, m_end: i32)
 
 /// Positions the grid items among `s.items[frame..end]` in the content area `content`.
 #[allow(clippy::too_many_arguments)]
+// Out of line: kept off the frames of the recursive layout walk (`arrange` / `resolve_node`),
+// whose stack use per tree level is measured (`docs/safety/profile.md` § 10).
+#[inline(never)]
 pub(crate) fn arrange<T: LayoutTree + ?Sized>(
     t: &mut T,
     s: &mut LayoutScratch<T::Id>,
@@ -340,6 +346,7 @@ pub(crate) fn arrange<T: LayoutTree + ?Sized>(
         let (tx, ty) = translate(&*t, it.id, size);
         place(
             t,
+            s,
             it.id,
             Rect::from_xywh(content.x0 + x + tx, content.y0 + y + ty, size.w, size.h),
         );

@@ -281,8 +281,17 @@ impl ButtonMatrix {
     /// in one): the buttons, their texts and their control bits, which replace the current
     /// ones. Idempotent: the same map (the same static table, or an equal one) changes
     /// nothing, also not the control bits changed since. The selection is kept on the button
-    /// that now occupies its position. Never panics.
-    pub fn set_map(&mut self, cx: &mut WidgetCx<'_>, map: BtnMap) {
+    /// that now occupies its position. The texts of an [`OwnedMap`] are cut to
+    /// [`Limits::max_text_len`](twine_core::Limits::max_text_len) like a label's text (a
+    /// `Capacity` fault, code `TextLen`, per cut text); a static map's texts are used as they
+    /// are (in flash, never copied). The button tables are kept between maps: a map with more
+    /// buttons than any before grows them. Never panics.
+    pub fn set_map(&mut self, cx: &mut WidgetCx<'_>, mut map: BtnMap) {
+        // The texts of an owned map are widget texts: cut in place (no allocation).
+        for t in map.owned_texts_mut() {
+            let cap = t.capacity();
+            cx.limit_text(t, cap);
+        }
         if self.map.same(&map) {
             if let (BtnMap::Static(_), BtnMap::Static(_)) = (&self.map, &map) {
                 self.map = map;
@@ -312,7 +321,10 @@ impl ButtonMatrix {
 
     /// Replaces the text of button `idx` in place (a static map is copied into an owned one
     /// first, once; after that the button's string is reused, so a text that fits its
-    /// capacity allocates nothing). Redraws only that button; the layout is unchanged.
+    /// capacity allocates nothing — with [`Limits::preallocate`](twine_core::Limits::preallocate)
+    /// a growing string is reserved for the full `max_text_len` at once). Cut to
+    /// [`Limits::max_text_len`](twine_core::Limits::max_text_len) like a label's text (a
+    /// `Capacity` fault, code `TextLen`). Redraws only that button; the layout is unchanged.
     /// Idempotent; an index out of range is ignored with a warning. Never panics.
     ///
     /// ```
@@ -330,7 +342,9 @@ impl ButtonMatrix {
             twine_core::warn!(target: "twine::engine", "buttonmatrix: button {} out of range", idx);
             return;
         }
-        if self.map.set_text(usize::from(idx), text) {
+        let text = cx.fit_text(text);
+        if let Some(buf) = self.map.text_buf(usize::from(idx), text) {
+            cx.store_text(buf, text);
             log_set(BUTTONMATRIX_CLASS.name, cx.node(), "btn_text");
             self.invalidate_btn(cx, Some(idx));
         }
@@ -474,6 +488,10 @@ impl ButtonMatrix {
     fn parse_map(&mut self) {
         self.row_cnt = u16::try_from(self.map.row_count()).unwrap_or(u16::MAX);
         let n = self.map.btn_count().min(usize::from(u16::MAX));
+        // Kept between maps: a map with more buttons than any before grows them.
+        if self.ctrl.capacity() < n || self.areas.capacity() < n {
+            twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::WidgetBuffer);
+        }
         self.ctrl.clear();
         self.ctrl
             .extend((0..n).map(|i| self.map.initial_ctrl(i).unwrap_or_default()));

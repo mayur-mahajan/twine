@@ -3,7 +3,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use twine_reactive::{Runtime, StoredValue};
+use twine_reactive::{HandleKind, ReactiveError, Runtime, StoredValue};
 
 /// The calling thread's reactive runtime.
 fn rt() -> Runtime {
@@ -26,9 +26,9 @@ fn stored_value_roundtrip() {
     v.with_mut(|v| v.push(3));
     assert_eq!(v.get(), [1, 2, 3]);
     v.set(vec![9]);
-    assert_eq!(v.try_get(), Some(vec![9]));
-    assert_eq!(v.try_with(Vec::len), Some(1));
-    assert_eq!(v.try_with_mut(Vec::pop), Some(Some(9)));
+    assert_eq!(v.try_get(), Ok(vec![9]));
+    assert_eq!(v.try_with(Vec::len), Ok(1));
+    assert_eq!(v.try_with_mut(Vec::pop), Ok(Some(9)));
     assert!(v.is_alive());
     cx.dispose();
 }
@@ -81,8 +81,14 @@ fn stored_value_disposed_with_its_scope() {
     root.dispose();
     assert!(dropped.get(), "value dropped with the scope");
     assert!(!v.is_alive());
-    assert!(v.try_with(|_| ()).is_none());
-    assert!(v.try_with_mut(|_| ()).is_none());
+    assert_eq!(
+        v.try_with(|_| ()),
+        Err(ReactiveError::Disposed(HandleKind::StoredValue))
+    );
+    assert_eq!(
+        v.try_with_mut(|_| ()),
+        Err(ReactiveError::Disposed(HandleKind::StoredValue))
+    );
     assert!(rt().stats().nodes < nodes);
 }
 
@@ -122,7 +128,7 @@ fn stored_value_old_value_drop_can_use_it_again() {
         fn drop(&mut self) {
             if let Some(v) = self.0.get() {
                 // The old value is dropped after the value was released: no borrow error.
-                assert!(v.try_with(|_| ()).is_some());
+                assert!(v.try_with(|_| ()).is_ok());
             }
         }
     }

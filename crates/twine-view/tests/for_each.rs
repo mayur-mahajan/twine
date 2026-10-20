@@ -35,7 +35,7 @@ fn list(initial: Vec<u32>) -> TestUi {
 }
 
 fn items(t: &TestUi) -> Signal<Vec<u32>> {
-    t.root_scope().expect_context::<Signal<Vec<u32>>>()
+    t.root_scope().use_context::<Signal<Vec<u32>>>().unwrap()
 }
 
 /// `(text, node)` of the rows in tree order.
@@ -197,7 +197,7 @@ fn table(n: u32) -> Table {
         .test_id("col")
     });
     t.run_until_idle();
-    let values = t.root_scope().expect_context::<Signal<Vec<(u32, i32)>>>();
+    let values = t.root_scope().use_context::<Signal<Vec<(u32, i32)>>>().unwrap();
     Table {
         t,
         values,
@@ -290,7 +290,7 @@ fn for_each_signal_items_are_read_in_place() {
         ))
     });
     t.run_until_idle();
-    let items = t.root_scope().expect_context::<Signal<Vec<Counted>>>();
+    let items = t.root_scope().use_context::<Signal<Vec<Counted>>>().unwrap();
     let before = CLONES.with(Cell::get);
     items.update(|v| v[10].value = 1);
     t.run_until_idle();
@@ -351,7 +351,7 @@ fn for_each_field_projection_runs_only_for_its_field() {
     });
     t.run_until_idle();
     assert_eq!(name_runs.get(), 2);
-    let items = t.root_scope().expect_context::<Signal<Vec<Item>>>();
+    let items = t.root_scope().use_context::<Signal<Vec<Item>>>().unwrap();
     items.update(|v| v[0].value = 5);
     t.run_until_idle();
     assert_eq!(name_runs.get(), 2, "the name binding did not run");
@@ -390,7 +390,7 @@ fn for_each_closure_and_constant_sources() {
             .collect()
     };
     assert_eq!(texts(&t), ["x", "y", "z", "0", "10", "7"]);
-    t.root_scope().expect_context::<Signal<usize>>().set(3);
+    t.root_scope().use_context::<Signal<usize>>().unwrap().set(3);
     t.run_until_idle();
     assert_eq!(texts(&t), ["x", "y", "z", "0", "10", "20", "7"]);
 }
@@ -517,7 +517,7 @@ fn keyed_virtual_list() -> (TestUi, Items, &'static Readings, Rc<Cell<u32>>) {
         .test_id("vl")
     });
     t.run_until_idle();
-    let items = t.root_scope().expect_context::<Signal<Vec<(u32, i32)>>>();
+    let items = t.root_scope().use_context::<Signal<Vec<(u32, i32)>>>().unwrap();
     (t, items, sensor, builds)
 }
 

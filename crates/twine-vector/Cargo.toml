@@ -12,6 +12,9 @@ workspace = true
 
 [features]
 default = []
+## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
+## safety lints of library code and the refusal of excluded features.
+safety = ["twine-core/safety", "twine-render/safety"]
 ## SVG Tiny subset parser (`parse_svg`, `SvgDocument`).
 svg = ["dep:thiserror"]
 ## std-only conveniences.

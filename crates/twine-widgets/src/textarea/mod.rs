@@ -227,7 +227,7 @@ impl Textarea {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            label: NodeId::from_raw(u32::MAX),
+            label: twine_engine::DEAD_NODE,
             cursor: CursorState {
                 show: true,
                 ..CursorState::default()

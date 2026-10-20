@@ -12,6 +12,15 @@ workspace = true
 
 [features]
 default = []
+## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
+## safety lints of library code and the refusal of excluded features.
+safety = [
+    "twine-anim/safety",
+    "twine-core/safety",
+    "twine-image/safety",
+    "twine-render/safety",
+    "twine-text/safety",
+]
 ## std-only conveniences.
 std = ["twine-core/std", "twine-anim/std", "twine-render/std", "twine-text/std", "twine-image/std"]
 ## Log through the `log` crate.

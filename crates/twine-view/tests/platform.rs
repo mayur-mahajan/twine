@@ -27,7 +27,9 @@ fn platform_is_the_clock_the_notify_and_the_interrupt_probe() {
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .platform(&platform)
-        .build(app);
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(app)
+        .unwrap();
     // The clock: the `Ui` reads the platform's time.
     platform.advance(Duration::ms(7));
     assert_eq!(ui.now(), Instant::from_millis(7));
@@ -61,7 +63,9 @@ fn notify_input_from_another_thread_notifies_the_platform() {
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .platform(&platform)
-        .build(|_| label("idle"));
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(|_| label("idle"))
+        .unwrap();
     while ui.update() == Wake::Now {}
     let before = MockPlatform::notifications();
     let waker = ui.waker();
@@ -84,7 +88,9 @@ fn std_platform_wait_wakes_on_ui_waker_wake() {
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .platform(&platform)
-        .build(|_| label("idle"));
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(|_| label("idle"))
+        .unwrap();
     while ui.update() == Wake::Now {}
     let waker = ui.waker();
     let sender = thread::spawn(move || {
@@ -120,12 +126,14 @@ fn reactive_api_in_an_interrupt_panics_with_debug_checks() {
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .platform(&platform)
-        .build(|cx| {
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(|cx| {
             let n = cx.signal(0u32);
             seen = Some(n);
             cx.on_message(&CH, move |v| n.set(v));
             label(text!("{}", n.get()))
-        });
+        })
+        .unwrap();
     let n = seen.unwrap();
     while ui.update() == Wake::Now {}
 

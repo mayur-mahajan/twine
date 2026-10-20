@@ -3,12 +3,12 @@
 
 use alloc::boxed::Box;
 use alloc::rc::Rc;
-use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::RefCell;
-use core::hash::Hash;
+use core::hash::{BuildHasher, Hash};
 
-use hashbrown::HashMap;
+use hashbrown::{DefaultHashBuilder, HashTable};
+use twine_core::alloc_guard::{self, AllocSite};
 use twine_engine::{Engine, NodeId, fmt_node_id};
 use twine_reactive::{ReadSignal, Scope, Signal};
 
@@ -44,11 +44,18 @@ use crate::view::{AnyView, IntoAnyView, View};
 /// Duplicate keys are a user error: the first occurrence wins, the others are skipped (and
 /// logged with `warn!`).
 ///
+/// **Bound.** At most [`Limits::max_list_items`](twine_core::Limits::max_list_items) rows
+/// (or [`ForEach::max_items`]): the items beyond it are not shown, and a
+/// [`CapacityFault::ListItems`](twine_core::fault::CapacityFault::ListItems) fault is raised.
+///
 /// **Cost.** Per row: a scope and one signal holding a copy of the item. Per change: when the
 /// keys are those of the rows, in the same order (values changed, or nothing did), one pass
 /// over the items comparing keys and values, allocation-free. Otherwise (insertions, removals,
-/// moves) a hash map of the keys and a few vectors for the time of the reconcile — a constant
-/// number of allocations, not one per row.
+/// moves) one pass to index the keys and one to place the rows, in a scratch the collection
+/// keeps between changes (an index table of `u32` entries — keys are never copied — and a
+/// few vectors): once it has reached the size of the largest change, or was reserved for the
+/// bound with [`Limits::preallocate`](twine_core::Limits::preallocate), removals and moves
+/// allocate nothing, and insertions only what their new rows need.
 ///
 /// ```
 /// use twine_view::prelude::*;
@@ -87,6 +94,7 @@ where
         items: items.into_items(),
         key: Box::new(key),
         view: Box::new(move |s, t| view(s, t).into_any()),
+        max_items: u16::MAX,
     }
 }
 
@@ -96,6 +104,8 @@ pub struct ForEach<T: 'static, K: 'static> {
     items: Items<T>,
     key: Box<dyn Fn(&T) -> K>,
     view: Box<dyn Fn(Scope, ReadSignal<T>) -> AnyView>,
+    /// This collection's row bound ([`max_items`](Self::max_items)).
+    max_items: u16,
 }
 
 impl<T, K> core::fmt::Debug for ForEach<T, K> {
@@ -122,6 +132,14 @@ struct Counts {
     deleted: usize,
     /// Kept rows whose item signal was written.
     updated: usize,
+    /// Items beyond the bound (not shown).
+    cut: usize,
+}
+
+/// Adds `by` to a count of rows (bounded by the list lengths: it cannot overflow).
+#[inline]
+fn add(count: &mut usize, by: usize) {
+    *count = count.saturating_add(by);
 }
 
 /// Writes `item` into a row's item signal when it differs from the value there
@@ -137,6 +155,34 @@ pub(super) fn sync_item<T: Clone + PartialEq + 'static>(sig: Signal<T>, item: &T
     true
 }
 
+impl<T, K> ForEach<T, K> {
+    /// Bounds this collection to `n` rows, below
+    /// [`Limits::max_list_items`](twine_core::Limits::max_list_items) (which stays the
+    /// ceiling: the bound is the smaller of the two). Default: the `Limits` value.
+    ///
+    /// With more items than the bound, the first `n` are shown and each reconcile raises a
+    /// [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity) fault (code
+    /// [`CapacityFault::ListItems`](twine_core::fault::CapacityFault::ListItems), `node` = the
+    /// collection). With [`Limits::preallocate`](twine_core::Limits::preallocate) the row list
+    /// and the reconcile scratch are reserved for the bound when the collection is built, so
+    /// a small list does not reserve for the application-wide maximum. `0` shows nothing.
+    /// Never panics.
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    ///
+    /// fn tabs(cx: Scope) -> impl View {
+    ///     let names = cx.signal(vec!["Home", "Logs", "Setup"]);
+    ///     row(for_each(names, |n| *n, |_, n| label(n.get_untracked())).max_items(4))
+    /// }
+    /// # let _ = tabs;
+    /// ```
+    pub fn max_items(mut self, n: u16) -> Self {
+        self.max_items = n;
+        self
+    }
+}
+
 impl<T: Clone + PartialEq + 'static, K: Eq + Hash + Clone + 'static> View for ForEach<T, K> {
     fn build(self, cx: &mut BuildCx<'_>) -> NodeId {
         let wrapper = cx.create(Wrapper(&FOR_EACH_CLASS));
@@ -145,14 +191,22 @@ impl<T: Clone + PartialEq + 'static, K: Eq + Hash + Clone + 'static> View for Fo
         }
         let scope = cx.scope();
         let rt = scope.runtime();
-        let rows: Rc<RefCell<Vec<Row<T, K>>>> = Rc::default();
-        let r = rows.clone();
+        let limits = *cx.engine().limits();
+        let bound = usize::from(self.max_items.min(limits.max_list_items));
+        let hasher = DefaultHashBuilder::default();
+        let state: Rc<RefCell<State<T, K>>> = Rc::new(RefCell::new(State::new()));
+        if limits.preallocate {
+            state.borrow_mut().reserve(bound);
+        }
+        let st = state.clone();
         cx.on_delete(wrapper, move || {
-            for row in r.borrow_mut().drain(..) {
+            // Taken out first: disposing runs user cleanups.
+            let rows = core::mem::take(&mut st.borrow_mut().rows);
+            for row in rows {
                 row.scope.dispose();
             }
         });
-        let ForEach { items, key, view } = self;
+        let ForEach { items, key, view, .. } = self;
         cx.provide(|| {
             scope.effect_with_cx(move |_| {
                 match EngineAccess::with(rt, |e| e.tree().contains(wrapper)) {
@@ -161,14 +215,19 @@ impl<T: Clone + PartialEq + 'static, K: Eq + Hash + Clone + 'static> View for Fo
                     Some(true) => {}
                 }
                 let mut counts = Counts::default();
-                let mut plan = None;
+                let mut structural = false;
                 // The read is tracked (the effect re-runs when the list changes); the keys,
                 // comparisons and copies of the items are not.
                 items.read(|new| {
-                    rt.untrack(|| plan = diff(&rows.borrow(), new, &*key, &mut counts));
+                    rt.untrack(|| {
+                        structural = diff(&mut state.borrow_mut(), new, bound, &*key, hasher, &mut counts);
+                    });
                 });
-                if let Some(plan) = plan {
-                    rt.untrack(|| apply(wrapper, scope, &rows, plan, &*view, &mut counts));
+                if counts.cut > 0 {
+                    report_cut(rt, wrapper, counts.cut);
+                }
+                if structural {
+                    rt.untrack(|| apply(wrapper, scope, &state, &*view, &mut counts));
                 }
                 twine_core::debug!(
                     target: "twine::view",
@@ -185,177 +244,359 @@ impl<T: Clone + PartialEq + 'static, K: Eq + Hash + Clone + 'static> View for Fo
     }
 }
 
-/// A position of the new list.
-enum Slot<T: 'static, K> {
-    /// Keep old row `j` (its item is up to date).
-    Keep(usize),
-    /// Build a row for a new key from a copy of its item.
-    New(K, T),
-    /// A new row's scope, item signal and view, ready to be built.
-    Ready {
-        key: K,
-        scope: Scope,
-        item: Signal<T>,
-        view: AnyView,
-    },
+/// Raises the `ListItems` capacity fault of a collection that cut `n` items.
+#[cold]
+#[inline(never)]
+pub(super) fn report_cut(rt: twine_reactive::Runtime, node: NodeId, n: usize) {
+    twine_core::warn!(
+        target: "twine::view",
+        "{}: {} item(s) beyond the list bound not shown",
+        fmt_node_id(node),
+        n
+    );
+    EngineAccess::with(rt, |e| {
+        e.raise_fault(
+            twine_engine::FaultRecord::new(twine_core::fault::FaultKind::Capacity)
+                .node(node)
+                .code(twine_core::fault::CapacityFault::ListItems.code()),
+        );
+    });
 }
 
-/// What [`apply`] does: the new list's positions and the old rows to delete.
-struct Plan<T: 'static, K> {
-    slots: Vec<Slot<T, K>>,
-    removed: Vec<usize>,
+/// Index-table / plan entry: the index part (rows and positions are bounded by
+/// `Limits::max_list_items <= 65 535`, far below it).
+const INDEX: u32 = (1 << 30) - 1;
+/// Entry flag: the index is one of [`Scratch::fresh`] (a key not among the rows), not a row.
+const NEW: u32 = 1 << 30;
+/// Index-table flag: the row's key was matched by a position of the new list (a second match
+/// is a duplicate key). Plan flag (same bit, other array): the row stays where it is.
+const TAKEN: u32 = 1 << 31;
+/// Plan flag: the kept row lies on the longest increasing run of old positions: it stays.
+const STAY: u32 = 1 << 31;
+/// No position (end of a LIS predecessor chain).
+const NONE: u32 = u32::MAX;
+
+/// An index as an entry (`INDEX` for an index that does not fit; never reached).
+#[inline]
+fn entry(i: usize) -> u32 {
+    u32::try_from(i).map_or(INDEX, |i| i.min(INDEX))
 }
 
-/// Marks a key of the index as used by a position of the new list.
-const TAKEN: usize = usize::MAX;
+/// The index part of an entry.
+#[inline]
+fn index_of(e: u32) -> usize {
+    (e & INDEX) as usize
+}
 
-/// Compares the new items with the rows. Same keys in the same order (the common case: values
-/// changed, or nothing did): the changed items are written into their rows' signals, nothing
-/// is allocated and `None` is returned. Otherwise the [`Plan`] of the structural change (the
-/// items of kept rows are updated too).
+/// A collection's rows and its reconcile scratch, kept between reconciles (their capacity is
+/// the high-water mark, or the bound when preallocated).
+struct State<T: 'static, K> {
+    rows: Vec<Row<T, K>>,
+    scratch: Scratch<T, K>,
+}
+
+/// What a structural reconcile works with. Every buffer is cleared, not freed, after use:
+/// once it reached its size (or was reserved for the bound), a keyed change allocates
+/// nothing but the rows it creates.
+struct Scratch<T: 'static, K> {
+    /// Keys → rows (and keys → `fresh` entries, to find duplicate new keys). It stores
+    /// entries only (a `u32` each), never a key: a key is compared through its row.
+    index: HashTable<u32>,
+    /// One entry per position of the new list (a row index, or `NEW | fresh index`),
+    /// followed by the indices of the rows to delete.
+    plan: Vec<u32>,
+    /// The number of positions of the new list (the head of `plan`).
+    positions: usize,
+    /// Key and item copy of each new row, in position order.
+    fresh: Vec<(K, T)>,
+    /// The rows while they are put in the new order (`None` once placed or deleted).
+    old: Vec<Option<Row<T, K>>>,
+    /// Longest-increasing-run scratch: run tails and predecessors.
+    tails: Vec<u32>,
+    prev: Vec<u32>,
+}
+
+impl<T: 'static, K> State<T, K> {
+    /// Empty; allocates nothing.
+    fn new() -> Self {
+        State {
+            rows: Vec::new(),
+            scratch: Scratch {
+                index: HashTable::new(),
+                plan: Vec::new(),
+                positions: 0,
+                fresh: Vec::new(),
+                old: Vec::new(),
+                tails: Vec::new(),
+                prev: Vec::new(),
+            },
+        }
+    }
+
+    /// Reserves everything a reconcile of up to `bound` rows needs: at most `bound` rows on
+    /// each side, so `2 · bound` index and plan entries (old rows plus new keys).
+    fn reserve(&mut self, bound: usize) {
+        let both = bound.saturating_mul(2);
+        let s = &mut self.scratch;
+        self.rows.reserve_exact(bound);
+        // The table is empty: nothing to rehash.
+        s.index.reserve(both, |_| 0);
+        s.plan.reserve_exact(both);
+        s.fresh.reserve_exact(bound);
+        s.old.reserve_exact(bound);
+        s.tails.reserve_exact(bound);
+        s.prev.reserve_exact(bound);
+    }
+}
+
+/// The key of index-table entry `e`: a row's, or a new key's.
+#[inline]
+fn key_of<'a, T, K>(rows: &'a [Row<T, K>], fresh: &'a [(K, T)], e: u32) -> Option<&'a K> {
+    if e & NEW == 0 {
+        rows.get(index_of(e)).map(|r| &r.key)
+    } else {
+        fresh.get(index_of(e)).map(|f| &f.0)
+    }
+}
+
+/// Compares the new items (the first `bound` of them) with the rows. Same keys in the same
+/// order (the common case: values changed, or nothing did): the changed items are written
+/// into their rows' signals, nothing is allocated and `false` is returned. Otherwise the
+/// structural change is planned in the scratch (the items of kept rows are updated too) and
+/// `true` is returned.
 fn diff<T: Clone + PartialEq + 'static, K: Eq + Hash + Clone>(
-    rows: &[Row<T, K>],
+    st: &mut State<T, K>,
     new: &[T],
+    bound: usize,
     key: &dyn Fn(&T) -> K,
+    hasher: DefaultHashBuilder,
     counts: &mut Counts,
-) -> Option<Plan<T, K>> {
+) -> bool {
+    let new = match new.get(..bound) {
+        Some(head) if head.len() < new.len() => {
+            counts.cut = new.len().saturating_sub(bound);
+            head
+        }
+        _ => new,
+    };
     // Fast path: walk both lists while the keys agree.
-    let mut same = 0;
-    for (row, item) in rows.iter().zip(new) {
+    let mut same = 0usize;
+    for (row, item) in st.rows.iter().zip(new) {
         if key(item) != row.key {
             break;
         }
-        counts.updated += usize::from(sync_item(row.item, item));
-        same += 1;
+        add(&mut counts.updated, usize::from(sync_item(row.item, item)));
+        add(&mut same, 1);
     }
-    if same == rows.len() && same == new.len() {
+    if same == st.rows.len() && same == new.len() {
         counts.kept = same;
-        return None;
+        return false;
     }
-    Some(diff_keys(rows, new, key, counts))
+    diff_keys(st, new, key, hasher, counts);
+    true
 }
 
-/// The structural part of [`diff`]: matches the new keys with the old rows (the first
-/// occurrence of a duplicate wins).
+/// The structural part of [`diff`]: matches the new keys with the rows (the first occurrence
+/// of a duplicate wins) and writes the plan: the new positions, then the rows to delete (in
+/// row order). Allocates only when the scratch is smaller than this change (noted as
+/// `Reconcile` after a seal).
 #[cold]
 #[inline(never)]
 fn diff_keys<T: Clone + PartialEq + 'static, K: Eq + Hash + Clone>(
-    rows: &[Row<T, K>],
+    st: &mut State<T, K>,
     new: &[T],
     key: &dyn Fn(&T) -> K,
+    hasher: DefaultHashBuilder,
     counts: &mut Counts,
-) -> Plan<T, K> {
-    let mut index: HashMap<K, usize> = HashMap::with_capacity(rows.len() + new.len());
-    for (j, r) in rows.iter().enumerate() {
-        index.insert(r.key.clone(), j);
+) {
+    let State {
+        rows,
+        scratch:
+            Scratch {
+                index,
+                plan,
+                positions,
+                fresh,
+                ..
+            },
+    } = st;
+    index.clear();
+    plan.clear();
+    fresh.clear();
+    let entries = rows.len().saturating_add(new.len());
+    if index.capacity() < entries {
+        twine_core::alloc_guard::grew(AllocSite::Reconcile);
+        // Empty (cleared): nothing to rehash.
+        index.reserve(entries, |_| 0);
     }
-    let mut slots = Vec::with_capacity(new.len());
+    alloc_guard::reserve(plan, entries, AllocSite::Reconcile);
+    let hash = |k: Option<&K>| k.map_or(0, |k| hasher.hash_one(k));
+    for (j, r) in rows.iter().enumerate() {
+        index.insert_unique(hasher.hash_one(&r.key), entry(j), |&e| {
+            hash(key_of(rows, fresh, e))
+        });
+    }
     for item in new {
         let k = key(item);
-        match index.get_mut(&k) {
-            Some(j) if *j == TAKEN => {
+        let h = hasher.hash_one(&k);
+        match index.find_mut(h, |&e| key_of(rows, fresh, e) == Some(&k)) {
+            Some(e) if *e & (TAKEN | NEW) != 0 => {
                 twine_core::warn!(target: "twine::view", "for_each: duplicate key; item skipped");
             }
-            Some(j) => {
-                let old = core::mem::replace(j, TAKEN);
-                counts.updated += usize::from(sync_item(rows[old].item, item));
-                slots.push(Slot::Keep(old));
+            Some(e) => {
+                *e |= TAKEN;
+                let j = *e & INDEX;
+                if let Some(row) = rows.get(index_of(j)) {
+                    add(&mut counts.updated, usize::from(sync_item(row.item, item)));
+                }
+                alloc_guard::push(plan, j, AllocSite::Reconcile);
             }
             None => {
-                index.insert(k.clone(), TAKEN);
-                slots.push(Slot::New(k, item.clone()));
+                let f = entry(fresh.len());
+                alloc_guard::push(fresh, (k, item.clone()), AllocSite::Reconcile);
+                index.insert_unique(h, NEW | TAKEN | f, |&e| hash(key_of(rows, fresh, e)));
+                alloc_guard::push(plan, NEW | f, AllocSite::Reconcile);
             }
         }
     }
-    let removed = index.into_values().filter(|&j| j != TAKEN).collect();
-    Plan { slots, removed }
+    *positions = plan.len();
+    // The rows no position took, in row order.
+    for (j, r) in rows.iter().enumerate() {
+        let me = entry(j);
+        let taken = index
+            .find(hasher.hash_one(&r.key), |&e| e & (NEW | INDEX) == me)
+            .is_some_and(|&e| e & TAKEN != 0);
+        if !taken {
+            alloc_guard::push(plan, me, AllocSite::Reconcile);
+        }
+    }
+    index.clear();
 }
 
-/// Applies a structural [`Plan`]: deletes the removed rows, builds the new ones and moves the
-/// kept rows that are out of order.
+/// Applies the planned structural change: deletes the removed rows, then walks the new
+/// positions from the first, placing each row right after the previous one — kept rows on a
+/// longest increasing run of old positions stay, the other kept rows move, new rows are
+/// built (their views with the engine lent to hooks).
 fn apply<T: 'static, K>(
     wrapper: NodeId,
     scope: Scope,
-    rows: &RefCell<Vec<Row<T, K>>>,
-    plan: Plan<T, K>,
+    state: &RefCell<State<T, K>>,
     view: &dyn Fn(Scope, ReadSignal<T>) -> AnyView,
     counts: &mut Counts,
 ) {
     let rt = scope.runtime();
-    let Plan { mut slots, removed } = plan;
-    let mut old: Vec<Option<Row<T, K>>> = rows.borrow_mut().drain(..).map(Some).collect();
+    // Taken out for the time of the apply (moving the buffers allocates nothing): user code
+    // runs meanwhile (cleanups, views) and may even delete the collection.
+    let mut st = core::mem::replace(&mut *state.borrow_mut(), State::new());
+    {
+        let State {
+            rows,
+            scratch:
+                Scratch {
+                    plan,
+                    positions,
+                    fresh,
+                    old,
+                    tails,
+                    prev,
+                    ..
+                },
+        } = &mut st;
+        let n = *positions;
+        alloc_guard::reserve(old, rows.len(), AllocSite::Reconcile);
+        old.extend(rows.drain(..).map(Some));
 
-    // 1. Dispose and delete the rows that are gone (scope first, then node).
-    EngineAccess::with(rt, |e| {
-        for j in removed {
-            if let Some(row) = old.get_mut(j).and_then(Option::take) {
-                delete_row(e, row.scope, row.node);
-                counts.deleted += 1;
+        // 1. Dispose and delete the rows that are gone (scope first, then node).
+        EngineAccess::with(rt, |e| {
+            for &j in plan.get(n..).unwrap_or(&[]) {
+                if let Some(row) = old.get_mut(index_of(j)).and_then(Option::take) {
+                    delete_row(e, row.scope, row.node);
+                    add(&mut counts.deleted, 1);
+                }
             }
+        });
+
+        // 2. The rows that stay in place.
+        if let Some(head) = plan.get_mut(..n) {
+            mark_stay(head, tails, prev);
         }
-    });
 
-    // 2. The rows that stay in place: a longest increasing subsequence of old positions.
-    let stay = lis(slots.len(), |i| match slots[i] {
-        Slot::Keep(j) => Some(j),
-        _ => None,
-    });
-
-    // 3. Views of new rows, created while the engine is available to hooks.
-    for s in &mut slots {
-        if let Slot::New(..) = s {
-            let Slot::New(key, item) = core::mem::replace(s, Slot::Keep(usize::MAX)) else {
-                continue;
-            };
-            let child = scope.child();
-            let item = child.signal(item);
-            let view = view(child, item.read_only());
-            *s = Slot::Ready {
-                key,
-                scope: child,
-                item,
-                view,
-            };
-        }
-    }
-
-    // 4. Walk from the end, inserting before the following row.
-    let mut new_rows: Vec<Row<T, K>> = Vec::with_capacity(slots.len());
-    EngineAccess::with(rt, |e| {
-        let mut next: Option<NodeId> = None;
-        while let Some(s) = slots.pop() {
-            let i = slots.len();
-            let row = match s {
-                Slot::Keep(j) => {
-                    let Some(row) = old.get_mut(j).and_then(Option::take) else {
+        // 3. Walk the positions, placing each row right after the previous one.
+        alloc_guard::reserve(rows, n, AllocSite::Reconcile);
+        EngineAccess::with(rt, |e| {
+            let mut fresh = fresh.drain(..);
+            let mut placed: Option<NodeId> = None;
+            for &p in plan.get(..n).unwrap_or(&[]) {
+                let before = match placed {
+                    Some(prev) => e.tree().node(prev).and_then(twine_engine::Node::next_sibling),
+                    None => e.tree().node(wrapper).and_then(twine_engine::Node::first_child),
+                };
+                let row = if p & NEW == 0 {
+                    let Some(row) = old.get_mut(index_of(p)).and_then(Option::take) else {
                         continue;
                     };
-                    if stay[i] {
-                        counts.kept += 1;
+                    if p & STAY != 0 || before == Some(row.node) {
+                        add(&mut counts.kept, 1);
                     } else {
-                        counts.moved += 1;
-                        let _ = e.move_node(row.node, wrapper, next);
+                        add(&mut counts.moved, 1);
+                        let _ = e.move_node(row.node, wrapper, before);
                     }
                     row
-                }
-                Slot::Ready {
-                    key,
-                    scope,
-                    item,
-                    view,
-                } => {
-                    counts.created += 1;
-                    build_row(e, wrapper, next, key, scope, item, view)
-                }
-                // Turned into `Ready` above.
-                Slot::New(..) => continue,
-            };
-            next = Some(row.node);
-            new_rows.push(row);
+                } else {
+                    // `fresh` holds one entry per `NEW` position, in position order.
+                    let Some((key, item)) = fresh.next() else {
+                        continue;
+                    };
+                    add(&mut counts.created, 1);
+                    build_row(e, wrapper, before, scope, key, item, view)
+                };
+                placed = Some(row.node);
+                rows.push(row);
+            }
+        });
+        // Empty unless the engine was unavailable (then the rows left are dropped).
+        old.clear();
+        fresh.clear();
+        plan.clear();
+    }
+    *state.borrow_mut() = st;
+}
+
+/// Flags (`STAY`) the positions of `plan` whose kept rows lie on a longest increasing run of
+/// old positions (patience sorting, O(n log n)); `NEW` positions are not on any run. `tails`
+/// and `prev` are the retained scratch.
+fn mark_stay(plan: &mut [u32], tails: &mut Vec<u32>, prev: &mut Vec<u32>) {
+    tails.clear();
+    prev.clear();
+    alloc_guard::reserve(tails, plan.len(), AllocSite::Reconcile);
+    alloc_guard::reserve(prev, plan.len(), AllocSite::Reconcile);
+    let old_at = |plan: &[u32], i: u32| {
+        plan.get(i as usize)
+            .filter(|&&e| e & NEW == 0)
+            .map(|&e| e & INDEX)
+    };
+    for i in 0..plan.len() {
+        let me = entry(i);
+        let mut before = NONE;
+        if let Some(v) = old_at(plan, me) {
+            // tails[l] = position of the smallest tail of an increasing run of length l + 1.
+            let pos = tails.partition_point(|&t| old_at(plan, t).is_some_and(|x| x < v));
+            if let Some(&b) = pos.checked_sub(1).and_then(|q| tails.get(q)) {
+                before = b;
+            }
+            // `pos <= tails.len()`: replace a tail, or extend by one.
+            match tails.get_mut(pos) {
+                Some(t) => *t = me,
+                None => tails.push(me),
+            }
         }
-    });
-    new_rows.reverse();
-    *rows.borrow_mut() = new_rows;
+        prev.push(before);
+    }
+    let mut cur = tails.last().copied().unwrap_or(NONE);
+    while let Some(e) = plan.get_mut(cur as usize) {
+        *e |= STAY;
+        cur = prev.get(cur as usize).copied().unwrap_or(NONE);
+    }
 }
 
 /// Disposes a row's scope (with the engine lent to its cleanups), then deletes its node.
@@ -366,19 +607,23 @@ pub(super) fn delete_row(e: &mut Engine, scope: Scope, node: NodeId) {
     }
 }
 
-/// Builds a row from its view and inserts it before `next`.
+/// Builds a new row for `key` and `item` — its scope, item signal and view (created with the
+/// engine lent to the view's hooks) — and inserts it before `next` (`None`: last).
 fn build_row<T: 'static, K>(
     e: &mut Engine,
     wrapper: NodeId,
     next: Option<NodeId>,
+    parent: Scope,
     key: K,
-    scope: Scope,
-    item: Signal<T>,
-    view: AnyView,
+    item: T,
+    view: &dyn Fn(Scope, ReadSignal<T>) -> AnyView,
 ) -> Row<T, K> {
+    let scope = parent.child();
+    let item = scope.signal(item);
+    let v = EngineAccess::provide(parent, e, || view(scope, item.read_only()));
     let node = {
         let mut bcx = BuildCx::new(e, wrapper, scope);
-        view.build(&mut bcx)
+        v.build(&mut bcx)
     };
     if next.is_some() {
         // The engine logs the reason.
@@ -394,45 +639,21 @@ fn build_row<T: 'static, K>(
     }
 }
 
-/// Which positions `0..len` lie on a longest increasing subsequence of the `Some` values of
-/// `at` (patience sorting, O(n log n)).
-pub(crate) fn lis(len: usize, at: impl Fn(usize) -> Option<usize>) -> Vec<bool> {
-    // tails[l] = position of the smallest tail of an increasing run of length l + 1.
-    let mut tails: Vec<usize> = Vec::new();
-    let mut prev: Vec<usize> = vec![usize::MAX; len];
-    for (i, p) in prev.iter_mut().enumerate() {
-        let Some(v) = at(i) else { continue };
-        let pos = tails.partition_point(|&t| at(t).is_some_and(|x| x < v));
-        if pos > 0 {
-            *p = tails[pos - 1];
-        }
-        if pos == tails.len() {
-            tails.push(i);
-        } else {
-            tails[pos] = i;
-        }
-    }
-    let mut out = vec![false; len];
-    let mut cur = tails.last().copied().unwrap_or(usize::MAX);
-    while let Some(flag) = out.get_mut(cur) {
-        *flag = true;
-        cur = prev[cur];
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;
 
-    use super::lis;
+    use super::{NEW, STAY, mark_stay};
 
-    fn run(s: &[Option<usize>]) -> Vec<bool> {
-        lis(s.len(), |i| s[i])
+    /// The positions flagged `STAY` for `s` (`None` = a new row).
+    fn run(s: &[Option<u32>]) -> Vec<bool> {
+        let mut plan: Vec<u32> = s.iter().map(|v| v.unwrap_or(NEW)).collect();
+        mark_stay(&mut plan, &mut Vec::new(), &mut Vec::new());
+        plan.iter().map(|e| e & STAY != 0).collect()
     }
 
     #[test]
-    fn lis_finds_longest_run() {
+    fn mark_stay_finds_longest_run() {
         let s = [Some(0), Some(2), Some(1), Some(3)];
         assert_eq!(run(&s).iter().filter(|b| **b).count(), 3);
         let rev = [Some(3), Some(2), Some(1), Some(0)];

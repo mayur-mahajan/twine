@@ -5,6 +5,8 @@
 //! `A8` is never a draw format, so it is disabled whatever `color-*` features the workspace
 //! unifies; the sweep over every format derives its expectation from
 //! `twine_render::is_format_enabled`, so it holds under any feature set.
+//!
+//! req: SAF-005
 
 use twine_core::ColorFormat;
 use twine_core::Rect;

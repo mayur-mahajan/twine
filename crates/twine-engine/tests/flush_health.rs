@@ -1,5 +1,7 @@
 //! Failed flushes and presents are retried, not dropped (R0.S02): the flush policy, the
 //! display health and the driver's error code.
+//!
+//! req: SAF-002
 
 use twine_core::fault::{FaultKind, Faults};
 use twine_core::{Color, ColorFormat, Instant, Opa, Rect};
@@ -101,6 +103,8 @@ fn ignore_policy_drops_the_area_but_reports_it() {
     assert_eq!(panel(&mut e, d).failed_flushes(), 1);
 }
 
+/// fault: `FlushError`
+/// req: SAF-031
 #[test]
 fn health_goes_degraded_then_failed_then_recovers_on_success() {
     let (mut e, d) = engine(FlushPolicy::Reinvalidate, 6);

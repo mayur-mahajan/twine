@@ -196,7 +196,9 @@ where
         self.0.dc.set_high()?;
         let mut pairs = data.chunks_exact(2);
         for p in &mut pairs {
-            self.0.strobe(u16::from_be_bytes([p[0], p[1]]))?;
+            if let &[hi, lo] = p {
+                self.0.strobe(u16::from_be_bytes([hi, lo]))?;
+            }
         }
         if let [b] = pairs.remainder() {
             self.0.strobe(u16::from(*b))?;

@@ -203,13 +203,17 @@ impl<SPI, IRQ> Xpt2046<SPI, IRQ> {
 fn median(v: &mut [u16]) -> u16 {
     // Insertion sort: at most 7 elements.
     for i in 1..v.len() {
-        let mut j = i;
-        while j > 0 && v[j - 1] > v[j] {
-            v.swap(j - 1, j);
-            j -= 1;
+        let Some((sorted, rest)) = v.split_at_checked(i) else {
+            break;
+        };
+        let Some(&x) = rest.first() else { break };
+        // Insert `v[i]` after the sorted values not greater than it.
+        let pos = sorted.partition_point(|&y| y <= x);
+        if let Some(run) = v.get_mut(pos..=i) {
+            run.rotate_right(1);
         }
     }
-    v[v.len() / 2]
+    v.get(v.len() / 2).copied().unwrap_or(0)
 }
 
 impl<SPI: SpiDevice, IRQ> Xpt2046<SPI, IRQ> {
@@ -224,16 +228,20 @@ impl<SPI: SpiDevice, IRQ> Xpt2046<SPI, IRQ> {
     pub fn read_raw(&mut self) -> Result<Option<(u16, u16, u16)>, SPI::Error> {
         let z1 = self.convert(CMD_Z1)?;
         let z2 = self.convert(CMD_Z2)?;
-        let z = (z1 + 4095).saturating_sub(z2);
+        let z = z1.saturating_add(4095).saturating_sub(z2);
         let result = if z > self.z_threshold {
             let n = usize::from(self.samples.clamp(1, MAX_SAMPLES));
             let mut xs = [0u16; MAX_SAMPLES as usize];
             let mut ys = [0u16; MAX_SAMPLES as usize];
-            for i in 0..n {
-                xs[i] = self.convert(CMD_X)?;
-                ys[i] = self.convert(CMD_Y)?;
+            for (x, y) in xs.iter_mut().zip(ys.iter_mut()).take(n) {
+                *x = self.convert(CMD_X)?;
+                *y = self.convert(CMD_Y)?;
             }
-            let (x, y) = (median(&mut xs[..n]), median(&mut ys[..n]));
+            // `1 <= n <= MAX_SAMPLES`.
+            let (x, y) = (
+                xs.get_mut(..n).map_or(0, median),
+                ys.get_mut(..n).map_or(0, median),
+            );
             trace!(target: "twine::driver", "xpt2046 raw x {} y {} z {}", x, y, z);
             Some((x, y, z))
         } else {

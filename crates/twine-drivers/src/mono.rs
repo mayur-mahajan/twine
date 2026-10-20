@@ -24,24 +24,23 @@
 /// Rows beyond the chunk read as 0. Only `out[..width.min(out.len())]` is written.
 pub fn i1_to_page(src: &[u8], stride: usize, width: usize, page: usize, out: &mut [u8]) {
     let width = width.min(out.len());
-    out[..width].fill(0);
-    for k in 0..8 {
-        let y = page * 8 + k;
-        let Some(row) = src.get(y * stride..(y + 1) * stride) else {
-            break;
-        };
-        // Walk whole source bytes: 8 pixels at a time.
-        for (bx, &byte) in row.iter().enumerate() {
+    let Some(out) = out.get_mut(..width) else { return };
+    out.fill(0);
+    if stride == 0 {
+        return; // empty rows
+    }
+    // The page's eight rows (fewer at the end of the chunk), as whole rows of `stride` bytes.
+    let rows = src.chunks_exact(stride).skip(page.saturating_mul(8)).take(8);
+    for (k, row) in rows.enumerate() {
+        let bit_k = 1u8 << k; // SHIFT: `k < 8` (`take(8)`).
+        // Walk whole source bytes: 8 pixels (8 output columns) at a time.
+        for (&byte, cols) in row.iter().zip(out.chunks_mut(8)) {
             if byte == 0 {
                 continue;
             }
-            for bit in 0..8 {
-                let x = bx * 8 + bit;
-                if x >= width {
-                    break;
-                }
+            for (bit, col) in cols.iter_mut().enumerate() {
                 if byte & (0x80 >> bit) != 0 {
-                    out[x] |= 1 << k;
+                    *col |= bit_k;
                 }
             }
         }
@@ -51,17 +50,22 @@ pub fn i1_to_page(src: &[u8], stride: usize, width: usize, page: usize, out: &mu
 /// Inverse of [`i1_to_page`]: writes page `page` (`width` bytes of `src`) back into rows
 /// `8·page …` of an `I1` buffer with `stride` bytes per row.
 pub fn page_to_i1(src: &[u8], stride: usize, width: usize, page: usize, out: &mut [u8]) {
-    for k in 0..8 {
-        let y = page * 8 + k;
-        let Some(row) = out.get_mut(y * stride..(y + 1) * stride) else {
-            break;
-        };
-        for (x, &b) in src.iter().take(width).enumerate() {
-            let mask = 0x80u8 >> (x % 8);
-            if b & (1 << k) != 0 {
-                row[x / 8] |= mask;
-            } else {
-                row[x / 8] &= !mask;
+    if stride == 0 {
+        return; // empty rows
+    }
+    let src = src.get(..width).unwrap_or(src);
+    let rows = out.chunks_exact_mut(stride).skip(page.saturating_mul(8)).take(8);
+    for (k, row) in rows.enumerate() {
+        let bit_k = 1u8 << k; // SHIFT: `k < 8` (`take(8)`).
+        // 8 page columns make one row byte.
+        for (cols, dst) in src.chunks(8).zip(row.iter_mut()) {
+            for (bit, &b) in cols.iter().enumerate() {
+                let mask = 0x80u8 >> bit;
+                if b & bit_k != 0 {
+                    *dst |= mask;
+                } else {
+                    *dst &= !mask;
+                }
             }
         }
     }
@@ -130,5 +134,19 @@ mod tests {
         i1_to_page(&chunk, 2, 10, 0, &mut page);
         assert_eq!(&page[..10], &[0b101, 1, 1, 1, 1, 1, 1, 1, 1, 0b101]);
         assert_eq!(&page[10..], &[0xAA, 0xAA]);
+    }
+
+    #[test]
+    fn regression_zero_stride_and_short_rows_do_not_panic() {
+        // `page_to_i1` indexed a row byte per 8 columns: out of bounds for rows shorter than
+        // the page width, and for a zero stride.
+        let mut out = [0u8; 4];
+        page_to_i1(&[0xFF; 16], 0, 16, 0, &mut out);
+        assert_eq!(out, [0; 4]);
+        page_to_i1(&[0x01; 16], 1, 16, 0, &mut out); // rows of 1 byte, 16 columns
+        assert_eq!(out, [0xFF, 0, 0, 0]); // row 0: bit 0 of every column
+        let mut page = [0xAAu8; 4];
+        i1_to_page(&[0xFF; 4], 0, 4, 0, &mut page);
+        assert_eq!(page, [0; 4]);
     }
 }

@@ -71,6 +71,8 @@ pub mod cmd {
     pub const RASET: u8 = 0x2B;
     /// Memory write.
     pub const RAMWR: u8 = 0x2C;
+    /// Memory read (display-integrity read-back, [`DcsInterface::read_pixels`](crate::interface::DcsInterface::read_pixels)).
+    pub const RAMRD: u8 = 0x2E;
     /// Tearing effect line off.
     pub const TEOFF: u8 = 0x34;
     /// Tearing effect line on.
@@ -242,15 +244,6 @@ pub struct PanelSpec {
     pub init: &'static [InitOp],
 }
 
-const fn rot_index(r: Rotation) -> usize {
-    match r {
-        Rotation::Deg0 => 0,
-        Rotation::Deg90 => 1,
-        Rotation::Deg180 => 2,
-        Rotation::Deg270 => 3,
-    }
-}
-
 impl PanelSpec {
     /// The pixel format the engine must render for this panel: [`ColorFormat::Rgb888`] for
     /// 18-bit `COLMOD` (`x6`), otherwise [`ColorFormat::Rgb565Swapped`].
@@ -280,7 +273,13 @@ impl PanelSpec {
     /// [`sw_rotation`](Self::sw_rotation) panels).
     #[must_use]
     pub const fn madctl_for(&self, r: Rotation) -> Madctl {
-        self.madctl[rot_index(self.hw_rotation(r))]
+        let [deg0, deg90, deg180, deg270] = self.madctl;
+        match self.hw_rotation(r) {
+            Rotation::Deg0 => deg0,
+            Rotation::Deg90 => deg90,
+            Rotation::Deg180 => deg180,
+            Rotation::Deg270 => deg270,
+        }
     }
 
     /// Logical `(width, height)` for a rotation (swapped when its `MADCTL` has `MV`, or for
@@ -329,7 +328,11 @@ impl PanelSpec {
         let r = self.hw_rotation(r);
         let (w, h) = self.logical_size(r);
         let a = i32::from(self.align.max(1));
-        if [area.x0, area.y0, area.x1, area.y1].iter().any(|v| v % a != 0) {
+        // DIV: `a >= 1`.
+        if [area.x0, area.y0, area.x1, area.y1]
+            .iter()
+            .any(|v| v.checked_rem(a) != Some(0))
+        {
             return None;
         }
         if area.is_empty() || !Rect::new(0, 0, i32::from(w), i32::from(h)).contains_rect(&area) {
@@ -338,7 +341,8 @@ impl PanelSpec {
         let (ox, oy) = self.offset(r);
         let enc = |a: i32, b: i32, o: u16| {
             let s = (a as u16).wrapping_add(o).to_be_bytes();
-            let e = ((b - 1) as u16).wrapping_add(o).to_be_bytes();
+            // `b >= 1`: the area is not empty and inside the screen.
+            let e = (b.saturating_sub(1) as u16).wrapping_add(o).to_be_bytes();
             [s[0], s[1], e[0], e[1]]
         };
         Some((enc(area.x0, area.x1, ox), enc(area.y0, area.y1, oy)))
@@ -361,15 +365,15 @@ impl PanelSpec {
     /// Returns a copy with the `BGR` bit set or cleared in every rotation.
     #[must_use]
     pub const fn with_bgr(mut self, bgr: bool) -> Self {
-        let mut i = 0;
-        while i < 4 {
-            self.madctl[i] = if bgr {
-                self.madctl[i].union(Madctl::BGR)
+        const fn set(m: Madctl, bgr: bool) -> Madctl {
+            if bgr {
+                m.union(Madctl::BGR)
             } else {
-                self.madctl[i].difference(Madctl::BGR)
-            };
-            i += 1;
+                m.difference(Madctl::BGR)
+            }
         }
+        let [a, b, c, d] = self.madctl;
+        self.madctl = [set(a, bgr), set(b, bgr), set(c, bgr), set(d, bgr)];
         self
     }
 
@@ -470,7 +474,7 @@ fn check_flush<E>(
         error!(target: "twine::driver", "{}: flush area {:?} outside the display or misaligned", spec.name, area);
         return Err(DcsError::BadArea);
     };
-    let bytes = area.area() as usize * spec.bytes_per_pixel();
+    let bytes = (area.area() as usize).saturating_mul(spec.bytes_per_pixel());
     if len < bytes {
         error!(target: "twine::driver", "{}: buffer of {} bytes too short for {} bytes", spec.name, len, bytes);
         return Err(DcsError::BadArea);
@@ -738,6 +742,28 @@ impl<I: DcsInterface, RST: OutputPin> DisplayDriver for MipiDcs<I, RST> {
         self.rotation = rotation;
         Ok(display_info(self.spec, rotation, self.dpi))
     }
+
+    /// `CASET`, `RASET` for `area` (as a flush), then `RAMRD` through
+    /// [`DcsInterface::read_pixels`], which returns the pixels in the write format.
+    /// `Unsupported` (nothing sent) when the interface cannot read
+    /// ([`DcsInterface::CAN_READ`]: none of the bundled interfaces can — a 4-wire SPI
+    /// `SpiDevice` releases chip select between the command and the read, which ends `RAMRD`
+    /// on most controllers; a board with a readable bus provides its own interface).
+    fn read_back(&mut self, area: Rect, buf: &mut [u8]) -> Result<(), ControlError<Self::Error>> {
+        if !I::CAN_READ {
+            return Err(ControlError::Unsupported);
+        }
+        let (c, r, bytes) =
+            check_flush(self.spec, self.rotation, area, buf.len()).map_err(ControlError::Driver)?;
+        let out = buf
+            .get_mut(..bytes)
+            .ok_or(ControlError::Driver(DcsError::BadArea))?;
+        self.command(cmd::CASET, &c).map_err(ControlError::Driver)?;
+        self.command(cmd::RASET, &r).map_err(ControlError::Driver)?;
+        self.iface
+            .read_pixels(cmd::RAMRD, out)
+            .map_err(|e| e.map(DcsError::Interface))
+    }
 }
 
 /// The command and settle time of entering (`true`) or leaving (`false`) sleep mode.
@@ -900,7 +926,8 @@ mod asynch {
             self.command(cmd::CASET, &c).await?;
             self.command(cmd::RASET, &r).await?;
             self.command(cmd::RAMWR, &[]).await?;
-            match self.iface.write_pixels(&buf[..bytes]).await {
+            // `bytes <= buf.len()` (`check_flush`).
+            match self.iface.write_pixels(buf.get(..bytes).unwrap_or(buf)).await {
                 Ok(()) => Ok(()),
                 Err(e) => {
                     warn!(target: "twine::driver", "{}: pixel write failed", self.spec.name);
@@ -1265,5 +1292,95 @@ mod tests {
             block_on(ad.flush(Rect::from_xywh(0, 0, 30, 1), &data)),
             Err(DcsError::BadArea)
         );
+    }
+
+    /// A controller memory behind an interface that can read (`CAN_READ`): `CASET`/`RASET`
+    /// set the window, `RAMWR` pixels are stored, `RAMRD` returns them.
+    struct Gram {
+        ram: Vec<u8>,
+        w: usize,
+        win: (usize, usize, usize, usize),
+        cmd: u8,
+    }
+
+    impl DcsInterface for Gram {
+        type Error = ();
+        const CAN_READ: bool = true;
+        fn command(&mut self, cmd: u8, p: &[u8]) -> Result<(), ()> {
+            let pair = |p: &[u8]| {
+                (
+                    usize::from(u16::from_be_bytes([p[0], p[1]])),
+                    usize::from(u16::from_be_bytes([p[2], p[3]])),
+                )
+            };
+            match cmd {
+                cmd::CASET => (self.win.0, self.win.2) = pair(p),
+                cmd::RASET => (self.win.1, self.win.3) = pair(p),
+                _ => {}
+            }
+            self.cmd = cmd;
+            Ok(())
+        }
+        fn write_pixels(&mut self, data: &[u8]) -> Result<(), ()> {
+            let (x0, y0, x1, _) = self.win;
+            let row = (x1 - x0 + 1) * 2;
+            for (i, px) in data.chunks(row).enumerate() {
+                let o = ((y0 + i) * self.w + x0) * 2;
+                self.ram[o..o + px.len()].copy_from_slice(px);
+            }
+            Ok(())
+        }
+        fn read_pixels(&mut self, cmd: u8, out: &mut [u8]) -> Result<(), ControlError<()>> {
+            assert_eq!(cmd, cmd::RAMRD);
+            let (x0, y0, x1, _) = self.win;
+            let row = (x1 - x0 + 1) * 2;
+            for (i, px) in out.chunks_mut(row).enumerate() {
+                let o = ((y0 + i) * self.w + x0) * 2;
+                px.copy_from_slice(&self.ram[o..o + px.len()]);
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn read_back_returns_what_was_flushed_through_a_readable_interface() {
+        let gram = Gram {
+            ram: vec![0; 12 * 24 * 2],
+            w: 12,
+            win: (0, 0, 0, 0),
+            cmd: 0,
+        };
+        let rec = Recorder::new();
+        let mut d = MipiDcs::new(
+            gram,
+            Some(rec.pin("rst")),
+            &TEST,
+            Rotation::Deg0,
+            &mut rec.delay(),
+        )
+        .unwrap();
+        let px: Vec<u8> = (0..2 * 3 * 2).map(|i| i as u8 + 1).collect();
+        let b = DrawBufferMem::new(Box::leak(px.clone().into_boxed_slice()));
+        d.begin_flush(Rect::from_xywh(2, 4, 3, 2), b).unwrap();
+        assert!(d.poll_flush().is_some());
+        let mut out = [0u8; 12];
+        d.read_back(Rect::from_xywh(2, 4, 3, 2), &mut out).unwrap();
+        assert_eq!(&out[..], &px[..]);
+        assert!(matches!(
+            d.read_back(Rect::from_xywh(0, 0, 30, 1), &mut out),
+            Err(ControlError::Driver(DcsError::BadArea))
+        ));
+    }
+
+    #[test]
+    fn read_back_is_unsupported_without_a_readable_interface() {
+        let (rec, mut d) = dut(&TEST, Rotation::Deg0);
+        let _ = rec.take_ops();
+        let mut out = [0u8; 8];
+        assert_eq!(
+            d.read_back(Rect::from_xywh(0, 0, 2, 2), &mut out),
+            Err(ControlError::Unsupported)
+        );
+        assert!(rec.ops().is_empty(), "nothing sent");
     }
 }

@@ -12,6 +12,9 @@ workspace = true
 
 [features]
 default = []
+## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
+## safety lints of library code and the refusal of excluded features.
+safety = ["twine-core/safety", "twine-render/safety"]
 ## In-house QOI decoder (the default image codec of the `twine` facade).
 img-qoi = []
 ## PNG decoder (in-house over `miniz_oxide`; every color type and bit depth, Adam7).

@@ -68,6 +68,8 @@
 //! - `async`: async interfaces and drivers (`embedded-hal-async`), `AsyncInputWait` for IRQ pins.
 //! - `testkit`: recording mock buses (module `testkit`) for host tests of code built on these drivers.
 //! - `defmt` / `log`: logging backends (target `twine::driver`).
+//! - `safety`: the safety profile (enabled by the `twine` facade's `safety` feature, see
+//!   `docs/safety/profile.md` in the repository): the profile's lints.
 //!
 //! ```
 //! use twine_core::Rect;
@@ -85,6 +87,20 @@
 //! ```
 #![no_std]
 #![forbid(unsafe_code)]
+// The safety profile's lints (`docs/safety/profile.md` § Lints): denied in library code under
+// the `safety` feature (`cargo xtask ci` stage `clippy-safety`).
+#![cfg_attr(
+    all(feature = "safety", not(test)),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::arithmetic_side_effects,
+    )
+)]
+#![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(any(test, feature = "testkit"))]

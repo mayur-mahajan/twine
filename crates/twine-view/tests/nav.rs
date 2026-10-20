@@ -41,14 +41,16 @@ fn page(cx: Scope, route: Route) -> AnyView {
         Route::Editor => editor(cx).into_any(),
         Route::Redirect => {
             // A page that sends the user elsewhere while it is built.
-            expect_navigator::<Route>(cx).replace(Route::Settings, ScreenAnim::None);
+            use_navigator::<Route>(cx)
+                .unwrap()
+                .replace(Route::Settings, ScreenAnim::None);
             label("redirecting").into_any()
         }
     }
 }
 
 fn home(cx: Scope) -> impl View {
-    let nav = expect_navigator::<Route>(cx);
+    let nav = use_navigator::<Route>(cx).unwrap();
     column((
         label("Home").test_id("title"),
         button(label("Settings")).on_click(move || nav.push(Route::Settings, ScreenAnim::MoveLeft(D))),
@@ -59,7 +61,7 @@ fn home(cx: Scope) -> impl View {
 }
 
 fn settings(cx: Scope) -> impl View {
-    let nav = expect_navigator::<Route>(cx);
+    let nav = use_navigator::<Route>(cx).unwrap();
     let s = cx.signal(1u32);
     SETTINGS_SIGNAL.with(|c| c.set(Some(s)));
     column((
@@ -72,7 +74,7 @@ fn settings(cx: Scope) -> impl View {
 
 /// A page taking data from its route.
 fn detail(cx: Scope, id: u32, name: String) -> impl View {
-    let nav = expect_navigator::<Route>(cx);
+    let nav = use_navigator::<Route>(cx).unwrap();
     column((
         label(text!("Item {id}: {name}")).test_id("title"),
         button(label("Back")).on_click(move || nav.pop(ScreenAnim::None)),
@@ -86,7 +88,7 @@ thread_local! {
 
 /// A page with unsaved changes: its guard denies leaving while `dirty`.
 fn editor(cx: Scope) -> impl View {
-    let nav = expect_navigator::<Route>(cx);
+    let nav = use_navigator::<Route>(cx).unwrap();
     let dirty = cx.signal(false);
     let asked = cx.signal(0u32);
     EDITOR.with(|c| c.set(Some((dirty, asked))));
@@ -116,7 +118,7 @@ const _: fn() = || {
 };
 
 fn nav_of(t: &TestUi) -> Navigator<Route> {
-    expect_navigator::<Route>(t.root_scope())
+    use_navigator::<Route>(t.root_scope()).unwrap()
 }
 
 fn screens(t: &TestUi) -> usize {
@@ -473,7 +475,7 @@ thread_local! {
 fn guard_registered_in_an_inner_scope_lives_with_it() {
     let mut t = TestUi::new(240, 160).mount(|cx| {
         navigator(cx, Route::Home, |cx, route| {
-            let nav = expect_navigator::<Route>(cx);
+            let nav = use_navigator::<Route>(cx).unwrap();
             if route == Route::Editor {
                 let inner = cx.child();
                 INNER.with(|i| i.set(Some(inner)));
@@ -499,7 +501,7 @@ fn guard_registered_in_an_inner_scope_lives_with_it() {
 #[test]
 fn navigator_used_from_a_loop_without_clone() {
     fn home(cx: Scope) -> impl View {
-        let nav = expect_navigator::<Route>(cx);
+        let nav = use_navigator::<Route>(cx).unwrap();
         // One `Copy` handle moved into many handlers: no `clone()`.
         let buttons: Vec<_> = (0..4u32)
             .map(|i| {
@@ -574,7 +576,7 @@ fn navigator_removed_with_its_scope_deletes_its_pages() {
         ))
     });
     t.run_until_idle();
-    let show = t.root_scope().expect_context::<Signal<bool>>();
+    let show = t.root_scope().use_context::<Signal<bool>>().unwrap();
     let d = t.engine().default_display().unwrap();
     let ui_screen = t.engine().screens(d)[0];
     show.set(false);
@@ -636,7 +638,7 @@ fn reads_are_tracked() {
     DEPTHS.with(|d| d.borrow_mut().clear());
     let mut t = TestUi::new(240, 160).mount(|cx| {
         let view = navigator(cx, Route::Home, page);
-        let nav = expect_navigator::<Route>(cx);
+        let nav = use_navigator::<Route>(cx).unwrap();
         cx.effect(move || {
             let seen = (nav.depth(), nav.current());
             DEPTHS.with(|d| d.borrow_mut().push(seen));
@@ -680,8 +682,8 @@ fn disposed_navigator_is_inert() {
         navigator(owner, Route::Home, page)
     });
     t.run_until_idle();
-    let nav = expect_navigator::<Route>(t.root_scope().expect_context::<Scope>());
-    t.root_scope().expect_context::<Scope>().dispose();
+    let nav = use_navigator::<Route>(t.root_scope().use_context::<Scope>().unwrap()).unwrap();
+    t.root_scope().use_context::<Scope>().unwrap().dispose();
     assert_eq!(nav.push(Route::Settings, ScreenAnim::None), NavOutcome::Disposed);
     assert_eq!(nav.pop(ScreenAnim::None), NavOutcome::Disposed);
     assert_eq!(nav.depth(), 0);
@@ -713,7 +715,7 @@ fn styled_nav_app(cx: Scope) -> impl View {
 }
 
 fn styled_home(cx: Scope) -> impl View {
-    let nav = expect_navigator::<bool>(cx);
+    let nav = use_navigator::<bool>(cx).unwrap();
     column((
         label("Home").test_id("home_title"),
         button(label("Next")).on_click(move || nav.push(true, ScreenAnim::None)),
@@ -801,7 +803,8 @@ fn modal_closes_itself_through_the_passed_handle() {
     t.run_until_idle();
     let modal = t
         .root_scope()
-        .expect_context::<Signal<Option<ModalHandle>>>()
+        .use_context::<Signal<Option<ModalHandle>>>()
+        .unwrap()
         .get_untracked()
         .expect("the view closure received the handle");
     assert!(modal.is_open());
@@ -823,13 +826,13 @@ fn modal_handle_after_its_scope_is_disposed_is_inert() {
         label("root")
     });
     t.run_until_idle();
-    let modal = t.root_scope().expect_context::<ModalHandle>();
+    let modal = t.root_scope().use_context::<ModalHandle>().unwrap();
     assert!(modal.is_open());
     assert!(!t.find_all(by_text("M")).is_empty());
     modal.close();
     t.run_until_idle();
     assert!(t.find_all(by_text("M")).is_empty());
-    t.root_scope().expect_context::<Scope>().dispose();
+    t.root_scope().use_context::<Scope>().unwrap().dispose();
     // The handle's state went with its scope: every method is a no-op, none panics.
     assert!(!modal.is_open());
     assert_eq!(modal.node(), None);
@@ -905,9 +908,11 @@ fn use_navigator_outside_a_navigator_is_an_error_naming_the_route_type() {
     assert!(use_navigator::<bool>(t.root_scope()).is_ok());
 }
 
+// `expect_navigator` is removed in the safety profile (`use_navigator` above is its form there).
+#[cfg(not(feature = "safety"))]
 #[test]
 #[should_panic(expected = "Navigator<nav::Route> not provided")]
 fn expect_navigator_outside_a_navigator_panics_with_the_route_type() {
     let t = TestUi::new(240, 160).mount(|_cx| label("no navigator"));
-    let _ = expect_navigator::<Route>(t.root_scope());
+    let _ = twine_view::expect_navigator::<Route>(t.root_scope());
 }

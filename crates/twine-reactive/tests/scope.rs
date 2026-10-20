@@ -143,6 +143,8 @@ fn scope_double_dispose_noop() {
     assert!(root.use_context::<u8>().is_err());
 }
 
+// With `no-panic-runtime` the creation is skipped (tests/no_panic_runtime.rs).
+#[cfg(not(feature = "no-panic-runtime"))]
 #[test]
 #[should_panic(expected = "scope used after it was disposed")]
 fn scope_creating_signal_on_disposed_scope_panics() {
@@ -217,8 +219,10 @@ fn scope_values_and_closures_dropped_on_dispose() {
 
 // Not built under Miri: wearing out a slot takes 65 535 dispose cycles by definition (instant
 // natively, hours under Miri); the retirement logic itself has no `unsafe` (it is twine-core's
-// `Arena`, `#![forbid(unsafe_code)]`), so Miri has nothing to add here.
-#[cfg(not(miri))]
+// `Arena`, `#![forbid(unsafe_code)]`), so Miri has nothing to add here. Not built in the safety
+// profile either: its 48-bit generations need 2.8 × 10¹⁴ cycles (twine-core tests that width's
+// retirement path directly).
+#[cfg(not(any(miri, feature = "safety")))]
 #[test]
 fn runtime_stats_reports_retired_slots() {
     // A fresh runtime (one per test thread): the child scope's slot is the only free one, so
@@ -237,4 +241,81 @@ fn runtime_stats_reports_retired_slots() {
     assert_eq!(s.get(), 1);
     c.dispose();
     assert_eq!(rt().stats().scopes, 1);
+}
+
+/// Disposal walks the scope tree through its links, not by recursion: a chain far deeper than
+/// any recursion budget is disposed on a test thread's default stack (it used to recurse once
+/// per level).
+#[test]
+fn regression_deep_scope_chain_disposal_does_not_recurse() {
+    // Scaled under Miri (slow); natively deep enough (`max_scopes` allows 65 535) to
+    // overflow a recursive disposal on the 2 MiB test-thread stack.
+    let depth = if cfg!(miri) { 300 } else { 60_000 };
+    let root = rt().create_root();
+    let (order, o) = log();
+    let mut s = root;
+    for i in 0..depth {
+        s = s.child();
+        s.signal(i);
+        if i % 20_000 == 0 {
+            let o = o.clone();
+            s.on_cleanup(move || o.borrow_mut().push(format!("{i}")));
+        }
+    }
+    root.dispose();
+    let st = rt().stats();
+    assert_eq!((st.nodes, st.scopes), (0, 0));
+    // Deepest first.
+    let expected: Vec<String> = (0..depth)
+        .filter(|i| i % 20_000 == 0)
+        .rev()
+        .map(|i| format!("{i}"))
+        .collect();
+    assert_eq!(*order.borrow(), expected);
+}
+
+/// A cleanup deep in the tree that disposes the root, a sibling or its own parent ends or
+/// redirects the walk without touching dead scopes twice.
+#[test]
+fn scope_cleanup_disposing_ancestors_or_siblings_is_safe() {
+    let root = rt().create_root();
+    let (order, o) = log();
+    let a = root.child();
+    let b = root.child();
+    let b1 = b.child();
+    let push = |o: &Log, s: &'static str| {
+        let o = o.clone();
+        move || o.borrow_mut().push(s.to_string())
+    };
+    a.on_cleanup(push(&o, "a"));
+    b.on_cleanup(push(&o, "b"));
+    let o2 = o.clone();
+    b1.on_cleanup(move || {
+        o2.borrow_mut().push("b1".into());
+        a.dispose(); // a sibling of the scope being disposed
+        b.dispose(); // its own parent, mid-walk
+    });
+    root.on_cleanup(push(&o, "root"));
+    root.dispose();
+    assert_eq!(*order.borrow(), ["b1", "a", "b", "root"]);
+    let st = rt().stats();
+    assert_eq!((st.nodes, st.scopes), (0, 0));
+
+    // A cleanup disposing the root that is being disposed ends the walk cleanly.
+    let root = rt().create_root();
+    let c = root.child().child();
+    let ran = Rc::new(Cell::new(0));
+    let r = ran.clone();
+    c.on_cleanup(move || {
+        r.set(r.get() + 1);
+        root.dispose();
+    });
+    root.on_cleanup({
+        let r = ran.clone();
+        move || r.set(r.get() + 10)
+    });
+    root.dispose();
+    assert_eq!(ran.get(), 11, "each cleanup ran once");
+    let st = rt().stats();
+    assert_eq!((st.nodes, st.scopes), (0, 0));
 }

@@ -83,6 +83,9 @@ pub struct GlyphCache {
     warned: [GlyphKey; WARN_CAP],
     warned_len: usize,
     warn_suppressed: bool,
+    /// Fresh mode ([`set_fresh`](GlyphCache::set_fresh)): `get` always misses.
+    #[cfg(feature = "display-integrity")]
+    fresh: bool,
 }
 
 impl core::fmt::Debug for GlyphCache {
@@ -125,7 +128,37 @@ impl GlyphCache {
             warned: [(0, 0); WARN_CAP],
             warned_len: 0,
             warn_suppressed: false,
+            #[cfg(feature = "display-integrity")]
+            fresh: false,
         }
+    }
+
+    /// Fresh mode on or off: while on, [`get`](Self::get) always misses, so every glyph drawn
+    /// is decoded from its font again (and written over its cache entry by the caller's
+    /// [`insert`](Self::insert)): what is drawn cannot depend on what the cache holds. The
+    /// engine turns it on while it draws a safety-critical node and for off-screen integrity
+    /// re-renders. Allocates nothing; never panics; idempotent.
+    ///
+    /// ```
+    /// use twine_text::GlyphCache;
+    ///
+    /// let mut c = GlyphCache::new(1024);
+    /// c.insert((1, 7), 4, 2).unwrap().copy_from_slice(&[9; 8]);
+    /// c.set_fresh(true);
+    /// assert_eq!(c.get((1, 7)), None); // decoded again by the caller
+    /// c.set_fresh(false);
+    /// assert!(c.get((1, 7)).is_some());
+    /// ```
+    #[cfg(feature = "display-integrity")]
+    pub fn set_fresh(&mut self, on: bool) {
+        self.fresh = on;
+    }
+
+    /// Whether fresh mode is on ([`set_fresh`](Self::set_fresh)).
+    #[cfg(feature = "display-integrity")]
+    #[must_use]
+    pub fn fresh(&self) -> bool {
+        self.fresh
     }
 
     /// The arena size in bytes (0 when caching is disabled).
@@ -192,7 +225,13 @@ impl GlyphCache {
     }
 
     /// The cached bitmap of `key` (marks it most recently used), counting a hit or a miss.
+    /// Always a miss in fresh mode (`set_fresh`, feature `display-integrity`).
     pub fn get(&mut self, key: GlyphKey) -> Option<&[u8]> {
+        #[cfg(feature = "display-integrity")]
+        if self.fresh {
+            self.stats.misses = self.stats.misses.saturating_add(1);
+            return None;
+        }
         let Some(i) = self.entries.iter().position(|e| e.key == key) else {
             self.stats.misses += 1;
             return None;

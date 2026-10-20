@@ -10,7 +10,8 @@ well tested. Please read them before opening a pull request.
   `rustup` installs them automatically the first time you build.
 - **Optional tools** (the checks that need them are skipped with a warning if missing):
   - nightly toolchain with Miri: `rustup toolchain install nightly --component miri`
-  - coverage: `cargo install cargo-llvm-cov`
+  - coverage: `cargo install cargo-llvm-cov`; MC/DC (`cargo xtask coverage --mcdc`) also needs
+    `rustup toolchain install nightly --component llvm-tools-preview`
   - Xtensa (ESP32, ESP32-S3) firmware builds: [`espup`](https://github.com/esp-rs/espup)
     (`espup install`); `cargo xtask firmware` builds the example firmware in `firmware/` and
     skips examples whose toolchain or target is missing
@@ -25,8 +26,10 @@ well tested. Please read them before opening a pull request.
 Every PR must meet this **Definition of Done**:
 
 1. **`cargo xtask ci` passes.** It runs formatting, clippy with `-D warnings` (default features, all
-   features, and every library crate with its `defmt` logging backend), all tests,
-   `no_std` builds for every embedded target, rustdoc, the layering check, the work-marker check,
+   features, every library crate with its `defmt` logging backend, and the facade in the
+   `safety` profile with its lint-status ratchet and the panic-inventory check), all tests, `no_std` builds for every
+   embedded target (also in the `safety` profile), the check that the profile refuses its
+   excluded parts and lacks the panicking convenience APIs, rustdoc, the layering check, the work-marker check,
    the generated-fonts, generated-images and style-property-table checks, a benchmark build, snapshot tests, Miri and
    the example firmware builds. Use
    `cargo xtask ci --quick` while iterating.
@@ -35,9 +38,12 @@ Every PR must meet this **Definition of Done**:
 3. **Public API is documented.** Every public item has rustdoc (the build denies missing docs).
    Explain *what* and *why*, document panics and errors, and add a short example (doctest) for
    types and functions a user will call directly.
-4. **Visual changes are reviewed.** If rendering output changes on purpose, regenerate snapshots
-   with `cargo xtask snapshots --update`, inspect the diff images, and attach before/after
-   screenshots to the PR. Never edit snapshot PNGs by hand.
+4. **Visual changes are reviewed.** Golden images are the hashes in each crate's committed
+   `tests/snapshots.toml`. If rendering output changes on purpose, run `cargo xtask snapshots`,
+   inspect the actual and diff images it lists under `target/twine-snapshots/`, then approve
+   with `cargo xtask snapshots --update`, and attach before/after screenshots to the PR. New
+   snapshots are proposed with `cargo xtask snapshots --propose` (a `[pending]` block, refused by
+   CI until approved with `--accept`). Never edit a manifest by hand.
 5. **Performance is considered.** For changes in rendering, layout, styles, input or the
    reactive runtime, run `cargo xtask bench` (renderer, text) and `cargo bench -p twine-bench`
    (engine refresh, layout and animation frames) and mention the impact in the PR. Regressions
@@ -74,6 +80,19 @@ These keep Twine usable on small, battery-powered devices. CI or review will rej
   use `Rc`, `portable-atomic` and `critical-section`.
 - **Never panic on user input.** Invalid ids or parameters are logged with `warn!` and ignored.
   Use `debug_assert!` for internal invariants.
+- **Keep the safety profile clean.** Under the `safety` feature the library crates deny
+  `clippy::{indexing_slicing, unwrap_used, expect_used, panic, unreachable,
+  arithmetic_side_effects}`; crates with remaining sites carry a tracked allow-list whose counts
+  CI ratchets (`cargo xtask safety-lints`). Write new code so that it adds no site: iterators or
+  `get` instead of indexing, explicit `saturating_*`/`wrapping_*`/`checked_*` arithmetic, no
+  `unwrap`. An API that panics by contract gets a `Result` form and is removed from the profile
+  (`#[cfg(not(feature = "safety"))]`); a panic that must stay carries a `// PANIC: …`
+  justification. After changing a panic site, run `cargo xtask panics` (the inventory
+  `docs/safety/panics.md`, checked by CI). See `docs/safety/profile.md` § 4 and § 7.
+- **Keep recursion over the tree bounded and lean.** A new walk over the widget tree is
+  iterative unless it must recurse; a recursive one is bounded by `Limits::max_tree_depth`,
+  keeps per-level work in `#[inline(never)]` helpers, and gets a scene in
+  `twine-engine/tests/stack_depth.rs` (`cargo xtask stack-budget`, `docs/safety/profile.md` § 10).
 - **Respect the crate layering.** A crate may only depend on crates in lower layers
   (`cargo xtask layers`). In particular, `twine-engine` never depends on `twine-reactive`.
 - **Keep dependencies minimal.** Open an issue before adding a new external dependency. No_std
@@ -104,12 +123,20 @@ These keep Twine usable on small, battery-powered devices. CI or review will rej
 
 ## Testing
 
-- **Snapshot tests** compare rendered output pixel-by-pixel against reference PNGs in
-  `tests/snapshots/`. The references are local and git-ignored: the first run creates them,
-  later runs compare against them. On mismatch the actual and diff images are written to
-  `target/twine-snapshots/`. In CI (`CI` set) there are no references, so snapshot comparisons are
-  skipped. Run the snapshot tests locally before and after your change to catch visual
-  regressions.
+- **Snapshot tests** (golden images) hash the rendered RGB pixels (XXH64) and compare with the
+  crate's committed manifest `tests/snapshots.toml`; no image is needed to pass, so CI checks
+  every snapshot. On a mismatch the actual image (and, with the local reference cache
+  `tests/snapshots/*.png`, which is git-ignored and filled by passing runs, a diff image) is
+  written to `target/twine-snapshots/<crate>/`; an image without an entry fails and is written to
+  `target/twine-snapshots/<crate>/new/`. Only `cargo xtask snapshots --update | --propose |
+  --accept` changes a manifest (`twine_testing::snapshot`).
+- **Requirements**: a test that verifies a safety requirement says so in its doc comment
+  (`/// req: SAF-012`, or `//! req: …` for a whole file); a fault-injection test also names the
+  kind (``/// fault: `FlushError` ``). `cargo xtask traceability` writes the matrix
+  `docs/safety/traceability.md` (CI checks it).
+- **Fuzzing**: decoders and parsers have cargo-fuzz targets in `fuzz/`; the widget tree, input
+  pipeline and reactive runtime have operation-sequence interpreters (`twine_testing::fuzz`)
+  run by property tests on stable and by cargo-fuzz targets on nightly.
 - **Harnesses** in `twine-testing`: `RenderHarness` (drawing primitives), `EngineHarness`
   (widget tree without reactivity) and `TestUi` (full declarative UI with scripted input and a
   mock clock). Use them only from integration tests (`tests/`), not from `#[cfg(test)]` modules.

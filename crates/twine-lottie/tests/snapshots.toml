@@ -1,0 +1,26 @@
+# Golden-image manifest (R5.S08): one entry per snapshot test image,
+#   <name> = "<width>x<height> xxh64:<hash>"
+# the XXH64 (seed 0) of the image's 8-bit RGB pixels, row-major (`xxhsum -H64` of the raw RGB
+# bytes). Written by `cargo xtask snapshots --update | --propose | --accept`; do not edit by hand.
+# Reference PNGs are not committed: `tests/snapshots/*.png` is a local cache used for diffs.
+
+[approved]
+alpha_matte = "150x150 xxh64:c9b542e3ace7c43e"
+fill_rule_evenodd = "150x150 xxh64:a83d7c9f79b4df52"
+layer_opacity = "150x150 xxh64:ae1a8ee43fa8db72"
+lottie_widget_loader_0 = "120x120 xxh64:f8d6db5bddf93494"
+lottie_widget_loader_20 = "120x120 xxh64:41c401a7b6c27b5b"
+lottie_widget_loader_40 = "120x120 xxh64:3c8aee8a3086a68c"
+mask_add = "150x150 xxh64:4dc94142be5cbdd6"
+mask_inverted = "150x150 xxh64:84053d94b4f1fc20"
+mask_subtract = "150x150 xxh64:8c8b9869866600b3"
+nested_group_transforms = "150x150 xxh64:e9d49f4772778ea8"
+parenting_chain = "150x150 xxh64:107afe123c282f74"
+repeater_three_copies = "150x150 xxh64:8e9930a8fe3f876f"
+sample_check = "500x100 xxh64:146f43236fbf8886"
+sample_heart = "500x100 xxh64:fe2f987ddfb5281a"
+sample_loader = "500x100 xxh64:c2c31d5c903f82d4"
+sample_masked = "500x100 xxh64:1761f6627a33d87b"
+shapes_frame0 = "150x150 xxh64:efa3216079bcad80"
+stroke_dash = "150x150 xxh64:cf75d45d038394d1"
+trim_half_path = "150x150 xxh64:555f63b3dcc205c0"

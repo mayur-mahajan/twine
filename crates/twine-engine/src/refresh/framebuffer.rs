@@ -58,6 +58,24 @@ fn copy_rect(src: &[u8], dst: &mut [u8], stride: usize, format: ColorFormat, r: 
     }
 }
 
+#[cfg(feature = "display-integrity")]
+/// Shows the rendered `area` of a framebuffer to the frame observer (rows of the
+/// framebuffer, starting at the area's first pixel).
+#[inline(never)]
+fn observe_fb_area(engine: &mut Engine, d: usize, info: &twine_hal::DisplayInfo, area: Rect, fb: &[u8]) {
+    let stride = info.bytes_per_row();
+    let first = usize::try_from(area.y0)
+        .unwrap_or(0)
+        .saturating_mul(stride)
+        .saturating_add(
+            usize::try_from(area.x0)
+                .unwrap_or(0)
+                .saturating_mul(usize::from(info.format.bpp()))
+                / 8,
+        );
+    engine.observe_chunk(d, area, fb.get(first..).unwrap_or_default(), Some(stride));
+}
+
 impl Engine {
     /// Area sync at the start of a `Full` frame: every area of the previous frame that the
     /// current frame does not redraw completely is copied from the front into the back buffer.
@@ -135,17 +153,22 @@ impl Engine {
             info.area(),
             area,
         );
+        #[cfg(feature = "display-integrity")]
+        if self.observer.is_some() {
+            observe_fb_area(self, d, &info, area, mem.as_slice());
+        }
         match &mut self.displays[d].refresher.strategy {
             Strategy::Full(st) => st.fb[usize::from(st.back)] = Some(mem),
             Strategy::Direct(st) => st.fb = Some(mem),
             Strategy::Partial(_) => {}
         }
-        let job = self.job_mut(d);
-        job.stats.chunks = job.stats.chunks.saturating_add(1);
-        job.stats.render_us = job
-            .stats
-            .render_us
-            .saturating_add(render_us.min(u64::from(u32::MAX)) as u32);
+        if let Some(job) = self.job_mut(d) {
+            job.stats.chunks = job.stats.chunks.saturating_add(1);
+            job.stats.render_us = job
+                .stats
+                .render_us
+                .saturating_add(render_us.min(u64::from(u32::MAX)) as u32);
+        }
     }
 
     /// Ends a `Full` frame: presents the back buffer and swaps. Returns whether the present

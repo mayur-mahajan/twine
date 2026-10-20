@@ -12,6 +12,20 @@ workspace = true
 
 [features]
 default = []
+## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
+## safety lints of library code and the refusal of excluded features.
+safety = [
+    "twine-core/safety",
+    "twine-engine/safety",
+    "twine-image/safety",
+    "twine-render/safety",
+    "twine-style/safety",
+    "twine-text/safety",
+    "twine-vector?/safety",
+    "display-integrity",
+]
+## Display-integrity mechanisms: `Widget::value_digest` of the value widgets (`docs/safety/profile.md` § 11); implied by `safety`. Off: not linked.
+display-integrity = ["twine-engine/display-integrity", "twine-render/display-integrity", "twine-text/display-integrity"]
 ## Animated GIFs in `AnimImg::from_gif` (the GIF decoder of `twine-image`).
 gif = ["twine-image/img-gif"]
 ## Bidirectional text: mixed LTR/RTL lines drawn in visual order, textarea cursors mapped

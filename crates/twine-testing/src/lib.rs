@@ -13,9 +13,10 @@
 //! | [`MockClock`] | manually advanced [`Clock`](twine_hal::Clock) |
 //! | [`MockPlatform`] | [`Platform`](twine_hal::Platform) and [`AsyncPlatform`](twine_hal::AsyncPlatform) on simulated time (records waits, counts notifications, simulates interrupt context) |
 //! | [`MockPointer`], [`MockKeypad`], [`MockEncoder`], [`MockButton`] | scriptable [`InputDevice`](twine_hal::InputDevice)s |
-//! | [`snapshot`] | pixel-exact PNG snapshots ([`assert_rgb_snapshot`], [`snapshot_config!`]) |
+//! | [`snapshot`] | golden images: pixel-exact snapshots against a committed hash manifest ([`assert_rgb_snapshot`], [`snapshot_config!`], [`snapshot::Manifest`]) |
+//! | [`fuzz`] | operation-sequence fuzzing: [`fuzz::Bytes`], and with the harness features the tree, input and reactive interpreters ([`fuzz`] module docs) shared by the property tests and the cargo-fuzz targets |
 //! | [`convert`] | any supported pixel format → RGB888 |
-//! | [`alloc`] | [`CountingAllocator`](alloc::CountingAllocator), [`count_allocs`](alloc::count_allocs) |
+//! | [`alloc`] | [`CountingAllocator`](alloc::CountingAllocator), [`count_allocs`](alloc::count_allocs), [`assert_no_alloc_after_seal`](alloc::assert_no_alloc_after_seal) (no allocation after `Ui::seal`) |
 //! | [`init_test_logging`], [`capture_logs`] | `env_logger` for tests, capturing log records |
 //!
 //! Harness tiers selected by features (so lower crates can test before higher crates exist):
@@ -24,7 +25,7 @@
 //! |---------|-------|
 //! | `render` | [`RenderHarness`] over the renderer; [`gallery`]: the renderer's reference drawings (pages of the `render_gallery` example and the renderer snapshot tests) |
 //! | `engine` | [`EngineHarness`] over a bare engine, [`MockDmaDisplay`], [`MockFramebufferDisplay`]; [`scenes`]: reference engine scenes (`engine_boxes`, `scroll_list`, …) shared by tests, benchmarks and examples |
-//! | `ui` (default) | [`TestUi`] over the declarative UI; per-test ports ([`TestUi::channel`], [`TestUi::latest`], [`TestUi::outbox`]: fresh `'static` queues handed to the application instead of global `static`s shared by parallel tests), the shipped configuration ([`TestUi::app_config`]) and [`TestUi::memory_report`] |
+//! | `ui` (default) | [`TestUi`] over the declarative UI; per-test ports ([`TestUi::channel`], [`TestUi::latest`], [`TestUi::outbox`]: fresh `'static` queues handed to the application instead of global `static`s shared by parallel tests), the shipped configuration ([`TestUi::app_config`], [`TestUi::limits`]), [`TestUi::memory_report`] and [`TestUi::seal`] |
 //!
 //! ```
 //! use twine_core::{Color, ColorFormat, Rect};
@@ -46,6 +47,7 @@ pub mod clock;
 pub mod convert;
 #[cfg(feature = "engine")]
 pub mod engine_harness;
+pub mod fuzz;
 #[cfg(feature = "render")]
 pub mod gallery;
 pub mod logging;
@@ -76,7 +78,10 @@ pub mod logs {
 
 pub use clock::MockClock;
 #[cfg(feature = "engine")]
-pub use engine_harness::{EngineHarness, FbMode, Query, StepFn, TeardownFn, by_class, by_id, by_text};
+pub use engine_harness::{
+    EngineHarness, FbMode, HARNESS_LIMITS, Query, StepFn, TeardownFn, by_class, by_id, by_text,
+    profile_limits,
+};
 pub use logging::{CapturedLog, capture_logs, init_test_logging};
 pub use memory_display::{FlushRecord, MemoryDisplay, MemoryDisplayError, leak_buffer};
 #[cfg(feature = "engine")]

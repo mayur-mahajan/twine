@@ -1,7 +1,7 @@
 //! `cargo xtask ci [--quick]`: every check CI runs, in order, stopping at the first failure.
 //!
-//! A summary table is printed at the end. `--quick` skips `nostd`, `doc`, `bench-build`, `miri`
-//! and `firmware`.
+//! A summary table is printed at the end. `--quick` skips `nostd`, `safety-exclusions`,
+//! `stack-budget`, `doc`, `bench-build`, `miri` and `firmware`.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,9 +9,16 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::cmd::{firmware, fonts, images, layers, miri, nostd, progress, sim, snapshots, style_props, todo};
+use crate::cmd::{
+    firmware, fonts, images, layers, miri, nostd, progress, safety, sim, snapshots, stack, style_props, todo,
+    traceability,
+};
 use crate::util::{R, cargo, cargo_ci, output, run as run_cmd, warn};
 
+/// The safety profile's feature (`safety`, on the facade and every profile crate) is left out of
+/// the all-features and `defmt` passes too: it refuses `perf-monitor`, `fs`, `ttf` and
+/// `img-jpeg`, which those passes enable. The `clippy-safety` stage lints it.
+///
 /// `(crate, feature)` pairs left out of the all-features clippy pass because they cannot be
 /// linted meaningfully on the host (`defmt` would win over `log`, hiding the `log` backend, and
 /// needs a target-side logger to link tests). The `defmt` code paths are linted by the
@@ -91,7 +98,10 @@ fn all_features_list(metadata: &str) -> Result<Vec<String>, Box<dyn std::error::
             continue;
         };
         for feat in features.keys() {
-            if feat == "default" || CLIPPY_ALL_FEATURES_EXCLUDE.contains(&(name, feat.as_str())) {
+            if feat == "default"
+                || feat == safety::FEATURE
+                || CLIPPY_ALL_FEATURES_EXCLUDE.contains(&(name, feat.as_str()))
+            {
                 continue;
             }
             list.push(format!("{name}/{feat}"));
@@ -127,12 +137,19 @@ fn is_defmt_conflict(feat: &str) -> bool {
 }
 
 /// Feature tables of the workspace packages, by package name.
-type FeatureTables<'a> = BTreeMap<&'a str, &'a serde_json::Map<String, Value>>;
+pub type FeatureTables<'a> = BTreeMap<&'a str, &'a serde_json::Map<String, Value>>;
 
-/// Whether feature `feat` of package `pkg` enables, directly or through other features of the
-/// workspace, a feature for which [`is_defmt_conflict`] holds (on `pkg` or on a dependency).
-fn implies_defmt_conflict(features: &FeatureTables<'_>, pkg: &str, feat: &str, depth: u32) -> bool {
-    if is_defmt_conflict(feat) {
+/// Whether feature `feat` of package `pkg` is, or enables directly or through other features of
+/// the workspace, a feature for which `hit(package, feature)` holds (on `pkg` or on a
+/// dependency). `dep:` entries are not followed.
+pub fn feature_implies(
+    features: &FeatureTables<'_>,
+    pkg: &str,
+    feat: &str,
+    hit: &dyn Fn(&str, &str) -> bool,
+    depth: u32,
+) -> bool {
+    if hit(pkg, feat) {
         return true;
     }
     // Feature graphs are acyclic (cargo rejects cycles); the bound only guards malformed input.
@@ -151,11 +168,17 @@ fn implies_defmt_conflict(features: &FeatureTables<'_>, pkg: &str, feat: &str, d
             false
         } else if let Some((dep, dep_feat)) = e.split_once('/') {
             // `dep?/feat` only applies when `dep` is enabled; it still enables `feat` then.
-            implies_defmt_conflict(features, dep.trim_end_matches('?'), dep_feat, depth + 1)
+            feature_implies(features, dep.trim_end_matches('?'), dep_feat, hit, depth + 1)
         } else {
-            implies_defmt_conflict(features, pkg, e, depth + 1)
+            feature_implies(features, pkg, e, hit, depth + 1)
         }
     })
+}
+
+/// Whether feature `feat` of package `pkg` enables, directly or through other features of the
+/// workspace, a feature for which [`is_defmt_conflict`] holds (on `pkg` or on a dependency).
+fn implies_defmt_conflict(features: &FeatureTables<'_>, pkg: &str, feat: &str) -> bool {
+    feature_implies(features, pkg, feat, &|_, f| is_defmt_conflict(f), 0)
 }
 
 /// A package name and the features to enable on it.
@@ -194,7 +217,10 @@ fn defmt_config(metadata: &str) -> Result<Vec<CrateFeatures>, Box<dyn std::error
             .filter(|feat| {
                 let excluded =
                     *feat != "defmt" && CLIPPY_ALL_FEATURES_EXCLUDE.contains(&(name, feat.as_str()));
-                *feat != "default" && !excluded && !implies_defmt_conflict(&features, name, feat, 0)
+                *feat != "default"
+                    && *feat != safety::FEATURE
+                    && !excluded
+                    && !implies_defmt_conflict(&features, name, feat)
             })
             .cloned()
             .collect();
@@ -241,15 +267,83 @@ fn clippy_defmt() -> Result<Outcome, Box<dyn std::error::Error>> {
 /// snapshot, so the `snapshots` stage does not run the whole suite a second time.
 static TESTS_RAN: AtomicBool = AtomicBool::new(false);
 
-/// The whole workspace test suite (snapshot comparisons included, mismatch artefacts listed).
+/// The whole workspace test suite (snapshot comparisons included, the run reported).
 fn test() -> Result<Outcome, Box<dyn std::error::Error>> {
     TESTS_RAN.store(true, Ordering::Relaxed);
-    ok(snapshots::run(false))
+    ok(snapshots::run(snapshots::Action::Check))
 }
 
 /// Tests of feature-gated backends that the default `cargo test --workspace` does not compile.
 fn test_features() -> Result<Outcome, Box<dyn std::error::Error>> {
     run_cmd(cargo_ci().args(["test", "-p", "twine-core", "--features", "log"]))?;
+    // The safety profile (R5.S04): the arena's 48-bit generations, the animation and timer
+    // tables, the reactive runtime and the engine (limits, handler serials, faults) in that
+    // profile — unit and integration tests; the doctests show the default profile's API (e.g.
+    // `expect_context`, non-preallocated `Limits`), which the profile removes or refuses.
+    run_cmd(cargo_ci().args([
+        "test",
+        "-p",
+        "twine-core",
+        "--features",
+        "safety",
+        "--lib",
+        "--tests",
+    ]))?;
+    run_cmd(cargo_ci().args([
+        "test",
+        "-p",
+        "twine-anim",
+        "--features",
+        "safety",
+        "--lib",
+        "--tests",
+    ]))?;
+    run_cmd(cargo_ci().args([
+        "test",
+        "-p",
+        "twine-reactive",
+        "--features",
+        "safety",
+        "--lib",
+        "--tests",
+    ]))?;
+    run_cmd(cargo_ci().args([
+        "test",
+        "-p",
+        "twine-engine",
+        "--features",
+        "safety",
+        "--lib",
+        "--tests",
+    ]))?;
+    // The view layer in the profile (R5.S05): its tests use the fallible forms (`try_build`,
+    // `use_context`, `use_navigator`) and `twine_testing::HARNESS_LIMITS` (preallocated
+    // there); the tests of the removed panicking APIs are `cfg(not(feature = "safety"))`.
+    run_cmd(cargo_ci().args([
+        "test",
+        "-p",
+        "twine-view",
+        "--features",
+        "safety",
+        "--lib",
+        "--tests",
+    ]))?;
+    // Display integrity (R5.S06): opt-in, so the default runs above build without it; its
+    // tests (`tests/integrity.rs`), doctests and the gated unit tests run here.
+    for pkg in [
+        "twine-render",
+        "twine-text",
+        "twine-engine",
+        "twine-widgets",
+        "twine-view",
+    ] {
+        run_cmd(cargo_ci().args(["test", "-p", pkg, "--features", "display-integrity"]))?;
+    }
+    // The engine's parts the profile excludes, which its dev-dependencies no longer enable.
+    run_cmd(cargo_ci().args(["test", "-p", "twine-engine", "--features", "perf-monitor,fs"]))?;
+    // The reactive runtime's `no-panic-runtime` behaviour (tests/no_panic_runtime.rs) and the
+    // rest of its suite with the feature on.
+    run_cmd(cargo_ci().args(["test", "-p", "twine-reactive", "--features", "no-panic-runtime"]))?;
     // Layout warnings (invalid grid cells) captured through `log`.
     run_cmd(cargo_ci().args(["test", "-p", "twine-layout", "--features", "log"]))?;
     // SVG images: vectors with `svg`, the placeholder without it.
@@ -298,8 +392,30 @@ fn images_check() -> Result<Outcome, Box<dyn std::error::Error>> {
     ok(images::gen_assets(true).and_then(|()| images::run(true)))
 }
 
+/// The requirements → tests matrix is current and every requirement is verified (R5.S08).
+fn traceability_check() -> Result<Outcome, Box<dyn std::error::Error>> {
+    ok(traceability::run(true))
+}
+
 fn style_props_check() -> Result<Outcome, Box<dyn std::error::Error>> {
     ok(style_props::run(true))
+}
+
+/// Clippy over the facade in the safety profile (its lints denied) and the lint-status
+/// ratchet (`docs/safety/profile.md`).
+fn clippy_safety() -> Result<Outcome, Box<dyn std::error::Error>> {
+    ok(safety::clippy_safety())
+}
+
+/// Every part the safety profile excludes fails to compile together with it.
+fn safety_exclusions() -> Result<Outcome, Box<dyn std::error::Error>> {
+    ok(safety::check_exclusions())
+}
+
+/// The stack of the engine's recursive tree walks at the reference depth stays within its
+/// budget (release build; R5.S05).
+fn stack_budget() -> Result<Outcome, Box<dyn std::error::Error>> {
+    ok(stack::run(false))
 }
 
 fn nostd_build() -> Result<Outcome, Box<dyn std::error::Error>> {
@@ -391,11 +507,14 @@ fn eg_sim() -> Result<Outcome, Box<dyn std::error::Error>> {
     Ok(Outcome::Ok)
 }
 
+/// The golden-image manifests parse and hold no entry awaiting approval; the snapshot
+/// comparisons themselves run with the workspace tests (here only if the `test` stage did not).
 fn snapshot_check() -> Result<Outcome, Box<dyn std::error::Error>> {
+    snapshots::verify()?;
     if TESTS_RAN.load(Ordering::Relaxed) {
-        return Ok(Outcome::Skipped("covered by the `test` stage".into()));
+        return Ok(Outcome::Ok);
     }
-    ok(snapshots::run(false))
+    ok(snapshots::run(snapshots::Action::Check))
 }
 
 fn firmware_build() -> Result<Outcome, Box<dyn std::error::Error>> {
@@ -408,6 +527,7 @@ const STAGES: &[(&str, bool, StageFn)] = &[
     ("clippy", true, clippy),
     ("clippy-all-features", true, clippy_all_features),
     ("clippy-defmt", true, clippy_defmt),
+    ("clippy-safety", true, clippy_safety),
     ("test", true, test),
     ("test-features", true, test_features),
     ("todo-check", true, todo_check),
@@ -416,7 +536,10 @@ const STAGES: &[(&str, bool, StageFn)] = &[
     ("fonts", true, fonts_check),
     ("images", true, images_check),
     ("style-props", true, style_props_check),
+    ("traceability", true, traceability_check),
     ("nostd", false, nostd_build),
+    ("safety-exclusions", false, safety_exclusions),
+    ("stack-budget", false, stack_budget),
     ("doc", false, doc),
     ("bench-build", false, bench_build),
     ("miri", false, miri_check),

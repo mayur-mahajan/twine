@@ -163,6 +163,40 @@ pub trait ThemeHook {
         let _ = (mode, dpi, resolution);
         None
     }
+
+    /// Describes the theme for an audit report (`AppConfig::audit_report`, section `theme`):
+    /// the hook a certification file uses to pin the exact theme a product runs. The default
+    /// writes `theme.name` ([`name`](Self::name)), the start mode and the supported modes'
+    /// count; a theme can add entries (a content digest of its tables, its version). Must not
+    /// allocate; never panics.
+    ///
+    /// ```
+    /// use twine_core::audit::{AuditSink, AuditValue, KeyValues};
+    /// use twine_engine::{ThemeCx, ThemeHook, WidgetClass};
+    ///
+    /// struct Plain;
+    /// impl ThemeHook for Plain {
+    ///     fn apply(&self, _: &mut ThemeCx<'_>, _: &'static WidgetClass) {}
+    ///     fn font_normal(&self) -> &'static twine_text::Font { &twine_text::EMPTY_FONT }
+    ///     fn name(&self) -> &'static str { "plain" }
+    ///     fn audit(&self, out: &mut dyn AuditSink) {
+    ///         out.entry("theme", "name", AuditValue::Text(self.name()));
+    ///         out.entry("theme", "version", AuditValue::Uint(3));
+    ///     }
+    /// }
+    /// struct Report<'a>(&'a dyn ThemeHook);
+    /// impl twine_core::audit::Audit for Report<'_> {
+    ///     fn audit(&self, out: &mut dyn AuditSink) { self.0.audit(out) }
+    /// }
+    /// assert_eq!(KeyValues(&Report(&Plain)).to_string(), "theme.name=plain\ntheme.version=3\n");
+    /// ```
+    // NOTE(R7.S10): themes add `theme.digest` (`ThemeDigest`, CRC32 over their tables) here.
+    fn audit(&self, out: &mut dyn twine_core::audit::AuditSink) {
+        use twine_core::audit::AuditValue;
+        out.entry("theme", "name", AuditValue::Text(self.name()));
+        out.entry("theme", "mode", AuditValue::Text(self.mode().name()));
+        out.entry("theme", "modes", AuditValue::from_usize(self.modes().len()));
+    }
 }
 
 impl core::fmt::Debug for dyn ThemeHook {

@@ -141,7 +141,7 @@ where
     for row in rows {
         let n = btns.len();
         btns.extend(row);
-        row_lens.push(btns.len() - n);
+        row_lens.push(btns.len().saturating_sub(n));
     }
     buttonmatrix_view(btns, row_lens)
 }
@@ -177,7 +177,14 @@ fn buttonmatrix_view(btns: Vec<Btn>, row_lens: Vec<usize>) -> WidgetView<ButtonM
         }
         // One binding for every dynamic text; each is formatted into the same scratch buffer
         // and written in place when it changed.
-        let scratch = Rc::new(RefCell::new(String::new()));
+        // Reserved for the limit with `Limits::preallocate` (formatting after a seal then
+        // allocates nothing); growth is noted for the allocation guard.
+        let limits = cx.engine().limits();
+        let mut buf = String::new();
+        if limits.preallocate {
+            buf.reserve(usize::from(limits.max_text_len));
+        }
+        let scratch = Rc::new(RefCell::new(buf));
         let texts = Rc::new(dynamic);
         cx.provide(|| {
             bind_effect(
@@ -189,7 +196,11 @@ fn buttonmatrix_view(btns: Vec<Btn>, row_lens: Vec<usize>) -> WidgetView<ButtonM
                         let mut buf = scratch.borrow_mut();
                         for (i, t) in texts.iter() {
                             buf.clear();
+                            let cap = buf.capacity();
                             t.write_to(&mut *buf);
+                            if buf.capacity() != cap {
+                                twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
+                            }
                             m.set_btn_text(wcx, *i, &buf);
                         }
                     });

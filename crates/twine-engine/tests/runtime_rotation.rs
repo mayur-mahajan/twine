@@ -348,6 +348,8 @@ fn brightness_and_sleep_on_a_mock_driver() {
     assert!(e.take_faults().is_empty());
 }
 
+/// fault: `DisplayControl`
+/// req: SAF-030, SAF-031
 #[test]
 fn unsupported_controls_raise_display_control_faults() {
     let panel = MemoryDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565)); // no controls

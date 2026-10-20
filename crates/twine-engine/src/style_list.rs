@@ -75,7 +75,8 @@ impl StyleList {
 
     /// Inserts `e` before every entry of the same or a lower priority class (so the latest
     /// added style of a class comes first).
-    pub(crate) fn insert(&mut self, e: StyleEntry) {
+    /// Returns the position of the new entry.
+    pub(crate) fn insert(&mut self, e: StyleEntry) -> usize {
         let r = rank(e.kind);
         let pos = self
             .0
@@ -83,6 +84,7 @@ impl StyleList {
             .position(|x| rank(x.kind) >= r)
             .unwrap_or(self.0.len());
         self.0.insert(pos, e);
+        pos
     }
 
     /// The local style of `sel`.
@@ -93,23 +95,17 @@ impl StyleList {
         })
     }
 
-    /// The local style of `sel`, created when missing.
-    pub(crate) fn local_mut(&mut self, sel: Selector) -> &mut StyleBuf {
-        let find = |l: &Self| {
-            l.0.iter().position(|e| {
-                e.kind == EntryKind::Local && e.selector == sel && matches!(e.style, StyleRef::Shared(_))
-            })
+    /// The local style of `sel`, created when missing. Always `Some`: the entry found or
+    /// inserted holds a shared buffer (`None` would only mean a broken invariant, and the
+    /// callers then skip the change instead of panicking).
+    pub(crate) fn local_mut(&mut self, sel: Selector) -> Option<&mut StyleBuf> {
+        let pos = match self.0.iter().position(|e| {
+            e.kind == EntryKind::Local && e.selector == sel && matches!(e.style, StyleRef::Shared(_))
+        }) {
+            Some(p) => p,
+            None => self.insert(StyleEntry::new(sel, Rc::new(StyleBuf::new()), EntryKind::Local)),
         };
-        let pos = if let Some(p) = find(self) {
-            p
-        } else {
-            self.insert(StyleEntry::new(sel, Rc::new(StyleBuf::new()), EntryKind::Local));
-            find(self).unwrap_or(0)
-        };
-        match &mut self.0[pos].style {
-            StyleRef::Shared(rc) => Rc::make_mut(rc),
-            StyleRef::Static(_) => unreachable!("local entries are shared buffers"),
-        }
+        shared_mut(self.0.get_mut(pos))
     }
 
     /// Removes and returns the entry at `i`.
@@ -302,7 +298,7 @@ impl Engine {
         if n.styles.local(selector).and_then(|s| s.get(pid)) == Some(prop.value()) {
             return;
         }
-        if !n.styles.local_mut(selector).set(prop) {
+        if !n.styles.local_mut(selector).is_some_and(|s| s.set(prop)) {
             return;
         }
         twine_core::trace!(target: "twine::style", "{} local {:?} = {:?}", fmt_node_id(id), pid, prop.value());
@@ -344,7 +340,7 @@ impl Engine {
         if n.styles.local(selector).and_then(StyleBuf::get_transition) == Some(t.get()) {
             return;
         }
-        if n.styles.local_mut(selector).set_transition(t) {
+        if n.styles.local_mut(selector).is_some_and(|s| s.set_transition(t)) {
             twine_core::trace!(target: "twine::style", "{} local transition for {:?}", fmt_node_id(id), selector);
             n.style_cache.invalidate();
         }
@@ -359,7 +355,9 @@ impl Engine {
         if n.styles.local(selector).and_then(|s| s.get(prop)).is_none() {
             return false;
         }
-        n.styles.local_mut(selector).remove(prop);
+        if let Some(s) = n.styles.local_mut(selector) {
+            s.remove(prop);
+        }
         self.refresh_style(id, selector.part, Some(prop));
         true
     }
@@ -476,6 +474,9 @@ impl Engine {
             .is_some_and(|n| n.style_cache.is_valid(self.tree.epoch))
     }
 
+    // Out of line: a cache miss is rare, and inlined into `cached_main` its frame would sit in
+    // every level of the recursive draw traversal.
+    #[inline(never)]
     fn resolve_main(&self, id: NodeId) -> MainStyle {
         let m = Part::Main;
         MainStyle {
@@ -575,22 +576,36 @@ impl Engine {
         }
     }
 
+    /// An inherited property of `id` changed: every cached style is stale (new epoch), the
+    /// descendants are redrawn, and the nodes linked to `id` or below it
+    /// ([`set_style_parent`](Self::set_style_parent)) are refreshed.
+    ///
+    /// Not recursive: `Tree::style_chain_reaches` follows links
+    /// too, so one scan finds the links reaching `id` through other links as well, and each
+    /// linked node is refreshed once without scanning again (its own descendants are
+    /// invalidated by [`refresh_linked_style`](Self::refresh_linked_style)).
     fn bump_epoch_and_invalidate_descendants(&mut self, id: NodeId) {
         self.tree.epoch = self.tree.epoch.wrapping_add(1);
-        let mut next = self.tree.node(id).and_then(crate::Node::first_child);
-        // Invalidate every descendant (they may draw outside `id` with OVERFLOW_VISIBLE).
-        while let Some(c) = next {
-            self.invalidate_subtree(c, InvalidateReason::StyleChange);
-            next = self.tree.node(c).and_then(crate::Node::next_sibling);
-        }
-        // Nodes linked to `id` or below it inherit the change too (no allocation: the links
-        // are indexed; refreshing a linked node never adds or removes links).
+        self.invalidate_descendants(id);
+        // No allocation: the links are indexed; refreshing a linked node never adds or
+        // removes links (application handlers of `StyleChanged` may, which at most skips or
+        // repeats a link of this scan).
         let mut i = 0;
         while let Some((n, p)) = self.tree.style_link_at(i) {
             i += 1;
             if self.tree.style_chain_reaches(p, id) {
-                self.refresh_style(n, Part::Any, None);
+                self.refresh_linked_style(n);
             }
+        }
+    }
+
+    /// Invalidates every descendant of `id` (they may draw outside `id` with
+    /// `OVERFLOW_VISIBLE`).
+    fn invalidate_descendants(&mut self, id: NodeId) {
+        let mut next = self.tree.node(id).and_then(crate::Node::first_child);
+        while let Some(c) = next {
+            self.invalidate_subtree(c, InvalidateReason::StyleChange);
+            next = self.tree.node(c).and_then(crate::Node::next_sibling);
         }
     }
 
@@ -625,10 +640,23 @@ impl Engine {
     /// property). Invalidates before and after, drops the cache, marks layout, recomputes the
     /// extra draw size and propagates inherited changes to the descendants as needed.
     pub(crate) fn refresh_style(&mut self, id: NodeId, part: Part, prop: Option<PropId>) {
+        let _ = part;
+        self.refresh_style_with(id, prop, true);
+    }
+
+    /// [`refresh_style`](Self::refresh_style) of a node linked to a node whose inherited
+    /// style changed: everything but the scan of the style links, which the caller makes.
+    fn refresh_linked_style(&mut self, id: NodeId) {
+        self.refresh_style_with(id, None, false);
+    }
+
+    /// [`refresh_style`](Self::refresh_style); `links`: an inherited change also refreshes
+    /// the nodes linked to `id` (else only its descendants are redrawn: the caller handles the
+    /// links and the epoch).
+    fn refresh_style_with(&mut self, id: NodeId, prop: Option<PropId>, links: bool) {
         if !self.tree.contains(id) {
             return;
         }
-        let _ = part;
         self.invalidate(id, InvalidateReason::StyleChange);
         self.clear_style_cache(id);
         let meta = prop.map(PropId::meta);
@@ -642,7 +670,11 @@ impl Engine {
             self.refresh_ext_draw(id);
         }
         if meta.is_none_or(|m| m.inherited) {
-            self.bump_epoch_and_invalidate_descendants(id);
+            if links {
+                self.bump_epoch_and_invalidate_descendants(id);
+            } else {
+                self.invalidate_descendants(id);
+            }
         }
         self.invalidate(id, InvalidateReason::StyleChange);
         self.send_event(id, crate::EventCode::StyleChanged, crate::EventParam::None);
@@ -687,6 +719,15 @@ fn state_compare(
     (res, inherited)
 }
 
+/// The buffer of `entry` for writing, when it holds a shared one (made unique first,
+/// copy on write); `None` for a missing entry or a static style.
+pub(crate) fn shared_mut(entry: Option<&mut StyleEntry>) -> Option<&mut StyleBuf> {
+    match entry.map(|e| &mut e.style) {
+        Some(StyleRef::Shared(rc)) => Some(Rc::make_mut(rc)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,6 +743,7 @@ mod tests {
         l.insert(StyleEntry::new(Selector::MAIN, &B, EntryKind::Normal));
         l.insert(StyleEntry::new(Selector::MAIN, &B, EntryKind::Theme));
         l.local_mut(Selector::MAIN)
+            .unwrap()
             .set(StyleProp::Radius(twine_style::Radius::Px(3).into()));
         l.insert(StyleEntry::new(Selector::MAIN, &A, EntryKind::Transition));
         let kinds: Vec<EntryKind> = l.entries().iter().map(|e| e.kind).collect();
@@ -740,6 +782,7 @@ mod tests {
         let n = e.create_root(Box::new(Obj)).unwrap();
         let list = &mut e.tree.node_mut(n).unwrap().styles;
         list.local_mut(Selector::state(State::PRESSED))
+            .unwrap()
             .set(StyleProp::BgColor(Color::GREEN.into()));
         list.insert(StyleEntry::new(Selector::MAIN, &BLUE, EntryKind::Normal));
         list.insert(StyleEntry::new(Selector::MAIN, &RED, EntryKind::Transition));

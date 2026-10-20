@@ -124,7 +124,8 @@ impl<'a> BuildCx<'a> {
     /// use twine_engine::{DEAD_NODE, Engine, EngineConfig, Obj};
     /// use twine_view::BuildCx;
     ///
-    /// let mut e = Engine::new(EngineConfig { max_nodes: 1, ..EngineConfig::default() }).unwrap();
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// e.set_limits(&twine_core::Limits::DEFAULT.max_nodes(1)).unwrap();
     /// let root = e.create_root(Box::new(Obj)).unwrap();
     /// let scope = twine_reactive::Runtime::take().unwrap().create_root();
     /// let mut cx = BuildCx::new(&mut e, root, scope);

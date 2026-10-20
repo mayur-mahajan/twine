@@ -75,8 +75,8 @@ impl Calibration {
     /// Every module differs by tens of pixels (and some mount the touch film mirrored);
     /// calibrate each device with [`from_points`](Self::from_points) for accurate touch.
     ///
-    /// A constant: [`apply`](Self::apply) with it never panics (its coefficients cannot
-    /// overflow the `i64` arithmetic for any `i32` raw point).
+    /// A constant: [`apply`](Self::apply) with it is exact for every `i32` raw point (its
+    /// coefficients cannot overflow the `i64` arithmetic).
     ///
     /// ```
     /// use twine_hal::Calibration;
@@ -97,49 +97,80 @@ impl Calibration {
     /// Solves the affine mapping that sends the three `raw` points to the three `screen` points
     /// (the classic 3-point solution, e.g. TI application report SLYT277).
     ///
-    /// Returns `None` if the raw points are collinear (degenerate).
+    /// Returns `None` if the raw points are collinear (degenerate), or if a coefficient would
+    /// overflow `i64` (coordinates far beyond any touch controller's range: the coefficients are
+    /// products of up to three coordinates). Never panics.
     #[must_use]
     pub fn from_points(raw: [(i32, i32); 3], screen: [(i32, i32); 3]) -> Option<Self> {
         let [(x0, y0), (x1, y1), (x2, y2)] = raw.map(|(x, y)| (i64::from(x), i64::from(y)));
         let [(sx0, sy0), (sx1, sy1), (sx2, sy2)] = screen.map(|(x, y)| (i64::from(x), i64::from(y)));
+        let sub = i64::checked_sub;
+        let (x02, x12, y02, y12) = (sub(x0, x2)?, sub(x1, x2)?, sub(y0, y2)?, sub(y1, y2)?);
+        let (sx02, sx12, sy02, sy12) = (sub(sx0, sx2)?, sub(sx1, sx2)?, sub(sy0, sy2)?, sub(sy1, sy2)?);
 
-        let div = (x0 - x2) * (y1 - y2) - (x1 - x2) * (y0 - y2);
+        let div = det(x02, y12, x12, y02)?;
         if div == 0 {
             return None;
         }
-        let a = (sx0 - sx2) * (y1 - y2) - (sx1 - sx2) * (y0 - y2);
-        let b = (x0 - x2) * (sx1 - sx2) - (sx0 - sx2) * (x1 - x2);
-        let c = y0 * (x2 * sx1 - x1 * sx2) + y1 * (x0 * sx2 - x2 * sx0) + y2 * (x1 * sx0 - x0 * sx1);
-        let d = (sy0 - sy2) * (y1 - y2) - (sy1 - sy2) * (y0 - y2);
-        let e = (x0 - x2) * (sy1 - sy2) - (sy0 - sy2) * (x1 - x2);
-        let f = y0 * (x2 * sy1 - x1 * sy2) + y1 * (x0 * sy2 - x2 * sy0) + y2 * (x1 * sy0 - x0 * sy1);
+        let a = det(sx02, y12, sx12, y02)?;
+        let b = det(x02, sx12, sx02, x12)?;
+        let c = sum3(
+            y0.checked_mul(det(x2, sx1, x1, sx2)?)?,
+            y1.checked_mul(det(x0, sx2, x2, sx0)?)?,
+            y2.checked_mul(det(x1, sx0, x0, sx1)?)?,
+        )?;
+        let d = det(sy02, y12, sy12, y02)?;
+        let e = det(x02, sy12, sy02, x12)?;
+        let f = sum3(
+            y0.checked_mul(det(x2, sy1, x1, sy2)?)?,
+            y1.checked_mul(det(x0, sy2, x2, sy0)?)?,
+            y2.checked_mul(det(x1, sy0, x0, sy1)?)?,
+        )?;
 
+        // Normalise the sign so that `div > 0`.
         let s = div.signum();
         Some(Self {
-            a: a * s,
-            b: b * s,
-            c: c * s,
-            d: d * s,
-            e: e * s,
-            f: f * s,
-            div: div * s,
+            a: a.checked_mul(s)?,
+            b: b.checked_mul(s)?,
+            c: c.checked_mul(s)?,
+            d: d.checked_mul(s)?,
+            e: e.checked_mul(s)?,
+            f: f.checked_mul(s)?,
+            div: div.checked_mul(s)?,
         })
     }
 
-    /// Maps a raw point to screen coordinates (rounded to the nearest pixel).
+    /// Maps a raw point to screen coordinates (rounded to the nearest pixel, saturated to
+    /// `i32`). Never panics.
     ///
     /// A calibration with `div <= 0` (not produced by this type's constructors) maps everything
-    /// to `(0, 0)`.
+    /// to `(0, 0)`. The `i64` arithmetic saturates; that only happens for coefficients far
+    /// beyond any real calibration, whose results saturate anyway.
     #[must_use]
     pub fn apply(&self, x: i32, y: i32) -> (i32, i32) {
         if self.div <= 0 {
             return (0, 0);
         }
         let (x, y) = (i64::from(x), i64::from(y));
-        let nx = self.a * x + self.b * y + self.c;
-        let ny = self.d * x + self.e * y + self.f;
+        let row = |p: i64, q: i64, r: i64| {
+            p.saturating_mul(x)
+                .saturating_add(q.saturating_mul(y))
+                .saturating_add(r)
+        };
+        let nx = row(self.a, self.b, self.c);
+        let ny = row(self.d, self.e, self.f);
         (round_div(nx, self.div), round_div(ny, self.div))
     }
+}
+
+/// `p·q − r·s`, or `None` on overflow.
+fn det(p: i64, q: i64, r: i64, s: i64) -> Option<i64> {
+    p.checked_mul(q)?.checked_sub(r.checked_mul(s)?)
+}
+
+/// `a + b + c`, or `None` on overflow.
+fn sum3(a: i64, b: i64, c: i64) -> Option<i64> {
+    a.checked_add(b)?.checked_add(c)
 }
 
 impl Default for Calibration {
@@ -148,16 +179,45 @@ impl Default for Calibration {
     }
 }
 
-/// `n / d` rounded to nearest (halves away from zero), saturated to `i32`; `d > 0`.
+/// `n / d` rounded to nearest (halves away from zero), saturated to `i32`; `d > 0` (checked
+/// by the caller; `0` otherwise).
 fn round_div(n: i64, d: i64) -> i32 {
     let half = d / 2;
-    let q = if n >= 0 { (n + half) / d } else { (n - half) / d };
+    let biased = if n >= 0 {
+        n.saturating_add(half)
+    } else {
+        n.saturating_sub(half)
+    };
+    // DIV: `d > 0` (`apply` returns early otherwise), so the fallback is never taken.
+    let q = biased.checked_div(d).unwrap_or(0);
     q.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regression_extreme_points_do_not_overflow() {
+        // Products of three `i32` coordinates leave `i64`: refused instead of overflowing.
+        let m = i32::MAX;
+        let raw = [(i32::MIN, i32::MIN), (m, 0), (0, m)];
+        assert_eq!(
+            Calibration::from_points(raw, [(m, m), (i32::MIN, 0), (0, i32::MIN)]),
+            None
+        );
+        // Huge coefficients saturate in `apply` instead of overflowing.
+        let huge = Calibration {
+            a: i64::MAX,
+            b: i64::MAX,
+            c: i64::MAX,
+            d: i64::MIN,
+            e: 1,
+            f: 0,
+            div: 1,
+        };
+        assert_eq!(huge.apply(m, m), (i32::MAX, i32::MIN));
+    }
 
     #[test]
     fn identity_and_default() {

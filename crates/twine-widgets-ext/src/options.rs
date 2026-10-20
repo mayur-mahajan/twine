@@ -4,6 +4,7 @@
 use alloc::string::String;
 
 use twine_core::Size;
+use twine_engine::WidgetCx;
 use twine_style::COORD_MAX;
 use twine_text::{Font, TextLayout};
 
@@ -268,46 +269,84 @@ impl Options {
         Size::new(w, n * i32::from(font.line_height) + (n - 1) * line_space)
     }
 
-    /// Replaces the options with a copy of `s`, reusing the owned buffer's capacity.
-    pub(crate) fn set_owned(&mut self, s: &str) {
+    /// Replaces the options with a copy of `s`, reusing the owned buffer's capacity. The text
+    /// is a widget text: cut to [`Limits::max_text_len`](twine_core::Limits::max_text_len)
+    /// (at a character boundary, with a `Capacity` fault, code `TextLen`; the last option
+    /// may be cut short), and with [`Limits::preallocate`](twine_core::Limits::preallocate)
+    /// the buffer is reserved for the limit when it first grows (see `WidgetCx::store_text`).
+    pub(crate) fn set_owned(&mut self, cx: &mut WidgetCx<'_>, s: &str) {
+        self.make_owned();
+        let Options::Owned(buf) = self else { return };
+        #[cfg(feature = "arabic-shaping")]
+        if twine_text::needs_shaping(s) {
+            buf.clear();
+            cx.reserve_text(buf);
+            let cap = buf.capacity();
+            twine_text::shape_into(s, buf);
+            cx.limit_text(buf, cap);
+            return;
+        }
+        let s = cx.fit_text(s);
+        cx.store_text(buf, s);
+    }
+
+    /// Switches to (empty) owned options unless they are owned already. Allocates nothing.
+    fn make_owned(&mut self) {
         if !matches!(self, Options::Owned(_)) {
             *self = Options::Owned(String::new());
-        }
-        if let Options::Owned(buf) = self {
-            buf.clear();
-            #[cfg(feature = "arabic-shaping")]
-            if twine_text::needs_shaping(s) {
-                twine_text::shape_into(s, buf);
-                return;
-            }
-            buf.push_str(s);
         }
     }
 
     /// Inserts `option` before option `pos` (at the end when `pos` is past it; LVGL
-    /// `lv_dropdown_add_option`). Converts static options to owned ones.
-    pub(crate) fn insert(&mut self, option: &str, pos: u32) {
+    /// `lv_dropdown_add_option`), in place in the owned buffer (static options are copied
+    /// into it first). Refused — returning `false`, with a `Capacity` fault (code `TextLen`)
+    /// — when the options would exceed [`Limits::max_text_len`](twine_core::Limits::max_text_len)
+    /// bytes: cutting would lose an option. Allocates only when the buffer is too small.
+    pub(crate) fn insert(&mut self, cx: &mut WidgetCx<'_>, option: &str, pos: u32) -> bool {
         let n = u32::from(self.count());
         if n == 0 {
-            self.set_owned(option);
-            return;
-        }
-        let mut s = String::with_capacity(self.len() + option.len() + 1);
-        for (i, o) in self.iter().enumerate() {
-            if i > 0 {
-                s.push('\n');
+            if !cx.text_len_fits(option.len()) {
+                return false;
             }
-            if u32::try_from(i).is_ok_and(|i| i == pos) {
-                s.push_str(option);
-                s.push('\n');
+            self.set_owned(cx, option);
+            return true;
+        }
+        let new_len = self.len().saturating_add(option.len()).saturating_add(1);
+        if !cx.text_len_fits(new_len) {
+            return false;
+        }
+        // The byte offset where option `pos` starts (`None`: append).
+        let at = (pos < n).then(|| {
+            self.iter()
+                .take(pos as usize)
+                .fold(0usize, |off, o| off.saturating_add(o.len()).saturating_add(1))
+        });
+        if !matches!(self, Options::Owned(_)) {
+            // Copy the current options into the owned buffer first (no allocation when it
+            // has room: a previous owned list's buffer is not kept across static lists).
+            let mut buf = String::new();
+            cx.reserve_text(&mut buf);
+            let cap = buf.capacity();
+            for (i, o) in self.iter().enumerate() {
+                if i > 0 {
+                    buf.push('\n');
+                }
+                buf.push_str(o);
             }
-            s.push_str(o);
+            cx.limit_text(&mut buf, cap);
+            *self = Options::Owned(buf);
         }
-        if pos >= n {
-            s.push('\n');
-            s.push_str(option);
+        let Options::Owned(buf) = self else { return false };
+        let cap = buf.capacity();
+        if let Some(a) = at.filter(|&a| buf.is_char_boundary(a)) {
+            buf.insert(a, '\n');
+            buf.insert_str(a, option);
+        } else {
+            buf.push('\n');
+            buf.push_str(option);
         }
-        *self = Options::Owned(s);
+        cx.limit_text(buf, cap);
+        true
     }
 }
 
@@ -377,9 +416,23 @@ pub(crate) fn count(s: &str) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use alloc::boxed::Box;
     use alloc::string::ToString;
 
+    use twine_core::Limits;
+    use twine_core::fault::{CapacityFault, FaultKind};
+    use twine_engine::{Engine, EngineConfig, Obj};
+
     use super::*;
+
+    /// Runs `f` with a widget context of an engine with `limits`; returns the engine.
+    fn with_cx(limits: Limits, f: impl FnOnce(&mut WidgetCx<'_>)) -> Engine {
+        let mut e = Engine::new(EngineConfig::default()).unwrap();
+        e.set_limits(&limits).unwrap();
+        let n = e.create_root(Box::new(Obj)).unwrap();
+        e.with_widget_mut(n, |_: &mut Obj, cx| f(cx));
+        e
+    }
 
     #[cfg(feature = "arabic-shaping")]
     #[test]
@@ -391,7 +444,7 @@ mod tests {
         assert!(o.is_static(StaticOptions::Str(OPTS)));
         assert!(o.same_as(OPTS));
         let mut owned = Options::Static("");
-        owned.set_owned("سلام");
+        with_cx(Limits::DEFAULT, |cx| owned.set_owned(cx, "سلام"));
         assert!(owned.same_as("سلام"));
         assert_eq!(
             Options::from_static(StaticOptions::Str("plain")),
@@ -405,30 +458,61 @@ mod tests {
     #[test]
     fn insert_positions() {
         static S: [&str; 2] = ["p", "q"];
-        let mut o = Options::Static("a\nb");
-        o.insert("x", 0);
-        assert_eq!(o, "x\na\nb");
-        o.insert("y", 2);
-        assert_eq!(o, "x\na\ny\nb");
-        o.insert("z", 99);
-        assert_eq!(o, "x\na\ny\nb\nz");
-        let mut e = Options::default();
-        e.insert("only", 5);
-        assert_eq!((e.to_string().as_str(), e.count()), ("only", 1));
-        let mut s = Options::Slice(&S);
-        s.insert("m", 1);
-        assert_eq!(s, Options::Owned("p\nm\nq".into()));
+        with_cx(Limits::DEFAULT, |cx| {
+            let mut o = Options::Static("a\nb");
+            assert!(o.insert(cx, "x", 0));
+            assert_eq!(o, "x\na\nb");
+            assert!(o.insert(cx, "y", 2));
+            assert_eq!(o, "x\na\ny\nb");
+            assert!(o.insert(cx, "z", 99));
+            assert_eq!(o, "x\na\ny\nb\nz");
+            let mut e = Options::default();
+            assert!(e.insert(cx, "only", 5));
+            assert_eq!((e.to_string().as_str(), e.count()), ("only", 1));
+            let mut s = Options::Slice(&S);
+            assert!(s.insert(cx, "m", 1));
+            assert_eq!(s, Options::Owned("p\nm\nq".into()));
+        });
+    }
+
+    #[test]
+    fn owned_options_respect_max_text_len() {
+        let e = with_cx(Limits::DEFAULT.max_text_len(7), |cx| {
+            let mut o = Options::Static("");
+            o.set_owned(cx, "one\ntwo\nthree");
+            assert_eq!(o, "one\ntwo", "cut to 7 bytes");
+            // "one\ntwo\nsix" would be 11 bytes: refused, unchanged.
+            assert!(!o.insert(cx, "six", 99));
+            assert_eq!(o, "one\ntwo");
+            assert!(!Options::Static("").insert(cx, "eight ch", 0));
+        });
+        assert_eq!(e.fault_counts().get(FaultKind::Capacity), 3);
+        let r = *e.last_fault(FaultKind::Capacity).unwrap();
+        assert_eq!(CapacityFault::from_code(r.code), Some(CapacityFault::TextLen));
+    }
+
+    #[test]
+    fn preallocated_owned_options_are_reserved_for_the_limit() {
+        with_cx(Limits::DEFAULT.max_text_len(64).preallocated(), |cx| {
+            let mut o = Options::Static("");
+            o.set_owned(cx, "a\nb");
+            assert!(matches!(&o, Options::Owned(s) if s.capacity() >= 64));
+            assert!(o.insert(cx, "c", 0));
+            assert!(matches!(&o, Options::Owned(s) if s.capacity() >= 64));
+        });
     }
 
     #[test]
     fn owned_reuses_capacity() {
         let mut o = Options::Owned(String::with_capacity(64));
-        o.set_owned("a\nb\nc");
+        let mut e = Engine::new(EngineConfig::default()).unwrap();
+        let n = e.create_root(Box::new(Obj)).unwrap();
+        e.with_widget_mut(n, |_: &mut Obj, cx| o.set_owned(cx, "a\nb\nc"));
         let cap = match &o {
             Options::Owned(s) => s.capacity(),
             _ => 0,
         };
-        o.set_owned("d\ne");
+        e.with_widget_mut(n, |_: &mut Obj, cx| o.set_owned(cx, "d\ne"));
         assert!(matches!(&o, Options::Owned(s) if s.capacity() == cap));
         assert_eq!(o.get(1), Some("e"));
         assert_eq!(o.get(2), None);

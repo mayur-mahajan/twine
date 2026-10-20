@@ -214,6 +214,10 @@ pub mod marker {
     pub struct Prop(());
     /// A reference to a text, cloned ([`IntoText`](crate::IntoText)).
     pub struct Ref<M>(PhantomData<fn() -> M>);
+    #[cfg(feature = "display-integrity")]
+    /// A [`Validity`](twine_core::validity::Validity) (or a signal or memo of one) shown as a
+    /// text ([`IntoText`](crate::IntoText)): `S` is its source.
+    pub struct Valid<S>(PhantomData<fn() -> S>);
 }
 
 impl<T: 'static, U: Into<T>> IntoProp<T, marker::Value<U>> for U {

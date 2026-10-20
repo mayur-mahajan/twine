@@ -1,4 +1,5 @@
-//! Allocation counting: [`CountingAllocator`] and [`count_allocs`].
+//! Allocation counting: [`CountingAllocator`], [`count_allocs`] and
+//! [`assert_no_alloc_after_seal`].
 //!
 //! Install the allocator in a test binary (one integration test file) that needs it:
 //!
@@ -91,6 +92,59 @@ pub fn count_allocs<R>(f: impl FnOnce() -> R) -> (R, AllocStats) {
     let before = current();
     let r = f();
     (r, current().since(before))
+}
+
+/// Runs `f` **sealed** and asserts that it allocated nothing: no allocation, reallocation or
+/// growth on this thread seen by the [`CountingAllocator`] (which must be the test binary's
+/// global allocator — checked first with a probe allocation), and no growth point noted by
+/// Twine's allocation guard ([`twine_core::alloc_guard`], which names the site). Returns `f`'s
+/// result.
+///
+/// The seal is taken for `f` (and the guard's counts cleared); if the thread was sealed before
+/// (e.g. by `Ui::seal`), it stays sealed afterwards, otherwise it is unsealed again. Freeing is
+/// allowed. Use it around steady-state updates of a sealed UI: the counting allocator proves
+/// the claim for the scenario (it sees every allocation, the application's included), and the
+/// guard check proves that Twine's own detection agrees.
+///
+/// # Panics
+/// When the counting allocator is not installed, or when `f` allocated (the message has the
+/// allocator's statistics and the last growth point the guard noted).
+///
+/// ```standalone_crate
+/// use twine_testing::alloc::{CountingAllocator, assert_no_alloc_after_seal};
+///
+/// #[global_allocator]
+/// static A: CountingAllocator = CountingAllocator;
+///
+/// # fn main() {
+/// let mut v: Vec<u32> = Vec::with_capacity(8);
+/// assert_no_alloc_after_seal(|| v.push(1)); // within capacity
+/// let r = std::panic::catch_unwind(move || assert_no_alloc_after_seal(|| vec![1u8]));
+/// assert!(r.is_err());
+/// # }
+/// ```
+#[track_caller]
+pub fn assert_no_alloc_after_seal<R>(f: impl FnOnce() -> R) -> R {
+    use twine_core::alloc_guard;
+    let ((), probe) = count_allocs(|| drop(std::hint::black_box(Box::new(0u8))));
+    assert!(
+        probe.allocs > 0,
+        "assert_no_alloc_after_seal: install `twine_testing::alloc::CountingAllocator` as the \
+         test binary's #[global_allocator]"
+    );
+    let was_sealed = alloc_guard::is_sealed();
+    alloc_guard::seal();
+    let (r, stats) = count_allocs(f);
+    let noted = alloc_guard::total();
+    let last = alloc_guard::take().map(|r| r.last);
+    if !was_sealed {
+        alloc_guard::unseal();
+    }
+    assert!(
+        stats.allocs == 0 && stats.reallocs == 0 && noted == 0,
+        "allocation after seal: {stats:?}; Twine's guard noted {noted} growth(s) (last: {last:?})"
+    );
+    r
 }
 
 /// A global allocator that forwards to [`System`] and counts calls per thread.

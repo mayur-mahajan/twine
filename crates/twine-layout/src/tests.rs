@@ -1207,3 +1207,54 @@ mod log_capture {
         core::mem::take(&mut *RECORDS.lock().unwrap())
     }
 }
+
+/// Content measurements of laying out a chain of `depth` nested content-sized nodes (each a
+/// `kind` container), and the chain's outermost size.
+fn chain_measurements(depth: usize, kind: LayoutKind) -> (u32, Size) {
+    let mut t = ToyTree::new(400, 300);
+    let mut parent = ToyTree::ROOT;
+    let mut first = None;
+    for _ in 0..depth {
+        let mut st = StyleBuf::new()
+            .width(Length::Content)
+            .height(Length::Content)
+            .padding_left(1)
+            .padding_right(1)
+            .padding_top(1)
+            .padding_bottom(1);
+        if kind != LayoutKind::None {
+            st = st.layout(kind);
+        }
+        if kind == LayoutKind::Grid {
+            static CONTENT: [GridTrack; 1] = [GridTrack::Content];
+            st = st.grid_column_tracks(&CONTENT).grid_row_tracks(&CONTENT);
+        }
+        parent = t.add(parent, st);
+        first.get_or_insert(parent);
+    }
+    t.set_content_size(parent, Size::new(10, 6));
+    let mut s = crate::LayoutScratch::new();
+    let screen = t.coords(ToyTree::ROOT);
+    crate::layout_subtree_with(&mut t, &mut s, ToyTree::ROOT, screen);
+    (s.measurements(), t.coords(first.unwrap_or(ToyTree::ROOT)).size())
+}
+
+/// R5.S05: nested content-sized nodes were measured in time exponential in their nesting
+/// (each level measured its children once per axis, and every level of the arrangement
+/// measured its subtree again). Now each node is measured a bounded number of times per
+/// layout call: linear.
+#[test]
+fn regression_nested_content_sizing_is_linear() {
+    for kind in [LayoutKind::None, LayoutKind::Flex, LayoutKind::Grid] {
+        let (m16, s16) = chain_measurements(16, kind);
+        let (m32, s32) = chain_measurements(32, kind);
+        assert!(m32 <= 6 * 32, "{kind:?}: {m32} measurements for 32 levels");
+        assert!(
+            m32 <= 2 * m16 + 8,
+            "{kind:?}: not linear ({m16} for 16, {m32} for 32)"
+        );
+        // The sizes are right: the leaf's content plus 1 px of padding per level and side.
+        assert_eq!(s16, Size::new(10 + 2 * 16, 6 + 2 * 16), "{kind:?}");
+        assert_eq!(s32, Size::new(10 + 2 * 32, 6 + 2 * 32), "{kind:?}");
+    }
+}

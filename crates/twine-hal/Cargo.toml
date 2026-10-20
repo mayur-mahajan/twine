@@ -12,6 +12,9 @@ workspace = true
 
 [features]
 default = []
+## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
+## safety lints of library code and the refusal of excluded features.
+safety = ["twine-core/safety"]
 ## Async traits (`AsyncDisplayDriver`, `AsyncInputWait`, `AsyncPlatform`).
 async = []
 ## `CortexMPlatform`: `WFE`/`SEV` waiting and `SCB::vect_active` (any Cortex-M).

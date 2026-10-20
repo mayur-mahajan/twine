@@ -1,5 +1,7 @@
 //! The fault stream (R0.S01): every recovered failure is raised, counted, kept as the last
 //! record of its kind and reported to the hook — without allocating.
+//!
+//! req: SAF-001
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -66,6 +68,8 @@ fn flush_engine() -> (Engine, twine_engine::DisplayId) {
     (e, d)
 }
 
+/// fault: `FlushError`
+/// req: SAF-031
 #[test]
 fn flush_error_is_raised_with_its_display() {
     let (mut e, d) = flush_engine();
@@ -95,11 +99,13 @@ fn present_error_is_raised() {
 
 #[test]
 fn capacity_is_raised_when_the_tree_is_full() {
-    let cfg = EngineConfig {
-        max_nodes: 8,
-        ..EngineConfig::default()
-    };
-    let mut e = Engine::new(cfg).unwrap();
+    let mut e = Engine::new(EngineConfig::default()).unwrap();
+    // Preallocated (small tables): the safety profile accepts nothing else.
+    let limits = twine_core::Limits::DEFAULT
+        .max_nodes(8)
+        .max_timers(4)
+        .max_anims(4);
+    e.set_limits(&limits.preallocated()).unwrap();
     let root = e.create_root(Box::new(Obj)).unwrap();
     let mut created = 1;
     let full = loop {
@@ -111,6 +117,10 @@ fn capacity_is_raised_when_the_tree_is_full() {
     assert_eq!(created, 8);
     assert_eq!(full, EngineError::TooManyNodes);
     assert_eq!(e.take_faults(), Faults::from(FaultKind::Capacity));
+    assert_eq!(
+        e.last_fault(FaultKind::Capacity).map(|r| r.code),
+        Some(twine_core::fault::CapacityFault::Nodes.code())
+    );
     assert_eq!(e.last_fault(FaultKind::Capacity).and_then(|r| r.node), Some(root));
     assert!(e.create_root(Box::new(Obj)).is_err());
     assert!(
@@ -123,11 +133,13 @@ fn capacity_is_raised_when_the_tree_is_full() {
 #[test]
 fn dead_node_is_never_handed_out_and_every_call_ignores_it() {
     use twine_engine::DEAD_NODE;
-    let cfg = EngineConfig {
-        max_nodes: 8,
-        ..EngineConfig::default()
-    };
-    let mut e = Engine::new(cfg).unwrap();
+    let mut e = Engine::new(EngineConfig::default()).unwrap();
+    // Preallocated (small tables): the safety profile accepts nothing else.
+    let limits = twine_core::Limits::DEFAULT
+        .max_nodes(8)
+        .max_timers(4)
+        .max_anims(4);
+    e.set_limits(&limits.preallocated()).unwrap();
     let root = e.create_root(Box::new(Obj)).unwrap();
     let mut ids = vec![root];
     while let Ok(id) = e.create(root, Box::new(Obj)) {
@@ -146,11 +158,12 @@ fn dead_node_is_never_handed_out_and_every_call_ignores_it() {
 
 #[test]
 fn zero_max_nodes_is_rejected() {
-    let cfg = EngineConfig {
-        max_nodes: 0,
-        ..EngineConfig::default()
-    };
-    assert!(matches!(Engine::new(cfg), Err(EngineError::InvalidConfig(_))));
+    let mut e = Engine::new(EngineConfig::default()).unwrap();
+    assert!(matches!(
+        e.set_limits(&twine_core::Limits::DEFAULT.max_nodes(0)),
+        Err(EngineError::InvalidConfig(_))
+    ));
+    assert_eq!(*e.limits(), twine_core::Limits::DEFAULT, "nothing applied");
 }
 
 #[test]

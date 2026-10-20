@@ -66,7 +66,7 @@ impl<W: Widget> core::fmt::Debug for NodeRef<W> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("NodeRef")
             .field("widget", &core::any::type_name::<W>())
-            .field("node", &self.cell.try_get().flatten().map(fmt_node_id))
+            .field("node", &self.cell.try_get().ok().flatten().map(fmt_node_id))
             .finish()
     }
 }
@@ -84,7 +84,7 @@ impl<W: Widget> NodeRef<W> {
     /// The node, once built (a tracked read).
     #[must_use]
     pub fn get(&self) -> Option<NodeId> {
-        self.cell.try_get().flatten()
+        self.cell.try_get().ok().flatten()
     }
 
     /// The node without subscribing the running binding.

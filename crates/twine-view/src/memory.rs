@@ -48,7 +48,7 @@ pub struct MemoryReport {
     /// The reactive runtime the UI runs on (shared by every UI on it).
     pub reactive: RuntimeMemory,
     /// The UI's engine command queues (one per display; see
-    /// [`AppConfig::engine_queue_capacity`](crate::AppConfig::engine_queue_capacity)).
+    /// [`Limits::engine_queue`](twine_core::Limits::engine_queue)).
     pub engine_queues: usize,
     /// Heap wakers of the process-wide waker pool
     /// ([`WakerLease::heap_bytes`]; 0 while every UI uses a static slot or its own `static`
@@ -78,7 +78,11 @@ impl MemoryReport {
     /// ```
     #[must_use]
     pub fn heap_bytes(&self) -> usize {
-        self.engine.heap_bytes() + self.reactive.bytes() + self.engine_queues + self.waker_pool
+        self.engine
+            .heap_bytes()
+            .saturating_add(self.reactive.bytes())
+            .saturating_add(self.engine_queues)
+            .saturating_add(self.waker_pool)
     }
 
     /// Caller memory (statics) the UI uses: a static layer buffer and static draw buffers
@@ -129,5 +133,73 @@ impl UiCore {
             engine_queues: self.engine_queue_bytes(),
             waker_pool: WakerLease::heap_bytes(),
         }
+    }
+}
+
+/// Seals Twine for a UI whose memory is `report` ([`UiCore::seal`], `Ui::seal`,
+/// `AsyncUi::seal`): checks [`Limits::heap_budget`](twine_core::Limits::heap_budget) against
+/// [`MemoryReport::heap_bytes`] (a `Capacity` fault with code
+/// [`CapacityFault::HeapBudget`](twine_core::fault::CapacityFault::HeapBudget) when it is
+/// exceeded), logs the heap in use, then [`alloc_guard::seal`](twine_core::alloc_guard::seal)s.
+pub(crate) fn seal(engine: &mut Engine, report: &MemoryReport) {
+    let heap = report.heap_bytes();
+    if let Some(budget) = engine.limits().heap_budget.filter(|&b| heap > b) {
+        twine_core::error!(
+            target: "twine::view",
+            "heap budget exceeded at seal: {} bytes in use, Limits::heap_budget = {}",
+            heap,
+            budget
+        );
+        engine.raise_fault(
+            twine_engine::FaultRecord::new(twine_core::fault::FaultKind::Capacity)
+                .code(twine_core::fault::CapacityFault::HeapBudget.code()),
+        );
+    }
+    twine_core::alloc_guard::seal();
+    twine_core::info!(
+        target: "twine::view",
+        "sealed: {} heap bytes, {} static bytes",
+        heap,
+        report.static_bytes()
+    );
+}
+
+impl UiCore {
+    /// Ends start-up: from now on Twine is expected to allocate nothing, and every growth
+    /// point that does allocate raises [`FaultKind::AllocAfterSeal`](twine_core::fault::FaultKind::AllocAfterSeal)
+    /// at the next update (see [`twine_core::alloc_guard`] for how it is detected and what it
+    /// covers). Call it once the UI is built and has run its first updates (every screen and
+    /// buffer the product uses exists; with [`Limits::preallocate`](twine_core::Limits::preallocate)
+    /// the bounded structures are reserved). Before sealing, it checks
+    /// [`Limits::heap_budget`](twine_core::Limits::heap_budget) against the report's
+    /// [`heap_bytes`](MemoryReport::heap_bytes) (a `Capacity` fault with code
+    /// [`CapacityFault::HeapBudget`](twine_core::fault::CapacityFault::HeapBudget) when
+    /// exceeded). Returns the memory report at sealing time (evidence of the fixed memory).
+    ///
+    /// The seal is process-wide without `std` (per thread with it); end it with
+    /// [`alloc_guard::unseal`](twine_core::alloc_guard::unseal) before a planned
+    /// reconfiguration. Never panics; O(nodes) once (the report).
+    ///
+    /// ```
+    /// use twine_core::alloc_guard;
+    /// use twine_engine::{Engine, EngineConfig};
+    /// use twine_hal::DisplayInfo;
+    /// use twine_core::ColorFormat;
+    /// use twine_view::prelude::*;
+    /// use twine_view::UiCore;
+    ///
+    /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
+    /// let display = engine.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::Rgb565), 32 * 2 * 4).unwrap();
+    /// let core = UiCore::mount(Runtime::take().unwrap(), &mut engine, display, |_| label("hi")).unwrap();
+    /// let report = core.seal(&mut engine);
+    /// assert!(alloc_guard::is_sealed());
+    /// assert!(report.heap_bytes() > 0);
+    /// alloc_guard::unseal();
+    /// # core.dispose(&mut engine);
+    /// ```
+    pub fn seal(&self, engine: &mut Engine) -> MemoryReport {
+        let report = self.memory_report(engine);
+        seal(engine, &report);
+        report
     }
 }

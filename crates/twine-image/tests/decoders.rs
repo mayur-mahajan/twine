@@ -1,6 +1,8 @@
 //! Decoders (QOI, BMP, PNG, JPEG) and the decoder registry. Test images are generated here
 //! (procedural patterns encoded with independent encoders: `image`, `png`, `jpeg-encoder`), so
 //! no third-party image files are needed.
+//!
+//! req: SAF-022
 
 mod decoders {
     use std::io::Cursor;

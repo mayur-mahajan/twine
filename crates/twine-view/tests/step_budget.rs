@@ -1,6 +1,8 @@
 //! `Ui::update_budgeted` (R3.S04): a frame rendered a few chunks per update is completed over
 //! several updates (each returning `Wake::Now` until it is), with exactly the pixels of the
 //! same frame rendered by one update — also when the UI changes between the partial steps.
+//!
+//! req: SAF-012
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -39,11 +41,13 @@ fn make_ui(clock: &MockClock, double: bool, text: &'static str) -> (Ui, Signal<&
         .buffers(BufferMode::alloc(spec))
         .theme(DefaultTheme::light())
         .clock(clock.clone())
-        .build(move |cx| {
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(move |cx| {
             let text = cx.signal(text);
             s.set(Some(text));
             app(text)(cx)
-        });
+        })
+        .unwrap();
     (ui, slot.get().unwrap())
 }
 
@@ -137,4 +141,65 @@ fn unbudgeted_update_finishes_a_budgeted_frame() {
     assert_eq!(ui.update_budgeted(StepBudget::chunks(1)), Wake::Now);
     assert_ne!(ui.update(), Wake::Now, "an unlimited update completes the frame");
     assert!(pixels(&ui) == pixels(&reference), "pixels differ");
+}
+
+// ---- R5.S05: the configured budget, `FrameOverrun` and the timing marks through `Ui` ----
+
+thread_local! {
+    static HIRES: Cell<u64> = const { Cell::new(0) };
+}
+
+/// A timer advancing 100 µs per reading.
+fn hires() -> Instant {
+    HIRES.with(|c| {
+        c.set(c.get() + 100);
+        Instant::from_micros(c.get())
+    })
+}
+
+fn configured_ui(engine: EngineConfig) -> Ui {
+    let mut config = AppConfig::new().limits(twine_testing::HARNESS_LIMITS);
+    config.engine = engine;
+    Ui::builder(MemoryDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565)))
+        .runtime(Runtime::current_thread())
+        .buffers(BufferMode::alloc(BufferSpec::PartialSingle { rows: ROWS }))
+        .clock(MockClock::new())
+        .app_config(config)
+        .try_build(|_| label("hi").into_any())
+        .unwrap()
+}
+
+#[test]
+fn update_renders_within_the_configured_step_budget() {
+    let mut ui = configured_ui(EngineConfig {
+        step_budget: StepBudget::chunks(3),
+        ..EngineConfig::default()
+    });
+    let mut updates = 1;
+    while ui.update() == Wake::Now {
+        updates += 1;
+    }
+    assert_eq!(updates, 4, "12 chunks, 3 per update");
+}
+
+/// fault: `FrameOverrun`
+/// req: SAF-031
+#[test]
+fn time_budget_overrun_reaches_the_ui_and_the_frame_completes() {
+    let mut ui = configured_ui(EngineConfig {
+        hires_timer: Some(hires),
+        step_budget: StepBudget::time(Duration::us(1)),
+        ..EngineConfig::default()
+    });
+    let mut updates = 1;
+    while ui.update() == Wake::Now {
+        updates += 1;
+        assert!(updates < 100);
+    }
+    assert_eq!(updates, 12, "one chunk per update, none dropped");
+    assert!(ui.fault_counts().get(FaultKind::FrameOverrun) >= 11);
+    let t = ui.timing();
+    assert!(t.worst_update_us > 0 && t.worst_render_us > 0 && t.worst_flush_us > 0);
+    ui.reset_worst();
+    assert_eq!(ui.timing(), TimingReport::default());
 }

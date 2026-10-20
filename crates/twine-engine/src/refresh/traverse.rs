@@ -3,6 +3,8 @@
 
 use twine_core::{Color, Opa, Rect};
 use twine_render::{LayerDsc, Mask, Painter};
+#[cfg(feature = "display-integrity")]
+use twine_style::State;
 use twine_style::{BlendMode, Part, PropId};
 
 use crate::draw_cx::AuxRes;
@@ -29,9 +31,17 @@ pub(crate) fn find_top_cover(engine: &Engine, id: NodeId, area: Rect) -> Option<
             return None;
         }
     }
-    for c in engine.tree.children_rev(id) {
-        if let Some(f) = find_top_cover(engine, c, area) {
-            return Some(f);
+    // A safety-critical node is drawn as a whole (`draw_critical`): drawing never starts
+    // inside it.
+    #[cfg(feature = "display-integrity")]
+    let descend = !n.flags().contains(ObjFlags::SAFETY_CRITICAL);
+    #[cfg(not(feature = "display-integrity"))]
+    let descend = true;
+    if descend {
+        for c in engine.tree.children_rev(id) {
+            if let Some(f) = find_top_cover(engine, c, area) {
+                return Some(f);
+            }
         }
     }
     // A wrapper draws nothing of its own, so it never covers anything.
@@ -46,7 +56,9 @@ fn clips_children(flags: ObjFlags) -> bool {
     !flags.intersects(ObjFlags::OVERFLOW_VISIBLE.union(ObjFlags::LAYOUT_PASSTHROUGH))
 }
 
-/// Whether `id` clips its children to its rounded corners (`ClipCorner` with a radius).
+/// Whether `id` clips its children to its rounded corners (`ClipCorner` with a radius). Out of
+/// line: the style resolution's frame stays off the recursive draw path.
+#[inline(never)]
 fn clips_corners(engine: &Engine, id: NodeId) -> bool {
     engine.cached_main(id).radius > 0
         && engine
@@ -158,6 +170,12 @@ fn draw_from(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, start: Node
 }
 
 /// Draws `id` and its subtree inside `clip` (`parent_opa` = the parent's effective opacity).
+///
+/// Recursive (through [`draw_content`] and [`draw_children`]), so its stack use grows with the
+/// tree depth, which `Limits::max_tree_depth` bounds. The work a level does only for itself —
+/// the widget's drawing, the post drawing, a layer's set-up — lives in `#[inline(never)]`
+/// helpers, so the frames that stay on the stack across the recursion hold only what the
+/// walk needs (the measured cost per level is in `docs/safety/profile.md` § 10).
 pub(crate) fn draw_node(
     engine: &Engine,
     p: &mut Painter<'_>,
@@ -172,6 +190,27 @@ pub(crate) fn draw_node(
     if n.is_hidden() {
         return;
     }
+    #[cfg(feature = "display-integrity")]
+    if n.flags().contains(ObjFlags::SAFETY_CRITICAL) {
+        draw_critical(engine, p, aux, id, clip);
+        return;
+    }
+    draw_shown(engine, p, aux, id, clip, parent_opa);
+}
+
+/// The body of [`draw_node`] for a node that is shown (inlined: one frame per level).
+#[inline(always)]
+fn draw_shown(
+    engine: &Engine,
+    p: &mut Painter<'_>,
+    aux: &mut AuxRes,
+    id: NodeId,
+    clip: Rect,
+    parent_opa: Opa,
+) {
+    let Some(n) = engine.tree.node(id) else {
+        return;
+    };
     let ext_area = n.coords().expand(i32::from(n.ext_draw()));
     let visible = ext_area.intersection(&clip).is_some();
     if !visible {
@@ -186,40 +225,142 @@ pub(crate) fn draw_node(
     engine.nodes_drawn.set(engine.nodes_drawn.get().saturating_add(1));
     n.rendered.set(true);
     let opa = parent_opa.mul(engine.cached_main(id).opa);
+    let mut clip = clip;
+    let mut mask = None;
     if engine.needs_layer(id) {
-        let t = engine.layer_transform(id);
-        let base_ext = if t.is_some() {
-            engine.ext_draw_untransformed(id)
-        } else {
-            n.ext_draw()
+        if p.layer_available() {
+            draw_layered(engine, p, aux, id, clip, opa);
+            return;
+        }
+        // Inside another layer (its buffer is in use) a layer is drawn directly — only its
+        // bitmap mask applies — so no layer is set up and the level costs one frame.
+        let Some(c) = clip.intersection(&p.clip()) else {
+            return;
         };
-        let layer_area = n.coords().expand(i32::from(base_ext));
-        let dsc = LayerDsc {
-            opa: engine.style_opa(id, Part::Main, PropId::Opacity),
-            blend_mode: engine
-                .style_prop(id, Part::Main, PropId::BlendMode)
-                .get::<BlendMode>()
-                .unwrap_or(BlendMode::Normal),
-            transform: t.map(|mut t| {
-                // The pivot is relative to the node; the layer starts `base_ext` further out.
-                t.pivot.x += i32::from(base_ext);
-                t.pivot.y += i32::from(base_ext);
-                t
-            }),
-        };
-        p.with_clip(clip, |p| {
-            let mask = bitmap_mask(engine, id).map(|m| p.push_mask(m));
-            p.layer(layer_area, &dsc, |lp| {
-                let c = lp.clip();
-                draw_content(engine, lp, aux, id, c, opa);
-            });
-            if let Some(m) = mask {
-                p.pop_mask(m);
-            }
-        });
-    } else {
-        draw_content(engine, p, aux, id, clip, opa);
+        clip = c;
+        mask = nested_layer_mask(engine, p, id);
     }
+    draw_content(engine, p, aux, id, clip, opa);
+    if let Some(m) = mask {
+        p.pop_mask(m);
+    }
+}
+
+/// [`draw_node`] of a [`SAFETY_CRITICAL`](ObjFlags::SAFETY_CRITICAL) node: drawn in fresh
+/// mode (no cached render or glyph data used as it is) and opaque to its ancestors' opacity.
+/// Inside a layer (an ancestor's opacity group, blend mode, transform or mask) it is skipped
+/// and drawn by [`draw_layered`] once the layer is composited, so the layer's effect never
+/// applies to it.
+#[cfg(feature = "display-integrity")]
+#[cold]
+#[inline(never)]
+fn draw_critical(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, id: NodeId, clip: Rect) {
+    if p.in_layer() {
+        engine.critical_skipped.set(true);
+        return;
+    }
+    let fresh = (p.caches().fresh(), aux.glyphs.fresh());
+    p.caches().set_fresh(true);
+    aux.glyphs.set_fresh(true);
+    engine.critical_drawn(id);
+    draw_shown(engine, p, aux, id, clip, Opa::COVER);
+    p.caches().set_fresh(fresh.0);
+    aux.glyphs.set_fresh(fresh.1);
+}
+
+/// Draws the safety-critical nodes of `id`'s subtree that the layer of `id` skipped (see
+/// [`draw_critical`]), each clipped by its ancestors, on top of the composited layer. A
+/// critical node inside another critical node is drawn with it.
+#[cfg(feature = "display-integrity")]
+#[cold]
+#[inline(never)]
+fn draw_skipped_critical(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, id: NodeId, clip: Rect) {
+    for c in engine.critical_nodes() {
+        // `c` must lie below `id` with no other critical node in between.
+        let mut cur = engine.tree.parent(c);
+        let mut inside = false;
+        while let Some(a) = cur {
+            if a == id {
+                inside = true;
+                break;
+            }
+            if engine
+                .tree
+                .node(a)
+                .is_none_or(|n| n.flags().contains(ObjFlags::SAFETY_CRITICAL))
+            {
+                break;
+            }
+            cur = engine.tree.parent(a);
+        }
+        if !inside || engine.visible_area(c).is_none() {
+            continue;
+        }
+        let Some(par) = engine.tree.parent(c) else {
+            continue;
+        };
+        if let Some(cc) = children_clip(engine, par, clip) {
+            draw_critical(engine, p, aux, c, cc);
+        }
+    }
+}
+
+/// The bitmap mask of a layered node `id` drawn inside another layer, pushed (to be popped
+/// after its content).
+#[inline(never)]
+fn nested_layer_mask(engine: &Engine, p: &mut Painter<'_>, id: NodeId) -> Option<twine_render::MaskId> {
+    twine_core::trace!(target: "twine::render", "nested layer {} drawn directly", crate::fmt_node_id(id));
+    bitmap_mask(engine, id).map(|m| p.push_mask(m))
+}
+
+/// [`draw_node`] of a node drawn through a layer (opacity group, transform, blend mode or
+/// bitmap mask): sets the layer up and draws the node's content into it.
+#[inline(never)]
+fn draw_layered(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, id: NodeId, clip: Rect, opa: Opa) {
+    let Some(n) = engine.tree.node(id) else {
+        return;
+    };
+    let (layer_area, dsc) = layer_setup(engine, id, n.coords(), n.ext_draw());
+    p.with_clip(clip, |p| {
+        let mask = bitmap_mask(engine, id).map(|m| p.push_mask(m));
+        p.layer(layer_area, &dsc, |lp| {
+            let c = lp.clip();
+            draw_content(engine, lp, aux, id, c, opa);
+        });
+        if let Some(m) = mask {
+            p.pop_mask(m);
+        }
+    });
+    #[cfg(feature = "display-integrity")]
+    if engine.critical_skipped.replace(false) {
+        draw_skipped_critical(engine, p, aux, id, clip);
+    }
+}
+
+/// The area and descriptor of `id`'s layer (`coords` and `ext_draw` are the node's).
+#[inline(never)]
+fn layer_setup(engine: &Engine, id: NodeId, coords: Rect, ext_draw: u16) -> (Rect, LayerDsc) {
+    let t = engine.layer_transform(id);
+    let base_ext = if t.is_some() {
+        engine.ext_draw_untransformed(id)
+    } else {
+        ext_draw
+    };
+    let layer_area = coords.expand(i32::from(base_ext));
+    let dsc = LayerDsc {
+        opa: engine.style_opa(id, Part::Main, PropId::Opacity),
+        blend_mode: engine
+            .style_prop(id, Part::Main, PropId::BlendMode)
+            .get::<BlendMode>()
+            .unwrap_or(BlendMode::Normal),
+        transform: t.map(|mut t| {
+            // The pivot is relative to the node; the layer starts `base_ext` further out.
+            t.pivot.x += i32::from(base_ext);
+            t.pivot.y += i32::from(base_ext);
+            t
+        }),
+    };
+    (layer_area, dsc)
 }
 
 static WARN_MASK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -254,7 +395,9 @@ fn bitmap_mask(engine: &Engine, id: NodeId) -> Option<Mask<'static>> {
     mask
 }
 
-/// The node's own drawing, its children and its post drawing.
+/// The node's own drawing, its children and its post drawing. Inlined into [`draw_node`] (and
+/// the layer closure), so a level of the recursion is one frame.
+#[inline(always)]
 fn draw_content(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, id: NodeId, clip: Rect, opa: Opa) {
     let Some(n) = engine.tree.node(id) else {
         return;
@@ -264,15 +407,40 @@ fn draw_content(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, id: Node
         draw_children(engine, p, aux, id, clip, opa);
         return;
     }
+    draw_own(engine, p, aux, id, clip, opa);
+    draw_children(engine, p, aux, id, clip, opa);
+    draw_post_clipped(engine, p, aux, id, clip, opa);
+}
+
+/// `Widget::draw` of `id` inside `clip` (out of line: its frame is not kept across the
+/// recursion of [`draw_children`]).
+#[inline(never)]
+fn draw_own(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, id: NodeId, clip: Rect, opa: Opa) {
+    let Some(n) = engine.tree.node(id) else {
+        return;
+    };
     p.with_clip(clip, |p| {
         let mut cx = DrawCx::new(p, engine, aux, id, opa);
         n.widget().draw(&mut cx);
     });
-    draw_children(engine, p, aux, id, clip, opa);
+}
+
+/// [`draw_post`] inside `clip` (out of line, like [`draw_own`]).
+#[inline(never)]
+fn draw_post_clipped(
+    engine: &Engine,
+    p: &mut Painter<'_>,
+    aux: &mut AuxRes,
+    id: NodeId,
+    clip: Rect,
+    opa: Opa,
+) {
     p.with_clip(clip, |p| draw_post(engine, p, aux, id, opa));
 }
 
 /// The children of `id` (clipped to it unless `OVERFLOW_VISIBLE`, with its corner mask).
+/// Inlined like [`draw_content`].
+#[inline(always)]
 fn draw_children(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, id: NodeId, clip: Rect, opa: Opa) {
     let Some(n) = engine.tree.node(id) else {
         return;
@@ -314,6 +482,13 @@ fn draw_post(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, id: NodeId,
     // Then the scrollbars and the post border (LVGL `lv_obj` `DRAW_POST`).
     crate::scrollbar::draw_scrollbars(engine, p, aux, id, opa);
     DrawCx::new(p, engine, aux, id, opa).draw_border_post(Part::Main);
+    // The standard look of a stale or invalid value, over everything the node drew.
+    #[cfg(feature = "display-integrity")]
+    let state = n.state();
+    #[cfg(feature = "display-integrity")]
+    if state.intersects(State::STALE.union(State::INVALID)) {
+        crate::integrity::draw_validity_mark(engine, p, id, state.contains(State::INVALID));
+    }
 }
 
 /// Outlines the coordinates of every visible node of `root`'s tree (layout bounds overlay).

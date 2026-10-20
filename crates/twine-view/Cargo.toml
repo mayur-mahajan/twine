@@ -12,6 +12,33 @@ workspace = true
 
 [features]
 default = []
+## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
+## safety lints of library code, the refusal of excluded features, and no panicking
+## convenience APIs (`UiBuilder::build`, `AsyncUiBuilder::build`, `expect_navigator`).
+safety = [
+    "twine-anim/safety",
+    "twine-core/safety",
+    "twine-engine/safety",
+    "twine-hal/safety",
+    "twine-image/safety",
+    "twine-reactive/safety",
+    "twine-render/safety",
+    "twine-style/safety",
+    "twine-text/safety",
+    "twine-theme/safety",
+    "twine-vector?/safety",
+    "twine-widgets/safety",
+    "twine-widgets-ext/safety",
+    "display-integrity",
+]
+## Display-integrity mechanisms: `Ui::set_fail_safe` / `enter_fail_safe`,
+## `frame_observer`, `.safety_critical`, `.validity`, `Validity` texts and `watch_fresh` (`docs/safety/profile.md` § 11); implied by `safety`. Off: not linked.
+display-integrity = [
+    "twine-engine/display-integrity",
+    "twine-widgets/display-integrity",
+    "twine-render/display-integrity",
+    "twine-text/display-integrity",
+]
 ## std-only conveniences (thread-local reactive runtime: no binding needed).
 std = [
     "twine-core/std",

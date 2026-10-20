@@ -5,26 +5,43 @@ use alloc::vec::Vec;
 use core::any::Any;
 use core::fmt;
 
-use twine_core::{Duration, Instant};
+use twine_core::arena::next_generation;
+use twine_core::{Duration, Generation, Id, Instant};
 
 use crate::Anim;
 use crate::anim::{AnimCallbacks, AnimTarget, NodeKey, Phase, PropKey};
 
 /// Handle of an animation in a [`Timeline`]. Generational: once the animation ends or is
-/// removed, its id is rejected even if the slot is reused.
+/// removed, its id is rejected even if the slot is reused. The handle is a [`twine_core::Id`]
+/// (4 bytes; 8 with a 48-bit [`Generation`] in the safety profile, `Option<AnimId>` as small)
+/// and never wraps: a slot that used up its generations is retired (see
+/// [`Timeline::retired`]), so a stale id can never name a later animation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AnimId {
-    index: u16,
-    generation: u16,
-}
+pub struct AnimId(Id<Slot>);
+
+// As small as an arena id in both profiles (4 / 8 bytes), `Option` included (R5.S04).
+const _: () = {
+    use core::mem::size_of;
+    assert!(size_of::<AnimId>() == size_of::<Id<()>>());
+    assert!(size_of::<Option<AnimId>>() == size_of::<Option<Id<()>>>());
+};
 
 impl AnimId {
     /// An id that never refers to an animation (returned when the timeline is full).
-    pub const DANGLING: AnimId = AnimId {
-        index: u16::MAX,
-        generation: u16::MAX,
-    };
+    pub const DANGLING: AnimId = AnimId(Id::INVALID);
+
+    const fn new(index: u16, generation: Generation) -> Self {
+        AnimId(Id::from_parts(index, generation))
+    }
+
+    const fn index(self) -> u16 {
+        self.0.index()
+    }
+
+    const fn generation(self) -> Generation {
+        self.0.generation()
+    }
 }
 
 /// A boxed exec closure (see [`Exec::Fn`]).
@@ -94,7 +111,9 @@ impl fmt::Debug for AnimCx<'_> {
 }
 
 struct Slot {
-    generation: u16,
+    /// Starts at 0; bumped when the slot is freed; a slot freed at `MAX_GENERATION` is
+    /// retired.
+    generation: Generation,
     anim: Option<Anim>,
     start_time: Instant,
     paused_at: Option<Instant>,
@@ -141,11 +160,14 @@ enum Which {
 /// assert_eq!(tl.tick(t0 + Duration::ms(100), &mut sink), None); // finished: nothing to wake for
 /// assert_eq!(sink.0.last(), Some(&(target, 100)));
 /// ```
-#[derive(Default)]
 pub struct Timeline {
     slots: Vec<Slot>,
     free: Vec<u16>,
     running: u16,
+    /// Most animations running at once ([`set_limit`](Timeline::set_limit)).
+    limit: u16,
+    /// Slots that used up their generations and are never reused.
+    retired: u16,
     epoch: u32,
     ticking: bool,
     added_while_ticking: bool,
@@ -160,6 +182,13 @@ impl fmt::Debug for Timeline {
     }
 }
 
+impl Default for Timeline {
+    /// [`Timeline::new`].
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Timeline {
     /// An empty timeline (does not allocate).
     #[must_use]
@@ -168,10 +197,61 @@ impl Timeline {
             slots: Vec::new(),
             free: Vec::new(),
             running: 0,
+            limit: Self::MAX_RUNNING,
+            retired: 0,
             epoch: 0,
             ticking: false,
             added_while_ticking: false,
         }
+    }
+
+    /// The largest number of animations a timeline can run at once (65 534: slot indices are
+    /// `u16`, one value is reserved).
+    pub const MAX_RUNNING: u16 = u16::MAX - 1;
+
+    /// Sets how many animations may run at once (capped at [`MAX_RUNNING`](Self::MAX_RUNNING);
+    /// at least 1). Starting one more returns [`AnimId::DANGLING`] (the caller reports it,
+    /// e.g. the engine's `Capacity` fault) — already running animations are kept. Never
+    /// panics.
+    ///
+    /// ```
+    /// use twine_anim::{Anim, AnimId, Timeline};
+    /// use twine_core::{Duration, Instant};
+    ///
+    /// let mut tl = Timeline::new();
+    /// tl.set_limit(1);
+    /// let a = || Anim::new(0, 10).duration(Duration::ms(100));
+    /// assert_ne!(tl.add(a(), Instant::ZERO), AnimId::DANGLING);
+    /// assert_eq!(tl.add(a(), Instant::ZERO), AnimId::DANGLING);
+    /// ```
+    pub fn set_limit(&mut self, limit: u16) {
+        self.limit = limit.clamp(1, Self::MAX_RUNNING);
+    }
+
+    /// The limit set with [`set_limit`](Self::set_limit) (default
+    /// [`MAX_RUNNING`](Self::MAX_RUNNING)).
+    ///
+    /// ```
+    /// use twine_anim::Timeline;
+    /// assert_eq!(Timeline::new().limit(), Timeline::MAX_RUNNING);
+    /// ```
+    #[must_use]
+    pub fn limit(&self) -> u16 {
+        self.limit
+    }
+
+    /// Reserves the storage of `n` animations (slots and free list), so starting and removing
+    /// animations never allocates while at most `n` run at once. Allocates once; never panics.
+    ///
+    /// ```
+    /// use twine_anim::Timeline;
+    /// let mut tl = Timeline::new();
+    /// tl.reserve(8);
+    /// ```
+    pub fn reserve(&mut self, n: u16) {
+        let n = usize::from(n);
+        self.slots.reserve_exact(n.saturating_sub(self.slots.len()));
+        self.free.reserve_exact(n.saturating_sub(self.free.len()));
     }
 
     /// Starts `anim` at `now`, applying values through [`TickSink::apply`]. An animation with
@@ -195,10 +275,21 @@ impl Timeline {
         if let AnimTarget::Node(key, prop) = anim.target {
             self.remove_target_prop(key, prop);
         }
+        if self.running >= self.limit {
+            twine_core::warn!(target: "twine::anim", "timeline full ({} animations), animation dropped", self.limit);
+            return AnimId::DANGLING;
+        }
         let cbs = core::mem::take(&mut anim.callbacks);
         let index = if let Some(i) = self.free.pop() {
             i
-        } else if self.slots.len() < usize::from(u16::MAX) {
+        } else if let Ok(i) = u16::try_from(self.slots.len())
+            && i < u16::MAX
+        {
+            twine_core::alloc_guard::before_push(
+                self.slots.len(),
+                self.slots.capacity(),
+                twine_core::alloc_guard::AllocSite::Animation,
+            );
             self.slots.push(Slot {
                 generation: 0,
                 anim: None,
@@ -211,16 +302,16 @@ impl Timeline {
                 exec: Exec::Target,
                 cbs: AnimCallbacks::default(),
             });
-            (self.slots.len() - 1) as u16
+            i
         } else {
             twine_core::warn!(target: "twine::anim", "timeline full ({} animations), animation dropped", u16::MAX);
             return AnimId::DANGLING;
         };
-        let slot = &mut self.slots[usize::from(index)];
-        let id = AnimId {
-            index,
-            generation: slot.generation,
+        let Some(slot) = self.slots.get_mut(usize::from(index)) else {
+            debug_assert!(false, "timeline: free slot {index} out of range");
+            return AnimId::DANGLING;
         };
+        let id = AnimId::new(index, slot.generation);
         twine_core::debug!(target: "twine::anim", "anim {:?} added: {} -> {}", id, anim.start, anim.end);
         *slot = Slot {
             generation: slot.generation,
@@ -234,32 +325,47 @@ impl Timeline {
             exec,
             cbs,
         };
-        self.running += 1;
+        // At most one per slot (`u16` slots).
+        self.running = self.running.saturating_add(1);
         self.added_while_ticking |= self.ticking;
         id
     }
 
     fn slot(&self, id: AnimId) -> Option<&Slot> {
         self.slots
-            .get(usize::from(id.index))
-            .filter(|s| s.generation == id.generation && s.anim.is_some())
+            .get(usize::from(id.index()))
+            .filter(|s| s.generation == id.generation() && s.anim.is_some())
     }
 
     fn slot_mut(&mut self, id: AnimId) -> Option<&mut Slot> {
         self.slots
-            .get_mut(usize::from(id.index))
-            .filter(|s| s.generation == id.generation && s.anim.is_some())
+            .get_mut(usize::from(id.index()))
+            .filter(|s| s.generation == id.generation() && s.anim.is_some())
     }
 
     /// Frees a live slot and returns its callbacks.
     fn free_slot(&mut self, index: u16) -> AnimCallbacks {
-        let slot = &mut self.slots[usize::from(index)];
+        let Some(slot) = self.slots.get_mut(usize::from(index)) else {
+            debug_assert!(false, "timeline: freeing slot {index} out of range");
+            return AnimCallbacks::default();
+        };
         slot.anim = None;
         slot.exec = Exec::Target;
-        slot.generation = slot.generation.wrapping_add(1);
         let cbs = core::mem::take(&mut slot.cbs);
-        self.free.push(index);
-        self.running -= 1;
+        // A slot whose generation would wrap is retired (never reused), so no stale id can
+        // match a later animation (no ABA).
+        if let Some(next) = next_generation(slot.generation) {
+            slot.generation = next;
+            twine_core::alloc_guard::push(
+                &mut self.free,
+                index,
+                twine_core::alloc_guard::AllocSite::Animation,
+            );
+        } else {
+            self.retired = self.retired.saturating_add(1);
+            twine_core::debug!(target: "twine::anim", "animation slot {} retired", index);
+        }
+        self.running = self.running.saturating_sub(1);
         cbs
     }
 
@@ -269,17 +375,20 @@ impl Timeline {
             return false;
         }
         twine_core::debug!(target: "twine::anim", "anim {:?} removed", id);
-        drop(self.free_slot(id.index));
+        drop(self.free_slot(id.index()));
         true
     }
 
     fn remove_where(&mut self, mut f: impl FnMut(AnimTarget) -> bool) -> usize {
-        let mut n = 0;
-        for i in 0..self.slots.len() {
-            let hit = self.slots[i].anim.as_ref().is_some_and(|a| f(a.target));
-            if hit {
-                drop(self.free_slot(i as u16));
-                n += 1;
+        let mut n = 0usize;
+        // Slot indices fit `u16` (`add` refuses more).
+        for i in 0..=u16::MAX {
+            let Some(slot) = self.slots.get(usize::from(i)) else {
+                break;
+            };
+            if slot.anim.as_ref().is_some_and(|a| f(a.target)) {
+                drop(self.free_slot(i));
+                n = n.saturating_add(1);
             }
         }
         n
@@ -332,17 +441,10 @@ impl Timeline {
 
     /// Every live animation (running or paused) with its id, in slot order.
     pub fn iter(&self) -> impl Iterator<Item = (AnimId, &Anim)> + '_ {
-        self.slots.iter().enumerate().filter_map(|(i, s)| {
-            s.anim.as_ref().map(|a| {
-                (
-                    AnimId {
-                        index: i as u16,
-                        generation: s.generation,
-                    },
-                    a,
-                )
-            })
-        })
+        self.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| s.anim.as_ref().map(|a| (AnimId::new(i as u16, s.generation), a)))
     }
 
     /// Whether `id` is live and not paused.
@@ -395,6 +497,25 @@ impl Timeline {
         usize::from(self.running)
     }
 
+    /// Number of **retired** slots: slots whose animations used up every [`Generation`]
+    /// (65 535 by default, ≈ 2.8 × 10¹⁴ in the safety profile) and that are never reused, so
+    /// a stale [`AnimId`] can never name a later animation. Each costs one slot of memory; 0
+    /// in practice. Never panics; O(1).
+    ///
+    /// ```
+    /// use twine_anim::{Anim, Timeline};
+    /// use twine_core::{Duration, Instant};
+    ///
+    /// let mut tl = Timeline::new();
+    /// let id = tl.add(Anim::new(0, 10).duration(Duration::ms(10)), Instant::ZERO);
+    /// tl.remove(id);
+    /// assert_eq!(tl.retired(), 0);
+    /// ```
+    #[must_use]
+    pub fn retired(&self) -> usize {
+        usize::from(self.retired)
+    }
+
     /// Removes every animation (no callbacks are called).
     pub fn clear(&mut self) {
         self.remove_where(|_| true);
@@ -425,7 +546,7 @@ impl Timeline {
     /// assert_eq!(sink.0, 100);
     /// ```
     pub fn finish_where(&mut self, now: Instant, mut f: impl FnMut(&Anim) -> bool) -> usize {
-        let mut n = 0;
+        let mut n = 0usize;
         for s in &mut self.slots {
             let Some(anim) = s.anim.as_mut() else { continue };
             if !f(anim) {
@@ -437,14 +558,16 @@ impl Timeline {
             anim.spec.essential = essential;
             s.start_time = now;
             s.paused_at = None;
-            n += 1;
+            n = n.saturating_add(1);
         }
         n
     }
 
     /// Calls callback `which` of slot `index`, then puts it back if the animation still exists.
     fn fire(&mut self, which: Which, id: AnimId, now: Instant, repeats_done: u16, sink: &mut dyn TickSink) {
-        let slot = &mut self.slots[usize::from(id.index)];
+        let Some(slot) = self.slots.get_mut(usize::from(id.index())) else {
+            return;
+        };
         let taken = match which {
             Which::Start => slot.cbs.on_start.take(),
             Which::Repeat => slot.cbs.on_repeat.take(),
@@ -482,13 +605,12 @@ impl Timeline {
         self.added_while_ticking = false;
         let mut deadline: Option<Instant> = None;
         let mut wake = |t: Instant| deadline = Some(deadline.map_or(t, |d| d.min(t)));
-        let mut i = 0;
         // `slots` may grow while callbacks run; animations added during this tick are skipped
-        // (and considered for the deadline below).
-        while i < self.slots.len() {
-            let index = i as u16;
-            i += 1;
-            let slot = &mut self.slots[usize::from(index)];
+        // (and considered for the deadline below). Slot indices fit `u16` (`add` refuses more).
+        for index in 0..=u16::MAX {
+            let Some(slot) = self.slots.get_mut(usize::from(index)) else {
+                break;
+            };
             let Some(anim) = slot.anim.as_ref() else { continue };
             if slot.paused_at.is_some() {
                 continue;
@@ -497,10 +619,7 @@ impl Timeline {
                 continue;
             }
             let s = anim.sample(now.saturating_duration_since(slot.start_time));
-            let id = AnimId {
-                index,
-                generation: slot.generation,
-            };
+            let id = AnimId::new(index, slot.generation);
 
             if !slot.started && s.phase != Phase::Delay {
                 slot.started = true;
@@ -510,7 +629,9 @@ impl Timeline {
                 }
             }
 
-            let slot = &mut self.slots[usize::from(index)];
+            let Some(slot) = self.slots.get_mut(usize::from(index)) else {
+                continue;
+            };
             let Some(anim) = slot.anim.as_ref() else { continue };
             if (s.phase != Phase::Delay || anim.early_apply) && slot.last_value != Some(s.value) {
                 slot.last_value = Some(s.value);
@@ -575,6 +696,7 @@ impl Timeline {
 mod tests {
     use super::*;
     use crate::{Easing, Repeat};
+    use twine_core::arena::MAX_GENERATION;
 
     /// Property codes of the tests (any numbers: the timeline only compares them).
     const X: PropKey = 0;
@@ -603,8 +725,46 @@ mod tests {
         Instant::from_millis(v)
     }
 
-    fn node(k: u32) -> AnimTarget {
+    fn node(k: NodeKey) -> AnimTarget {
         AnimTarget::Node(k, X)
+    }
+
+    /// A slot freed at the last generation retires instead of wrapping: no stale id can name
+    /// a later animation, and the next animation gets a new slot. Runs in both generation
+    /// widths (the generation is set directly).
+    #[test]
+    fn last_generation_retires_the_slot() {
+        let mut tl = Timeline::new();
+        let first = tl.add(lin(0, 1, 10), ms(0));
+        assert!(tl.remove(first));
+        tl.slots[0].generation = MAX_GENERATION;
+        let last = tl.add(lin(0, 1, 10), ms(0));
+        assert_eq!((last.index(), last.generation()), (0, MAX_GENERATION));
+        assert_ne!(last, AnimId::DANGLING);
+        assert!(tl.remove(last));
+        assert_eq!(tl.retired(), 1);
+        let next = tl.add(lin(0, 1, 10), ms(0));
+        assert_eq!(next.index(), 1, "retired slot 0 must not be reused");
+        for stale in [first, last] {
+            assert!(tl.get(stale).is_none());
+            assert!(!tl.remove(stale));
+        }
+        assert_eq!(tl.running_count(), 1);
+    }
+
+    /// The same through a finished animation (freed by `tick`).
+    #[test]
+    fn finished_animation_at_the_last_generation_retires() {
+        let mut tl = Timeline::new();
+        let mut sink = Sink::default();
+        let first = tl.add(lin(0, 1, 10), ms(0));
+        assert!(tl.remove(first));
+        tl.slots[0].generation = MAX_GENERATION;
+        let last = tl.add(lin(0, 1, 10), ms(0));
+        assert_eq!(tl.tick(ms(10), &mut sink), None);
+        assert!(tl.get(last).is_none());
+        assert_eq!((tl.retired(), tl.running_count()), (1, 0));
+        assert_eq!(tl.add(lin(0, 1, 10), ms(10)).index(), 1);
     }
 
     fn lin(start: i32, end: i32, dur_ms: u64) -> Anim {
@@ -676,7 +836,7 @@ mod tests {
         let a = tl.add(lin(0, 1, 10), ms(0));
         assert!(tl.remove(a));
         let b = tl.add(lin(0, 1, 10), ms(0));
-        assert_eq!(a.index, b.index);
+        assert_eq!(a.index(), b.index());
         assert_ne!(a, b);
         assert!(!tl.remove(a));
         assert!(!tl.pause(a, ms(0)) && !tl.resume(a, ms(0)) && !tl.restart(a, ms(0)));

@@ -140,7 +140,7 @@ fn light_to_dark_recolors_without_rebuilding_or_rebinding() {
     assert_eq!(color(&t, "closure", m, PropId::BgColor), colors::DARK_SCR);
 
     // A signal-driven element in a part scope still follows its signal...
-    t.root_scope().expect_context::<Signal<bool>>().set(true);
+    t.root_scope().use_context::<Signal<bool>>().unwrap().set(true);
     t.run_until_idle();
     assert_eq!(
         color(&t, "slider", Part::Indicator, PropId::BgColor),

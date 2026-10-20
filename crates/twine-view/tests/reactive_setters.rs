@@ -78,7 +78,7 @@ fn core_setters_accept_signals() {
         ))
     });
     t.run_until_idle();
-    let s = t.root_scope().expect_context::<CoreSig>();
+    let s = t.root_scope().use_context::<CoreSig>().unwrap();
     let (l, b, i) = (node(&t, "l"), node(&t, "b"), node(&t, "i"));
     assert!(has_flag(&t, l, ObjFlags::CLICKABLE));
     assert!(has_flag(&t, b, ObjFlags::CHECKABLE));
@@ -163,7 +163,7 @@ fn controls_setters_accept_signals() {
     // The spinner runs forever: a few updates instead of waiting for idle.
     let period = t.engine().config().refr_period;
     t.advance(period);
-    let s = t.root_scope().expect_context::<CtlSig>();
+    let s = t.root_scope().use_context::<CtlSig>().unwrap();
     let arc_node = node(&t, "arc");
     let knob_styles = |t: &TestUi| {
         t.engine()
@@ -260,7 +260,7 @@ fn images_setters_accept_signals() {
         ))
     });
     t.run_until_idle();
-    let s = t.root_scope().expect_context::<ImgSig>();
+    let s = t.root_scope().use_context::<ImgSig>().unwrap();
     s.src.set(ImageSource::symbol(Symbol::Pause));
     s.side.set(Some(ImageSource::symbol(Symbol::Left)));
     s.frames.set(&FRAMES_B[..]);
@@ -309,7 +309,7 @@ fn lists_setters_accept_signals() {
         ))
     });
     t.run_until_idle();
-    let s = t.root_scope().expect_context::<ListSig>();
+    let s = t.root_scope().use_context::<ListSig>().unwrap();
     let b = node(&t, "b");
     let img = t
         .engine()
@@ -358,7 +358,7 @@ fn menus_setters_accept_signals() {
             .test_id("m")
     });
     t.run_until_idle();
-    let s = t.root_scope().expect_context::<MenuSig>();
+    let s = t.root_scope().use_context::<MenuSig>().unwrap();
     let m = node(&t, "m");
     let header_title = || {
         let e = t.engine();
@@ -418,7 +418,7 @@ fn selection_setters_accept_signals() {
         ))
     });
     t.run_until_idle();
-    let s = t.root_scope().expect_context::<SelSig>();
+    let s = t.root_scope().use_context::<SelSig>().unwrap();
     s.names
         .set(vec![String::from("x"), String::from("y"), String::from("z")]);
     s.dir.set(Side::Top);
@@ -478,7 +478,7 @@ fn span_setters_accept_signals() {
         .test_id("g")
     });
     t.run_until_idle();
-    let s = t.root_scope().expect_context::<SpanSig>();
+    let s = t.root_scope().use_context::<SpanSig>().unwrap();
     s.text.set(String::from("two"));
     s.n.set(4);
     s.mode.set(SpanMode::Expand);
@@ -527,7 +527,7 @@ fn tabs_setters_accept_signals() {
             .test_id("tv")
     });
     t.run_until_idle();
-    let s = t.root_scope().expect_context::<TabSig>();
+    let s = t.root_scope().use_context::<TabSig>().unwrap();
     s.title.set(String::from("First"));
     s.dir.set(Side::Bottom);
     s.size.set(30);
@@ -603,7 +603,7 @@ fn text_input_setters_accept_signals() {
     });
     // The keyboard makes the textarea's cursor blink: never idle.
     t.advance(Duration::ms(100));
-    let s = t.root_scope().expect_context::<InputSig>();
+    let s = t.root_scope().use_context::<InputSig>().unwrap();
     s.key.set(String::from("Z"));
     s.on.set(false);
     s.mode.set(KeyboardMode::Number);
@@ -674,7 +674,7 @@ fn windows_setters_accept_signals() {
             .test_id("w")
     });
     t.run_until_idle();
-    let s = t.root_scope().expect_context::<WinSig>();
+    let s = t.root_scope().use_context::<WinSig>().unwrap();
     let close = t.find(twine_testing::by_class("msgbox_header_button")).id();
     assert!(!has_flag(&t, close, ObjFlags::HIDDEN));
     s.title.set(String::from("Window"));

@@ -205,6 +205,9 @@ fn place_content(place: MainAlign, max: i32, content: i32, n: i32, start: &mut i
 /// the longest track without wrapping, other children ignored; the cross axis: the sum of the
 /// tracks and gaps, or the extent of the non-flex children if larger).
 #[allow(clippy::too_many_arguments)]
+// Out of line: kept off the frames of the recursive layout walk (`arrange` / `resolve_node`),
+// whose stack use per tree level is measured (`docs/safety/profile.md` § 10).
+#[inline(never)]
 pub(crate) fn extent<T: LayoutTree + ?Sized>(
     t: &T,
     s: &mut LayoutScratch<T::Id>,
@@ -292,6 +295,9 @@ fn distribute_grow<I>(items: &mut [Item<I>], tr: &Track, main: Axis) {
 
 /// Positions the flex items among `s.items[frame..end]` in the content area `content`.
 #[allow(clippy::too_many_arguments)]
+// Out of line: kept off the frames of the recursive layout walk (`arrange` / `resolve_node`),
+// whose stack use per tree level is measured (`docs/safety/profile.md` § 10).
+#[inline(never)]
 pub(crate) fn arrange<T: LayoutTree + ?Sized>(
     t: &mut T,
     s: &mut LayoutScratch<T::Id>,
@@ -452,6 +458,7 @@ fn place_track<T: LayoutTree + ?Sized>(
         };
         place(
             t,
+            s,
             it.id,
             Rect::from_xywh(content.x0 + x + tx, content.y0 + y + ty, size.w, size.h),
         );

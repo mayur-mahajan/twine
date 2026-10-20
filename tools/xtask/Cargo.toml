@@ -20,3 +20,6 @@ serde = { version = "1", features = ["derive"] }
 twine-cli = { path = "../twine-cli" }
 # `cargo xtask style-props`: the property table is generated from the style metadata.
 twine-style = { path = "../../crates/twine-style", features = ["std"] }
+# `cargo xtask snapshots`: the golden-image manifest format and the run records (one
+# definition, shared with the snapshot assertions). No harness features: core + hal + png only.
+twine-testing = { path = "../../crates/twine-testing", default-features = false }

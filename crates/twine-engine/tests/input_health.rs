@@ -1,5 +1,7 @@
 //! Input device health (R0.S08): `InputDevice::health` → `FaultKind::InputDevice` on
 //! transitions, `Engine::input_health`, and the release of a held press when a device fails.
+//!
+//! req: SAF-004
 
 mod common;
 
@@ -53,6 +55,8 @@ fn input_faults(h: &EngineHarness) -> u32 {
     h.engine().fault_counts().get(FaultKind::InputDevice)
 }
 
+/// fault: `InputDevice`
+/// req: SAF-031
 #[test]
 fn fault_raised_on_transition_only() {
     let (mut h, _, _) = setup();

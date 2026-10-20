@@ -74,7 +74,9 @@ fn builder_fits_a_touch_driver_to_the_rotated_display() {
         .clock(clock.clone())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .input(touch)
-        .build(move |cx| app(cx, hit, raw));
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(move |cx| app(cx, hit, raw))
+        .unwrap();
     tap(&mut ui, &clock, &regs, (10, 20));
     assert_eq!(
         hit.get(),
@@ -101,7 +103,9 @@ fn builder_composes_the_touch_mount_with_the_rotation() {
         .clock(clock.clone())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .input(touch)
-        .build(move |cx| app(cx, hit, raw));
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(move |cx| app(cx, hit, raw))
+        .unwrap();
     tap(&mut ui, &clock, &regs, (229, 20));
     assert_eq!((hit.get(), raw.get()), (1, 0));
 }
@@ -117,7 +121,9 @@ fn with_fail_after_reaches_the_ui_through_the_builder() {
         .clock(clock.clone())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .input(touch)
-        .build(|_| label("hi"));
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(|_| label("hi"))
+        .unwrap();
     let id = ui.engine().inputs().next().expect("one input");
     rec.set_bus_down(true);
     let mut seen = Vec::new();
@@ -163,10 +169,12 @@ fn builder_fits_a_resistive_driver_to_the_display_size() {
         .clock(clock.clone())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .input(touch)
-        .build(move |_| {
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(move |_| {
             let corner = button(label("")).pos(0, 220).size(20, 20);
             container((corner.on_click(move || hit.update(|n| *n += 1)),)).fill()
-        });
+        })
+        .unwrap();
     for _ in 0..3 {
         let _ = ui.update();
         clock.advance(Duration::ms(50));

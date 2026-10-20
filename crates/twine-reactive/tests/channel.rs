@@ -112,6 +112,7 @@ fn channel_drop_oldest_drops_the_evicted_value_outside_the_queue() {
     assert_eq!(Rc::strong_count(&token), 1, "the oldest value was dropped");
 }
 
+/// req: SAF-028
 #[test]
 fn channel_overflow_faults_count_lost_values_for_both_policies() {
     let _ = rt().take_faults();

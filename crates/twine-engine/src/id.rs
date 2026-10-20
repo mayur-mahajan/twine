@@ -4,9 +4,14 @@ use core::fmt;
 
 use crate::tree::Node;
 
-/// Handle of a node in the widget tree: a generational [`Id`](twine_core::Id) (`u16` slot index
-/// + `u16` generation), so a handle to a deleted node never resolves again, even after its slot
-///   is reused. At most 65 535 nodes can be alive at once.
+/// Handle of a node in the widget tree: a generational [`Id`](twine_core::Id) (a `u16` slot
+/// index and a [`Generation`](twine_core::Generation)), so a handle to a deleted node never
+/// resolves again, even after its slot is reused. At most 65 535 nodes can be alive at once.
+///
+/// 4 bytes by default (`u16` generation: a node slot serves 65 535 nodes, then retires); 8 bytes
+/// in the safety profile (48-bit generation: no slot retires in practice), where
+/// `Option<NodeId>` stays 8 bytes too. See the arena's
+/// [generation budget](twine_core::Arena#generation-width-and-budget).
 ///
 /// Tree dumps print it as `n<index>g<generation>` (see [`fmt_node_id`]).
 pub type NodeId = twine_core::Id<Node>;
@@ -28,6 +33,14 @@ pub type NodeId = twine_core::Id<Node>;
 /// assert!(e.create(DEAD_NODE, Box::new(Obj)).is_err());
 /// ```
 pub const DEAD_NODE: NodeId = NodeId::INVALID;
+
+// The node handle's size per profile (R5.S04; the five links of every node are
+// `Option<NodeId>`).
+const _: () = {
+    use core::mem::size_of;
+    assert!(size_of::<NodeId>() == if cfg!(feature = "safety") { 8 } else { 4 });
+    assert!(size_of::<Option<NodeId>>() == if cfg!(feature = "safety") { 8 } else { 6 });
+};
 
 /// Formats a [`NodeId`] as `n<index>g<generation>` (e.g. `n12g3`), the notation of tree dumps
 /// and engine logs.
@@ -54,7 +67,7 @@ impl fmt::Display for NodeIdFmt {
 #[cfg(feature = "defmt")]
 impl defmt::Format for NodeIdFmt {
     fn format(&self, f: defmt::Formatter<'_>) {
-        defmt::write!(f, "n{=u16}g{=u16}", self.0.index(), self.0.generation());
+        defmt::write!(f, "n{=u16}g{}", self.0.index(), self.0.generation());
     }
 }
 

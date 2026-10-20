@@ -91,6 +91,47 @@ perf-monitor = ["twine-engine/perf-monitor"]
 debug-checks = ["twine-engine/debug-checks", "twine-reactive/debug-checks"]
 ## Keep test ids in release builds.
 test-ids = ["twine-engine/test-ids"]
+## Reactive failures that can be skipped (a write to a disposed signal, a creation in a disposed
+## scope or a full arena, a memo cycle) raise a fault instead of panicking
+## (`twine_reactive` § Failures). Implied by `safety`.
+no-panic-runtime = ["twine-reactive/no-panic-runtime"]
+## The safety profile (`docs/safety/profile.md`): denies the panic, overflow and float lints in
+## library code (`cargo xtask ci` stage `clippy-safety`), refuses, at compile time, the parts
+## the profile excludes (`perf-monitor` — a default feature: use `default-features = false` —,
+## `fs`, `ttf`, `img-jpeg`, `full` and the `twine-lottie` crate), removes the panicking
+## convenience APIs (`UiBuilder::build`, `expect_context`, `expect_navigator`: use the `Result`
+## forms) and enables `no-panic-runtime`. Later R5 steps hang more run-time guarantees on it.
+safety = [
+    "twine-core/safety",
+    "twine-hal/safety",
+    "twine-reactive/safety",
+    "twine-anim/safety",
+    "twine-render/safety",
+    "twine-text/safety",
+    "twine-image/safety",
+    "twine-style/safety",
+    "twine-layout/safety",
+    "twine-engine/safety",
+    "twine-theme/safety",
+    "twine-widgets/safety",
+    "twine-widgets-ext/safety",
+    "twine-view/safety",
+    "twine-assets/safety",
+    "twine-vector?/safety",
+    "twine-drivers?/safety",
+    "twine-embassy?/safety",
+    "display-integrity",
+]
+## Display integrity (`docs/safety/profile.md` § 11): frame observers, region checks against the
+## panel's read-back, safety-critical nodes, the fail-safe screen and `Validity` looks. Implied
+## by `safety`; without it none of it is linked.
+display-integrity = [
+    "twine-render/display-integrity",
+    "twine-text/display-integrity",
+    "twine-engine/display-integrity",
+    "twine-widgets/display-integrity",
+    "twine-view/display-integrity",
+]
 ## Pixel formats the renderer is compiled for.
 color-rgb565 = ["twine-engine/color-rgb565", "twine-render/color-rgb565"]
 color-rgb565-swapped = ["twine-engine/color-rgb565-swapped", "twine-render/color-rgb565-swapped"]
@@ -263,6 +304,7 @@ source-han-sans-sc-16-cjk = ["twine-assets/source-han-sans-sc-16-cjk"]
 ## build choices.
 full = [
     "async",
+    "display-integrity",
     "perf-monitor",
     "color-rgb565",
     "color-rgb565-swapped",

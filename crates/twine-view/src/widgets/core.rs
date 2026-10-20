@@ -70,7 +70,7 @@ impl WidgetView<Label> {
                 if let (true, Some(p)) = (en.get(), ecx.point()) {
                     let e = ecx.engine();
                     let origin = e.content_area(node);
-                    let rel = Point::new(p.x - origin.x0, p.y - origin.y0);
+                    let rel = p - Point::new(origin.x0, origin.y0);
                     if let Some(l) = e.widget::<Label>(node) {
                         s.set(l.letter_on(&MeasureCx::new(e, node), rel));
                     }
@@ -82,7 +82,7 @@ impl WidgetView<Label> {
                 if let (true, Some(p)) = (en.get(), ecx.point()) {
                     let e = ecx.engine_mut();
                     let origin = e.content_area(node);
-                    let rel = Point::new(p.x - origin.x0, p.y - origin.y0);
+                    let rel = p - Point::new(origin.x0, origin.y0);
                     let end = e
                         .widget::<Label>(node)
                         .map(|l| l.letter_on(&MeasureCx::new(e, node), rel));

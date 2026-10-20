@@ -37,10 +37,11 @@ twine-render = { path = "../twine-render", optional = true, features = [
 ] }
 # `debug-checks` is opt-in (feature `debug-checks`): benchmarks built on the harness must
 # measure the engine without it.
+# No `perf-monitor`: it is excluded from the safety profile, whose engine and runtime tests use
+# this harness too (tests of the overlay enable it themselves).
 twine-engine = { path = "../twine-engine", optional = true, features = [
     "std",
     "log",
-    "perf-monitor",
     # Queries by test id also in release test builds.
     "test-ids",
     "color-rgb565",
@@ -71,4 +72,16 @@ required-features = ["ui"]
 
 [[test]]
 name = "ports"
+required-features = ["ui"]
+
+[dev-dependencies]
+# Property-based runs of the `fuzz` interpreters on stable (`tests/fuzz_*.rs`).
+proptest = "1"
+
+[[test]]
+name = "fuzz_input"
+required-features = ["ui"]
+
+[[test]]
+name = "fuzz_reactive"
 required-features = ["ui"]

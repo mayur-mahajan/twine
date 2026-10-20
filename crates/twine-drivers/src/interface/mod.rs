@@ -108,8 +108,8 @@ pub trait DcsInterface {
         buf: DrawBufferMem,
         len: usize,
     ) -> Result<Option<DrawBufferMem>, (Self::Error, DrawBufferMem)> {
-        let len = len.min(buf.len());
-        match self.write_pixels(&buf.as_slice()[..len]) {
+        let data = buf.as_slice();
+        match self.write_pixels(data.get(..len).unwrap_or(data)) {
             Ok(()) => Ok(Some(buf)),
             Err(e) => Err((e, buf)),
         }
@@ -120,6 +120,40 @@ pub trait DcsInterface {
     /// `start_pixels` never keeps a buffer).
     fn poll_pixels(&mut self) -> Option<DrawBufferMem> {
         None
+    }
+
+    /// Whether [`read_pixels`](Self::read_pixels) works on this interface (default `false`).
+    /// Panel drivers check it before sending anything for a read-back, so an interface that
+    /// cannot read answers "unsupported" without touching the panel.
+    const CAN_READ: bool = false;
+
+    /// Sends the read command `cmd` (MIPI DCS `RAMRD` after the address window is set) and
+    /// fills `out` with the pixels that follow, **in the write format** of the panel (the
+    /// format pixels are flushed in): the interface drops the controller's dummy read cycle
+    /// and converts its read format (often 18-bit RGB666 even in 16-bit mode) — it is
+    /// board- and controller-specific, so it lives with the interface. The basis of
+    /// `DisplayDriver::read_back` (display integrity). Requires [`CAN_READ`](Self::CAN_READ).
+    ///
+    /// # Errors
+    /// `ControlError::Unsupported` (the default: nothing is sent), or the transport's error.
+    ///
+    /// ```
+    /// use twine_drivers::interface::DcsInterface;
+    /// use twine_hal::ControlError;
+    ///
+    /// /// A transport that only writes.
+    /// struct WriteOnly;
+    /// impl DcsInterface for WriteOnly {
+    ///     type Error = ();
+    ///     fn command(&mut self, _: u8, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    ///     fn write_pixels(&mut self, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// }
+    /// assert!(!WriteOnly::CAN_READ);
+    /// assert_eq!(WriteOnly.read_pixels(0x2E, &mut [0; 4]), Err(ControlError::Unsupported));
+    /// ```
+    fn read_pixels(&mut self, cmd: u8, out: &mut [u8]) -> Result<(), twine_hal::ControlError<Self::Error>> {
+        let _ = (cmd, out);
+        Err(twine_hal::ControlError::Unsupported)
     }
 }
 

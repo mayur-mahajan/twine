@@ -3,8 +3,9 @@
 //! Every normal and build dependency between two twine crates must point to a strictly lower
 //! layer (or be an explicitly allowed same-layer pair). Dev-dependencies are exempt
 //! (tests may use higher-level crates such as `twine-testing`). The same metadata also drives
-//! the panel → colour feature check ([`panel_colors`](super::panel_colors)) and the feature
-//! forwarding check ([`feature_forwarding`](super::feature_forwarding)).
+//! the panel → colour feature check ([`panel_colors`](super::panel_colors)), the feature
+//! forwarding check ([`feature_forwarding`](super::feature_forwarding)) and the safety-profile
+//! crate check ([`safety`](super::safety)).
 
 use serde_json::Value;
 
@@ -116,9 +117,11 @@ pub fn run() -> R {
     let mut errors = check_metadata(&json)?;
     errors.extend(super::panel_colors::check_metadata(&json)?);
     errors.extend(super::feature_forwarding::check_metadata(&json)?);
+    errors.extend(super::safety::check_metadata(&json)?);
     if errors.is_empty() {
         println!(
-            "layers: ok ({} layered crates, panel colour features coupled, features forwarded)",
+            "layers: ok ({} layered crates, panel colour features coupled, features forwarded, \
+             safety-profile crates and lint attributes)",
             LAYERS.len()
         );
         Ok(())

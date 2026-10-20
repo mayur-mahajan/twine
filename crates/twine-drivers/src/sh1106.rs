@@ -68,7 +68,7 @@ fn check(area: Rect, len: usize) -> Option<(usize, core::ops::Range<usize>)> {
         return None;
     }
     let stride = (area.width() as usize).div_ceil(8);
-    (len >= stride * area.height() as usize)
+    (len >= stride.saturating_mul(area.height() as usize))
         .then_some((stride, (area.y0 / 8) as usize..(area.y1 / 8) as usize))
 }
 
@@ -135,12 +135,14 @@ impl<I: DcsInterface> Sh1106<I> {
         };
         trace!(target: "twine::driver", "sh1106: flush {:?}", area);
         let w = area.width() as usize;
-        let col = area.x0 as u8 + COLUMN_OFFSET;
-        let first = pages.start;
-        for p in pages {
+        // `x0 < 128` (inside the panel).
+        let col = (area.x0 as u8).saturating_add(COLUMN_OFFSET);
+        for (i, p) in pages.enumerate() {
             self.commands(&page_cmds(p as u8, col))?;
-            i1_to_page(buf, stride, w, p - first, &mut self.scratch);
-            self.iface.write_pixels(&self.scratch[..w]).map_err(|e| {
+            i1_to_page(buf, stride, w, i, &mut self.scratch);
+            // `w <= 128` (inside the panel): the whole scratch otherwise.
+            let data = self.scratch.get(..w).unwrap_or(&self.scratch);
+            self.iface.write_pixels(data).map_err(|e| {
                 warn!(target: "twine::driver", "sh1106: data write failed");
                 OledError::Interface(e)
             })?;
@@ -294,12 +296,14 @@ mod asynch {
                 return Err(OledError::BadArea);
             };
             let w = area.width() as usize;
-            let col = area.x0 as u8 + COLUMN_OFFSET;
-            let first = pages.start;
-            for p in pages {
+            // `x0 < 128` (inside the panel).
+            let col = (area.x0 as u8).saturating_add(COLUMN_OFFSET);
+            for (i, p) in pages.enumerate() {
                 self.commands(&page_cmds(p as u8, col)).await?;
-                i1_to_page(buf, stride, w, p - first, &mut self.scratch);
-                if let Err(e) = self.iface.write_pixels(&self.scratch[..w]).await {
+                i1_to_page(buf, stride, w, i, &mut self.scratch);
+                // `w <= 128` (inside the panel): the whole scratch otherwise.
+                let data = self.scratch.get(..w).unwrap_or(&self.scratch);
+                if let Err(e) = self.iface.write_pixels(data).await {
                     warn!(target: "twine::driver", "sh1106: data write failed");
                     return Err(OledError::Interface(e));
                 }

@@ -62,7 +62,7 @@ fn context_lookup_walks_parents() {
     assert_eq!(deep.use_context::<u32>(), Ok(7));
     assert_eq!(deep.use_context::<&str>(), Ok("theme"));
     assert_eq!(deep.use_context::<u64>(), Err(MissingContext::of::<u64>()));
-    assert_eq!(deep.expect_context::<u32>(), 7);
+    assert_eq!(deep.use_context::<u32>().unwrap(), 7);
     // A value provided below is not visible above.
     deep.provide(1u64);
     assert!(root.use_context::<u64>().is_err());
@@ -99,9 +99,9 @@ fn context_store_handles_share_state() {
     });
     let a = root.child();
     let b = root.child().child();
-    let sa = a.expect_context::<Store>();
+    let sa = a.use_context::<Store>().unwrap();
     sa.count.update(|c| *c += sa.step.get());
-    let sb = b.expect_context::<Store>();
+    let sb = b.use_context::<Store>().unwrap();
     assert_eq!(sb.count.get(), 2, "every lookup sees the same signals");
     root.dispose();
 }
@@ -124,6 +124,8 @@ fn context_missing_error_names_the_type() {
     root.dispose();
 }
 
+// `expect_context` does not exist in the `safety` profile.
+#[cfg(not(feature = "safety"))]
 #[test]
 #[should_panic(expected = "context u16 not provided")]
 fn context_expect_panics_with_type_name() {
@@ -131,6 +133,7 @@ fn context_expect_panics_with_type_name() {
     let _: u16 = root.expect_context();
 }
 
+#[cfg(not(feature = "safety"))]
 #[test]
 fn context_expect_reports_the_caller_location() {
     std::thread_local! {
@@ -175,7 +178,7 @@ fn context_is_dropped_with_its_scope() {
     let child = root.child();
     let token = Rc::new(());
     child.provide(Rc::clone(&token));
-    let looked_up = child.child().expect_context::<Rc<()>>();
+    let looked_up = child.child().use_context::<Rc<()>>().unwrap();
     assert_eq!(Rc::strong_count(&token), 3);
     drop(looked_up);
     // Replacing drops the old value.
@@ -205,7 +208,7 @@ fn context_lookup_allocates_nothing() {
     }
     let before = allocs();
     for _ in 0..100 {
-        let s = deep.expect_context::<Store>();
+        let s = deep.use_context::<Store>().unwrap();
         assert_eq!(s.step.get_untracked(), 1);
         assert_eq!(deep.use_context::<u8>(), Ok(3));
         assert!(deep.use_context::<u64>().is_err()); // a miss walks the whole chain

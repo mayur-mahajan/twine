@@ -92,21 +92,19 @@ impl Checkbox {
     }
 
     /// Sets the text, copying it into the checkbox's buffer (no allocation when it fits).
-    /// Idempotent; a change re-measures the checkbox.
+    /// Idempotent; a change re-measures the checkbox. Cut to
+    /// [`Limits::max_text_len`](twine_core::Limits::max_text_len) like a label's text.
     pub fn set_text(&mut self, cx: &mut WidgetCx<'_>, s: &str) {
+        let s = cx.fit_text(s);
         if self.text() == s {
             return;
         }
         log_set(CHECKBOX_CLASS.name, cx.node(), "text");
         match &mut self.text {
-            LabelText::Owned(buf) => {
-                buf.clear();
-                buf.push_str(s);
-            }
+            LabelText::Owned(buf) => cx.store_text(buf, s),
             LabelText::Static(_) => {
                 let mut buf = core::mem::take(&mut self.scratch);
-                buf.clear();
-                buf.push_str(s);
+                cx.store_text(&mut buf, s);
                 self.text = LabelText::Owned(buf);
             }
         }

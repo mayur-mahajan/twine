@@ -69,10 +69,12 @@ fn engine_queue_bytes_are_the_heap_of_the_queues() {
 fn static_layer_and_draw_buffers_stay_out_of_the_heap() {
     twine_view::draw_buffers!(static BUFS: 2 x 16 rows x 160 px @ Rgb565);
     static LAYER: LayerBuffer<{ 16 * 1024 }> = LayerBuffer::zeroed();
-    let config = AppConfig::new().engine(EngineConfig {
-        layer_buf_bytes: 16 * 1024,
-        ..EngineConfig::default()
-    });
+    let config = AppConfig::new()
+        .limits(twine_testing::HARNESS_LIMITS)
+        .engine(EngineConfig {
+            layer_buf_bytes: 16 * 1024,
+            ..EngineConfig::default()
+        });
     let panel = || MemoryDisplay::new(DisplayInfo::new(160, 120, ColorFormat::Rgb565));
 
     // The two UIs share the thread's runtime, whose arenas grow by doubling: measure each
@@ -85,7 +87,8 @@ fn static_layer_and_draw_buffers_stay_out_of_the_heap() {
             .clock(MockClock::new())
             .buffers(BufferMode::alloc(BufferSpec::PartialDouble { rows: 16 }))
             .app_config(config.clone())
-            .build(|_| label("hi"))
+            .try_build(|_| label("hi"))
+            .unwrap()
     });
     let rt1 = rt_bytes();
     let (static_ui, statik) = count_allocs(|| {
@@ -95,7 +98,8 @@ fn static_layer_and_draw_buffers_stay_out_of_the_heap() {
             .buffers(BufferMode::partial_double_from(BUFS.take().unwrap()))
             .layer_buf(LAYER.take().unwrap())
             .app_config(config.clone())
-            .build(|_| label("hi"))
+            .try_build(|_| label("hi"))
+            .unwrap()
     });
     let rt2 = rt_bytes();
     let (h, s) = (heap_ui.memory_report(), static_ui.memory_report());
@@ -131,6 +135,7 @@ fn a_layer_buffer_below_four_kib_fails_the_build() {
         .clock(MockClock::new())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .layer_buf(SMALL.take().unwrap())
+        .limits(twine_testing::HARNESS_LIMITS)
         .try_build(|_| label("hi"));
     assert!(
         matches!(r, Err(UiError::Engine(EngineError::InvalidConfig(_)))),

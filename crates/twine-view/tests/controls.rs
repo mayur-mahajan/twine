@@ -79,7 +79,7 @@ fn bar_signal_runs_one_binding_and_redraws_only_the_bar() {
         column((bar(level).width(200).test_id("bar"), label("unrelated")))
     });
     t.run_until_idle();
-    let level = t.root_scope().expect_context::<Signal<i32>>();
+    let level = t.root_scope().use_context::<Signal<i32>>().unwrap();
     assert_one_binding_local(&mut t, level, 60, "bar");
     assert_eq!(read(&t, "bar", Bar::value), 60);
 }
@@ -92,7 +92,7 @@ fn bar_animated_animates_value_changes() {
         bar(level).animated(Duration::ms(300)).width(200).test_id("bar")
     });
     t.run_until_idle();
-    let level = t.root_scope().expect_context::<Signal<i32>>();
+    let level = t.root_scope().use_context::<Signal<i32>>().unwrap();
     level.set(80);
     t.update();
     assert!(read(&t, "bar", Bar::is_animating), "the new value animates");
@@ -113,7 +113,7 @@ fn slider_view_two_way() {
             .test_id("s")
     });
     t.run_until_idle();
-    let level = t.root_scope().expect_context::<Signal<i32>>();
+    let level = t.root_scope().use_context::<Signal<i32>>().unwrap();
     let c = t.find(by_id("s")).coords();
     // Drag the knob to three quarters.
     let from = Point::new(c.x0 + c.width() / 10, c.center().y);
@@ -141,7 +141,7 @@ fn slider_keys_write_back() {
         slider(level).width(200).test_id("s")
     });
     t.run_until_idle();
-    let level = t.root_scope().expect_context::<Signal<i32>>();
+    let level = t.root_scope().use_context::<Signal<i32>>().unwrap();
     focus(&mut t, "s");
     t.key(Key::Right);
     t.key(Key::Right);
@@ -164,7 +164,10 @@ fn slider_range_mode_two_models() {
             .test_id("s")
     });
     t.run_until_idle();
-    let (lo, hi) = t.root_scope().expect_context::<(Signal<i32>, Signal<i32>)>();
+    let (lo, hi) = t
+        .root_scope()
+        .use_context::<(Signal<i32>, Signal<i32>)>()
+        .unwrap();
     assert_eq!(read(&t, "s", Slider::left_value), 20);
     let c = t.find(by_id("s")).coords();
     // Drag the left knob from 20 % to 40 %.
@@ -195,7 +198,7 @@ fn switch_checkbox_led_share_one_signal() {
         ))
     });
     t.run_until_idle();
-    let on = t.root_scope().expect_context::<Signal<bool>>();
+    let on = t.root_scope().use_context::<Signal<bool>>().unwrap();
     assert_eq!(read(&t, "led", Led::brightness), LED_BRIGHT_MIN);
     t.find(by_id("sw")).click();
     t.run_until_idle();
@@ -249,7 +252,7 @@ fn checkbox_dynamic_text() {
             .test_id("cb")
     });
     t.run_until_idle();
-    let n = t.root_scope().expect_context::<Signal<i32>>();
+    let n = t.root_scope().use_context::<Signal<i32>>().unwrap();
     assert_eq!(t.find(by_id("cb")).text(), "Item 1");
     assert_one_binding_local(&mut t, n, 2, "cb");
     assert_eq!(t.find(by_id("cb")).text(), "Item 2");
@@ -269,7 +272,7 @@ fn arc_view_two_way() {
             .test_id("arc")
     });
     t.run_until_idle();
-    let v = t.root_scope().expect_context::<Signal<i32>>();
+    let v = t.root_scope().use_context::<Signal<i32>>().unwrap();
     focus(&mut t, "arc");
     t.key(Key::Right);
     t.run_until_idle();
@@ -300,7 +303,7 @@ fn led_brightness_while_on() {
             .test_id("led")
     });
     t.run_until_idle();
-    let on = t.root_scope().expect_context::<Signal<bool>>();
+    let on = t.root_scope().use_context::<Signal<bool>>().unwrap();
     assert_eq!(
         read(&t, "led", |l: &Led| (l.brightness(), l.color())),
         (Fraction::from_raw(150), Color::RED)
@@ -325,7 +328,7 @@ fn line_points_binding() {
         ))
     });
     t.run_until_idle();
-    let pts = t.root_scope().expect_context::<Signal<Vec<Point>>>();
+    let pts = t.root_scope().use_context::<Signal<Vec<Point>>>().unwrap();
     assert_eq!(read(&t, "z", |l: &Line| l.points().len()), 3);
     assert_one_binding_local(&mut t, pts, vec![Point::new(0, 0), Point::new(30, 20)], "l");
     assert_eq!(
@@ -383,7 +386,7 @@ fn image_button_checked_two_way() {
             .test_id("ib")
     });
     t.run_until_idle();
-    let on = t.root_scope().expect_context::<Signal<bool>>();
+    let on = t.root_scope().use_context::<Signal<bool>>().unwrap();
     t.find(by_id("ib")).click();
     t.run_until_idle();
     assert!(on.get_untracked());
@@ -412,7 +415,7 @@ fn animimg_playing_binding() {
     });
     t.run_until_idle();
     t.assert_idle();
-    let run = t.root_scope().expect_context::<Signal<bool>>();
+    let run = t.root_scope().use_context::<Signal<bool>>().unwrap();
     run.set(true);
     t.advance(Duration::ms(150));
     let n = t.find(by_id("a")).id();

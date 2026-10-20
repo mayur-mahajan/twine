@@ -63,13 +63,14 @@ pub enum FaultKind {
     /// node or input; `code` = `0`; `occurrences` = the number of triggers since the last
     /// update.
     DepthGuard = 3,
-    /// A fixed capacity was reached (nodes, reactive nodes, queues): something was not created
-    /// or was dropped.
+    /// A bound was reached (a [`Limits`](crate::Limits) field or a fixed capacity): something
+    /// was not created, was cut or was dropped — never grown.
     ///
-    /// Record: `code` names the bound — `0` for the engine's own capacities (a full widget
-    /// tree: `node` = the parent the node could not be created under, if any), or a view-layer
-    /// `twine_view::CapacityFault` code (`1` = the `Ui`'s engine command queue: `display` set,
-    /// `occurrences` = the number of dropped commands).
+    /// Record: `code` is the [`CapacityFault`] code naming the bound (e.g. `0` = the widget
+    /// tree, `node` = the parent the node could not be created under; `1` = a `Ui`'s engine
+    /// command queue, `display` set, `occurrences` = the dropped commands; `3`/`4` = the
+    /// reactive runtime's node / scope bound, forwarded by the `Ui`). See each
+    /// [`CapacityFault`] variant.
     Capacity = 4,
     /// The view layer could not build a widget it was asked to build.
     ///
@@ -107,11 +108,82 @@ pub enum FaultKind {
     /// Record: `display` set; `code` = the `twine_engine::DisplayControlFault` code (which
     /// control, and why).
     DisplayControl = 10,
+    /// A reactive handle (signal, memo, stored value, effect or scope) was used after its scope
+    /// was disposed, or a node was created in a disposed scope. Raised by the reactive
+    /// runtime's `no-panic-runtime` feature (implied by the `safety` profile), which skips the
+    /// write or creation instead of panicking: the value written is dropped, and a creation
+    /// returns a handle that is not alive. A read that has no value to return still panics
+    /// after raising the fault (see `twine_reactive::ReactiveError`).
+    ///
+    /// Record (forwarded by `Ui` like [`EffectLoopCut`](Self::EffectLoopCut)): no display,
+    /// node or input; `code` = `0`; `occurrences` = the number of skipped operations since the
+    /// last update.
+    DisposedHandle = 11,
+    /// A memo read itself, directly or through other memos (a dependency cycle). With the
+    /// reactive runtime's `no-panic-runtime` feature the read returns the memo's previous value
+    /// instead of panicking (a memo with no previous value still panics after raising the
+    /// fault); without it, the read panics.
+    ///
+    /// Record (forwarded by `Ui` like [`EffectLoopCut`](Self::EffectLoopCut)): no display,
+    /// node or input; `code` = `0`; `occurrences` = the number of cyclic reads since the last
+    /// update.
+    MemoCycle = 12,
+    /// A signal or stored value was written while its value was borrowed by an enclosing
+    /// access of the same value (e.g. `set` inside `with` on the same signal). With the
+    /// reactive runtime's `no-panic-runtime` feature the write is skipped instead of panicking.
+    ///
+    /// Record (forwarded by `Ui` like [`EffectLoopCut`](Self::EffectLoopCut)): no display,
+    /// node or input; `code` = `0`; `occurrences` = the number of skipped writes since the
+    /// last update.
+    ReentrantAccess = 13,
+    /// Twine allocated heap memory after the application **sealed** it
+    /// ([`alloc_guard::seal`](crate::alloc_guard::seal), `Ui::seal`): a growth point that
+    /// should have been sized at start-up (from [`Limits`](crate::Limits)) grew, or something
+    /// was created after start-up. The allocation was made (refusing it would lose data or
+    /// break an invariant); the fault is the evidence that the "no allocation after start-up"
+    /// claim did not hold.
+    ///
+    /// Record (raised by the view layer's `Ui` at each update, or by
+    /// `Engine::take_faults`): no display, node or input; `code` = the
+    /// [`AllocSite`](crate::alloc_guard::AllocSite) code of the **last** growth point;
+    /// `occurrences` = the number of growths since the previous record.
+    AllocAfterSeal = 14,
+    /// An update used up the time of its step budget (`StepBudget::time`, e.g.
+    /// `EngineConfig::step_budget`): rendering stopped after the chunk that reached it, and
+    /// the rest of the frame continues in the next update (`Wake::Now`) — deferred, never
+    /// dropped. Also raised when an update that deferred nothing still ended past its time
+    /// (a long layout or binding run, one slow chunk). Measured with the engine's
+    /// `hires_timer`; at most one record per update.
+    ///
+    /// Record: `display` = the display whose frame was cut short (not set when nothing was
+    /// deferred); `code` = the update's time in µs when it was checked (saturated to
+    /// `u32::MAX`).
+    #[doc(alias = "FRAME_OVERRUN")]
+    FrameOverrun = 15,
+    /// The application switched a display to its fail-safe screen
+    /// (`Engine::enter_fail_safe`, `Ui::enter_fail_safe`): from now on the display shows the
+    /// static screen registered at start-up, and loading any other screen is refused until
+    /// the application leaves the fail-safe state. Twine raises it so the switch is part of
+    /// the fault stream and its evidence; the reason is the application's.
+    ///
+    /// Record: `display` set; `code` = the application's reason code given to
+    /// `enter_fail_safe`.
+    FailSafe = 16,
+    /// A display-integrity check found that a region of the display does not show what was
+    /// rendered: the checksum of the pixels read back from the panel (or its framebuffer)
+    /// differs from the checksum of an independent off-screen re-render of the same region
+    /// (`Engine::check_region`). What the application does about it (retry, fail-safe screen,
+    /// reset) is its policy.
+    ///
+    /// Record: `display` and `node` set (the node whose region was checked); `code` = the
+    /// checksum read back from the panel (the expected one is in the check's result).
+    #[doc(alias = "DISPLAY_INTEGRITY")]
+    DisplayIntegrity = 17,
 }
 
 impl FaultKind {
     /// Every kind, in [`index`](Self::index) order.
-    pub const ALL: [FaultKind; 11] = [
+    pub const ALL: [FaultKind; 18] = [
         FaultKind::FlushError,
         FaultKind::FlushTimeout,
         FaultKind::EffectLoopCut,
@@ -123,6 +195,13 @@ impl FaultKind {
         FaultKind::ChannelOverflow,
         FaultKind::AccelTimeout,
         FaultKind::DisplayControl,
+        FaultKind::DisposedHandle,
+        FaultKind::MemoCycle,
+        FaultKind::ReentrantAccess,
+        FaultKind::AllocAfterSeal,
+        FaultKind::FrameOverrun,
+        FaultKind::FailSafe,
+        FaultKind::DisplayIntegrity,
     ];
 
     /// The number of kinds (the length of per-kind tables such as fault counters).
@@ -174,6 +253,13 @@ impl FaultKind {
             FaultKind::ChannelOverflow => "ChannelOverflow",
             FaultKind::AccelTimeout => "AccelTimeout",
             FaultKind::DisplayControl => "DisplayControl",
+            FaultKind::DisposedHandle => "DisposedHandle",
+            FaultKind::MemoCycle => "MemoCycle",
+            FaultKind::ReentrantAccess => "ReentrantAccess",
+            FaultKind::AllocAfterSeal => "AllocAfterSeal",
+            FaultKind::FrameOverrun => "FrameOverrun",
+            FaultKind::FailSafe => "FailSafe",
+            FaultKind::DisplayIntegrity => "DisplayIntegrity",
         }
     }
 
@@ -359,6 +445,178 @@ impl fmt::Debug for Faults {
     }
 }
 
+/// The bound named by a [`FaultKind::Capacity`] record (its `code`): which limit was reached.
+///
+/// Codes are stable (a bound keeps its code forever; new bounds are appended). Most bounds are
+/// fields of [`Limits`](crate::Limits); the others are fixed capacities of the crate that
+/// raises the fault. In every case the operation was refused, cut or dropped — Twine never
+/// grows past a bound.
+///
+/// ```
+/// use twine_core::fault::CapacityFault;
+///
+/// assert_eq!(CapacityFault::EngineQueue.code(), 1);
+/// assert_eq!(CapacityFault::from_code(4), Some(CapacityFault::ReactiveScopes));
+/// assert_eq!(CapacityFault::from_code(9999), None);
+/// assert_eq!(CapacityFault::TreeDepth.name(), "TreeDepth");
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u32)]
+#[non_exhaustive]
+pub enum CapacityFault {
+    /// The widget tree is full ([`Limits::max_nodes`](crate::Limits::max_nodes), at most
+    /// 65 535): the node was not created. `node` = the parent, if any.
+    Nodes = 0,
+    /// A `Ui`'s engine command queue was full ([`Limits::engine_queue`](crate::Limits::engine_queue)):
+    /// engine side effects issued without the engine (a scope disposed or a handle called
+    /// outside `Ui::update`) were dropped. `display` set; `occurrences` = their number.
+    EngineQueue = 1,
+    /// The process-wide waker pool was exhausted when a `Ui` was mounted
+    /// ([`Limits::max_heap_wakers`](crate::Limits::max_heap_wakers)): it got the shared
+    /// fallback waker instead of its own, so channel and interrupt wake-ups are no longer
+    /// routed to this UI alone. `display` set.
+    WakerPool = 2,
+    /// The reactive runtime's node bound was reached
+    /// ([`Limits::max_reactive_nodes`](crate::Limits::max_reactive_nodes): signals, memos,
+    /// stored values and effects): with `no-panic-runtime` the creation was skipped and
+    /// returned a handle that is never alive (without it, the creation panics). Forwarded by
+    /// the `Ui`; `occurrences` = the skipped creations.
+    ReactiveNodes = 3,
+    /// The reactive runtime's scope bound was reached
+    /// ([`Limits::max_scopes`](crate::Limits::max_scopes)), as for
+    /// [`ReactiveNodes`](Self::ReactiveNodes).
+    ReactiveScopes = 4,
+    /// More effects waited to run than
+    /// [`Limits::max_pending_effects`](crate::Limits::max_pending_effects): the effects beyond
+    /// it were not queued (like an effect-loop cut, the bindings concerned may show outdated
+    /// values until their sources change again). Forwarded by the `Ui`; `occurrences` = the
+    /// effects not queued.
+    PendingEffects = 5,
+    /// A node would have been deeper than [`Limits::max_tree_depth`](crate::Limits::max_tree_depth)
+    /// below its root: the creation or move was refused. `node` = the parent.
+    TreeDepth = 6,
+    /// A widget text was longer than [`Limits::max_text_len`](crate::Limits::max_text_len)
+    /// bytes: it was cut at the last character boundary that fits. `node` = the widget.
+    TextLen = 7,
+    /// The engine's event handlers reached [`Limits::max_handlers`](crate::Limits::max_handlers):
+    /// the handler was not added. `node` = the node it was for.
+    Handlers = 8,
+    /// The engine's timers reached [`Limits::max_timers`](crate::Limits::max_timers): the timer
+    /// was not added (its id never resolves).
+    Timers = 9,
+    /// The engine's running animations reached [`Limits::max_anims`](crate::Limits::max_anims):
+    /// the animation was not started (its id never resolves).
+    Animations = 10,
+    /// More focus groups than the engine's fixed `MAX_GROUPS`: the group was not created.
+    FocusGroups = 11,
+    /// A navigator's route stack reached [`Limits::max_nav_depth`](crate::Limits::max_nav_depth):
+    /// the push was refused (the current page stays).
+    NavDepth = 12,
+    /// The heap Twine reports for a `Ui` (`MemoryReport::heap_bytes`) exceeded
+    /// [`Limits::heap_budget`](crate::Limits::heap_budget) when the `Ui` was sealed.
+    /// `occurrences` = 1; nothing was refused (the memory is in use), the record is evidence.
+    HeapBudget = 13,
+    /// A keyed collection had more rows to show than its bound
+    /// ([`Limits::max_list_items`](crate::Limits::max_list_items), or a smaller per-collection
+    /// bound): the items beyond it were not shown (a `for_each` shows the first ones, a
+    /// `virtual_list` the first visible ones). `node` = the collection.
+    ListItems = 14,
+}
+
+impl CapacityFault {
+    /// Every bound, in code order.
+    pub const ALL: [CapacityFault; 15] = [
+        CapacityFault::Nodes,
+        CapacityFault::EngineQueue,
+        CapacityFault::WakerPool,
+        CapacityFault::ReactiveNodes,
+        CapacityFault::ReactiveScopes,
+        CapacityFault::PendingEffects,
+        CapacityFault::TreeDepth,
+        CapacityFault::TextLen,
+        CapacityFault::Handlers,
+        CapacityFault::Timers,
+        CapacityFault::Animations,
+        CapacityFault::FocusGroups,
+        CapacityFault::NavDepth,
+        CapacityFault::HeapBudget,
+        CapacityFault::ListItems,
+    ];
+
+    /// The stable numeric code (the fault record's `code`).
+    ///
+    /// ```
+    /// use twine_core::fault::CapacityFault;
+    /// assert_eq!(CapacityFault::Nodes.code(), 0);
+    /// ```
+    #[must_use]
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+
+    /// The bound with code `code` (`None` for an unknown code).
+    ///
+    /// ```
+    /// use twine_core::fault::CapacityFault;
+    /// assert_eq!(CapacityFault::from_code(1), Some(CapacityFault::EngineQueue));
+    /// ```
+    #[must_use]
+    pub const fn from_code(code: u32) -> Option<CapacityFault> {
+        Some(match code {
+            0 => CapacityFault::Nodes,
+            1 => CapacityFault::EngineQueue,
+            2 => CapacityFault::WakerPool,
+            3 => CapacityFault::ReactiveNodes,
+            4 => CapacityFault::ReactiveScopes,
+            5 => CapacityFault::PendingEffects,
+            6 => CapacityFault::TreeDepth,
+            7 => CapacityFault::TextLen,
+            8 => CapacityFault::Handlers,
+            9 => CapacityFault::Timers,
+            10 => CapacityFault::Animations,
+            11 => CapacityFault::FocusGroups,
+            12 => CapacityFault::NavDepth,
+            13 => CapacityFault::HeapBudget,
+            14 => CapacityFault::ListItems,
+            _ => return None,
+        })
+    }
+
+    /// The bound's name, as written in the source (`"Nodes"`, …).
+    ///
+    /// ```
+    /// use twine_core::fault::CapacityFault;
+    /// assert_eq!(CapacityFault::HeapBudget.name(), "HeapBudget");
+    /// ```
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            CapacityFault::Nodes => "Nodes",
+            CapacityFault::EngineQueue => "EngineQueue",
+            CapacityFault::WakerPool => "WakerPool",
+            CapacityFault::ReactiveNodes => "ReactiveNodes",
+            CapacityFault::ReactiveScopes => "ReactiveScopes",
+            CapacityFault::PendingEffects => "PendingEffects",
+            CapacityFault::TreeDepth => "TreeDepth",
+            CapacityFault::TextLen => "TextLen",
+            CapacityFault::Handlers => "Handlers",
+            CapacityFault::Timers => "Timers",
+            CapacityFault::Animations => "Animations",
+            CapacityFault::FocusGroups => "FocusGroups",
+            CapacityFault::NavDepth => "NavDepth",
+            CapacityFault::HeapBudget => "HeapBudget",
+            CapacityFault::ListItems => "ListItems",
+        }
+    }
+}
+
+impl fmt::Display for CapacityFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// Saturating per-kind occurrence counters (how often each fault happened since start-up).
 ///
 /// ```
@@ -454,6 +712,11 @@ mod tests {
             assert_eq!(FaultKind::from_index(i), Some(*k));
         }
         assert_eq!(FaultKind::from_index(FaultKind::COUNT), None);
+        for (i, c) in CapacityFault::ALL.iter().enumerate() {
+            assert_eq!(c.code() as usize, i);
+            assert_eq!(CapacityFault::from_code(c.code()), Some(*c));
+        }
+        assert_eq!(CapacityFault::from_code(CapacityFault::ALL.len() as u32), None);
     }
 
     #[test]

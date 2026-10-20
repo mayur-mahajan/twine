@@ -117,7 +117,8 @@ impl QuadratureDecoder {
             return;
         }
         self.state.store(cur, Ordering::Relaxed);
-        let step = STEP[usize::from(prev << 2 | cur)];
+        // `prev` and `cur` are 2-bit states: the index is below 16.
+        let step = STEP.get(usize::from(prev << 2 | cur)).copied().unwrap_or(0);
         if step != 0 {
             self.steps.fetch_add(i16::from(step), Ordering::Relaxed);
         }
@@ -127,9 +128,12 @@ impl QuadratureDecoder {
     /// steps are kept.
     pub fn take(&self) -> i16 {
         let spd = i16::from(self.steps_per_detent);
-        let detents = self.steps.load(Ordering::Relaxed) / spd;
+        // DIV: `steps_per_detent >= 1` (`new`), so the fallback is never taken.
+        let detents = self.steps.load(Ordering::Relaxed).checked_div(spd).unwrap_or(0);
         if detents != 0 {
-            self.steps.fetch_sub(detents * spd, Ordering::Relaxed);
+            // `|detents · spd| <= |steps|`: exact.
+            self.steps
+                .fetch_sub(detents.saturating_mul(spd), Ordering::Relaxed);
         }
         detents
     }

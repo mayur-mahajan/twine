@@ -44,6 +44,8 @@ pub struct Engine {
     pub(crate) displays: Vec<Display>,
     pub(crate) default_display: Option<DisplayId>,
     pub(crate) config: EngineConfig,
+    /// The engine's bounds ([`set_limits`](Self::set_limits)).
+    pub(crate) limits: twine_core::Limits,
     /// The default display's theme font (the default `Font` of every node).
     pub(crate) theme_font: Option<&'static twine_text::Font>,
     pub(crate) res: Option<RenderRes>,
@@ -70,8 +72,8 @@ pub struct Engine {
     pub(crate) default_group: Option<crate::GroupId>,
     /// Gridnav containers.
     pub(crate) gridnavs: Vec<crate::gridnav::GridnavDsc>,
-    /// Next user handler id.
-    pub(crate) next_handler_id: u32,
+    /// Next user handler id (never reused: see [`HandlerId`](crate::HandlerId)).
+    pub(crate) next_handler_id: crate::handlers::HandlerSerial,
     /// Next `EventCode::Custom` value.
     pub(crate) next_event_code: u16,
     /// The layout pass.
@@ -88,6 +90,28 @@ pub struct Engine {
     pub(crate) faults: crate::fault::FaultState,
     /// The last user input (see [`Engine::inactive_for`]); `None` until the first step.
     pub(crate) last_activity: Option<twine_core::Instant>,
+    /// The high-resolution time (µs) the current step began at ([`Engine::begin_step`]; `None`
+    /// without a `hires_timer`).
+    pub(crate) step_started_us: Option<u64>,
+    /// Worst-case timings ([`Engine::timing`]).
+    pub(crate) timing: crate::TimingReport,
+    /// The frame observer ([`Engine::set_frame_observer`]); `None`: no observer, one branch
+    /// per chunk.
+    #[cfg(feature = "display-integrity")]
+    pub(crate) observer: Option<alloc::boxed::Box<dyn crate::FrameObserver>>,
+    /// The nodes with [`ObjFlags::SAFETY_CRITICAL`](crate::ObjFlags::SAFETY_CRITICAL), in
+    /// the order they became critical (empty: the draw walk skips every critical check).
+    #[cfg(feature = "display-integrity")]
+    pub(crate) critical: Vec<crate::integrity::CriticalEntry>,
+    /// Drawing is an off-screen re-render ([`Engine::render_region_to`]): critical nodes
+    /// drawn meanwhile are not recorded as drawn on screen.
+    #[cfg(feature = "display-integrity")]
+    pub(crate) offscreen: Cell<bool>,
+    /// A layer skipped a safety-critical node while drawing (drawn after the layer).
+    #[cfg(feature = "display-integrity")]
+    pub(crate) critical_skipped: Cell<bool>,
+    /// Completed steps ([`Engine::heartbeat`]), wrapping.
+    pub(crate) heartbeat: u32,
     #[cfg(feature = "debug-checks")]
     pub(crate) invalidations: Vec<(Rect, InvalidateReason)>,
     /// The invalidations rendered by the last frame that started.
@@ -188,6 +212,7 @@ impl Engine {
             displays: Vec::new(),
             default_display: None,
             config,
+            limits: twine_core::Limits::DEFAULT,
             theme_font: None,
             res: Some(res),
             nodes_drawn: Cell::new(0),
@@ -212,6 +237,17 @@ impl Engine {
             outside_presses: Vec::new(),
             faults: crate::fault::FaultState::default(),
             last_activity: None,
+            step_started_us: None,
+            timing: crate::TimingReport::default(),
+            #[cfg(feature = "display-integrity")]
+            observer: None,
+            #[cfg(feature = "display-integrity")]
+            critical: Vec::new(),
+            #[cfg(feature = "display-integrity")]
+            offscreen: Cell::new(false),
+            #[cfg(feature = "display-integrity")]
+            critical_skipped: Cell::new(false),
+            heartbeat: 0,
             // Both logs are swapped at every frame start: allocated once, up front.
             #[cfg(feature = "debug-checks")]
             invalidations: Vec::with_capacity(64),
@@ -232,6 +268,92 @@ impl Engine {
     #[must_use]
     pub fn config(&self) -> &EngineConfig {
         &self.config
+    }
+
+    /// Applies the engine's share of `limits`: [`max_nodes`](twine_core::Limits::max_nodes)
+    /// (screens and layers included), [`max_tree_depth`](twine_core::Limits::max_tree_depth),
+    /// [`max_text_len`](twine_core::Limits::max_text_len),
+    /// [`max_handlers`](twine_core::Limits::max_handlers),
+    /// [`max_timers`](twine_core::Limits::max_timers) and
+    /// [`max_anims`](twine_core::Limits::max_anims) bound creations from now on (each refusal
+    /// raises [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity) with its
+    /// [`CapacityFault`](twine_core::fault::CapacityFault) code). With
+    /// [`preallocate`](twine_core::Limits::preallocate) it also reserves the node arena, the
+    /// delete scratch and the timer and animation tables, so staying within the limits
+    /// allocates nothing there. Lowering a bound below the current count refuses further
+    /// creations until enough are deleted — except `max_tree_depth`: drawing, hit testing and
+    /// layout recurse over the tree, and their stack bound
+    /// (`docs/safety/profile.md` § 10.4) holds only if no node is deeper than the limit, so
+    /// a depth limit below the current tree's depth is refused. The `Ui` builders call it with
+    /// `AppConfig::limits`; an engine created on its own starts with
+    /// [`Limits::DEFAULT`](twine_core::Limits::DEFAULT).
+    ///
+    /// Allocates (the reservation) only with `preallocate`; never panics.
+    ///
+    /// # Errors
+    /// [`EngineError::InvalidConfig`] when [`Limits::validate`](twine_core::Limits::validate)
+    /// refuses `limits`, or when the tree already has nodes deeper than
+    /// [`max_tree_depth`](twine_core::Limits::max_tree_depth); nothing is applied.
+    ///
+    /// ```
+    /// use twine_core::Limits;
+    /// use twine_engine::{Engine, EngineConfig, EngineError, Obj};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// e.set_limits(&Limits::DEFAULT.max_nodes(2).preallocated()).unwrap();
+    /// let root = e.create_root(Box::new(Obj)).unwrap();
+    /// e.create(root, Box::new(Obj)).unwrap();
+    /// assert_eq!(e.create(root, Box::new(Obj)), Err(EngineError::TooManyNodes));
+    /// assert_eq!(e.limits().max_nodes, 2);
+    /// ```
+    pub fn set_limits(&mut self, limits: &twine_core::Limits) -> Result<(), EngineError> {
+        if let Err(twine_core::Error::InvalidArgument(msg)) = limits.validate() {
+            twine_core::warn!(target: "twine::engine", "set_limits: {}", msg);
+            return Err(EngineError::InvalidConfig(msg));
+        }
+        if self.tree_height() > usize::from(limits.max_tree_depth) {
+            twine_core::warn!(
+                target: "twine::engine",
+                "set_limits: the tree is already deeper than max_tree_depth = {}",
+                limits.max_tree_depth
+            );
+            return Err(EngineError::InvalidConfig(
+                "max_tree_depth is below the depth of the current tree",
+            ));
+        }
+        self.limits = *limits;
+        self.anim.timeline.set_limit(limits.max_anims);
+        self.anim.timers.set_limit(limits.max_timers);
+        if limits.preallocate {
+            self.tree.reserve(limits.max_nodes);
+            self.anim.timeline.reserve(limits.max_anims);
+            self.anim.timers.reserve(limits.max_timers);
+        }
+        Ok(())
+    }
+
+    /// The depth of the deepest node (a screen or layer is level 0). O(nodes).
+    fn tree_height(&self) -> usize {
+        self.tree
+            .roots()
+            .map(|r| self.tree.subtree_height(r))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The limits applied with [`set_limits`](Self::set_limits) (default
+    /// [`Limits::DEFAULT`](twine_core::Limits::DEFAULT)).
+    ///
+    /// ```
+    /// use twine_core::Limits;
+    /// use twine_engine::{Engine, EngineConfig};
+    ///
+    /// let e = Engine::new(EngineConfig::default()).unwrap();
+    /// assert_eq!(*e.limits(), Limits::DEFAULT);
+    /// ```
+    #[must_use]
+    pub fn limits(&self) -> &twine_core::Limits {
+        &self.limits
     }
 
     /// The configuration, mutably (cache sizes cannot change after [`new`](Self::new)).

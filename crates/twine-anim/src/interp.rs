@@ -36,7 +36,10 @@ fn lerp_i64(a: i32, b: i32, t: i32) -> i64 {
     match t {
         0 => i64::from(a),
         EASING_ONE => i64::from(b),
-        _ => i64::from(a) + (((i64::from(b) - i64::from(a)) * i64::from(t)) >> 10),
+        // `|b − a| < 2^32` and `|t| ≤ 2^31`: the product has magnitude below 2^63, so the
+        // `i64` steps are exact.
+        _ => i64::from(a)
+            .wrapping_add(i64::from(b).wrapping_sub(i64::from(a)).wrapping_mul(i64::from(t)) >> 10),
     }
 }
 
@@ -74,7 +77,8 @@ impl Interpolate for Color {
     /// (floor), i.e. [`Color::mix`]; outside, each channel is extrapolated and saturated.
     fn lerp(a: Color, b: Color, t: i32) -> Color {
         if (0..=EASING_ONE).contains(&t) {
-            Color::mix(b, a, Opa::from_raw(((t * 255) >> 10) as u8))
+            // `t ∈ 0..=1024`: `t · 255 >> 10 ∈ 0..=255`.
+            Color::mix(b, a, Opa::from_raw((t.wrapping_mul(255) >> 10) as u8))
         } else {
             Color::new(
                 u8::lerp(a.r, b.r, t),

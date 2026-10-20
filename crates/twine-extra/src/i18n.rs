@@ -30,8 +30,9 @@
 //! and is searched by binary search. A missing key or translation shows the key itself and
 //! logs one `warn!` (per key and language).
 //!
-//! Code below `provide_i18n` reaches the handle with [`expect_i18n`] (panics outside) or
-//! [`use_i18n`] (a `Result`), following the context convention of `Scope` (§ Context values).
+//! Code below `provide_i18n` reaches the handle with [`use_i18n`] (a `Result`) or
+//! [`expect_i18n`] (panics outside), following the context convention of `Scope` (§ Context
+//! values).
 
 use core::cell::RefCell;
 use core::fmt::{Display, Write};
@@ -266,6 +267,9 @@ pub fn use_i18n(cx: Scope) -> Result<I18n, MissingContext> {
 /// [`use_i18n`], a thin `#[track_caller]` wrapper for application code below `provide_i18n`
 /// (e.g. a language picker).
 ///
+/// `twine-extra` is not part of the `safety` profile yet, so this function exists in every
+/// build; profile code uses [`use_i18n`] and handles the error.
+///
 /// # Panics
 ///
 /// If no ancestor of `cx` called [`provide_i18n`], with `"context twine_extra::i18n::I18n not
@@ -280,7 +284,20 @@ pub fn use_i18n(cx: Scope) -> Result<I18n, MissingContext> {
 #[must_use]
 #[track_caller]
 pub fn expect_i18n(cx: Scope) -> I18n {
-    cx.expect_context::<I18n>()
+    match use_i18n(cx) {
+        Ok(i18n) => i18n,
+        Err(e) => missing(e),
+    }
+}
+
+/// The panic path of [`expect_i18n`] (cold, out of line). Not `MissingContext::panic`, which
+/// the `safety` profile removes: this crate is not a profile crate and builds in safety builds
+/// too.
+#[cold]
+#[inline(never)]
+#[track_caller]
+fn missing(e: MissingContext) -> ! {
+    panic!("{e}")
 }
 
 /// Keys (pointer, length, language) already warned about; later warnings pass through once the

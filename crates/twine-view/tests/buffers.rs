@@ -49,7 +49,9 @@ fn draw_buffers_statics_are_taken_once_and_render() {
         .runtime(Runtime::current_thread())
         .clock(MockClock::new())
         .buffers(BufferMode::partial_double_from(bufs))
-        .build(|_| label("hi"));
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(|_| label("hi"))
+        .unwrap();
     let _ = ui.update();
     let d = ui.display();
     assert_eq!(ui.engine().last_stats(d).chunks, 4, "32 rows in 8-row chunks");
@@ -62,6 +64,7 @@ fn regression_refused_display_leaks_no_heap_buffers() {
         let a8 = NullPanel(DisplayInfo::new(320, 240, ColorFormat::A8), None);
         let builder = Ui::builder(a8)
             .runtime(Runtime::current_thread())
+            .limits(twine_testing::HARNESS_LIMITS)
             .clock(MockClock::new())
             .buffers(BufferMode::alloc(BufferSpec::PartialDouble { rows }));
         let (r, stats) = count_allocs(move || builder.try_build(|_| label("hi")).map(|_| ()));
@@ -76,7 +79,16 @@ fn regression_refused_display_leaks_no_heap_buffers() {
         stats
     };
     // The engine built (and dropped) meanwhile allocates the same whatever the buffer size:
-    // no buffer was allocated.
+    // no buffer was allocated. In the safety profile the limits are preallocated, and the
+    // thread's reactive runtime keeps its reservation (it outlives every `Ui`): reserve it
+    // before measuring.
+    if twine_core::SAFETY_PROFILE {
+        let mut e = twine_engine::Engine::new(twine_engine::EngineConfig::default()).unwrap();
+        AppConfig::new()
+            .limits(twine_testing::HARNESS_LIMITS)
+            .apply_limits(Runtime::current_thread(), &mut e)
+            .unwrap();
+    }
     let (small, big) = (attempt(1), attempt(240));
     assert_eq!(small.bytes, big.bytes, "{small:?} vs {big:?}");
 }

@@ -12,6 +12,19 @@ workspace = true
 
 [features]
 default = []
+## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
+## safety lints of library code and the refusal of excluded features.
+safety = [
+    "twine-anim/safety",
+    "twine-core/safety",
+    "twine-engine/safety",
+    "twine-image/safety",
+    "twine-render/safety",
+    "twine-style/safety",
+    "twine-text/safety",
+    "twine-vector?/safety",
+    "twine-widgets/safety",
+]
 ## Arabic/Persian contextual forms in dropdown and roller options.
 arabic-shaping = ["twine-text/arabic-shaping", "twine-widgets/arabic-shaping"]
 ## `VectorView`: a widget drawing `twine-vector` scenes.

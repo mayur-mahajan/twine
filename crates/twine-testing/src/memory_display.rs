@@ -160,6 +160,8 @@ pub struct MemoryDisplay {
     sleep_settle: Duration,
     /// Flushes begun while asleep.
     flushes_asleep: u64,
+    /// `read_back` is refused (`without_read_back`).
+    write_only: bool,
 }
 
 impl MemoryDisplay {
@@ -205,6 +207,7 @@ impl MemoryDisplay {
             asleep: false,
             sleep_settle: Duration::ZERO,
             flushes_asleep: 0,
+            write_only: false,
         }
     }
 
@@ -421,6 +424,31 @@ impl MemoryDisplay {
         &self.framebuffer
     }
 
+    /// The framebuffer, writable: changes what the panel "shows" behind the engine's back,
+    /// e.g. to simulate a corrupted frame memory for display-integrity tests.
+    ///
+    /// ```
+    /// use twine_core::{Color, ColorFormat};
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::MemoryDisplay;
+    ///
+    /// let mut d = MemoryDisplay::new(DisplayInfo::new(4, 4, ColorFormat::L8));
+    /// d.framebuffer_mut()[0] = 0xFF;
+    /// assert_eq!(d.pixel(0, 0), Color::WHITE);
+    /// ```
+    pub fn framebuffer_mut(&mut self) -> &mut [u8] {
+        &mut self.framebuffer
+    }
+
+    /// Makes the display write-only: `read_back` answers `ControlError::Unsupported`, like a
+    /// panel without a readable frame memory. (By default a `MemoryDisplay` reads back its
+    /// framebuffer.)
+    #[must_use]
+    pub fn without_read_back(mut self) -> Self {
+        self.write_only = true;
+        self
+    }
+
     /// Every flush since creation or the last [`take_flushes`](Self::take_flushes).
     #[must_use]
     pub fn flushes(&self) -> &[FlushRecord] {
@@ -632,6 +660,42 @@ impl DisplayDriver for MemoryDisplay {
         }
         self.asleep = sleep;
         Ok(self.sleep_settle)
+    }
+
+    /// Copies the pixels of `area` out of the framebuffer, packed (the layout of a flush);
+    /// `Unsupported` after [`without_read_back`](MemoryDisplay::without_read_back).
+    fn read_back(&mut self, area: Rect, buf: &mut [u8]) -> Result<(), ControlError<Self::Error>> {
+        if self.write_only {
+            return Err(ControlError::Unsupported);
+        }
+        let panel = Rect::new(0, 0, i32::from(self.panel_w), i32::from(self.panel_h));
+        if area.is_empty() || !panel.contains_rect(&area) {
+            return Err(ControlError::Driver(MemoryDisplayError::OutOfBounds(area)));
+        }
+        let bpp = usize::from(self.info.format.bpp());
+        let row_bytes = self.info.format.stride(area.width() as u32) as usize;
+        let needed = row_bytes * area.height() as usize;
+        if buf.len() < needed {
+            return Err(ControlError::Driver(MemoryDisplayError::BufferTooSmall {
+                needed,
+                got: buf.len(),
+            }));
+        }
+        for (r, out) in buf.chunks_mut(row_bytes).take(area.height() as usize).enumerate() {
+            let src_row = (area.y0 as usize + r) * self.stride;
+            if bpp % 8 == 0 {
+                let start = src_row + area.x0 as usize * bpp / 8;
+                out.copy_from_slice(&self.framebuffer[start..start + row_bytes]);
+            } else {
+                out.fill(0);
+                let src = &self.framebuffer[src_row..src_row + self.stride];
+                for x in 0..area.width() as usize {
+                    let v = twine_core::color::unpack_bits(src, bpp as u8, area.x0 as usize + x);
+                    set_bits(out, bpp, x, v);
+                }
+            }
+        }
+        Ok(())
     }
 
     fn set_rotation(&mut self, rotation: Rotation) -> Result<DisplayInfo, ControlError<Self::Error>> {

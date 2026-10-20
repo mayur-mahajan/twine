@@ -63,7 +63,7 @@ fn textarea_view_two_way() {
         textarea(name).one_line(true).test_id("ta")
     });
     settle(&mut t);
-    let name = t.root_scope().expect_context::<Signal<String>>();
+    let name = t.root_scope().use_context::<Signal<String>>().unwrap();
     assert_eq!(ta_text(&t, "ta"), "Ada");
     focus(&mut t, "ta");
     t.type_text("m");
@@ -87,7 +87,7 @@ fn textarea_own_edit_keeps_cursor() {
         textarea(s).one_line(true).test_id("ta")
     });
     settle(&mut t);
-    let s = t.root_scope().expect_context::<Signal<String>>();
+    let s = t.root_scope().use_context::<Signal<String>>().unwrap();
     focus(&mut t, "ta");
     let n = node(&t, "ta");
     t.engine_mut()
@@ -127,7 +127,7 @@ fn textarea_on_insert_replaces() {
             .test_id("ta")
     });
     settle(&mut t);
-    let s = t.root_scope().expect_context::<Signal<String>>();
+    let s = t.root_scope().use_context::<Signal<String>>().unwrap();
     focus(&mut t, "ta");
     t.type_text("ok");
     settle(&mut t);
@@ -153,7 +153,7 @@ fn keyboard_types_into_bound_textarea() {
         .size(Length::pct(100), Length::pct(100))
     });
     settle(&mut t);
-    let name = t.root_scope().expect_context::<Signal<String>>();
+    let name = t.root_scope().use_context::<Signal<String>>().unwrap();
     assert!(t.find(by_id("ta")).state().contains(State::FOCUSED), "attached");
     tap_key(&mut t, "h");
     tap_key(&mut t, "i");
@@ -206,7 +206,7 @@ fn spinbox_view_two_way() {
             .test_id("sb")
     });
     t.run_until_idle();
-    let v = t.root_scope().expect_context::<Signal<i32>>();
+    let v = t.root_scope().use_context::<Signal<i32>>().unwrap();
     assert_eq!(ta_text(&t, "sb"), "042");
     focus(&mut t, "sb");
     t.key(Key::Up);
@@ -233,7 +233,7 @@ fn buttonmatrix_select_and_selected_model() {
             .test_id("m")
     });
     t.run_until_idle();
-    let sel = t.root_scope().expect_context::<Signal<Option<u16>>>();
+    let sel = t.root_scope().use_context::<Signal<Option<u16>>>().unwrap();
     let n = node(&t, "m");
     let area = {
         let e = t.engine();
@@ -274,7 +274,7 @@ fn span_text_binding_redraws_only_the_group() {
         ))
     });
     t.run_until_idle();
-    let name = t.root_scope().expect_context::<Signal<String>>();
+    let name = t.root_scope().use_context::<Signal<String>>().unwrap();
     let n = node(&t, "g");
     let texts = |t: &TestUi| -> Vec<String> {
         let e = t.engine();
@@ -353,7 +353,7 @@ fn buttonmatrix_builder_maps_rows_widths_and_controls() {
         .test_id("m")
     });
     t.run_until_idle();
-    let ok = t.root_scope().expect_context::<Signal<String>>();
+    let ok = t.root_scope().use_context::<Signal<String>>().unwrap();
     let n = node(&t, "m");
     {
         let e = t.engine();
@@ -419,7 +419,8 @@ fn keyboard_follows_a_dynamic_target_and_docks_from_a_signal() {
     settle(&mut t);
     let (editing, docked) = t
         .root_scope()
-        .expect_context::<(Signal<Option<usize>>, Signal<bool>)>();
+        .use_context::<(Signal<Option<usize>>, Signal<bool>)>()
+        .unwrap();
     let kb = node(&t, "kb");
     let attached = |t: &TestUi| t.engine().widget::<Keyboard>(kb).unwrap().textarea();
     assert_eq!(attached(&t), Some(node(&t, "a")));

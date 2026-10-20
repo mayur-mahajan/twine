@@ -37,7 +37,7 @@ fn when_switches_branch_and_disposes_scope() {
     assert_eq!(t.find(by_id("yes")).text(), "yes 1");
     let s = branch_signal.borrow().unwrap();
     assert!(s.is_alive());
-    let on = t.root_scope().expect_context::<Signal<bool>>();
+    let on = t.root_scope().use_context::<Signal<bool>>().unwrap();
     on.set(false);
     t.run_until_idle();
     assert!(t.find_all(by_id("yes")).is_empty());
@@ -67,7 +67,7 @@ fn when_unchanged_cond_does_not_rebuild() {
     });
     t.run_until_idle();
     let id = t.find(by_id("p")).id();
-    let n = t.root_scope().expect_context::<Signal<i32>>();
+    let n = t.root_scope().use_context::<Signal<i32>>().unwrap();
     for v in 2..10 {
         n.set(v);
         t.run_until_idle();
@@ -96,7 +96,7 @@ fn dynamic_rebuilds_only_on_tracked_change() {
     });
     t.run_until_idle();
     assert_eq!(builds.get(), 1);
-    let (mode, other) = t.root_scope().expect_context::<(Signal<u8>, Signal<u8>)>();
+    let (mode, other) = t.root_scope().use_context::<(Signal<u8>, Signal<u8>)>().unwrap();
     other.set(3);
     t.run_until_idle();
     assert_eq!(builds.get(), 1, "an untracked signal does not rebuild");
@@ -121,7 +121,7 @@ fn child_binding_reads_do_not_rebuild_dynamic() {
         })
     });
     t.run_until_idle();
-    let n = t.root_scope().expect_context::<Signal<i32>>();
+    let n = t.root_scope().use_context::<Signal<i32>>().unwrap();
     for v in 1..5 {
         n.set(v);
         t.run_until_idle();
@@ -145,7 +145,7 @@ fn regions_release_everything_on_switch() {
         )
     });
     t.run_until_idle_bounded();
-    let on = t.root_scope().expect_context::<Signal<bool>>();
+    let on = t.root_scope().use_context::<Signal<bool>>().unwrap();
     let nodes_on = t.engine().tree().len();
     let reactive_on = rt().stats().nodes;
     on.set(false);

@@ -187,6 +187,62 @@ macro_rules! reactive_texts {
 }
 reactive_texts!(Signal, ReadSignal, Memo);
 
+#[cfg(feature = "display-integrity")]
+/// What a text shows for a value that is not valid (`Validity::Failed` / `NoData`): dashes.
+pub const INVALID_TEXT: &str = "---";
+
+#[cfg(feature = "display-integrity")]
+/// Writes the text of a [`Validity`](twine_core::validity::Validity): the value (also when
+/// stale), or [`INVALID_TEXT`].
+fn write_validity<T: core::fmt::Display>(v: &twine_core::validity::Validity<T>, w: &mut dyn Write) {
+    let _ = match v.value() {
+        Some(t) => write!(w, "{t}"),
+        None => w.write_str(INVALID_TEXT),
+    };
+}
+
+#[cfg(feature = "display-integrity")]
+/// A `Validity` of a displayable value is a text: the value (also when stale, which the
+/// [`validity`](crate::ViewExt::validity) look marks), or dashes ([`INVALID_TEXT`]) when there
+/// is none — so an invalid value is never shown as a number.
+///
+/// ```
+/// use twine_view::prelude::*;
+///
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
+/// let v = cx.signal(Validity::Valid(42u16));
+/// let _a = label(v).validity(v);
+/// let _b = label(Validity::<u16>::NoData); // "---"
+/// cx.dispose();
+/// ```
+impl<T: core::fmt::Display> IntoText<marker::Valid<twine_core::validity::Validity<T>>>
+    for twine_core::validity::Validity<T>
+{
+    fn into_text(self) -> TextProp {
+        let mut s = String::new();
+        write_validity(&self, &mut s);
+        TextProp::Owned(s)
+    }
+}
+
+#[cfg(feature = "display-integrity")]
+/// The `IntoText` impls of reactive `Validity` handles: written in place (no allocation once
+/// the widget's buffers are large enough).
+macro_rules! validity_texts {
+    ($($s:ident),+) => {$(
+        impl<T: core::fmt::Display + 'static>
+            IntoText<marker::Valid<$s<T>>>
+            for $s<twine_core::validity::Validity<T>>
+        {
+            fn into_text(self) -> TextProp {
+                TextProp::Write(Box::new(move |w| self.with(|v| write_validity(v, w))))
+            }
+        }
+    )+};
+}
+#[cfg(feature = "display-integrity")]
+validity_texts!(Signal, ReadSignal, Memo);
+
 /// A text writer: the value [`text!`](crate::text!) expands to.
 pub struct TextFn(pub Box<TextWriter>);
 
@@ -305,7 +361,16 @@ pub(crate) fn bind_str(
         TextProp::Owned(s) => return set(cx.engine(), node, TextRef::Borrowed(&s)),
         TextProp::StaticFn(f) => DynText::StaticFn(f),
         TextProp::Fn(f) => DynText::Fn(f),
-        TextProp::Write(w) => DynText::Write(w, alloc::rc::Rc::default()),
+        TextProp::Write(w) => {
+            // The binding's format buffer is a widget text too: reserved for the limit with
+            // `Limits::preallocate`, so formatting after a seal allocates nothing.
+            let limits = cx.engine().limits();
+            let mut buf = String::new();
+            if limits.preallocate {
+                buf.reserve(usize::from(limits.max_text_len));
+            }
+            DynText::Write(w, alloc::rc::Rc::new(core::cell::RefCell::new(buf)))
+        }
         // `resolve` resolved it.
         TextProp::Scoped(_) => return,
     };
@@ -352,7 +417,11 @@ impl DynText {
                 {
                     let mut b = scratch.borrow_mut();
                     b.clear();
+                    let cap = b.capacity();
                     w(&mut *b);
+                    if b.capacity() != cap {
+                        twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
+                    }
                 }
                 TextValue::Scratch(scratch.clone())
             }

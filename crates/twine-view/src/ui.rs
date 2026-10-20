@@ -9,7 +9,7 @@ use twine_core::fault::{FaultCounts, FaultKind, Faults};
 use twine_core::{Duration, Fraction, Instant, Rotation};
 use twine_engine::{
     BufferMode, DisplayCmd, DisplayId, Engine, EngineConfig, EngineError, FaultHook, FaultRecord, InputId,
-    IntoTheme, StepBudget, Wake,
+    IntoTheme, StepBudget, TimingReport, Wake,
 };
 use twine_hal::{Clock, DisplayDriver, FramebufferDisplay, InputDevice, Platform};
 use twine_reactive::{Channel, Runtime, Scope, Signal, UiWaker, WakerLease};
@@ -19,15 +19,13 @@ use crate::access::{EffectCx, EngineAccess};
 use crate::build::{BuildCx, MountReport};
 use crate::config::AppConfig;
 use crate::display::{CommandsSetter, DisplayBuilder, DisplayMut, mount_display};
-use crate::engine_queue::{DEFAULT_ENGINE_QUEUE_CAPACITY, EngineQueue};
-use crate::error::{BuildError, BuildFailure, BuildFault, CapacityFault, UiError};
+use crate::engine_queue::EngineQueue;
+use crate::error::{BuildError, BuildFailure, BuildFault, UiError};
 use crate::hooks::{StyleAnchor, ThemeState, UiContext, track_theme};
 use crate::typestate::{HasBuffers, HasClock, HasRuntime, NoBuffers, NoClock, NoRuntime};
 use crate::view::View;
-
-/// The default of [`UiBuilder::messages_per_channel`]: messages delivered per channel per
-/// update (the rest waits for the next update, which is requested at once).
-pub const DEFAULT_MESSAGES_PER_CHANNEL: usize = 16;
+use twine_core::Limits;
+use twine_core::fault::CapacityFault;
 
 /// The reactive half of a [`Ui`] for hosts that own the engine themselves (test harnesses,
 /// simulators, custom loops): the root scope, the waker, and the update cycle run on an
@@ -72,7 +70,7 @@ pub const DEFAULT_MESSAGES_PER_CHANNEL: usize = 16;
 /// [`ThemeHandle::set`](crate::ThemeHandle::set), [`ThemeHandle::set_mode`](crate::ThemeHandle::set_mode)
 /// and [`MotionHandle::set`](crate::MotionHandle::set) called between updates — are queued on the
 /// `UiCore` that owns the scope and applied at the start of the next `update`. The queue is a
-/// fixed ring of [`DEFAULT_ENGINE_QUEUE_CAPACITY`] commands allocated at mount
+/// fixed ring of [`Limits::engine_queue`] commands allocated at mount
 /// ([`set_engine_queue_capacity`](Self::set_engine_queue_capacity)); a full queue drops the
 /// command and raises [`FaultKind::Capacity`] with code
 /// [`CapacityFault::EngineQueue`](crate::CapacityFault::EngineQueue) at the next update. Pass
@@ -128,7 +126,7 @@ impl core::fmt::Debug for UiCore {
         f.debug_struct("UiCore")
             .field("root", &self.root)
             .field("display", &self.display)
-            .field("displays", &(1 + self.others.len()))
+            .field("displays", &self.others.len().saturating_add(1))
             .finish_non_exhaustive()
     }
 }
@@ -206,14 +204,50 @@ fn build_app<V: View>(
     Ok(())
 }
 
+#[cfg(feature = "display-integrity")]
+/// Builds the static view `app` under `screen` in `scope` (the fail-safe screen, see
+/// [`UiCore::set_fail_safe`]); the caller has activated the scope's root.
+fn build_static<V: View>(
+    scope: Scope,
+    engine: &mut Engine,
+    screen: twine_engine::NodeId,
+    app: impl FnOnce(Scope) -> V,
+) -> Result<(), BuildError> {
+    let rt = scope.runtime();
+    let report = MountReport::begin(scope);
+    EngineAccess::provide(rt, engine, || {
+        rt.batch(|| {
+            let view = app(scope);
+            EngineAccess::with(rt, |e| {
+                let mut cx = BuildCx::new(e, screen, scope);
+                view.build(&mut cx);
+            });
+        });
+    });
+    forward_reactive_faults(rt, engine);
+    report.finish().into_result()?;
+    engine.update_layout();
+    Ok(())
+}
+
 /// Moves the faults the reactive runtime recorded since the last call into the engine's fault
 /// stream (one record per kind, with the number of occurrences), so the application sees every
 /// fault in one place and through one hook.
 fn forward_reactive_faults(rt: Runtime, engine: &mut Engine) {
     let counts = rt.take_faults();
     for kind in counts.kinds().iter() {
-        engine.raise_fault(FaultRecord::new(kind).occurrences(counts.get(kind)));
+        if kind == FaultKind::Capacity {
+            // One record per bound of the runtime, with its code.
+            for (bound, n) in rt.take_capacity_faults() {
+                if n > 0 {
+                    engine.raise_fault(FaultRecord::new(kind).occurrences(n).code(bound.code()));
+                }
+            }
+        } else {
+            engine.raise_fault(FaultRecord::new(kind).occurrences(counts.get(kind)));
+        }
     }
+    engine.raise_alloc_after_seal();
 }
 
 impl UiCore {
@@ -238,7 +272,14 @@ impl UiCore {
         display: DisplayId,
         app: impl FnOnce(Scope) -> V,
     ) -> Result<UiCore, BuildError> {
-        Self::mount_inner(rt, engine, display, None, DEFAULT_ENGINE_QUEUE_CAPACITY, app)
+        Self::mount_inner(
+            rt,
+            engine,
+            display,
+            None,
+            usize::from(Limits::DEFAULT.engine_queue),
+            app,
+        )
     }
 
     /// [`mount`](Self::mount) with the application's own waker (typically a
@@ -279,17 +320,17 @@ impl UiCore {
             engine,
             display,
             Some(waker),
-            DEFAULT_ENGINE_QUEUE_CAPACITY,
+            usize::from(Limits::DEFAULT.engine_queue),
             app,
         )
     }
 
     /// [`mount`](Self::mount) with the application's [`AppConfig`], for hosts that create the
     /// engine themselves (the simulator, test harnesses, custom loops) and want exactly what
-    /// [`UiBuilder::app_config`] gives a [`Ui`]: [`AppConfig::configure_engine`] on `display`
-    /// (fault hook, motion, theme, rotation), then the mount with the configured engine-queue
-    /// capacity and messages per channel. [`AppConfig::engine`] is what the host creates the
-    /// engine with.
+    /// [`UiBuilder::app_config`] gives a [`Ui`]: [`AppConfig::apply_limits`] (engine, runtime,
+    /// waker pool), [`AppConfig::configure_engine`] on `display` (fault hook, motion, theme,
+    /// rotation), then the mount with the limits' engine-queue capacity and messages per
+    /// channel. [`AppConfig::engine`] is what the host creates the engine with.
     ///
     /// ```
     /// use twine_core::ColorFormat;
@@ -297,7 +338,7 @@ impl UiCore {
     /// use twine_testing::MemoryDisplay;
     /// use twine_view::{UiCore, prelude::*};
     ///
-    /// let cfg = AppConfig::new().theme(DefaultTheme::light()).messages_per_channel(2);
+    /// let cfg = AppConfig::new().theme(DefaultTheme::light()).limits(Limits::DEFAULT.messages_per_channel(2));
     /// let mut engine = Engine::new(cfg.engine).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
     /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
@@ -309,8 +350,9 @@ impl UiCore {
     ///
     /// # Errors
     ///
-    /// [`UiError::Engine`] from [`AppConfig::configure_engine`] (unknown display, a rotation
-    /// on a framebuffer display); [`UiError::Build`] as [`mount`](Self::mount).
+    /// [`UiError::Engine`] from [`AppConfig::apply_limits`] (invalid limits) or
+    /// [`AppConfig::configure_engine`] (unknown display, a rotation on a framebuffer display);
+    /// [`UiError::Build`] as [`mount`](Self::mount).
     pub fn mount_configured<V: View>(
         rt: Runtime,
         engine: &mut Engine,
@@ -335,7 +377,7 @@ impl UiCore {
     /// use twine_view::{UiCore, prelude::*};
     ///
     /// static WAKER: UiWaker = UiWaker::new();
-    /// let cfg = AppConfig::new().messages_per_channel(2);
+    /// let cfg = AppConfig::new().limits(Limits::DEFAULT.messages_per_channel(2));
     /// let mut engine = Engine::new(cfg.engine).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
     /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
@@ -370,9 +412,17 @@ impl UiCore {
         waker: Option<&'static UiWaker>,
         app: impl FnOnce(Scope) -> V,
     ) -> Result<UiCore, UiError> {
+        config.apply_limits(rt, engine)?;
         config.configure_engine(engine, display)?;
-        let mut core = Self::mount_inner(rt, engine, display, waker, config.engine_queue_capacity, app)?;
-        core.set_messages_per_channel(config.messages_per_channel);
+        let mut core = Self::mount_inner(
+            rt,
+            engine,
+            display,
+            waker,
+            usize::from(config.limits.engine_queue),
+            app,
+        )?;
+        core.set_messages_per_channel(usize::from(config.limits.messages_per_channel));
         Ok(core)
     }
 
@@ -420,7 +470,7 @@ impl UiCore {
             others: Vec::new(),
             queue_capacity,
             lease,
-            messages_per_channel: DEFAULT_MESSAGES_PER_CHANNEL,
+            messages_per_channel: usize::from(Limits::DEFAULT.messages_per_channel),
             motion,
             motion_seen: engine.motion(),
         })
@@ -541,6 +591,49 @@ impl UiCore {
         self.others.iter().find(|a| a.display == display).map(|a| a.scope)
     }
 
+    #[cfg(feature = "display-integrity")]
+    /// Builds the static fail-safe view `app` of `display` on a new screen and registers it
+    /// ([`Engine::set_fail_safe_screen`]); see [`Ui::set_fail_safe`]. The view is built in a
+    /// child scope of the display's scope and refused (removed again) when it creates any
+    /// reactive node.
+    ///
+    /// # Errors
+    /// As [`Ui::set_fail_safe`]; [`EngineError::DisplayNotFound`] for a display this `UiCore`
+    /// does not drive.
+    pub fn set_fail_safe<V: View>(
+        &mut self,
+        engine: &mut Engine,
+        display: DisplayId,
+        app: impl FnOnce(Scope) -> V,
+    ) -> Result<(), UiError> {
+        let parent = self
+            .display_scope(display)
+            .ok_or(EngineError::DisplayNotFound(display))?;
+        if engine.fail_safe(display).is_some() {
+            return Err(EngineError::InvalidConfig("set_fail_safe: the fail-safe state is active").into());
+        }
+        let screen = engine.create_screen(display)?;
+        let rt = self.rt;
+        let before = rt.memory().nodes;
+        let scope = parent.child();
+        let built = self.root.activate(|| build_static(scope, engine, screen, app));
+        let reactive = rt.memory().nodes > before;
+        let result = match built {
+            Err(e) => Err(UiError::Build(e)),
+            Ok(()) if reactive => Err(UiError::Engine(EngineError::InvalidConfig(
+                "set_fail_safe: the fail-safe view must be static (it created signals, memos or effects)",
+            ))),
+            Ok(()) => engine
+                .set_fail_safe_screen(display, screen)
+                .map_err(UiError::Engine),
+        };
+        if result.is_err() {
+            EngineAccess::provide(rt, engine, || scope.dispose());
+            let _ = engine.delete(screen);
+        }
+        result
+    }
+
     /// Whether engine commands wait in any display's queue (one flag read per display).
     #[inline]
     fn queues_pending(&self) -> bool {
@@ -554,15 +647,18 @@ impl UiCore {
     /// inside one batch, with the engine lent to the application code they run), 6 the effect
     /// flush (bindings), 7 layout, 8 refresh; returns 9 when to run again (the engine's
     /// deadline, or at once while effects, channel messages, engine commands or the waker are
-    /// pending).
+    /// pending). The refresh (8) renders within the engine's
+    /// [`EngineConfig::step_budget`](twine_engine::EngineConfig::step_budget) (default
+    /// unlimited; see [`update_budgeted`](Self::update_budgeted)).
     #[inline]
     pub fn update(&mut self, engine: &mut Engine, now: Instant) -> Wake {
-        self.update_budgeted(engine, now, StepBudget::UNLIMITED)
+        let budget = engine.config().step_budget;
+        self.update_budgeted(engine, now, budget)
     }
 
     /// [`update`](Self::update) whose refresh (8) renders at most `budget` (see
-    /// [`StepBudget`]): a frame cut short continues in the next update, and this one returns
-    /// [`Wake::Now`]. See [`Ui::update_budgeted`].
+    /// [`StepBudget`]) instead of the configured one: a frame cut short continues in the next
+    /// update, and this one returns [`Wake::Now`]. See [`Ui::update_budgeted`].
     ///
     /// ```
     /// # use twine_core::ColorFormat;
@@ -674,7 +770,7 @@ impl UiCore {
     }
 
     /// Sets the number of engine commands the `UiCore` can queue (default
-    /// [`DEFAULT_ENGINE_QUEUE_CAPACITY`]; see [`UiCore`] § Engine commands). Allocates the new
+    /// [`Limits::engine_queue`]; see [`UiCore`] § Engine commands). Allocates the new
     /// ring now (configuration time), keeping the queued commands; queuing never allocates.
     /// Shrinking the ring below the number of commands already queued keeps the oldest ones that
     /// fit and drops the rest, reported at the next update like a full queue
@@ -706,8 +802,8 @@ impl UiCore {
     }
 
     /// Sets how many messages each channel delivers per update (default
-    /// [`DEFAULT_MESSAGES_PER_CHANNEL`]; `0` counts as `1`, so every update makes progress). See
-    /// [`UiBuilder::messages_per_channel`]. Never panics.
+    /// [`Limits::messages_per_channel`]; `0` counts as `1`, so every update makes progress).
+    /// Never panics.
     ///
     /// ```
     /// # use twine_core::ColorFormat;
@@ -751,7 +847,9 @@ impl UiCore {
 
     /// Heap bytes of the engine command queues of every display of this `UiCore`.
     pub(crate) fn engine_queue_bytes(&self) -> usize {
-        self.queue.heap_bytes() + self.others.iter().map(|d| d.queue.heap_bytes()).sum::<usize>()
+        self.others.iter().fold(self.queue.heap_bytes(), |sum, d| {
+            sum.saturating_add(d.queue.heap_bytes())
+        })
     }
 
     /// The display the `UiCore` was mounted on (see [`displays`](Self::displays) for all).
@@ -838,7 +936,10 @@ impl Drop for UiCore {
         if self.root.is_alive() {
             self.root.dispose();
         }
-        let unapplied = self.queue.len() + self.others.iter().map(|a| a.queue.len()).sum::<usize>();
+        let unapplied = self
+            .others
+            .iter()
+            .fold(self.queue.len(), |sum, a| sum.saturating_add(a.queue.len()));
         if unapplied > 0 {
             twine_core::warn!(
                 target: "twine::view",
@@ -921,9 +1022,17 @@ pub(crate) struct Settings {
     pub(crate) interrupt_probe: Option<fn() -> bool>,
     /// Caller memory for the engine's layer buffer (`Engine::with_layer_buf`); `None`: heap.
     pub(crate) layer_buf: Option<&'static mut [u8]>,
+    #[cfg(feature = "display-integrity")]
+    /// Registers the frame observer (`Engine::set_frame_observer`) on the built engine.
+    observer: Option<AccelSetter>,
 }
 
 impl Settings {
+    #[cfg(feature = "display-integrity")]
+    pub(crate) fn frame_observer(&mut self, observer: impl twine_engine::FrameObserver + 'static) {
+        self.observer = Some(Box::new(move |e: &mut Engine| e.set_frame_observer(observer)));
+    }
+
     pub(crate) fn accel(&mut self, accel: impl DrawAccel + 'static) {
         self.accel = Some(Box::new(move |e: &mut Engine| e.set_accel(accel)));
     }
@@ -942,21 +1051,25 @@ impl Settings {
         add_display: impl FnOnce(&mut Engine) -> Result<AddedDisplay, UiError>,
         app: impl FnOnce(Scope) -> V,
     ) -> Result<(Engine, UiCore), UiError> {
-        let mut engine = self.new_engine()?;
+        let mut engine = self.new_engine(rt)?;
         let (display, commands) = add_display(&mut engine)?;
         self.app.configure_display(&mut engine, display)?;
         if let Some(set_accel) = self.accel {
             set_accel(&mut engine);
+        }
+        #[cfg(feature = "display-integrity")]
+        if let Some(set_observer) = self.observer {
+            set_observer(&mut engine);
         }
         let mut core = UiCore::mount_inner(
             rt,
             &mut engine,
             display,
             self.waker,
-            self.app.engine_queue_capacity,
+            usize::from(self.app.limits.engine_queue),
             app,
         )?;
-        core.set_messages_per_channel(self.app.messages_per_channel);
+        core.set_messages_per_channel(usize::from(self.app.limits.messages_per_channel));
         if let Some(register) = commands {
             register(core.root_scope(), display);
         }
@@ -969,9 +1082,10 @@ impl Settings {
         Ok((engine, core))
     }
 
-    /// The engine, configured (fault hook and motion set before any display is added), with
-    /// the caller's layer buffer if one was given.
-    fn new_engine(&mut self) -> Result<Engine, UiError> {
+    /// The engine, configured (limits applied — and their storage reserved — and the fault
+    /// hook and motion set, before any display is added), with the caller's layer buffer if
+    /// one was given.
+    fn new_engine(&mut self, rt: Runtime) -> Result<Engine, UiError> {
         if let Some(probe) = self.interrupt_probe {
             twine_reactive::set_interrupt_probe(Some(probe));
         }
@@ -979,6 +1093,7 @@ impl Settings {
             Some(buf) => Engine::with_layer_buf(self.app.engine, buf)?,
             None => Engine::new(self.app.engine)?,
         };
+        self.app.apply_limits(rt, &mut engine)?;
         self.app.configure_engine_wide(&mut engine);
         Ok(engine)
     }
@@ -1042,13 +1157,11 @@ impl<S, B> UiBuilder<S, NoRuntime, NoClock, B> {
 }
 
 impl<S, R, C, B> UiBuilder<S, R, C, B> {
-    /// The application's configuration ([`AppConfig`]: engine configuration, theme, motion,
-    /// rotation, channel and queue budgets, fault hook) — the same value the simulator and the
-    /// tests are given, so they run what ships. **Replaces** every setting it covers, including
-    /// those set before by [`config`](Self::config), [`theme`](Self::theme),
-    /// [`motion`](Self::motion), [`rotation`](Self::rotation),
-    /// [`messages_per_channel`](Self::messages_per_channel),
-    /// [`engine_queue_capacity`](Self::engine_queue_capacity) and
+    /// The application's configuration ([`AppConfig`]: engine configuration, limits, theme,
+    /// motion, rotation, fault hook) — the same value the simulator and the tests are given,
+    /// so they run what ships. **Replaces** every setting it covers, including those set
+    /// before by [`config`](Self::config), [`limits`](Self::limits), [`theme`](Self::theme),
+    /// [`motion`](Self::motion), [`rotation`](Self::rotation) and
     /// [`fault_hook`](Self::fault_hook); those methods called afterwards refine it (e.g. the
     /// board's `hires_timer`). Never panics.
     ///
@@ -1059,7 +1172,7 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
     /// use twine_view::prelude::*;
     ///
     /// fn config() -> AppConfig {
-    ///     AppConfig::new().theme(DefaultTheme::light()).messages_per_channel(4)
+    ///     AppConfig::new().theme(DefaultTheme::light()).limits(Limits::DEFAULT.messages_per_channel(4))
     /// }
     ///
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
@@ -1120,7 +1233,7 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
 
     /// Applies the [`DisplayCmd`]s sent to `commands` from any context — another task, an
     /// interrupt, another thread or core (brightness, sleep, wake, rotation): each update
-    /// delivers them (like any channel, see [`messages_per_channel`](Self::messages_per_channel))
+    /// delivers them (like any channel, see [`Limits::messages_per_channel`])
     /// to [`Engine::display_command`] for the `Ui`'s display, and the engine applies them
     /// between frames (see [`Ui::set_rotation`], [`Ui::set_display_sleep`],
     /// [`Ui::set_brightness`]). A send wakes the `Ui`. The application owns the channel (the
@@ -1297,6 +1410,43 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
         self
     }
 
+    #[cfg(feature = "display-integrity")]
+    /// Registers a [`FrameObserver`](twine_engine::FrameObserver) on the engine when it is
+    /// built (display integrity: an independent monitor sees every chunk sent to the panels
+    /// and the end of every frame; see [`Engine::set_frame_observer`]). Registered at build,
+    /// so nothing is allocated for it afterwards; without one the refresh path pays one branch
+    /// per chunk. A later call replaces it.
+    ///
+    /// ```
+    /// use std::cell::Cell;
+    /// use std::rc::Rc;
+    /// use twine_core::ColorFormat;
+    /// use twine_engine::{FrameChunk, FrameObserver, FrameReport};
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::{MemoryDisplay, MockClock};
+    /// use twine_view::prelude::*;
+    ///
+    /// struct Frames(Rc<Cell<u32>>);
+    /// impl FrameObserver for Frames {
+    ///     fn chunk(&mut self, _: &FrameChunk<'_>) {}
+    ///     fn frame_done(&mut self, _: &FrameReport) { self.0.set(self.0.get() + 1) }
+    /// }
+    /// let frames = Rc::new(Cell::new(0));
+    /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
+    /// let mut ui = Ui::builder(panel)
+    ///     .runtime(Runtime::take().unwrap())
+    ///     .clock(MockClock::new())
+    ///     .buffers(BufferMode::alloc(BufferSpec::default()))
+    ///     .frame_observer(Frames(frames.clone()))
+    ///     .build(|_| label("hi"));
+    /// ui.update();
+    /// assert_eq!(frames.get(), 1);
+    /// ```
+    pub fn frame_observer(mut self, observer: impl twine_engine::FrameObserver + 'static) -> Self {
+        self.settings.frame_observer(observer);
+        self
+    }
+
     /// Caller memory for the engine's layer buffer (opacity groups, transforms, blend modes;
     /// ARGB8888) — typically a [`LayerBuffer`](crate::LayerBuffer) static — so that firmware
     /// keeps the renderer's largest scratch buffer out of the heap. Without it the engine
@@ -1431,9 +1581,9 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
     ///     .runtime(Runtime::take().unwrap())
     ///     .clock(MockClock::new())
     ///     .buffers(BufferMode::alloc(BufferSpec::default()))
-    ///     .config(EngineConfig { max_nodes: 256, ..EngineConfig::default() })
+    ///     .config(EngineConfig { refr_period: Duration::ms(20), ..EngineConfig::default() })
     ///     .build(|_| label("hi"));
-    /// assert_eq!(ui.engine().config().max_nodes, 256);
+    /// assert_eq!(ui.engine().config().refr_period, Duration::ms(20));
     /// ```
     pub fn config(mut self, c: EngineConfig) -> Self {
         self.settings.app.engine = c;
@@ -1511,44 +1661,35 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
         self
     }
 
-    /// How many engine commands the `Ui` can queue while the engine is not lent (default
-    /// [`DEFAULT_ENGINE_QUEUE_CAPACITY`]; sets [`AppConfig::engine_queue_capacity`]): the
-    /// cleanups of scopes disposed and the
-    /// [`AnimController`](crate::AnimController) methods, [`ThemeHandle::set`](crate::ThemeHandle::set),
-    /// [`ThemeHandle::set_mode`](crate::ThemeHandle::set_mode) and
-    /// [`MotionHandle::set`](crate::MotionHandle::set) calls made outside [`Ui::update`],
-    /// applied at the start of the next update. The ring is allocated once when the `Ui` is
-    /// built; a full queue drops the command and raises [`FaultKind::Capacity`] with code
-    /// [`CapacityFault::EngineQueue`](crate::CapacityFault::EngineQueue). A capacity of `0` is
-    /// accepted: every such command is then dropped and reported (the engine side effects of
-    /// handlers, effects and timers run by the `Ui` are applied at once and never queued). See
-    /// [`UiCore`] § Engine commands.
+    /// The memory bounds of the `Ui` (sets [`AppConfig::limits`]; default
+    /// [`Limits::DEFAULT`]), applied when it is built, before anything is created: the
+    /// engine's (nodes, tree depth, text length, handlers, timers, animations), the reactive
+    /// runtime's (nodes, scopes, pending effects), the `Ui`'s own and the waker pool's. Two of
+    /// them shape the update cycle:
     ///
-    /// ```
-    /// use twine_core::ColorFormat;
-    /// use twine_hal::DisplayInfo;
-    /// use twine_testing::{MemoryDisplay, MockClock};
-    /// use twine_view::prelude::*;
+    /// - [`engine_queue`](Limits::engine_queue): engine commands the `Ui` can queue while the
+    ///   engine is not lent — the cleanups of scopes disposed and the
+    ///   [`AnimController`](crate::AnimController) methods, [`ThemeHandle::set`](crate::ThemeHandle::set),
+    ///   [`ThemeHandle::set_mode`](crate::ThemeHandle::set_mode) and
+    ///   [`MotionHandle::set`](crate::MotionHandle::set) calls made outside [`Ui::update`],
+    ///   applied at the start of the next update. The ring is allocated once when the `Ui` is
+    ///   built; a full queue drops the command and raises [`FaultKind::Capacity`] with code
+    ///   [`CapacityFault::EngineQueue`](crate::CapacityFault::EngineQueue) (`0` drops and
+    ///   reports every such command; the engine side effects of handlers, effects and timers
+    ///   run by the `Ui` are applied at once and never queued). See [`UiCore`] § Engine
+    ///   commands.
+    /// - [`messages_per_channel`](Limits::messages_per_channel): messages each
+    ///   [`Channel`](twine_reactive::Channel) with an [`on_message`](Scope::on_message) handler
+    ///   delivers per update. Messages beyond it stay queued and the update returns
+    ///   [`Wake::Now`], so a burst is spread over several updates (frames keep being drawn in
+    ///   between) instead of stalling one. Raise it for bursty producers with large channels;
+    ///   lower it to bound the time an update spends in handlers. A
+    ///   [`Latest`](twine_reactive::Latest) always delivers its one newest value. Change it
+    ///   later with [`Ui::set_messages_per_channel`]; it costs nothing per update.
     ///
-    /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// let ui = Ui::builder(panel).runtime(Runtime::take().unwrap()).buffers(BufferMode::alloc(BufferSpec::default())).clock(MockClock::new()).engine_queue_capacity(64).build(|_| label("hi"));
-    /// # let _ = ui;
-    /// ```
-    pub fn engine_queue_capacity(mut self, capacity: usize) -> Self {
-        self.settings.app.engine_queue_capacity = capacity;
-        self
-    }
-
-    /// How many messages each [`Channel`](twine_reactive::Channel) with an
-    /// [`on_message`](Scope::on_message) handler delivers per update (default
-    /// [`DEFAULT_MESSAGES_PER_CHANNEL`] = 16; `0` counts as `1`; sets
-    /// [`AppConfig::messages_per_channel`]). Messages beyond it stay queued
-    /// and the update returns [`Wake::Now`], so a burst is spread over several updates (frames
-    /// keep being drawn in between) instead of stalling one. Raise it for bursty producers
-    /// with large channels; lower it to bound the time an update spends in handlers. A
-    /// [`Latest`](twine_reactive::Latest) always delivers its one newest value. Change it later
-    /// with [`Ui::set_messages_per_channel`] ([`UiCore::set_messages_per_channel`]); it costs
-    /// nothing per update. Never panics.
+    /// Invalid limits make [`try_build`](Self::try_build) fail with [`UiError::Engine`]
+    /// ([`EngineError::InvalidConfig`](twine_engine::EngineError::InvalidConfig)); in the
+    /// `safety` profile they must be [`preallocated`](Limits::preallocated). Never panics.
     ///
     /// ```
     /// use twine_core::ColorFormat;
@@ -1561,12 +1702,13 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
     ///     .runtime(Runtime::take().unwrap())
     ///     .buffers(BufferMode::alloc(BufferSpec::default()))
     ///     .clock(MockClock::new())
-    ///     .messages_per_channel(64)
+    ///     .limits(Limits::DEFAULT.engine_queue(64).messages_per_channel(4).max_nodes(200))
     ///     .build(|_| label("hi"));
-    /// assert_eq!(ui.messages_per_channel(), 64);
+    /// assert_eq!(ui.messages_per_channel(), 4);
+    /// assert_eq!(ui.engine().limits().max_nodes, 200);
     /// ```
-    pub fn messages_per_channel(mut self, n: usize) -> Self {
-        self.settings.app.messages_per_channel = n;
+    pub fn limits(mut self, limits: Limits) -> Self {
+        self.settings.app.limits = limits;
         self
     }
 
@@ -1627,7 +1769,7 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
     /// for an [`AppConfig::rotation`] on a framebuffer display. Heap buffers
     /// ([`BufferMode::alloc`]) are allocated only once the display has been accepted.
     /// [`UiError::Build`]: a widget of `app` could not be created (e.g. more nodes than
-    /// [`EngineConfig::max_nodes`](twine_engine::EngineConfig::max_nodes)); see
+    /// [`Limits::max_nodes`]); see
     /// [`UiCore::mount`]. The fault hook set with [`fault_hook`](Self::fault_hook) has seen
     /// every fault by then.
     ///
@@ -1663,6 +1805,9 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
 
     /// [`try_build`](Self::try_build), panicking on an error.
     ///
+    /// Not available with the `safety` feature (the profile has no panicking constructors:
+    /// use [`try_build`](Self::try_build) and handle the error).
+    ///
     /// # Panics
     /// When the engine rejects the display, buffers or inputs, or when a widget of `app`
     /// cannot be created (see [`try_build`](Self::try_build) § Errors). A missing runtime,
@@ -1682,6 +1827,7 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
     ///     .build(|_| label("hi"));
     /// ui.update();
     /// ```
+    #[cfg(not(feature = "safety"))]
     pub fn build<V: View>(self, app: impl FnOnce(Scope) -> V) -> Ui
     where
         S: DisplaySetup,
@@ -1752,22 +1898,27 @@ impl Ui {
         UiBuilder::new(DisplayBuilder::framebuffer(display))
     }
 
-    /// One update (see [`UiCore::update`]) at the clock's current time. Returns when to run
-    /// again; [`run::blocking`](crate::run::blocking) is the loop that honours it.
+    /// One update (see [`UiCore::update`]) at the clock's current time, rendering within
+    /// [`AppConfig::engine`](crate::AppConfig::engine)'s
+    /// [`step_budget`](twine_engine::EngineConfig::step_budget) (default unlimited). Returns
+    /// when to run again; [`run::blocking`](crate::run::blocking) is the loop that honours it.
     pub fn update(&mut self) -> Wake {
         let now = self.clock.now();
         self.core.update(&mut self.engine, now)
     }
 
-    /// One update that renders at most `budget` ([`StepBudget`]): the hook for schedulers
-    /// that bound how long a step may take (an RTOS time slice, a super-loop with other
-    /// duties). When the frame is cut short the update returns [`Wake::Now`] and the next
-    /// update — budgeted or not — continues it; the finished frame has exactly the pixels of
-    /// the same frame rendered by one [`update`](Self::update). Each update still runs the
-    /// whole update cycle before rendering (messages, inputs, timers, animations, bindings,
-    /// layout), so the UI stays responsive while a large frame is drawn.
+    /// One update that renders at most `budget` ([`StepBudget`]: chunks and/or time) instead
+    /// of the configured [`step_budget`](twine_engine::EngineConfig::step_budget): the hook
+    /// for schedulers that bound how long a step may take (an RTOS time slice, a super-loop
+    /// with other duties). When the frame is cut short the update returns [`Wake::Now`] and
+    /// the next update — budgeted or not — continues it; the finished frame has exactly the
+    /// pixels of the same frame rendered by one [`update`](Self::update). An update that uses
+    /// up the budget's time raises
+    /// [`FaultKind::FrameOverrun`](twine_core::fault::FaultKind::FrameOverrun). Each update
+    /// still runs the whole update cycle before rendering (messages, inputs, timers,
+    /// animations, bindings, layout), so the UI stays responsive while a large frame is drawn.
     ///
-    /// Allocation-free; never panics. With [`StepBudget::UNLIMITED`] it is
+    /// Allocation-free; never panics. With the configured budget it is
     /// [`update`](Self::update).
     ///
     /// ```
@@ -1860,14 +2011,187 @@ impl Ui {
         self.core.memory_report(&self.engine)
     }
 
-    /// Messages each channel delivers per update (see [`UiBuilder::messages_per_channel`]).
+    /// The worst-case timings since start-up or the last [`reset_worst`](Self::reset_worst):
+    /// the longest update, chunk render and chunk flush in µs ([`TimingReport`]; measured
+    /// with the engine's `hires_timer`, all `0` without one). Evidence for a time budget
+    /// (`twine_core::audit::KeyValues(&ui.timing())` writes the `timing.*` audit lines).
+    /// Never panics; allocates nothing.
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::{MemoryDisplay, MockClock};
+    /// use twine_view::prelude::*;
+    ///
+    /// fn hires() -> Instant {
+    ///     // The board's microsecond timer; here 50 µs pass per reading.
+    ///     thread_local!(static T: std::cell::Cell<u64> = const { std::cell::Cell::new(0) });
+    ///     T.with(|t| { t.set(t.get() + 50); Instant::from_micros(t.get()) })
+    /// }
+    /// let mut config = AppConfig::new();
+    /// config.engine.hires_timer = Some(hires);
+    /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
+    /// let mut ui = Ui::builder(panel)
+    ///     .runtime(Runtime::take().unwrap())
+    ///     .clock(MockClock::new())
+    ///     .buffers(BufferMode::alloc(BufferSpec::default()))
+    ///     .app_config(config)
+    ///     .build(|_| label("hi"));
+    /// ui.update();
+    /// assert!(ui.timing().worst_update_us >= ui.timing().worst_render_us);
+    /// ui.reset_worst(); // e.g. after start-up
+    /// assert_eq!(ui.timing(), TimingReport::default());
+    /// ```
+    #[must_use]
+    pub fn timing(&self) -> TimingReport {
+        self.engine.timing()
+    }
+
+    /// Clears the high-water marks of [`timing`](Self::timing) ([`Engine::reset_worst`]).
+    /// Never panics.
+    pub fn reset_worst(&mut self) {
+        self.engine.reset_worst();
+    }
+
+    /// The number of completed updates ([`Engine::heartbeat`]), wrapping: an external
+    /// watchdog reads it to see that the UI is alive. Never panics.
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::{MemoryDisplay, MockClock};
+    /// use twine_view::prelude::*;
+    ///
+    /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
+    /// let mut ui = Ui::builder(panel)
+    ///     .runtime(Runtime::take().unwrap())
+    ///     .clock(MockClock::new())
+    ///     .buffers(BufferMode::alloc(BufferSpec::default()))
+    ///     .build(|_| label("hi"));
+    /// let before = ui.heartbeat();
+    /// ui.update();
+    /// ui.update();
+    /// assert_eq!(ui.heartbeat(), before.wrapping_add(2));
+    /// ```
+    #[must_use]
+    pub fn heartbeat(&self) -> u32 {
+        self.engine.heartbeat()
+    }
+
+    #[cfg(feature = "display-integrity")]
+    /// Builds the **fail-safe screen** of the first display: `app` is built once, now, on a
+    /// screen of its own, and registered with [`Engine::set_fail_safe_screen`];
+    /// [`enter_fail_safe`](Self::enter_fail_safe) switches to it later without allocating.
+    /// Call it at start-up, before [`seal`](Self::seal).
+    ///
+    /// The fail-safe view must be **static**: it may not create signals, memos or effects
+    /// (no reactive dependency can keep it from showing, or change it, once the application's
+    /// state is not trusted any more); constant properties only. Contexts provided on the
+    /// root are visible to it.
+    ///
+    /// # Errors
+    /// [`UiError::Build`] when a widget could not be built; [`UiError::Engine`] with
+    /// [`EngineError::InvalidConfig`] when the view created reactive nodes (it is removed
+    /// again) or while the fail-safe state is active; engine errors of creating the screen.
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::{MemoryDisplay, MockClock};
+    /// use twine_view::prelude::*;
+    ///
+    /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
+    /// let mut ui = Ui::builder(panel)
+    ///     .runtime(Runtime::take().unwrap())
+    ///     .clock(MockClock::new())
+    ///     .buffers(BufferMode::alloc(BufferSpec::default()))
+    ///     .build(|cx| {
+    ///         let n = cx.signal(0);
+    ///         label(text!("{}", n.get()))
+    ///     });
+    /// ui.set_fail_safe(|_| label("SERVICE REQUIRED")).unwrap();
+    /// // A reactive fail-safe view is refused.
+    /// assert!(ui.set_fail_safe(|cx| { let s = cx.signal(1); label(text!("{}", s.get())) }).is_err());
+    /// ui.enter_fail_safe(3);
+    /// assert_eq!(ui.fail_safe(), Some(3));
+    /// ```
+    pub fn set_fail_safe<V: View>(&mut self, app: impl FnOnce(Scope) -> V) -> Result<(), UiError> {
+        let display = self.core.display();
+        self.core.set_fail_safe(&mut self.engine, display, app)
+    }
+
+    #[cfg(feature = "display-integrity")]
+    /// Switches the first display to its fail-safe screen ([`set_fail_safe`](Self::set_fail_safe))
+    /// and keeps it there ([`Engine::enter_fail_safe`]: other screens are refused, popups
+    /// hidden, [`FaultKind::FailSafe`](twine_core::fault::FaultKind::FailSafe) raised with
+    /// `reason`, the application's code). Wakes the `Ui`; the screen is drawn by the next
+    /// update. Allocates nothing — works after [`seal`](Self::seal). Without a fail-safe
+    /// screen it logs an error and changes nothing. Idempotent.
+    pub fn enter_fail_safe(&mut self, reason: u32) {
+        let display = self.core.display();
+        if let Err(e) = self.engine.enter_fail_safe(display, reason) {
+            twine_core::error!(target: "twine::view", "enter_fail_safe: {}", e);
+        }
+        self.core.notify_input();
+    }
+
+    #[cfg(feature = "display-integrity")]
+    /// Ends the fail-safe state of the first display ([`Engine::leave_fail_safe`]): the
+    /// application may load other screens again. Never panics.
+    pub fn leave_fail_safe(&mut self) {
+        let display = self.core.display();
+        let _ = self.engine.leave_fail_safe(display);
+        self.core.notify_input();
+    }
+
+    #[cfg(feature = "display-integrity")]
+    /// The reason code of the fail-safe state of the first display (`None`: not in it).
+    #[must_use]
+    pub fn fail_safe(&self) -> Option<u32> {
+        self.engine.fail_safe(self.core.display())
+    }
+
+    /// Ends start-up: from now on every allocation by one of Twine's growth points raises
+    /// [`FaultKind::AllocAfterSeal`] at the next update, after the heap budget is checked
+    /// (see [`UiCore::seal`]). Returns the memory report at sealing time. Call it once the UI
+    /// is built and has drawn its first frames (every screen it will show exists).
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, alloc_guard};
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::{MemoryDisplay, MockClock};
+    /// use twine_view::prelude::*;
+    ///
+    /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
+    /// let mut ui = Ui::builder(panel)
+    ///     .runtime(Runtime::take().unwrap())
+    ///     .clock(MockClock::new())
+    ///     .buffers(BufferMode::alloc(BufferSpec::default()))
+    ///     .limits(Limits::DEFAULT.max_nodes(64).max_reactive_nodes(64).max_scopes(32).preallocated())
+    ///     .build(|cx| {
+    ///         let n = cx.signal(0u32);
+    ///         label(text!("{}", n.get()))
+    ///     });
+    /// ui.update();
+    /// let report = ui.seal();
+    /// assert!(report.heap_bytes() > 0);
+    /// ui.update(); // steady state: nothing allocated
+    /// assert!(ui.last_fault(FaultKind::AllocAfterSeal).is_none());
+    /// alloc_guard::unseal();
+    /// ```
+    pub fn seal(&mut self) -> crate::MemoryReport {
+        self.core.seal(&mut self.engine)
+    }
+
+    /// Messages each channel delivers per update (see [`Limits::messages_per_channel`]).
     #[must_use]
     pub fn messages_per_channel(&self) -> usize {
         self.core.messages_per_channel()
     }
 
     /// Changes how many messages each channel delivers per update (see
-    /// [`UiBuilder::messages_per_channel`]; `0` counts as `1`). Never panics.
+    /// [`Limits::messages_per_channel`] and [`UiBuilder::limits`]; `0` counts as `1`). Never
+    /// panics.
     ///
     /// ```
     /// # use twine_core::ColorFormat;

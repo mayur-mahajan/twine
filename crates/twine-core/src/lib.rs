@@ -16,12 +16,17 @@
 //! | [`transform`] | [`Transform`] (2-D affine, fixed point) |
 //! | [`color`] | [`Color`], [`Opa`], [`ColorFormat`], [`PixelFormat`] and format marker types, the WCAG [`ContrastRatio`](color::ContrastRatio) |
 //! | [`time`] | [`Instant`], [`Duration`] (µs) |
-//! | [`arena`] | [`Arena<T>`], generational [`Id<T>`] |
+//! | [`arena`] | [`Arena<T>`], generational [`Id<T>`], its [`Generation`] (16-bit; 48-bit in the safety profile, [`arena::MAX_GENERATION`], [`arena::next_generation`]) and packed form [`RawId`] |
 //! | [`small_vec`] | [`SmallVec`] (inline-first vector) |
 //! | [`symbol`] | [`Symbol`] (built-in icon glyphs, LVGL `LV_SYMBOL_*`) |
 //! | [`rect_set`] | [`RectSet`] (dirty areas, LVGL join policy) |
 //! | [`mod@error`] | [`Error`] |
-//! | [`fault`] | [`FaultKind`], [`Faults`], [`FaultCounts`]: failures Twine recovered from, reported to the application |
+//! | [`fault`] | [`FaultKind`], [`Faults`], [`FaultCounts`], [`CapacityFault`](fault::CapacityFault): failures Twine recovered from, reported to the application |
+//! | [`limits`] | [`Limits`]: the memory bounds of an application (enforced as `Capacity` faults, optionally preallocated) |
+//! | [`alloc_guard`] | sealing: allocation after start-up detected at Twine's growth points ([`AllocSite`](alloc_guard::AllocSite)) |
+//! | [`audit`] | [`Audit`](audit::Audit), [`AuditSink`](audit::AuditSink), [`KeyValues`](audit::KeyValues): machine-readable configuration evidence |
+//! | [`crc`] | [`Crc32`]: the CRC-32 (IEEE 802.3) checksum of display-integrity checks and digests |
+//! | [`validity`] | [`Validity`], [`ValidityStatus`]: a value and how far it can be trusted (valid, stale, failed, no data) |
 //! | [`rng`] | [`XorShift32`] (deterministic, non-cryptographic) |
 //! | [`log`] | `trace!`, `debug!`, `info!`, `warn!`, `error!` (log / defmt / none backends) |
 //! | [`prelude`] | the most used types |
@@ -42,6 +47,9 @@
 //! - `log` / `defmt`: logging backend (see [`log`]); `defmt` also derives `defmt::Format` for
 //!   every public type.
 //! - `std`: std-only conveniences.
+//! - `safety`: the safety profile (enabled by the `twine` facade's `safety` feature; see
+//!   [`SAFETY_PROFILE`] and `docs/safety/profile.md`). Among other things it widens arena
+//!   generations to 48 bits ([`Generation`]), so no arena slot retires in practice.
 //!
 //! ```
 //! use twine_core::prelude::*;
@@ -55,17 +63,34 @@
 //! ```
 #![no_std]
 #![forbid(unsafe_code)]
+// The safety profile's lints (`docs/safety/profile.md` § Lints): denied in library code under
+// the `safety` feature (`cargo xtask ci` stage `clippy-safety`).
+#![cfg_attr(
+    all(feature = "safety", not(test)),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable,)
+)]
+// NOTE(R5.S11): sites of these lints remain (counts: `docs/safety/profile.md` § Lint status,
+// `cargo xtask safety-lints`); a lint moves to `deny` above when its last site is fixed.
+#![cfg_attr(
+    all(feature = "safety", not(test)),
+    allow(clippy::indexing_slicing, clippy::arithmetic_side_effects,)
+)]
 #![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 
 extern crate alloc;
-#[cfg(feature = "std")]
+// Unit tests use `std` for the per-thread allocation-guard state (tests run in parallel).
+#[cfg(any(feature = "std", test))]
 extern crate std;
 
+pub mod alloc_guard;
 pub mod arena;
+pub mod audit;
 pub mod color;
+pub mod crc;
 pub mod error;
 pub mod fault;
 pub mod geometry;
+pub mod limits;
 pub mod log;
 pub mod math;
 pub mod prelude;
@@ -75,12 +100,15 @@ pub mod small_vec;
 pub mod symbol;
 pub mod time;
 pub mod transform;
+pub mod validity;
 
-pub use arena::{Arena, Id};
+pub use arena::{Arena, Generation, Id, RawId};
 pub use color::{Color, ColorFormat, Opa, PixelFormat};
+pub use crc::Crc32;
 pub use error::Error;
 pub use fault::{FaultCounts, FaultKind, Faults};
 pub use geometry::*;
+pub use limits::Limits;
 pub use math::{Angle, AngularSpeed, Fraction, Fx, Scale};
 pub use rect_set::{AddResult, RectSet};
 pub use rng::XorShift32;
@@ -88,6 +116,25 @@ pub use small_vec::SmallVec;
 pub use symbol::Symbol;
 pub use time::{Duration, Instant};
 pub use transform::Transform;
+pub use validity::{Validity, ValidityStatus};
+
+/// Whether this build is the **safety profile** (the `twine` facade's `safety` feature, which
+/// enables `twine-core/safety`).
+///
+/// Cargo unifies features, so every crate of one build sees the same value. Crates the profile
+/// excludes as a whole (`twine-fs`, `twine-lottie`) assert on it in a constant, so linking one
+/// of them into a safety build is a compile error naming the crate, even when the application
+/// depends on it directly instead of through the facade. Application code can check it the same
+/// way, e.g. a certified firmware refusing to build without the profile. See
+/// `docs/safety/profile.md` for what the profile contains.
+///
+/// ```
+/// // In a certified firmware: refuse to build without the profile.
+/// // const _: () = assert!(twine_core::SAFETY_PROFILE, "build with `twine/safety`");
+/// let profile = if twine_core::SAFETY_PROFILE { "safety" } else { "standard" };
+/// assert!(!profile.is_empty());
+/// ```
+pub const SAFETY_PROFILE: bool = cfg!(feature = "safety");
 
 /// Re-exports used by the logging macros. Not public API.
 #[doc(hidden)]

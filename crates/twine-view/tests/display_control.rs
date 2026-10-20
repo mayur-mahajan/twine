@@ -37,7 +37,9 @@ fn ui(panel: MemoryDisplay, clock: &MockClock) -> Ui {
         .buffers(BufferMode::alloc(BufferSpec::PartialDouble { rows: 16 }))
         .theme(DefaultTheme::light())
         .reserve_rotation()
-        .build(scene)
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(scene)
+        .unwrap()
 }
 
 fn pixels(ui: &Ui) -> Vec<u8> {
@@ -154,7 +156,8 @@ fn touch_maps_to_the_new_rotation() {
         .clock(clock.clone())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .input(Ft6x36::new(rec.i2c(), None::<NoPin>))
-        .build(move |_| {
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(move |_| {
             container((
                 button(label(""))
                     .pos(290, 0)
@@ -166,7 +169,8 @@ fn touch_maps_to_the_new_rotation() {
                     .on_click(move || portrait_hit.update(|n| *n += 1)),
             ))
             .fill()
-        });
+        })
+        .unwrap();
     tap(&mut ui, &clock, &regs, (10, 20));
     assert_eq!((portrait_hit.get(), landscape_hit.get()), (1, 0), "portrait");
     ui.set_rotation(Rotation::Deg90).unwrap();
@@ -191,7 +195,9 @@ fn display_commands_from_another_thread() {
         .clock(MockClock::new())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .display_commands(&COMMANDS)
-        .build(|_| label("hi"));
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(|_| label("hi"))
+        .unwrap();
     let _ = ui.update();
     std::thread::spawn(|| {
         COMMANDS
@@ -228,13 +234,15 @@ fn idle_timeout_reaches_the_run_loop_as_inactive() {
     let ui =
         Ui::builder(MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)).with_power_control())
             .runtime(Runtime::current_thread())
+            .limits(twine_testing::HARNESS_LIMITS)
             .platform(&platform)
             .config(EngineConfig {
                 idle_timeout: Some(Duration::secs(30)),
                 ..EngineConfig::default()
             })
             .buffers(BufferMode::alloc(BufferSpec::default()))
-            .build(|_| label("hi"));
+            .try_build(|_| label("hi"))
+            .unwrap();
     let events = Rc::new(RefCell::new(Vec::new()));
     let seen = events.clone();
     let result = catch_unwind(AssertUnwindSafe(|| -> () {

@@ -80,7 +80,7 @@ fn dynamic_prop_updates_on_signal_change() {
         t.engine().style_color(id, Part::Main, PropId::TextColor),
         Color::RED
     );
-    let red = t.root_scope().expect_context::<Signal<bool>>();
+    let red = t.root_scope().use_context::<Signal<bool>>().unwrap();
     red.set(false);
     t.run_until_idle();
     assert_eq!(
@@ -98,7 +98,10 @@ fn binding_runs_only_for_its_signal() {
         row((label(text!("{}", a.get())), label(text!("{}", b.get()))))
     });
     t.run_until_idle();
-    let (a, _b) = t.root_scope().expect_context::<(Signal<i32>, Signal<i32>)>();
+    let (a, _b) = t
+        .root_scope()
+        .use_context::<(Signal<i32>, Signal<i32>)>()
+        .unwrap();
     a.set(10); // outside the Ui: the binding defers itself to the next update
     let runs = rt().stats().effect_runs;
     t.run_until_idle();
@@ -113,7 +116,7 @@ fn binding_disposes_when_node_deleted() {
         label(text!("{}", n.get())).test_id("l")
     });
     t.run_until_idle();
-    let n = t.root_scope().expect_context::<Signal<i32>>();
+    let n = t.root_scope().use_context::<Signal<i32>>().unwrap();
     let id = t.find(by_id("l")).id();
     let nodes = rt().stats().nodes;
     t.engine_mut().delete(id).unwrap();
@@ -132,7 +135,7 @@ fn binding_outside_update_is_deferred() {
         label(text!("{}", n.get())).test_id("l")
     });
     t.run_until_idle();
-    let n = t.root_scope().expect_context::<Signal<i32>>();
+    let n = t.root_scope().use_context::<Signal<i32>>().unwrap();
     n.set(7); // no engine here: the binding waits
     let id = t.find(by_id("l")).id();
     assert_eq!(t.engine().widget::<Label>(id).unwrap().text(), "0");
@@ -199,7 +202,7 @@ fn user_type_as_prop_without_declaration() {
             .test_id("l")
     });
     t.run_until_idle();
-    let g = t.root_scope().expect_context::<Signal<Gauge>>();
+    let g = t.root_scope().use_context::<Signal<Gauge>>().unwrap();
     let l = t.find(by_id("l")).id();
     assert_eq!(t.engine().widget::<Label>(l).unwrap().max_lines(), 10);
     assert_eq!(t.engine().widget::<Label>(l).unwrap().long_mode(), LongMode::Dots);

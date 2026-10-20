@@ -22,7 +22,10 @@ impl Drop for BatchGuard {
 
 /// See [`Runtime::batch`].
 pub(crate) fn batch<R>(f: impl FnOnce() -> R) -> R {
-    with_runtime(|rt| rt.inner.borrow_mut().batch_depth += 1);
+    with_runtime(|rt| {
+        let mut inner = rt.inner.borrow_mut();
+        inner.batch_depth = inner.batch_depth.saturating_add(1);
+    });
     let guard = BatchGuard;
     let r = f();
     drop(guard);

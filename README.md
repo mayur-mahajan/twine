@@ -18,6 +18,17 @@ to what changed, and an idle UI executes no code at all.
   (RP2040, no atomic CAS). Integer-only, deterministic renderer: identical pixels on every platform.
 - **LVGL parity**: widgets, styles, themes, flex/grid layout, animations, scrolling, input devices,
   fonts, images, vector graphics.
+- **Safety profile** (`twine/safety`): refuses the parts unsuited to certifiable products
+  (floating point, run-time files and fonts, the performance overlay) at compile time, lints
+  library code for panics, unchecked indexing and overflow, offers only `Result`-returning
+  constructors and lookups, turns reactive misuse into faults instead of panics, bounds every
+  growing structure with preallocated `Limits` (`Ui::seal()` then reports any allocation as a
+  fault), widens arena generations to 48 bits (no handle slot is retired or reused within a
+  product's lifetime) and dumps the configuration for audits (`AppConfig::audit_report`). Every
+  remaining panic site is listed in [`docs/safety/panics.md`](docs/safety/panics.md). See
+  [`docs/safety/profile.md`](docs/safety/profile.md) and the safety manual
+  [`docs/safety/manual.md`](docs/safety/manual.md) (assumptions of use, configuration
+  constraints, known limitations, verification evidence).
 
 ## Example
 
@@ -134,10 +145,11 @@ Commands:
 | `cargo xtask ci` | everything CI runs (fmt, clippy, tests, no_std builds, docs, Miri, todo-check, layers); `--quick` skips the slow stages, `--only <stage>` runs single stages |
 | `cargo xtask sim <example>` | run a simulator example (a Cargo example of `twine` in `crates/twine/examples/`; same as `cargo run -p twine --example <example>`) |
 | `cargo xtask sim-smoke` | run every simulator example headless |
-| `cargo xtask snapshots [--update]` | run / refresh snapshot tests (review diffs before updating) |
+| `cargo xtask snapshots [--update]` | run the golden-image tests against the committed hash manifests / approve new references (review diffs before updating) |
 | `cargo xtask nostd` | build the `no_std` crates for all embedded targets |
 | `cargo xtask firmware [example] [--strict]` | build the example firmware and print flash/RAM sizes |
-| `cargo xtask coverage` | per-crate line coverage with thresholds |
+| `cargo xtask coverage [--mcdc]` | per-crate line coverage with thresholds; MC/DC of the core crates (nightly) |
+| `cargo xtask traceability` | requirements → tests matrix of the safety profile (`docs/safety/traceability.md`) |
 | `cargo xtask miri [crate…]` | run tests under Miri (nightly) to detect undefined behaviour |
 
 Logging: `RUST_LOG=twine=debug` enables logs in the simulator and tests

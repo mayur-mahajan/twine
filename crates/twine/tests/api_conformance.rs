@@ -144,7 +144,7 @@ fn s2_reactive_primitives() {
     assert_eq!(m.get(), 8);
     assert_eq!(cx.runtime().batch(|| 3), 3);
     assert_eq!(cx.runtime().untrack(|| s.get()), 4);
-    assert_eq!(s.try_get(), Some(4));
+    assert_eq!(s.try_get(), Ok(4));
     assert!(s.is_alive());
     child.dispose();
     cx.dispose();

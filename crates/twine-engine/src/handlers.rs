@@ -9,9 +9,24 @@ use crate::event::{Event, EventCode, EventCx, EventParam, EventResult, EventText
 use crate::{Engine, NodeId, ObjFlags, Widget, fmt_node_id};
 
 /// Handle of a user event handler, returned by [`Engine::add_event_handler`].
+///
+/// A creation serial, unique per engine and never reused, so a stale id never removes a later
+/// handler, and ordered (handlers run in creation order; one added during a dispatch waits for
+/// the next event). `u32` by default: after 2³² handlers added to one engine (e.g. 1.4 years at
+/// 100 per second) further handlers are **refused** with a `Capacity` fault
+/// ([`CapacityFault::Handlers`](twine_core::fault::CapacityFault::Handlers)) rather than reusing
+/// a serial. `u64` in the safety profile, where that cannot happen (5.8 × 10⁹ years at 100 per
+/// second).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct HandlerId(u32);
+pub struct HandlerId(HandlerSerial);
+
+/// The integer behind a [`HandlerId`]: `u32` by default, `u64` in the safety profile (R5.S04).
+#[cfg(not(feature = "safety"))]
+pub(crate) type HandlerSerial = u32;
+/// The integer behind a [`HandlerId`]: `u32` by default, `u64` in the safety profile (R5.S04).
+#[cfg(feature = "safety")]
+pub(crate) type HandlerSerial = u64;
 
 /// Which events a handler receives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -65,6 +80,11 @@ impl core::fmt::Debug for Handlers {
 }
 
 impl Handlers {
+    /// Number of handlers in the list.
+    pub(crate) fn len(&self) -> usize {
+        self.list.len()
+    }
+
     /// Heap bytes of this box, its list and the boxed handler closures (for
     /// [`Engine::memory_report`](crate::Engine::memory_report)).
     pub(crate) fn heap_bytes(&self) -> usize {
@@ -113,7 +133,12 @@ impl Engine {
     /// While a handler runs it is taken out of its node: events sent to the same node from
     /// inside it (nested dispatch) reach the node's other handlers, not the running one.
     ///
-    /// Unknown nodes log `warn!`; the returned id then refers to nothing.
+    /// Unknown nodes log `warn!`; the returned id then refers to nothing. So does a handler
+    /// beyond [`Limits::max_handlers`](twine_core::Limits::max_handlers) (all nodes together),
+    /// which is not added and raises a
+    /// [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity) fault (code `Handlers`,
+    /// with the node), and a handler added after the engine's handler serials ran out (see
+    /// [`HandlerId`]; unreachable in the safety profile).
     ///
     /// ```
     /// use std::{cell::Cell, rc::Rc};
@@ -138,13 +163,27 @@ impl Engine {
         h: impl FnMut(&mut EventCx<'_>, &Event) -> EventResult + 'static,
     ) -> HandlerId {
         let hid = HandlerId(self.next_handler_id);
-        self.next_handler_id = self.next_handler_id.wrapping_add(1);
+        // Serials are never reused (dispatch relies on their order): once the last one is
+        // reached, handlers are refused. `hid` (the last serial) is then never given to a
+        // handler, so it refers to nothing.
+        let Some(next) = self.next_handler_id.checked_add(1) else {
+            self.capacity_refused(twine_core::fault::CapacityFault::Handlers, Some(id));
+            return hid;
+        };
+        self.next_handler_id = next;
+        if self.tree.handler_count >= usize::from(self.limits.max_handlers) && self.tree.contains(id) {
+            self.capacity_refused(twine_core::fault::CapacityFault::Handlers, Some(id));
+            return hid;
+        }
         match self.tree.node_mut(id) {
             Some(n) => {
+                // The boxed closure (and the node's list, on its first handler) allocate.
+                twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::Handler);
                 n.handlers
                     .get_or_insert_with(Box::default)
                     .list
                     .push((hid, filter, Some(Box::new(h))));
+                self.tree.handler_count = self.tree.handler_count.saturating_add(1);
             }
             None => {
                 twine_core::warn!(target: "twine::event", "add_event_handler: node {} not found", fmt_node_id(id));
@@ -161,13 +200,16 @@ impl Engine {
         };
         let before = list.list.len();
         list.list.retain(|(i, ..)| *i != h);
-        before != list.list.len()
+        let removed = before.saturating_sub(list.list.len());
+        self.tree.handler_count = self.tree.handler_count.saturating_sub(removed);
+        removed != 0
     }
 
     /// Removes every user handler of `id`.
     pub fn remove_all_event_handlers(&mut self, id: NodeId) {
         if let Some(n) = self.tree.node_mut(id) {
-            n.handlers = None;
+            let removed = n.handlers.take().map_or(0, |h| h.len());
+            self.tree.handler_count = self.tree.handler_count.saturating_sub(removed);
         }
     }
 
@@ -237,7 +279,11 @@ impl Engine {
             );
         }
         twine_core::trace!(target: "twine::event", "{:?} -> {} posted (widget busy)", code, fmt_node_id(target));
-        self.events.posted.push((target, code, param));
+        twine_core::alloc_guard::push(
+            &mut self.events.posted,
+            (target, code, param),
+            twine_core::alloc_guard::AllocSite::EngineScratch,
+        );
     }
 
     /// Puts `w` back into node `id` after it was taken out, then dispatches the posted events
@@ -307,7 +353,11 @@ impl Engine {
             serial: q.next_text_serial,
         };
         q.next_text_serial = q.next_text_serial.wrapping_add(1);
-        q.text_frames.push(h);
+        twine_core::alloc_guard::push(
+            &mut q.text_frames,
+            h,
+            twine_core::alloc_guard::AllocSite::EngineScratch,
+        );
         let r = self.send_event(target, code, EventParam::Text(h));
         let q = &mut self.events;
         q.text_frames.pop();
@@ -496,6 +546,42 @@ mod tests {
         assert_eq!(e.event_handler_count(n), 1);
         assert!(e.remove_event_handler(n, first));
         assert!(!e.remove_event_handler(n, first));
+    }
+
+    /// The last handler serial is never handed out: a handler added then is refused with a
+    /// `Capacity` fault (code `Handlers`), and the handlers added before keep running in
+    /// order (no serial wraps below them). Both serial widths (the counter is set directly).
+    #[test]
+    fn exhausted_handler_serials_refuse_new_handlers() {
+        use twine_core::fault::{CapacityFault, FaultKind};
+        let mut e = engine();
+        let n = e.create_root(Box::new(Obj)).unwrap();
+        let log: Log = Rc::default();
+        e.next_handler_id = HandlerSerial::MAX - 1;
+        let l = log.clone();
+        let last = e.add_event_handler(n, EventFilter::All, move |_, _| {
+            l.borrow_mut().push("last");
+            EventResult::Continue
+        });
+        assert_eq!(last, HandlerId(HandlerSerial::MAX - 1));
+        let _ = e.take_faults();
+        let l = log.clone();
+        let refused = e.add_event_handler(n, EventFilter::All, move |_, _| {
+            l.borrow_mut().push("refused");
+            EventResult::Continue
+        });
+        assert_eq!(refused, HandlerId(HandlerSerial::MAX));
+        assert_eq!(e.event_handler_count(n), 1);
+        let faults = e.take_faults();
+        assert!(faults.contains(FaultKind::Capacity));
+        assert_eq!(
+            e.last_fault(FaultKind::Capacity).map(|r| r.code),
+            Some(CapacityFault::Handlers.code())
+        );
+        e.send_event(n, EventCode::Clicked, EventParam::None);
+        assert_eq!(*log.borrow(), vec!["last"]);
+        assert!(!e.remove_event_handler(n, refused));
+        assert!(e.remove_event_handler(n, last));
     }
 
     #[test]

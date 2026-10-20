@@ -129,7 +129,7 @@ impl RenderHarness {
         )
     }
 
-    /// Compares the buffer with the reference snapshot `name` of `cfg`, pixel-exact. Usually
+    /// Compares the buffer with the golden image `name` of `cfg` (its manifest entry), pixel-exact. Usually
     /// called through [`assert_render_snapshot!`](crate::assert_render_snapshot).
     pub fn assert_snapshot_with(&self, cfg: &SnapshotConfig, name: &str) {
         assert_rgb_snapshot(
@@ -143,7 +143,8 @@ impl RenderHarness {
     }
 }
 
-/// Asserts a [`RenderHarness`] snapshot stored in the calling crate's `tests/snapshots/`.
+/// Asserts a [`RenderHarness`] snapshot against the calling crate's golden-image manifest
+/// (`tests/snapshots.toml`, see [`snapshot`](crate::snapshot)).
 ///
 /// ```no_run
 /// use twine_core::ColorFormat;

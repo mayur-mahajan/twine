@@ -18,7 +18,8 @@ use twine_hal::{DisplayInfo, DrawBufferMem};
 use twine_render::{DrawAccel, DrawBuf, Painter};
 
 use crate::display::Backend;
-use crate::{Engine, EngineError, RefreshStats, StepBudget, Wake};
+use crate::wake::Allowance;
+use crate::{Engine, EngineError, RefreshStats, StepBudget, TimingReport, Wake};
 
 pub(crate) use framebuffer::{DirectState, FullState};
 use partial::ChunkStep;
@@ -268,15 +269,15 @@ impl Engine {
     /// Renders and flushes every display whose dirty areas are due at `now` (at most one frame
     /// per `refr_period` per display). Called by [`step`](Self::step).
     pub fn refresh(&mut self, now: Instant) -> RefreshOutcome {
-        self.refresh_within(now, &mut StepBudget::UNLIMITED.chunk_allowance())
+        self.refresh_within(now, &mut Allowance::unlimited())
     }
 
-    /// [`refresh`](Self::refresh) rendering at most `*chunks_left` chunks (decremented per
-    /// chunk); a frame cut short is [`in_progress`](RefreshOutcome::in_progress).
-    fn refresh_within(&mut self, now: Instant, chunks_left: &mut u32) -> RefreshOutcome {
+    /// [`refresh`](Self::refresh) within `allow` (chunks left, time deadline; see
+    /// [`Allowance`]); a frame cut short is [`in_progress`](RefreshOutcome::in_progress).
+    fn refresh_within(&mut self, now: Instant, allow: &mut Allowance) -> RefreshOutcome {
         let mut out = RefreshOutcome::default();
         for d in 0..self.displays.len() {
-            match self.refresh_display(d, now, chunks_left) {
+            match self.refresh_display(d, now, allow) {
                 DisplayOutcome::Idle => {}
                 DisplayOutcome::Due(t) => out.next_due = Some(out.next_due.map_or(t, |n| n.min(t))),
                 DisplayOutcome::Rendered(due) => {
@@ -302,13 +303,19 @@ impl Engine {
     /// while an animation plays), the end of an animation delay, the next due timer, the next
     /// input read (polled devices, held devices, long press timers) and pending flushes;
     /// [`Wake::Idle`] when nothing is pending — an idle UI costs no CPU at all.
+    ///
+    /// Renders within [`EngineConfig::step_budget`](crate::EngineConfig::step_budget)
+    /// (default unlimited; see [`step_budgeted`](Self::step_budgeted)).
     pub fn step(&mut self, now: Instant) -> Wake {
-        self.step_budgeted(now, StepBudget::UNLIMITED)
+        self.step_budgeted(now, self.config.step_budget)
     }
 
-    /// [`step`](Self::step) rendering at most `budget` (see [`StepBudget`]): when a frame is
-    /// cut short, the step returns [`Wake::Now`] and the next step continues it. The pixels of
-    /// a frame finished over several steps are those of the same frame rendered at once.
+    /// [`step`](Self::step) rendering at most `budget` (see [`StepBudget`]) instead of the
+    /// configured [`step_budget`](crate::EngineConfig::step_budget): when a frame is cut
+    /// short, the step returns [`Wake::Now`] and the next step continues it. The pixels of a
+    /// frame finished over several steps are those of the same frame rendered at once. A step
+    /// that uses up the budget's time raises
+    /// [`FaultKind::FrameOverrun`](twine_core::fault::FaultKind::FrameOverrun).
     ///
     /// ```
     /// use twine_core::{ColorFormat, Instant};
@@ -337,8 +344,11 @@ impl Engine {
 
     /// Starts an update at `now` (the first part of [`step`](Self::step), for callers that run
     /// the steps one by one — the view layer's `Ui::update`): records the time used by
-    /// animations and timers started before the next animation step.
+    /// animations and timers started before the next animation step, and (with a
+    /// `hires_timer`) the moment the update starts, from which its
+    /// [`StepBudget`] time and [`TimingReport::worst_update_us`] count.
     pub fn begin_step(&mut self, now: Instant) {
+        self.step_started_us = self.hires_us();
         self.set_anim_now(now);
         // `inactive_for` counts from the first step until the first input.
         self.last_activity.get_or_insert(now);
@@ -348,8 +358,9 @@ impl Engine {
     /// [`read_inputs`](Self::read_inputs), [`run_timers`](Self::run_timers) and
     /// [`run_anims`](Self::run_anims)): the layout pass, the refresh of every due display and
     /// the performance bookkeeping. Returns when to call again (see [`step`](Self::step)).
+    /// Renders within [`EngineConfig::step_budget`](crate::EngineConfig::step_budget).
     pub fn finish_step(&mut self, now: Instant) -> Wake {
-        self.finish_step_budgeted(now, StepBudget::UNLIMITED)
+        self.finish_step_budgeted(now, self.config.step_budget)
     }
 
     /// [`finish_step`](Self::finish_step) rendering at most `budget` (see [`StepBudget`] and
@@ -378,10 +389,15 @@ impl Engine {
         // Brightness / sleep / rotation requests first: a rotation is laid out and drawn now.
         self.apply_display_requests(now);
         self.update_layout();
-        let out = self.refresh_within(now, &mut budget.chunk_allowance());
+        let mut allow = Allowance::new(budget, self.step_started_us);
+        let out = self.refresh_within(now, &mut allow);
         self.after_refresh(now, out.rendered);
         // The performance overlay may have changed its size: lay it out for the next frame.
         self.update_layout();
+        if let Some(start) = self.step_started_us.take() {
+            self.end_step_timing(start, budget, allow.cut);
+        }
+        self.heartbeat = self.heartbeat.wrapping_add(1);
         if out.in_progress {
             return Wake::Now;
         }
@@ -403,6 +419,26 @@ impl Engine {
         self.displays.iter().any(|d| d.refresher.flush_pending())
     }
 
+    /// The number of completed steps (`step`, `finish_step` and their budgeted forms; every
+    /// `Ui::update`), wrapping at `u32::MAX`: a value an external watchdog reads to see that
+    /// the UI is alive — it changes as long as updates complete, whatever they draw. Never
+    /// panics.
+    ///
+    /// ```
+    /// use twine_core::Instant;
+    /// use twine_engine::{Engine, EngineConfig};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// assert_eq!(e.heartbeat(), 0);
+    /// e.step(Instant::from_millis(0));
+    /// e.step(Instant::from_millis(10));
+    /// assert_eq!(e.heartbeat(), 2);
+    /// ```
+    #[must_use]
+    pub fn heartbeat(&self) -> u32 {
+        self.heartbeat
+    }
+
     /// Statistics of the last frame of `display` (default values for unknown displays).
     #[must_use]
     pub fn last_stats(&self, display: crate::DisplayId) -> RefreshStats {
@@ -411,7 +447,7 @@ impl Engine {
             .map_or_else(RefreshStats::default, |d| d.refresher.stats)
     }
 
-    fn refresh_display(&mut self, d: usize, now: Instant, chunks_left: &mut u32) -> DisplayOutcome {
+    fn refresh_display(&mut self, d: usize, now: Instant, allow: &mut Allowance) -> DisplayOutcome {
         if matches!(self.displays[d].backend, Backend::External(())) {
             // Rendered by the caller through `refresh_begin` / `render_chunk`: only report when
             // the next frame is due (a frame due now is rendered right after this update).
@@ -482,13 +518,13 @@ impl Engine {
                     DisplayOutcome::Due(now + Duration::ms(1))
                 };
             }
-            if *chunks_left == 0 {
+            if allow.chunks == 0 {
                 // The step's budget went to another display: start this frame next step.
                 return DisplayOutcome::InProgress;
             }
             self.start_job(d, now);
         }
-        match self.run_job(d, chunks_left) {
+        match self.run_job(d, allow) {
             JobStep::Done => {
                 let r = &self.displays[d].refresher;
                 let again = !self.display_halted(d) && (!r.dirty.is_empty() || r.overlay_dirty.is_some());
@@ -593,7 +629,7 @@ impl Engine {
     }
 
     /// Takes back finished buffers without blocking.
-    fn reclaim_buffers(&mut self, d: usize) {
+    pub(crate) fn reclaim_buffers(&mut self, d: usize) {
         let disp = &mut self.displays[d];
         if let (Strategy::Partial(p), Backend::Flush(b)) = (&mut disp.refresher.strategy, &mut disp.backend) {
             while !p.in_flight.is_empty() {
@@ -607,7 +643,7 @@ impl Engine {
 
     /// Whether a framebuffer swap requested by the previous frame has happened (always true for
     /// other strategies).
-    fn present_done(&mut self, d: usize) -> bool {
+    pub(crate) fn present_done(&mut self, d: usize) -> bool {
         let disp = &mut self.displays[d];
         match (&mut disp.refresher.strategy, &mut disp.backend) {
             (Strategy::Full(f), Backend::Framebuffer(b)) => {
@@ -677,11 +713,12 @@ impl Engine {
         }
     }
 
-    /// Continues the frame of display `d` (see [`JobStep`]), rendering at most `*chunks_left`
-    /// chunks (each one decrements it).
-    fn run_job(&mut self, d: usize, chunks_left: &mut u32) -> JobStep {
+    /// Continues the frame of display `d` (see [`JobStep`]) within `allow`: each chunk uses
+    /// one of its chunks, and after a chunk that reaches its time deadline no further chunk
+    /// is rendered in this step.
+    fn run_job(&mut self, d: usize, allow: &mut Allowance) -> JobStep {
         while let Some((area, y, counted)) = self.job_next(d) {
-            if *chunks_left == 0 {
+            if allow.chunks == 0 {
                 return JobStep::Waiting;
             }
             let t0 = self.hires_us();
@@ -699,10 +736,16 @@ impl Engine {
                     area.y1
                 }
             };
-            *chunks_left -= 1;
+            allow.chunks -= 1;
+            if let Some(f) = self.config.on_chunk {
+                f();
+            }
+            if let Some(deadline) = allow.deadline_us {
+                self.check_step_time(d, deadline, allow);
+            }
             if !counted {
-                if let (Some(a), Some(b)) = (t0, self.hires_us()) {
-                    self.job_mut(d).excluded_us += b.saturating_sub(a);
+                if let (Some(a), Some(b), Some(job)) = (t0, self.hires_us(), self.job_mut(d)) {
+                    job.excluded_us += b.saturating_sub(a);
                 }
             }
             self.job_advance(d, next_y);
@@ -713,6 +756,51 @@ impl Engine {
         }
         self.finish_job(d);
         JobStep::Done
+    }
+
+    /// Ends the step's allowance when its time is up at `deadline` (µs): no further chunk
+    /// in this step, and the frame of display `d` is the one cut short.
+    #[inline(never)]
+    fn check_step_time(&self, d: usize, deadline: u64, allow: &mut Allowance) {
+        if self.hires_us().is_some_and(|t| t >= deadline) {
+            allow.chunks = 0;
+            allow.cut.get_or_insert(d);
+        }
+    }
+
+    /// The end of a step that began at `start` (µs): its time raises the update high-water
+    /// mark, and a step that used up `budget`'s time (cutting the frame of display `cut`, or
+    /// ending past its deadline) raises [`FaultKind::FrameOverrun`].
+    ///
+    /// [`FaultKind::FrameOverrun`]: twine_core::fault::FaultKind::FrameOverrun
+    fn end_step_timing(&mut self, start: u64, budget: StepBudget, cut: Option<usize>) {
+        let Some(end) = self.hires_us() else {
+            return;
+        };
+        let took = end.saturating_sub(start);
+        TimingReport::raise(&mut self.timing.worst_update_us, took);
+        if budget.max_time().is_some_and(|t| took >= t.as_micros()) || cut.is_some() {
+            self.raise_frame_overrun(took, cut);
+        }
+    }
+
+    /// Raises [`FaultKind::FrameOverrun`](twine_core::fault::FaultKind::FrameOverrun) for a
+    /// step that took `took` µs (`cut`: the display whose frame continues next step).
+    #[cold]
+    #[inline(never)]
+    fn raise_frame_overrun(&mut self, took: u64, cut: Option<usize>) {
+        twine_core::debug!(
+            target: "twine::refresh",
+            "step over its time budget: {}us (frame of display {:?} continues next step)",
+            took,
+            cut
+        );
+        let mut r = crate::FaultRecord::new(twine_core::fault::FaultKind::FrameOverrun)
+            .code(u32::try_from(took).unwrap_or(u32::MAX));
+        if let Some(id) = cut.and_then(|d| self.displays.get(d)).map(|x| x.id) {
+            r = r.display(id);
+        }
+        self.raise_fault(r);
     }
 
     /// The next piece of the frame of display `d`: `(area, first row, counted in the
@@ -727,7 +815,9 @@ impl Engine {
     /// Records that the frame of display `d` is rendered up to row `next_y` of its current
     /// area (moving to the next area when that one is done).
     fn job_advance(&mut self, d: usize, next_y: i32) {
-        let job = self.job_mut(d);
+        let Some(job) = self.job_mut(d) else {
+            return;
+        };
         let Some(area) = job.areas.get(job.idx).copied() else {
             return;
         };
@@ -811,26 +901,33 @@ impl Engine {
         if let Strategy::Partial(p) = &mut self.displays[d].refresher.strategy {
             p.ext_src = src;
         }
+        #[cfg(feature = "display-integrity")]
+        self.observe_chunk(d, flush_area, buf, None);
         let t1 = self.hires_us();
-        let job = self.job_mut(d);
-        job.stats.chunks = job.stats.chunks.saturating_add(1);
-        job.stats.render_us = job
-            .stats
-            .render_us
-            .saturating_add(render_us.min(u64::from(u32::MAX)) as u32);
-        if !counted {
-            if let (Some(a), Some(b)) = (t0, t1) {
-                job.excluded_us += b.saturating_sub(a);
+        if let Some(job) = self.job_mut(d) {
+            job.stats.chunks = job.stats.chunks.saturating_add(1);
+            job.stats.render_us = job
+                .stats
+                .render_us
+                .saturating_add(render_us.min(u64::from(u32::MAX)) as u32);
+            if !counted {
+                if let (Some(a), Some(b)) = (t0, t1) {
+                    job.excluded_us += b.saturating_sub(a);
+                }
             }
         }
         self.job_advance(d, chunk.y1);
         twine_core::trace!(target: "twine::refresh", "chunk {} rendered", flush_area);
+        if let Some(f) = self.config.on_chunk {
+            f();
+        }
         Some(flush_area)
     }
 
     /// Adds the caller's measured transfer times to the statistics of the frame started by
     /// [`refresh_begin`](Self::refresh_begin): `flush_us` of transfer, of which `wait_us` the CPU
     /// only waited (the rest overlapped rendering).
+    /// `flush_us` also raises [`TimingReport::worst_flush_us`] (one chunk's flush per call).
     pub fn refresh_add_flush_time(&mut self, flush_us: u32, wait_us: u32) {
         let Some(d) = self.chunk_display else {
             return;
@@ -839,6 +936,7 @@ impl Engine {
             job.stats.flush_us = job.stats.flush_us.saturating_add(flush_us);
             job.stats.flush_wait_us = job.stats.flush_wait_us.saturating_add(wait_us);
         }
+        TimingReport::raise(&mut self.timing.worst_flush_us, u64::from(flush_us));
     }
 
     /// Ends the frame started by [`refresh_begin`](Self::refresh_begin): statistics, the
@@ -863,24 +961,28 @@ impl Engine {
         self.displays[d].refresher.busy = false;
     }
 
-    fn job_mut(&mut self, d: usize) -> &mut FrameJob {
-        self.displays[d]
-            .refresher
-            .job
-            .as_mut()
-            .expect("frame job in progress")
+    /// The frame job in progress on display `d`; `None` when no frame runs (the callers run
+    /// only inside a frame, so `None` means there is nothing to account the work to).
+    fn job_mut(&mut self, d: usize) -> Option<&mut FrameJob> {
+        self.displays[d].refresher.job.as_mut()
     }
 
     fn finish_job(&mut self, d: usize) {
-        let presented = match self.displays[d].refresher.strategy {
-            Strategy::Full(_) => self.present_full(d),
+        let t_present = self.hires_us();
+        // `(presented, framebuffer display)`.
+        let (presented, framebuffer) = match self.displays[d].refresher.strategy {
+            Strategy::Full(_) => (self.present_full(d), true),
             Strategy::Direct(_) => {
                 self.present_direct(d);
-                true
+                (true, true)
             }
-            Strategy::Partial(_) => true,
+            Strategy::Partial(_) => (true, false),
         };
         let end = self.hires_us();
+        if let (true, Some(a), Some(b)) = (framebuffer, t_present, end) {
+            // A framebuffer display's flush is its present.
+            TimingReport::raise(&mut self.timing.worst_flush_us, b.saturating_sub(a));
+        }
         let Some(job) = self.displays[d].refresher.job.take() else {
             return;
         };
@@ -911,6 +1013,8 @@ impl Engine {
         s.fps = self.perf.fps();
         s.cpu_percent = self.perf.cpu_percent();
         r.stats = s;
+        #[cfg(feature = "display-integrity")]
+        self.observe_frame(d, &s);
         twine_core::debug!(
             target: "twine::refresh",
             "frame {} areas={} px={} chunks={} nodes={} render={}us flush={}us wait={}us",
@@ -966,7 +1070,11 @@ impl Engine {
             );
         }
         match (t0, t1) {
-            (Some(a), Some(b)) => b.saturating_sub(a),
+            (Some(a), Some(b)) => {
+                let us = b.saturating_sub(a);
+                TimingReport::raise(&mut self.timing.worst_render_us, us);
+                us
+            }
             _ => 0,
         }
     }

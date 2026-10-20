@@ -27,9 +27,14 @@ pub enum EngineError {
     /// More than [`MAX_GROUPS`](crate::MAX_GROUPS) focus groups.
     #[error("too many focus groups")]
     TooManyGroups,
-    /// More than 65 535 live nodes.
+    /// The widget tree is full: [`Limits::max_nodes`](twine_core::Limits::max_nodes) live
+    /// nodes (at most 65 535).
     #[error("too many nodes")]
     TooManyNodes,
+    /// The node would be deeper than [`Limits::max_tree_depth`](twine_core::Limits::max_tree_depth)
+    /// levels below its root (creation or move refused).
+    #[error("tree too deep")]
+    TooDeep,
     /// A draw buffer or framebuffer is smaller than needed.
     #[error("buffer too small: {got} bytes, {needed} needed")]
     BufferTooSmall {
@@ -65,6 +70,21 @@ pub enum EngineError {
     /// engine's `color-i1` feature enables both).
     #[error("drawing into {0} is not compiled in (enable its `color-*` feature)")]
     FormatDisabled(ColorFormat),
+    /// The node is not shown (hidden, clipped away, or not on an active screen or layer of a
+    /// display), so it has no region on a display (`Engine::render_region_to`,
+    /// `Engine::check_region`).
+    #[error("node {0} is not visible")]
+    NotVisible(NodeId),
+    /// The display or its driver cannot do what was asked (e.g. a driver without
+    /// `DisplayDriver::read_back`, an integrity check on a software-rotated display); the
+    /// text names what.
+    #[error("unsupported: {0}")]
+    Unsupported(&'static str),
+    /// The display is busy with something the request must not interleave with: a frame is
+    /// in progress, a flush is in flight, or the region still has areas waiting to be drawn.
+    /// Retry after the next update.
+    #[error("display busy")]
+    Busy,
     /// A display driver reported an error.
     #[error("driver error {code}: {message}")]
     Driver {
@@ -87,6 +107,7 @@ impl defmt::Format for EngineError {
             EngineError::TooManyInputs => defmt::write!(f, "too many input devices"),
             EngineError::TooManyGroups => defmt::write!(f, "too many focus groups"),
             EngineError::TooManyNodes => defmt::write!(f, "too many nodes"),
+            EngineError::TooDeep => defmt::write!(f, "tree too deep"),
             EngineError::BufferTooSmall { needed, got } => {
                 defmt::write!(
                     f,
@@ -103,6 +124,9 @@ impl defmt::Format for EngineError {
             EngineError::FormatDisabled(format) => {
                 defmt::write!(f, "drawing into {} is not compiled in", format);
             }
+            EngineError::NotVisible(id) => defmt::write!(f, "node {} is not visible", id),
+            EngineError::Unsupported(what) => defmt::write!(f, "unsupported: {=str}", what),
+            EngineError::Busy => defmt::write!(f, "display busy"),
             EngineError::Driver { code, message } => {
                 defmt::write!(f, "driver error {}: {=str}", code, message.as_str());
             }

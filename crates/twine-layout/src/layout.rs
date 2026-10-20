@@ -28,6 +28,8 @@ pub struct LayoutScratch<I> {
     pub(crate) items: Vec<Item<I>>,
     pub(crate) tracks: Vec<Track>,
     pub(crate) ints: Vec<i32>,
+    /// The measurements of the current layout call ([`crate::memo`]).
+    pub(crate) memo: crate::memo::Memo,
 }
 
 impl<I> LayoutScratch<I> {
@@ -38,7 +40,34 @@ impl<I> LayoutScratch<I> {
             items: Vec::new(),
             tracks: Vec::new(),
             ints: Vec::new(),
+            memo: crate::memo::Memo::new(),
         }
+    }
+
+    /// How many content measurements (a content-sized node measuring its children on one
+    /// axis) the layout calls with these buffers made so far: the cost of laying out
+    /// content-sized nodes, linear in their number (each is measured a bounded number of
+    /// times per call, see [`LayoutTree::content_size`]). For tests and diagnostics.
+    ///
+    /// ```
+    /// # #[cfg(feature = "toy")] {
+    /// use twine_layout::{LayoutScratch, LayoutTree, ToyTree, layout_subtree_with};
+    /// use twine_style::{Length, StyleBuf};
+    ///
+    /// let mut t = ToyTree::new(200, 100);
+    /// let mut parent = ToyTree::ROOT;
+    /// for _ in 0..32 {
+    ///     parent = t.add(parent, StyleBuf::new().width(Length::Content).height(Length::Content));
+    /// }
+    /// let mut s = LayoutScratch::new();
+    /// let screen = t.coords(ToyTree::ROOT);
+    /// layout_subtree_with(&mut t, &mut s, ToyTree::ROOT, screen);
+    /// assert!(s.measurements() <= 4 * 32); // linear in the nesting
+    /// # }
+    /// ```
+    #[must_use]
+    pub const fn measurements(&self) -> u32 {
+        self.memo.measured()
     }
 }
 
@@ -186,6 +215,7 @@ pub fn layout_subtree_with<T: LayoutTree + ?Sized>(
     root: T::Id,
     parent_content: Rect,
 ) {
+    s.memo.begin();
     let r = resolve_node(&*t, s, root, raw_size(parent_content), [None; 2]);
     let rect = match t.align_to(root) {
         Some(a) => align_to_rect(&*t, root, r.size, a),
@@ -199,7 +229,7 @@ pub fn layout_subtree_with<T: LayoutTree + ?Sized>(
             [false; 2],
         ),
     };
-    place(t, root, rect);
+    place(t, s, root, rect);
     arrange(t, s, root, [false; 2]);
 }
 
@@ -212,6 +242,7 @@ pub fn layout_children<T: LayoutTree + ?Sized>(t: &mut T, id: T::Id) {
 
 /// [`layout_children`] with caller-provided buffers.
 pub fn layout_children_with<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, id: T::Id) {
+    s.memo.begin();
     arrange(t, s, id, [false; 2]);
 }
 
@@ -266,7 +297,7 @@ fn arrange<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, id: 
         }
         let r = resolve_node(&*t, s, it.id, csize, [None; 2]);
         let rect = abs_rect(&*t, it.id, r.size, content, raw, rtl, sized);
-        place(t, it.id, rect);
+        place(t, s, it.id, rect);
     }
     for i in frame..end {
         let it = s.items[i];
@@ -330,7 +361,12 @@ fn place_docked<T: LayoutTree + ?Sized>(
         let c = s.items[i].id;
         let r = resolve_node(&*t, s, c, csize, [Some(csize.w), None]);
         bottom -= r.size.h.max(0);
-        place(t, c, Rect::new(raw.x0, bottom, raw.x1, bottom + r.size.h.max(0)));
+        place(
+            t,
+            s,
+            c,
+            Rect::new(raw.x0, bottom, raw.x1, bottom + r.size.h.max(0)),
+        );
         // Its width is set by the parent (for its own children's content sizing).
         s.items[i].ovr = [true, false];
     }
@@ -338,13 +374,16 @@ fn place_docked<T: LayoutTree + ?Sized>(
 }
 
 /// Positions the `align_to` child at `s.items[i]` and lays out its subtree.
+// Out of line: kept off the frames of the recursive layout walk (`arrange` / `resolve_node`),
+// whose stack use per tree level is measured (`docs/safety/profile.md` § 10).
+#[inline(never)]
 fn place_aligned<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, i: usize, csize: Size) {
     let c = s.items[i].id;
     s.items[i].done = true;
     let r = resolve_node(&*t, s, c, csize, [None; 2]);
     if let Some(a) = t.align_to(c) {
         let rect = align_to_rect(&*t, c, r.size, a);
-        place(t, c, rect);
+        place(t, s, c, rect);
     }
     arrange(t, s, c, [false; 2]);
 }

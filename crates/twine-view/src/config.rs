@@ -4,15 +4,16 @@
 use alloc::rc::Rc;
 
 use twine_anim::Motion;
-use twine_core::Rotation;
+use twine_core::audit::{Audit, AuditSink, AuditValue, KeyValues};
+use twine_core::{Limits, Rotation};
 use twine_engine::{DisplayId, Engine, EngineConfig, EngineError, FaultHook, IntoTheme, ThemeHook};
+use twine_reactive::{Runtime, WakerLease};
 
-use crate::engine_queue::DEFAULT_ENGINE_QUEUE_CAPACITY;
-use crate::ui::DEFAULT_MESSAGES_PER_CHANNEL;
+use crate::error::UiError;
 
 /// Everything about a UI that is the **application's** choice rather than the board's: the
-/// engine configuration, the theme, the motion preference, the rotation the screens are
-/// designed for, the channel and engine-queue budgets and the fault hook.
+/// engine configuration, the memory bounds ([`Limits`]), the theme, the motion preference,
+/// the rotation the screens are designed for and the fault hook.
 ///
 /// Write it once, as a function, and hand it to every host that runs the application:
 ///
@@ -30,8 +31,10 @@ use crate::ui::DEFAULT_MESSAGES_PER_CHANNEL;
 /// [`EngineConfig`] (`mem_info`, `hires_timer`) are set by the board on the value it gets
 /// (`cfg.engine.hires_timer = Some(..)`); the simulator installs its own timer.
 ///
-/// The fields are public (an audit can read the whole configuration); the chainable setters
-/// are the convenient way to write one. `Clone` is cheap (the theme is shared, not copied).
+/// The fields are public; the chainable setters are the convenient way to write one. `Clone`
+/// is cheap (the theme is shared, not copied). [`audit_report`](Self::audit_report) dumps the
+/// whole configuration — limits, engine settings, caches, timeouts, theme, enabled features
+/// and profile flags — as machine-readable evidence for an audit.
 ///
 /// ```
 /// use twine_core::ColorFormat;
@@ -44,7 +47,7 @@ use crate::ui::DEFAULT_MESSAGES_PER_CHANNEL;
 ///     AppConfig::new()
 ///         .theme(DefaultTheme::dark())
 ///         .motion(Motion::Reduced)
-///         .engine(EngineConfig { max_nodes: 512, ..EngineConfig::default() })
+///         .limits(Limits::DEFAULT.max_nodes(512))
 /// }
 ///
 /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
@@ -55,15 +58,21 @@ use crate::ui::DEFAULT_MESSAGES_PER_CHANNEL;
 ///     .app_config(config())
 ///     .build(|_| label("hi"));
 /// assert_eq!(ui.motion(), Motion::Reduced);
-/// assert_eq!(ui.engine().config().max_nodes, 512);
+/// assert_eq!(ui.engine().limits().max_nodes, 512);
 /// assert_eq!(ui.engine().theme(ui.display()).map(|t| t.name()), config().theme.map(|t| t.name()));
 /// ```
 #[derive(Clone)]
 #[must_use]
 pub struct AppConfig {
-    /// The engine configuration (refresh period, flush timeout and policy, caches, node
-    /// budget, input timings, idle timeout, …). Default: [`EngineConfig::default`].
+    /// The engine configuration (refresh period, flush timeout and policy, caches, input
+    /// timings, idle timeout, …). Default: [`EngineConfig::default`].
     pub engine: EngineConfig,
+    /// The memory bounds of the engine, the reactive runtime, the `Ui`'s queues, the
+    /// navigation stack and the waker pool (see [`Limits`]), applied when the `Ui` is built
+    /// (before anything is created, so preallocated storage is reserved first). Default
+    /// [`Limits::DEFAULT`]. The runtime's and the waker pool's shares are process-wide (per
+    /// thread with `std`): the last `Ui` built sets them.
+    pub limits: Limits,
     /// The theme of the (first) display. Default `None`: no theme — set one, or the widgets
     /// get only their own styles (on every host alike). Further displays of a multi-display
     /// `Ui` bring their own ([`DisplayBuilder::theme`](crate::DisplayBuilder::theme)).
@@ -78,14 +87,6 @@ pub struct AppConfig {
     /// or the rotation is refused with [`FaultKind::DisplayControl`](twine_core::fault::FaultKind::DisplayControl).
     /// The simulator emulates it in hardware; `TestUi` rotates its in-memory panel.
     pub rotation: Option<Rotation>,
-    /// Messages each channel delivers per update (see
-    /// [`UiBuilder::messages_per_channel`](crate::UiBuilder::messages_per_channel)). Default
-    /// [`DEFAULT_MESSAGES_PER_CHANNEL`].
-    pub messages_per_channel: usize,
-    /// Capacity of the engine-command queue (see
-    /// [`UiBuilder::engine_queue_capacity`](crate::UiBuilder::engine_queue_capacity)). Default
-    /// [`DEFAULT_ENGINE_QUEUE_CAPACITY`].
-    pub engine_queue_capacity: usize,
     /// The function called for every fault (see [`Engine::set_fault_hook`]). Default `None`.
     pub fault_hook: Option<FaultHook>,
 }
@@ -94,11 +95,10 @@ impl core::fmt::Debug for AppConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("AppConfig")
             .field("engine", &self.engine)
+            .field("limits", &self.limits)
             .field("theme", &self.theme.as_ref().map(|t| t.name()))
             .field("motion", &self.motion)
             .field("rotation", &self.rotation)
-            .field("messages_per_channel", &self.messages_per_channel)
-            .field("engine_queue_capacity", &self.engine_queue_capacity)
             .field("fault_hook", &self.fault_hook.is_some())
             .finish()
     }
@@ -111,9 +111,9 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    /// The defaults: [`EngineConfig::default`], no theme, [`Motion::Full`], the display's own
-    /// rotation, [`DEFAULT_MESSAGES_PER_CHANNEL`], [`DEFAULT_ENGINE_QUEUE_CAPACITY`], no fault
-    /// hook — exactly what a builder uses when it is given no `AppConfig`.
+    /// The defaults: [`EngineConfig::default`], [`Limits::DEFAULT`], no theme,
+    /// [`Motion::Full`], the display's own rotation, no fault hook — exactly what a builder
+    /// uses when it is given no `AppConfig`.
     ///
     /// ```
     /// use twine_view::prelude::*;
@@ -121,16 +121,15 @@ impl AppConfig {
     /// let cfg = AppConfig::new();
     /// assert!(cfg.theme.is_none());
     /// assert_eq!(cfg.motion, Motion::Full);
-    /// assert_eq!(cfg.messages_per_channel, twine_view::DEFAULT_MESSAGES_PER_CHANNEL);
+    /// assert_eq!(cfg.limits, Limits::DEFAULT);
     /// ```
     pub fn new() -> Self {
         Self {
             engine: EngineConfig::default(),
+            limits: Limits::DEFAULT,
             theme: None,
             motion: Motion::Full,
             rotation: None,
-            messages_per_channel: DEFAULT_MESSAGES_PER_CHANNEL,
-            engine_queue_capacity: DEFAULT_ENGINE_QUEUE_CAPACITY,
             fault_hook: None,
         }
     }
@@ -145,6 +144,19 @@ impl AppConfig {
     /// ```
     pub fn engine(mut self, engine: EngineConfig) -> Self {
         self.engine = engine;
+        self
+    }
+
+    /// Sets [`limits`](Self::limits).
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    ///
+    /// let cfg = AppConfig::new().limits(Limits::DEFAULT.max_nodes(300).engine_queue(32));
+    /// assert_eq!((cfg.limits.max_nodes, cfg.limits.engine_queue), (300, 32));
+    /// ```
+    pub fn limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
         self
     }
 
@@ -197,30 +209,6 @@ impl AppConfig {
         self
     }
 
-    /// Sets [`messages_per_channel`](Self::messages_per_channel) (`0` counts as `1`).
-    ///
-    /// ```
-    /// use twine_view::prelude::*;
-    ///
-    /// assert_eq!(AppConfig::new().messages_per_channel(4).messages_per_channel, 4);
-    /// ```
-    pub fn messages_per_channel(mut self, n: usize) -> Self {
-        self.messages_per_channel = n;
-        self
-    }
-
-    /// Sets [`engine_queue_capacity`](Self::engine_queue_capacity).
-    ///
-    /// ```
-    /// use twine_view::prelude::*;
-    ///
-    /// assert_eq!(AppConfig::new().engine_queue_capacity(64).engine_queue_capacity, 64);
-    /// ```
-    pub fn engine_queue_capacity(mut self, capacity: usize) -> Self {
-        self.engine_queue_capacity = capacity;
-        self
-    }
-
     /// Sets [`fault_hook`](Self::fault_hook).
     ///
     /// ```
@@ -239,8 +227,9 @@ impl AppConfig {
     /// the fault hook, the motion preference, the theme (unless the display already has this
     /// very theme) and the rotation (requested only when it differs from the display's).
     /// [`engine`](Self::engine) is not applied here — it is what the host creates the engine
-    /// with ([`Engine::new`]) — and neither are the channel and queue budgets (they belong to
-    /// the mount: [`UiCore::mount_configured`](crate::UiCore::mount_configured)).
+    /// with ([`Engine::new`]) — and neither are the [`limits`](Self::limits) (they need the
+    /// runtime too: [`apply_limits`](Self::apply_limits), which
+    /// [`UiCore::mount_configured`](crate::UiCore::mount_configured) calls).
     ///
     /// Idempotent. Never panics; costs one theme installation (O(nodes of the display)) when
     /// the theme changes, nothing per frame.
@@ -275,6 +264,80 @@ impl AppConfig {
         engine.set_motion(self.motion);
     }
 
+    /// Applies [`limits`](Self::limits): the engine's share ([`Engine::set_limits`]), the
+    /// reactive runtime's ([`Runtime::set_limits`]) and the waker pool's heap bound
+    /// ([`WakerLease::set_heap_limit`] from [`Limits::max_heap_wakers`]). With
+    /// [`Limits::preallocate`] this reserves the bounded storage, so call it before anything
+    /// is created (the builders and [`UiCore::mount_configured`](crate::UiCore::mount_configured)
+    /// do). The `Ui`'s own bounds (engine queue, messages per channel) are applied by the
+    /// mount. Idempotent; allocates only the reservation; never panics.
+    ///
+    /// # Errors
+    /// [`UiError::Engine`] with [`EngineError::InvalidConfig`] when [`Limits::validate`]
+    /// refuses the limits (nothing is applied) — in the `safety` profile also when they are
+    /// not preallocated.
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    ///
+    /// let cfg = AppConfig::new().limits(Limits::DEFAULT.max_nodes(64).max_scopes(32).preallocated());
+    /// let mut engine = Engine::new(cfg.engine).unwrap();
+    /// cfg.apply_limits(Runtime::take().unwrap(), &mut engine).unwrap();
+    /// assert_eq!(engine.limits().max_nodes, 64);
+    /// assert!(cfg.limits(Limits::DEFAULT.max_nodes(0)).apply_limits(Runtime::current_thread(), &mut engine).is_err());
+    /// ```
+    pub fn apply_limits(&self, rt: Runtime, engine: &mut Engine) -> Result<(), UiError> {
+        engine.set_limits(&self.limits)?;
+        // Validated by the engine above: the runtime accepts the same value.
+        if let Err(twine_core::Error::InvalidArgument(msg)) = rt.set_limits(&self.limits) {
+            return Err(UiError::Engine(EngineError::InvalidConfig(msg)));
+        }
+        WakerLease::set_heap_limit(self.limits.max_heap_wakers);
+        Ok(())
+    }
+
+    /// The complete configuration as `section.key=value` lines (see [`twine_core::audit`]
+    /// for the format): `Display`, and `defmt::Format` with the `defmt` feature; or visit
+    /// the entries with [`Audit::audit`] to store or transmit them without text. Sections, in
+    /// order:
+    ///
+    /// | Section | Entries |
+    /// |---------|---------|
+    /// | `audit` | `format` (the format version, `1`) |
+    /// | `build` | `twine_version`, the profile and feature flags (`safety`, `no_panic_runtime`, `debug_checks`, `async`, `std`, …) |
+    /// | `limits` | every [`Limits`] field ([`Limits::summary`]) |
+    /// | `engine` | every [`EngineConfig`] field: refresh, flush timeout and policy, cache budgets, input timings, idle timeout |
+    /// | `fixed` | compile-time capacities: displays, input devices, focus groups, static waker slots |
+    /// | `view` | motion, rotation, fault hook |
+    /// | `theme` | `theme.set`, then the theme's own entries ([`ThemeHook::audit`]: name, modes; R7 themes add their digest) |
+    /// | `audit` | `digest_crc32`, last: the CRC-32 of the text of every line before it ([`twine_core::audit::digest`]) — one number to compare with the reviewed configuration's |
+    ///
+    /// The report is the configuration, not the state: it does not depend on what the
+    /// application did. Nothing is allocated; the formatting code is linked only when this is
+    /// used.
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    ///
+    /// let cfg = AppConfig::new()
+    ///     .limits(Limits::DEFAULT.max_nodes(300).preallocated())
+    ///     .theme(DefaultTheme::light());
+    /// let report = cfg.audit_report().to_string();
+    /// assert!(report.starts_with("audit.format=1\n"));
+    /// assert!(report.contains("limits.max_nodes=300\n"));
+    /// assert!(report.contains("limits.preallocate=true\n"));
+    /// assert!(report.contains("engine.flush_timeout_us=500000\n"));
+    /// assert!(report.contains("build.safety=false\n"));
+    /// assert!(report.contains("theme.set=true\n"));
+    /// // The last line digests the others.
+    /// let (body, last) = report.trim_end().rsplit_once('\n').unwrap();
+    /// let crc = twine_core::crc::Crc32::of(format!("{body}\n").as_bytes());
+    /// assert_eq!(last, format!("audit.digest_crc32={}", crc.value()));
+    /// ```
+    pub fn audit_report(&self) -> KeyValues<'_, AppConfig> {
+        KeyValues(self)
+    }
+
     /// The display part of [`configure_engine`](Self::configure_engine): theme and rotation.
     pub(crate) fn configure_display(
         &self,
@@ -296,5 +359,83 @@ impl AppConfig {
             }
         }
         Ok(())
+    }
+}
+
+impl Audit for AppConfig {
+    /// The entries of [`audit_report`](AppConfig::audit_report), in its order, ending with
+    /// `audit.digest_crc32`: the CRC-32 ([`twine_core::audit::digest`]) of every line before it.
+    fn audit(&self, out: &mut dyn AuditSink) {
+        let body = Entries(self);
+        body.audit(out);
+        out.entry(
+            "audit",
+            "digest_crc32",
+            AuditValue::Uint(u64::from(twine_core::audit::digest(&body).value())),
+        );
+    }
+}
+
+/// The entries of an [`AppConfig`]'s audit report before its digest.
+struct Entries<'a>(&'a AppConfig);
+
+impl Audit for Entries<'_> {
+    fn audit(&self, out: &mut dyn AuditSink) {
+        let this = self.0;
+        out.entry("audit", "format", AuditValue::Uint(1));
+        out.entry(
+            "build",
+            "twine_version",
+            AuditValue::Text(env!("CARGO_PKG_VERSION")),
+        );
+        out.entry("build", "safety", AuditValue::Bool(twine_core::SAFETY_PROFILE));
+        out.entry("build", "view_async", AuditValue::Bool(cfg!(feature = "async")));
+        out.entry("build", "view_vector", AuditValue::Bool(cfg!(feature = "vector")));
+        out.entry("build", "view_svg", AuditValue::Bool(cfg!(feature = "svg")));
+        out.entry("build", "std", AuditValue::Bool(cfg!(feature = "std")));
+        twine_reactive::audit_features(out);
+        twine_engine::audit_features(out);
+        this.limits.audit(out);
+        this.engine.audit(out);
+        out.entry(
+            "fixed",
+            "max_displays",
+            AuditValue::from_usize(twine_engine::MAX_DISPLAYS),
+        );
+        out.entry(
+            "fixed",
+            "max_inputs",
+            AuditValue::from_usize(twine_engine::MAX_INPUTS),
+        );
+        out.entry(
+            "fixed",
+            "max_focus_groups",
+            AuditValue::from_usize(twine_engine::MAX_GROUPS),
+        );
+        out.entry(
+            "fixed",
+            "static_wakers",
+            AuditValue::from_usize(WakerLease::STATIC_SLOTS),
+        );
+        out.entry(
+            "view",
+            "motion",
+            AuditValue::Text(match this.motion {
+                Motion::Full => "full",
+                Motion::Reduced => "reduced",
+                Motion::None => "none",
+            }),
+        );
+        out.entry(
+            "view",
+            "rotation_deg",
+            this.rotation
+                .map_or(AuditValue::Absent, |r| AuditValue::Uint(u64::from(r.degrees()))),
+        );
+        out.entry("view", "fault_hook", AuditValue::Bool(this.fault_hook.is_some()));
+        out.entry("theme", "set", AuditValue::Bool(this.theme.is_some()));
+        if let Some(theme) = &this.theme {
+            theme.audit(out);
+        }
     }
 }

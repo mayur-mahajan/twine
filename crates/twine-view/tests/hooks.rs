@@ -73,7 +73,7 @@ fn tween_reaches_target_and_idles() {
     });
     t.run_until_idle();
     assert_eq!(t.find(by_id("c")).coords().height(), 20);
-    let open = t.root_scope().expect_context::<Signal<bool>>();
+    let open = t.root_scope().use_context::<Signal<bool>>().unwrap();
     open.set(true);
     t.advance(Duration::ms(100));
     let mid = t.find(by_id("c")).coords().height();
@@ -94,8 +94,8 @@ fn tween_retarget_midflight_is_continuous() {
         label(text!("{}", v.get()))
     });
     t.run_until_idle();
-    let target = t.root_scope().expect_context::<Signal<i32>>();
-    let v = t.root_scope().expect_context::<ReadSignal<i32>>();
+    let target = t.root_scope().use_context::<Signal<i32>>().unwrap();
+    let v = t.root_scope().use_context::<ReadSignal<i32>>().unwrap();
     target.set(1000);
     let mut last = v.get_untracked();
     let mut max_step = 0;
@@ -134,7 +134,8 @@ fn animation_controller_pause_resume() {
     t.advance(Duration::ms(200));
     let (a, _ctl) = t
         .root_scope()
-        .expect_context::<(ReadSignal<i32>, AnimController)>();
+        .use_context::<(ReadSignal<i32>, AnimController)>()
+        .unwrap();
     t.find(by_text("pause")).click();
     let paused = a.get_untracked();
     assert!(paused > 0 && paused < 1000);
@@ -172,7 +173,7 @@ fn interval_stops_on_dispose() {
     let n = ticks.get();
     // LVGL timers restart from the time they ran: with frames every `refr_period` they drift.
     assert!((7..=11).contains(&n), "{n}");
-    let on = t.root_scope().expect_context::<Signal<bool>>();
+    let on = t.root_scope().use_context::<Signal<bool>>().unwrap();
     on.set(false);
     t.run_until_idle();
     t.advance(Duration::ms(1000));

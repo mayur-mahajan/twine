@@ -475,6 +475,14 @@ impl Widget for Spinbox {
         &SPINBOX_CLASS
     }
 
+    /// The range and the value (little-endian `i32`s), for display-integrity cross-checks.
+    #[cfg(feature = "display-integrity")]
+    fn value_digest(&self, crc: &mut twine_core::crc::Crc32) {
+        for v in [self.range.0, self.range.1, self.value] {
+            crc.update(&v.to_le_bytes());
+        }
+    }
+
     fn init(&mut self, cx: &mut WidgetCx<'_>) {
         self.ta.construct(cx);
         let id = cx.node();

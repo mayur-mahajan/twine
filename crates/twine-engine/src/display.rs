@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::any::Any;
 
-use twine_core::fault::FaultKind;
+use twine_core::fault::{CapacityFault, FaultKind};
 use twine_core::{ColorFormat, Duration, Fraction, Rect, Rotation};
 use twine_hal::{
     ControlError, DisplayDriver, DisplayInfo, DrawBuffer, DrawBufferMem, FramebufferDisplay, buffer_bytes,
@@ -20,7 +20,7 @@ use crate::{
 pub const MAX_DISPLAYS: usize = 4;
 
 /// Nodes every display creates when it is added: bottom layer, first screen, top layer and
-/// system layer (they count against `EngineConfig::max_nodes`).
+/// system layer (they count against `Limits::max_nodes`).
 const DISPLAY_NODES: usize = 4;
 
 /// A request for partial draw buffers on the heap: how many (one or two) and how many
@@ -374,11 +374,26 @@ pub(crate) trait FlushBackend {
         &mut self,
         rotation: Rotation,
     ) -> Result<DisplayInfo, ControlError<crate::DriverErrorCode>>;
+    #[cfg(feature = "display-integrity")]
+    fn read_back(&mut self, area: Rect, buf: &mut [u8]) -> Result<(), EngineError>;
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 impl<D: DisplayDriver + 'static> FlushBackend for D {
+    #[cfg(feature = "display-integrity")]
+    fn read_back(&mut self, area: Rect, buf: &mut [u8]) -> Result<(), EngineError> {
+        match DisplayDriver::read_back(self, area, buf) {
+            Ok(()) => Ok(()),
+            Err(ControlError::Unsupported) => Err(EngineError::Unsupported(
+                "the display driver cannot read back (DisplayDriver::read_back)",
+            )),
+            Err(ControlError::Driver(e)) => {
+                let code = crate::DriverErrorCode::new(DisplayDriver::error_code(self, &e));
+                Err(EngineError::driver(code, &e))
+            }
+        }
+    }
     fn set_brightness(&mut self, level: Fraction) -> Result<(), ControlError<crate::DriverErrorCode>> {
         DisplayDriver::set_brightness(self, level).map_err(|e| self.control_code(e))
     }
@@ -526,6 +541,9 @@ pub(crate) struct Display {
     pub(crate) control: crate::display_control::ControlState,
     /// The partial draw buffers of the display (for `Engine::memory_report`).
     pub(crate) draw_buffers: DrawBufferUsage,
+    /// The fail-safe screen and whether it is active (`Engine::set_fail_safe_screen`).
+    #[cfg(feature = "display-integrity")]
+    pub(crate) fail_safe: crate::integrity::FailSafe,
 }
 
 /// Bytes of a display's partial draw buffers by where they live (recorded once, when the
@@ -597,7 +615,7 @@ impl Engine {
     /// # Errors
     /// [`EngineError::BufferModeMismatch`] for `Full` / `Direct`;
     /// [`EngineError::TooManyDisplays`]; [`EngineError::TooManyNodes`] (and
-    /// [`FaultKind::Capacity`] is raised) when [`EngineConfig::max_nodes`](crate::EngineConfig::max_nodes)
+    /// [`FaultKind::Capacity`] is raised) when [`Limits::max_nodes`](twine_core::Limits::max_nodes)
     /// leaves no room for the display's 4 layer and screen nodes; [`EngineError::FormatDisabled`] (and
     /// [`FaultKind::FormatDisabled`] is raised) when the renderer for the display's colour
     /// format is not compiled in; [`EngineError::BufferMisaligned`] for caller buffers that are
@@ -711,12 +729,12 @@ impl Engine {
         )
     }
 
-    /// Refuses a display when the node budget ([`EngineConfig::max_nodes`](crate::EngineConfig::max_nodes),
+    /// Refuses a display when the node budget ([`Limits::max_nodes`](twine_core::Limits::max_nodes),
     /// screens and layers included) has no room for its [`DISPLAY_NODES`] layer and screen
     /// nodes. Checked before anything is allocated for the display (F10b), so creating them
     /// in `push_display` cannot fail.
     fn check_display_nodes(&mut self) -> Result<(), EngineError> {
-        if self.tree.len() + DISPLAY_NODES <= usize::from(self.config.max_nodes) {
+        if self.tree.len() + DISPLAY_NODES <= usize::from(self.limits.max_nodes) {
             Ok(())
         } else {
             self.display_nodes_exhausted()
@@ -728,12 +746,12 @@ impl Engine {
     fn display_nodes_exhausted(&mut self) -> Result<(), EngineError> {
         twine_core::error!(
             target: "twine::engine",
-            "display refused: {} live nodes, a display needs {} more (EngineConfig::max_nodes = {})",
+            "display refused: {} live nodes, a display needs {} more (Limits::max_nodes = {})",
             self.tree.len(),
             DISPLAY_NODES,
-            self.config.max_nodes
+            self.limits.max_nodes
         );
-        self.raise_fault(FaultRecord::new(FaultKind::Capacity));
+        self.raise_fault(FaultRecord::new(FaultKind::Capacity).code(CapacityFault::Nodes.code()));
         Err(EngineError::TooManyNodes)
     }
 
@@ -810,6 +828,8 @@ impl Engine {
             health: crate::health::HealthTracker::default(),
             control: crate::display_control::ControlState::new(&info),
             draw_buffers,
+            #[cfg(feature = "display-integrity")]
+            fail_safe: crate::integrity::FailSafe::default(),
         });
         if self.default_display.is_none() {
             self.default_display = Some(id);
@@ -870,7 +890,7 @@ impl Engine {
             .display(display)
             .ok_or(EngineError::DisplayNotFound(display))?
             .area();
-        let s = self.tree.create(None, Box::new(Obj))?;
+        let s = self.tree_create(None, Box::new(Obj))?;
         if let Some(n) = self.tree.node_mut(s) {
             n.coords = area;
         }
@@ -891,6 +911,10 @@ impl Engine {
     pub(crate) fn load_screen_now(&mut self, d: usize, screen: NodeId) {
         let old = self.displays[d].active_screen;
         if old == screen {
+            return;
+        }
+        #[cfg(feature = "display-integrity")]
+        if self.fail_safe_refuses(d, screen) {
             return;
         }
         self.send_event(old, EventCode::ScreenUnloadStart, EventParam::None);
@@ -995,26 +1019,69 @@ impl Engine {
         Ok(id)
     }
 
-    /// [`Tree::create`](crate::Tree::create) within
-    /// [`EngineConfig::max_nodes`](crate::EngineConfig::max_nodes), raising
-    /// [`FaultKind::Capacity`] (with the parent) when the tree is full.
+    /// [`Tree::create`](crate::Tree::create) within [`Limits::max_nodes`](twine_core::Limits::max_nodes)
+    /// and [`Limits::max_tree_depth`](twine_core::Limits::max_tree_depth), raising
+    /// [`FaultKind::Capacity`] (with the parent and the [`CapacityFault`] code) when refused.
     fn tree_create(
         &mut self,
         parent: Option<NodeId>,
         widget: Box<dyn Widget>,
     ) -> Result<NodeId, EngineError> {
-        let result = if self.tree.len() >= usize::from(self.config.max_nodes) {
-            Err(EngineError::TooManyNodes)
-        } else {
-            self.tree.create(parent, widget)
-        };
-        result.inspect_err(|e| {
-            if *e == EngineError::TooManyNodes {
-                twine_core::error!(target: "twine::engine", "create: too many nodes");
-                let r = FaultRecord::new(FaultKind::Capacity);
-                self.raise_fault(if let Some(p) = parent { r.node(p) } else { r });
+        if self.tree.len() >= usize::from(self.limits.max_nodes) {
+            return Err(self.refuse_node(parent, EngineError::TooManyNodes));
+        }
+        if let Some(p) = parent {
+            // The new node is one level below its parent.
+            if self
+                .tree
+                .depth(p)
+                .is_some_and(|d| d >= usize::from(self.limits.max_tree_depth))
+            {
+                return Err(self.refuse_node(Some(p), EngineError::TooDeep));
             }
-        })
+        }
+        let id = self.tree.create(parent, widget).map_err(|e| {
+            if e == EngineError::TooManyNodes {
+                self.refuse_node(parent, e)
+            } else {
+                e
+            }
+        })?;
+        #[cfg(feature = "display-integrity")]
+        if self
+            .tree
+            .node(id)
+            .is_some_and(|n| n.flags().contains(ObjFlags::SAFETY_CRITICAL))
+        {
+            // A widget class whose nodes are critical by default.
+            self.critical_changed(id, true);
+        }
+        Ok(id)
+    }
+
+    /// Logs and raises the `Capacity` fault of a refused creation or move (`TooManyNodes` or
+    /// `TooDeep`), returning the error. Cold.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn refuse_node(&mut self, parent: Option<NodeId>, e: EngineError) -> EngineError {
+        let code = if e == EngineError::TooDeep {
+            twine_core::error!(
+                target: "twine::engine",
+                "node refused: deeper than Limits::max_tree_depth = {}",
+                self.limits.max_tree_depth
+            );
+            CapacityFault::TreeDepth
+        } else {
+            twine_core::error!(
+                target: "twine::engine",
+                "create: too many nodes (Limits::max_nodes = {})",
+                self.limits.max_nodes
+            );
+            CapacityFault::Nodes
+        };
+        let r = FaultRecord::new(FaultKind::Capacity).code(code.code());
+        self.raise_fault(if let Some(p) = parent { r.node(p) } else { r });
+        e
     }
 
     /// Creates a root node that belongs to no display (LVGL `lv_obj_create(NULL)` before the
@@ -1111,8 +1178,37 @@ impl Engine {
                 ));
             }
         }
-        let order = self.tree.post_order(id);
-        for &n in &order {
+        #[cfg(feature = "display-integrity")]
+        if self.is_fail_safe_screen(id) {
+            twine_core::warn!(target: "twine::engine", "delete: {} is a fail-safe screen", fmt_node_id(id));
+            return Err(EngineError::InvalidConfig("cannot delete a fail-safe screen"));
+        }
+        // The post-order lives in the tree's delete scratch (no allocation once it is large
+        // enough; reserved with `Limits::preallocate`). `Delete` handlers may delete other
+        // nodes meanwhile: their segments go after this one and are released before we go on.
+        let order = self.tree.push_post_order(id);
+        let result = self.delete_in_order(id, order.clone());
+        self.tree.release_scratch(order.start);
+        result
+    }
+
+    /// Stops the animations, transitions and screen loads of the nodes deleted at `range` of
+    /// the delete scratch.
+    fn forget_deleted(&mut self, range: core::ops::Range<usize>) {
+        let scratch = self.tree.take_scratch();
+        let ids = scratch.get(range).unwrap_or(&[]);
+        self.anims_forget_nodes(ids);
+        self.screen_anims_forget(ids);
+        #[cfg(feature = "display-integrity")]
+        self.critical_forget(ids);
+        self.tree.put_scratch(scratch);
+    }
+
+    /// The body of [`delete`](Self::delete) once `id`'s post-order is in the delete scratch
+    /// at `order`.
+    fn delete_in_order(&mut self, id: NodeId, order: core::ops::Range<usize>) -> Result<(), EngineError> {
+        for i in order.clone() {
+            let Some(n) = self.tree.scratch_at(i) else { break };
             if self.tree.contains(n) {
                 self.send_event(n, EventCode::Delete, EventParam::None);
             }
@@ -1120,7 +1216,8 @@ impl Engine {
         if !self.tree.contains(id) {
             return Ok(()); // a `Delete` handler deleted it already
         }
-        for &n in &order {
+        for i in order {
+            let Some(n) = self.tree.scratch_at(i) else { break };
             if self.tree.node(n).is_some_and(|x| x.group.is_some()) {
                 self.group_remove(n);
             }
@@ -1130,9 +1227,9 @@ impl Engine {
         }
         let parent = self.tree.parent(id);
         self.invalidate_subtree(id, InvalidateReason::Delete);
-        let deleted = self.tree.delete(id)?;
-        self.anims_forget_nodes(&deleted);
-        self.screen_anims_forget(&deleted);
+        let deleted = self.tree.delete_keep_order(id)?;
+        self.forget_deleted(deleted.clone());
+        self.tree.release_scratch(deleted.start);
         self.forget_outside_presses();
         for d in &mut self.displays {
             d.screens.retain(|s| *s != id);
@@ -1146,7 +1243,11 @@ impl Engine {
         }
         if let Some(p) = parent.filter(|p| self.tree.contains(*p)) {
             self.mark_layout(p, crate::LayoutDirty::CHILDREN);
-            self.layout.readjust.push(p);
+            twine_core::alloc_guard::push(
+                &mut self.layout.readjust,
+                p,
+                twine_core::alloc_guard::AllocSite::EngineScratch,
+            );
             self.scrollbar_invalidate_tracks(p);
             self.dispatch(id, p, EventCode::ChildDeleted, EventParam::None);
         }

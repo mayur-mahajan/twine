@@ -110,6 +110,9 @@ fn pos_of<T: LayoutTree + ?Sized>(t: &T, id: T::Id, axis: Axis, parent: Size, si
 
 /// The rectangle of a child positioned by its own styles in a parent whose content area is
 /// `content` (scrolled) / `unscrolled` (for `FLOATING` children).
+// Out of line: kept off the frames of the recursive layout walk (`arrange` / `resolve_node`),
+// whose stack use per tree level is measured (`docs/safety/profile.md` § 10).
+#[inline(never)]
 pub(crate) fn abs_rect<T: LayoutTree + ?Sized>(
     t: &T,
     id: T::Id,
@@ -207,6 +210,9 @@ fn abs_extent<T: LayoutTree + ?Sized>(
 }
 
 /// The largest [`abs_extent`] over the children in `items` positioned by their own styles.
+// Out of line: kept off the frames of the recursive layout walk (`arrange` / `resolve_node`),
+// whose stack use per tree level is measured (`docs/safety/profile.md` § 10).
+#[inline(never)]
 pub(crate) fn abs_extent_all<T: LayoutTree + ?Sized>(
     t: &T,
     items: &[Item<T::Id>],

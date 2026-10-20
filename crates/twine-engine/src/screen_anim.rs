@@ -331,6 +331,10 @@ impl Engine {
         {
             return;
         }
+        #[cfg(feature = "display-integrity")]
+        if self.fail_safe_refuses(d, screen) {
+            return;
+        }
         if self.displays[d].screen_load.is_some() {
             self.finish_screen_anim_at(d);
         }

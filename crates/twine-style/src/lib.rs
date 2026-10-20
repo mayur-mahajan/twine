@@ -140,8 +140,23 @@
 //!
 //! `log` / `defmt` select the logging backend (target `"twine::style"`); `std` enables std-only
 //! conveniences of the dependencies.
+//!
+//! `safety`: the safety profile (enabled by the `twine` facade's `safety` feature, see
+//! `docs/safety/profile.md` in the repository): the profile's lints.
 #![no_std]
 #![forbid(unsafe_code)]
+// The safety profile's lints (`docs/safety/profile.md` § Lints): denied in library code under
+// the `safety` feature (`cargo xtask ci` stage `clippy-safety`).
+#![cfg_attr(
+    all(feature = "safety", not(test)),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable,)
+)]
+// NOTE(R5.S11): sites of these lints remain (counts: `docs/safety/profile.md` § Lint status,
+// `cargo xtask safety-lints`); a lint moves to `deny` above when its last site is fixed.
+#![cfg_attr(
+    all(feature = "safety", not(test)),
+    allow(clippy::indexing_slicing, clippy::arithmetic_side_effects,)
+)]
 #![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 
 extern crate alloc;

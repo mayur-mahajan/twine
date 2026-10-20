@@ -55,7 +55,7 @@ pub fn styled_box(e: &mut Engine, parent: NodeId, r: Rect, props: &[StyleProp]) 
 /// # Panics
 ///
 /// If the node cannot be created: `parent` does not exist, or the engine's node limit
-/// (`EngineConfig::max_nodes`) is reached. A test fixture fails loudly instead of building a
+/// (`Limits::max_nodes`) is reached. A test fixture fails loudly instead of building a
 /// partial scene.
 pub fn child_box(e: &mut Engine, parent: NodeId, r: Rect, props: &[StyleProp]) -> NodeId {
     let b = e.create(parent, Box::new(Obj)).expect("parent exists");

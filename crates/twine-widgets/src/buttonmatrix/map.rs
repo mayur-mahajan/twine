@@ -301,20 +301,27 @@ impl BtnMap {
         }
     }
 
-    /// Replaces the text of button `i` in place (a static map becomes an owned copy first).
-    /// Returns whether it changed; `false` when `i` is out of range.
-    pub(crate) fn set_text(&mut self, i: usize, text: &str) -> bool {
+    /// The buffer to write the new text of button `i` into, when `text` differs from its
+    /// text (a static map becomes an owned copy first). `None` when unchanged or when `i` is
+    /// out of range.
+    pub(crate) fn text_buf(&mut self, i: usize, text: &str) -> Option<&mut String> {
         if i >= self.btn_count() || self.text(i) == Some(text) {
-            return false;
+            return None;
         }
         if let BtnMap::Static(_) = self {
+            twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::WidgetBuffer);
             *self = BtnMap::Owned(OwnedMap::from(&*self));
         }
-        let BtnMap::Owned(m) = self else { return false };
-        let Some(s) = m.texts.get_mut(i) else { return false };
-        s.clear();
-        s.push_str(text);
-        true
+        let BtnMap::Owned(m) = self else { return None };
+        m.texts.get_mut(i)
+    }
+
+    /// The owned texts (none for a static map), to bound them.
+    pub(crate) fn owned_texts_mut(&mut self) -> &mut [String] {
+        match self {
+            BtnMap::Owned(m) => &mut m.texts,
+            BtnMap::Static(_) => &mut [],
+        }
     }
 }
 
@@ -344,18 +351,29 @@ mod tests {
     }
 
     #[test]
-    fn set_text_copies_a_static_map_once_and_reuses_the_strings() {
+    fn text_buf_copies_a_static_map_once_and_reuses_the_strings() {
+        /// Writes `t` into button `i` the way `ButtonMatrix::set_btn_text` does.
+        fn set(m: &mut BtnMap, i: usize, t: &str) -> bool {
+            m.text_buf(i, t)
+                .map(|b| {
+                    b.clear();
+                    b.push_str(t);
+                })
+                .is_some()
+        }
         let mut m = BtnMap::from(&MAP);
-        assert!(!m.set_text(0, "a"), "same text: no copy");
+        assert!(!set(&mut m, 0, "a"), "same text: no copy");
         assert!(matches!(m, BtnMap::Static(_)));
-        assert!(m.set_text(1, "bee"));
+        assert!(set(&mut m, 1, "bee"));
         assert_eq!(m.texts().collect::<Vec<_>>(), ["a", "bee", "c"]);
         let BtnMap::Owned(o) = &m else { panic!("owned") };
         let cap = o.texts[1].capacity();
-        assert!(m.set_text(1, "b"));
+        assert!(set(&mut m, 1, "b"));
         let BtnMap::Owned(o) = &m else { panic!("owned") };
         assert_eq!(o.texts[1].capacity(), cap);
-        assert!(!m.set_text(9, "x"));
+        assert!(!set(&mut m, 9, "x"));
+        assert_eq!(m.owned_texts_mut().len(), 3);
+        assert!(BtnMap::from(&MAP).owned_texts_mut().is_empty());
     }
 
     #[test]

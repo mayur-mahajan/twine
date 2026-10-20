@@ -103,6 +103,9 @@ pub(crate) fn show(
     e.with_widget_mut(node, |p: &mut Popover, cx| {
         if p.text != text || p.state != state {
             p.text.clear();
+            if p.text.capacity() < text.len() {
+                twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
+            }
             p.text.push_str(text);
             p.state = state;
             cx.invalidate();

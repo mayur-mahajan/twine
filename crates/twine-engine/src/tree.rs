@@ -276,6 +276,11 @@ pub struct Tree {
     /// parent (see [`style_parent`](Self::style_parent)). Usually empty: one entry per open
     /// popup or modal.
     style_links: Vec<(NodeId, NodeId)>,
+    /// Post-order ids of the subtrees being deleted, one segment per (nested) deletion; kept
+    /// to reuse its allocation, reserved for `Limits::max_nodes` with `preallocate`.
+    scratch: Vec<NodeId>,
+    /// Event handlers registered on the live nodes (bounded by `Limits::max_handlers`).
+    pub(crate) handler_count: usize,
 }
 
 impl Tree {
@@ -299,9 +304,61 @@ impl Tree {
     /// Allocates nothing; never panics; O(nodes).
     pub(crate) fn heap_bytes(&self) -> usize {
         self.nodes.bytes_reserved()
+            + self.scratch.capacity() * core::mem::size_of::<NodeId>()
             + self.roots.capacity() * core::mem::size_of::<NodeId>()
             + self.style_links.capacity() * core::mem::size_of::<(NodeId, NodeId)>()
             + self.nodes.iter().map(|(_, n)| n.heap_bytes()).sum::<usize>()
+    }
+
+    /// Reserves the storage of `n` nodes: the node arena and the delete scratch (see
+    /// `Limits::preallocate`).
+    pub(crate) fn reserve(&mut self, n: u16) {
+        self.nodes.reserve(n);
+        let n = usize::from(n);
+        self.scratch.reserve_exact(n.saturating_sub(self.scratch.len()));
+    }
+
+    /// Levels between `id` and its root (a root is 0); `None` for an unknown node. O(depth).
+    pub(crate) fn depth(&self, id: NodeId) -> Option<usize> {
+        if !self.contains(id) {
+            return None;
+        }
+        Some(self.ancestors(id).count())
+    }
+
+    /// Levels below `id` in its subtree (a leaf is 0). O(subtree), no allocation: a walk
+    /// along the child and sibling links that tracks the depth.
+    pub(crate) fn subtree_height(&self, id: NodeId) -> usize {
+        let (mut height, mut depth) = (0usize, 0usize);
+        let mut n = id;
+        loop {
+            if let Some(c) = self.node(n).and_then(|x| x.first_child) {
+                n = c;
+                depth = depth.saturating_add(1);
+                height = height.max(depth);
+                continue;
+            }
+            // Leaf: climb until a next sibling exists (never above `id`).
+            loop {
+                if n == id {
+                    return height;
+                }
+                let Some(node) = self.node(n) else {
+                    return height;
+                };
+                if let Some(s) = node.next {
+                    n = s;
+                    break;
+                }
+                match node.parent {
+                    Some(p) => {
+                        n = p;
+                        depth = depth.saturating_sub(1);
+                    }
+                    None => return height,
+                }
+            }
+        }
     }
 
     /// Number of slots of the node arena (live, free and retired; by capacity).
@@ -309,10 +366,11 @@ impl Tree {
         self.nodes.capacity()
     }
 
-    /// Number of retired node slots: slots that used up their 65 535 generations and are
-    /// never reused ([`Arena::retired`]). Stays 0 unless the tree's working set is tiny
-    /// compared to its create/delete churn (see the arena's generation budget); a growing
-    /// value means node memory is slowly being lost to wear.
+    /// Number of retired node slots: slots that used up their generations (65 535 by default,
+    /// ≈ 2.8 × 10¹⁴ in the safety profile) and are never reused ([`Arena::retired`]). Stays 0
+    /// unless the tree's working set is tiny compared to its create/delete churn (see the
+    /// arena's [generation budget](Arena#generation-width-and-budget)); a growing value means
+    /// node memory is slowly being lost to wear. In the safety profile it stays 0 in practice.
     #[must_use]
     pub fn retired_slots(&self) -> usize {
         self.nodes.retired()
@@ -348,6 +406,7 @@ impl Tree {
                 .remove(ObjFlags::PRESS_LOCK | ObjFlags::SCROLL_CHAIN | ObjFlags::GESTURE_BUBBLE);
         }
         let id = self.nodes.insert(node).map_err(|_| EngineError::TooManyNodes)?;
+        twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::Widget);
         self.attach(id, parent, None);
         twine_core::trace!(
             target: "twine::engine",
@@ -360,25 +419,55 @@ impl Tree {
         Ok(id)
     }
 
-    /// Deletes `id` and its whole subtree. Returns the deleted ids in post-order (children
-    /// before their parent). O(subtree).
-    pub fn delete(&mut self, id: NodeId) -> Result<Vec<NodeId>, EngineError> {
+    /// Deletes `id` and its whole subtree; returns the number of nodes deleted. O(subtree).
+    /// The post-order (children before their parent) is built in the tree's delete scratch,
+    /// which keeps its capacity: deleting allocates nothing once the scratch is large enough
+    /// (reserved for `Limits::max_nodes` with `Limits::preallocate`).
+    ///
+    /// ```
+    /// use twine_engine::{Obj, Tree};
+    ///
+    /// let mut t = Tree::new();
+    /// let root = t.create(None, Box::new(Obj)).unwrap();
+    /// let a = t.create(Some(root), Box::new(Obj)).unwrap();
+    /// t.create(Some(a), Box::new(Obj)).unwrap();
+    /// assert_eq!(t.delete(a), Ok(2));
+    /// assert_eq!(t.len(), 1);
+    /// ```
+    ///
+    /// # Errors
+    /// [`EngineError::NodeNotFound`] for an unknown node. Never panics.
+    pub fn delete(&mut self, id: NodeId) -> Result<usize, EngineError> {
+        let range = self.delete_keep_order(id)?;
+        let n = range.len();
+        self.release_scratch(range.start);
+        Ok(n)
+    }
+
+    /// [`delete`](Self::delete) that leaves the deleted ids in post-order in the delete
+    /// scratch, at the returned range ([`scratch_at`](Self::scratch_at)); the caller releases
+    /// it with [`release_scratch`](Self::release_scratch)`(range.start)`.
+    pub(crate) fn delete_keep_order(&mut self, id: NodeId) -> Result<core::ops::Range<usize>, EngineError> {
         if !self.contains(id) {
             return Err(EngineError::NodeNotFound(id));
         }
-        let order = self.post_order(id);
+        let range = self.push_post_order(id);
         self.detach(id);
-        for &n in &order {
-            self.nodes.remove(n);
+        for i in range.clone() {
+            let Some(&n) = self.scratch.get(i) else { break };
+            if let Some(node) = self.nodes.remove(n) {
+                let handlers = node.handlers.as_ref().map_or(0, |h| h.len());
+                self.handler_count = self.handler_count.saturating_sub(handlers);
+            }
         }
         if !self.style_links.is_empty() {
             let nodes = &self.nodes;
             self.style_links
                 .retain(|&(n, p)| nodes.get(n).is_some() && nodes.get(p).is_some());
         }
-        twine_core::trace!(target: "twine::engine", "delete {} ({} nodes)", fmt_node_id(id), order.len());
+        twine_core::trace!(target: "twine::engine", "delete {} ({} nodes)", fmt_node_id(id), range.len());
         self.debug_check();
-        Ok(order)
+        Ok(range)
     }
 
     /// Moves `id` under `new_parent` (`None` = make it a root) at `index` (`None` = last).
@@ -723,9 +812,50 @@ impl Tree {
         Some(self.ancestors(id).last().unwrap_or(id))
     }
 
-    /// Post-order ids of `id`'s subtree (children before parents).
-    pub(crate) fn post_order(&self, id: NodeId) -> Vec<NodeId> {
-        let mut out = Vec::new();
+    /// Appends the post-order ids of `id`'s subtree (children before parents) to the delete
+    /// scratch and returns their range. Nested deletions (from `Delete` handlers) append
+    /// after the running one's segment and release theirs before it continues.
+    pub(crate) fn push_post_order(&mut self, id: NodeId) -> core::ops::Range<usize> {
+        let mut out = core::mem::take(&mut self.scratch);
+        let start = out.len();
+        self.post_order_into(id, &mut out);
+        let end = out.len();
+        self.scratch = out;
+        start..end
+    }
+
+    /// The id at `i` of the delete scratch (see [`push_post_order`](Self::push_post_order)).
+    #[inline]
+    pub(crate) fn scratch_at(&self, i: usize) -> Option<NodeId> {
+        self.scratch.get(i).copied()
+    }
+
+    /// The ids of the delete scratch in `range`.
+    #[cfg(test)]
+    pub(crate) fn scratch_slice(&self, range: core::ops::Range<usize>) -> &[NodeId] {
+        self.scratch.get(range).unwrap_or(&[])
+    }
+
+    /// Lends the delete scratch out (for a pass that needs the engine mutably while it reads
+    /// the deleted ids); give it back with [`put_scratch`](Self::put_scratch). A deletion
+    /// meanwhile uses a scratch of its own.
+    pub(crate) fn take_scratch(&mut self) -> Vec<NodeId> {
+        core::mem::take(&mut self.scratch)
+    }
+
+    /// Puts back the scratch lent by [`take_scratch`](Self::take_scratch) (it holds the
+    /// running deletions' segments; one used meanwhile is empty again and dropped).
+    pub(crate) fn put_scratch(&mut self, scratch: Vec<NodeId>) {
+        self.scratch = scratch;
+    }
+
+    /// Drops the delete scratch's segments from `start` on (keeping the allocation).
+    pub(crate) fn release_scratch(&mut self, start: usize) {
+        self.scratch.truncate(start);
+    }
+
+    /// Appends the post-order ids of `id`'s subtree (children before parents) to `out`.
+    fn post_order_into(&self, id: NodeId, out: &mut Vec<NodeId>) {
         let leftmost = |mut n: NodeId| {
             while let Some(c) = self.node(n).and_then(|x| x.first_child) {
                 n = c;
@@ -734,11 +864,16 @@ impl Tree {
         };
         let mut n = leftmost(id);
         loop {
-            out.push(n);
+            twine_core::alloc_guard::push(out, n, twine_core::alloc_guard::AllocSite::DeleteScratch);
             if n == id {
                 break;
             }
-            let node = &self.nodes.get(n).expect("post_order: live node");
+            // Every id reached is live (children and parents of live nodes); a dead one would
+            // mean a corrupt tree: stop the walk with what was collected.
+            let Some(node) = self.nodes.get(n) else {
+                debug_assert!(false, "post_order: dead node {n:?}");
+                break;
+            };
             match node.next {
                 Some(s) => n = leftmost(s),
                 None => match node.parent {
@@ -747,7 +882,6 @@ impl Tree {
                 },
             }
         }
-        out
     }
 
     /// Unlinks `id` from its parent's child list (or the roots). Its subtree stays intact.
@@ -1090,6 +1224,9 @@ mod tests {
         t.check_invariants().unwrap();
     }
 
+    // The default profile's 16-bit generations (the safety profile's 48-bit ones would take
+    // 2.8 × 10¹⁴ cycles; `twine-core` tests that width's retirement path directly).
+    #[cfg(not(feature = "safety"))]
     #[test]
     fn retired_slots_counts_worn_out_node_slots() {
         // A lone child churned in a tree with no other free slot reuses one slot until its
@@ -1142,10 +1279,41 @@ mod tests {
         let a = t.create(Some(kids[0]), obj()).unwrap();
         let b = t.create(Some(kids[0]), obj()).unwrap();
         let aa = t.create(Some(a), obj()).unwrap();
-        let order = t.delete(root).unwrap();
-        assert_eq!(order, vec![aa, a, b, kids[0], kids[1], root]);
+        let range = t.delete_keep_order(root).unwrap();
+        assert_eq!(t.scratch_slice(range.clone()), [aa, a, b, kids[0], kids[1], root]);
+        t.release_scratch(range.start);
         assert!(t.is_empty());
         assert_eq!(t.roots().count(), 0);
+    }
+
+    #[test]
+    fn delete_reuses_its_scratch_and_nests() {
+        let (mut t, root, kids) = tree_with(3);
+        t.reserve(16);
+        let cap = t.scratch.capacity();
+        // A nested deletion appends after the running one's segment.
+        let outer = t.push_post_order(kids[0]);
+        let inner = t.delete_keep_order(kids[1]).unwrap();
+        assert_eq!(inner.start, outer.end);
+        assert_eq!(t.scratch_slice(outer.clone()), [kids[0]]);
+        t.release_scratch(inner.start);
+        assert_eq!(t.delete(kids[0]), Ok(1));
+        t.release_scratch(outer.start);
+        assert_eq!(t.scratch.capacity(), cap);
+        assert_eq!(t.children(root).collect::<Vec<_>>(), [kids[2]]);
+    }
+
+    #[test]
+    fn depth_and_subtree_height() {
+        let (mut t, root, kids) = tree_with(2);
+        let a = t.create(Some(kids[0]), obj()).unwrap();
+        let aa = t.create(Some(a), obj()).unwrap();
+        assert_eq!(t.depth(root), Some(0));
+        assert_eq!(t.depth(aa), Some(3));
+        assert_eq!(t.subtree_height(root), 3);
+        assert_eq!(t.subtree_height(kids[0]), 2);
+        assert_eq!(t.subtree_height(kids[1]), 0);
+        assert_eq!(t.subtree_height(aa), 0);
     }
 
     #[test]

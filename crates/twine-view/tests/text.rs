@@ -99,7 +99,10 @@ fn into_text_all_kinds() {
         texts(&t),
         ["static", "owned", "sig", "sig", "memo 2", "fn 2", "macro 2"]
     );
-    let (name, n) = t.root_scope().expect_context::<(Signal<String>, Signal<i32>)>();
+    let (name, n) = t
+        .root_scope()
+        .use_context::<(Signal<String>, Signal<i32>)>()
+        .unwrap();
     name.set("new".into());
     n.set(3);
     t.run_until_idle();
@@ -117,7 +120,7 @@ fn model_two_way_no_loop() {
         button(label("toggle")).checkable(true).checked(on).test_id("b")
     });
     t.run_until_idle();
-    let on = t.root_scope().expect_context::<Signal<bool>>();
+    let on = t.root_scope().use_context::<Signal<bool>>().unwrap();
     let runs = rt().stats().effect_runs;
     t.find(by_id("b")).click();
     t.run_until_idle();

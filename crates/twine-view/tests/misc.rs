@@ -33,7 +33,7 @@ enum Page {
 fn page(cx: Scope, p: Page) -> AnyView {
     match p {
         Page::First => {
-            let nav = expect_navigator::<Page>(cx);
+            let nav = use_navigator::<Page>(cx).unwrap();
             button(label("first"))
                 .on_click(move || nav.replace(Page::Second, ScreenAnim::FadeIn(Duration::ms(100))))
                 .into_any()
@@ -48,7 +48,7 @@ fn navigator_replace_keeps_depth() {
     t.run_until_idle();
     t.find(by_text("first")).click();
     t.run_until_idle();
-    let nav = expect_navigator::<Page>(t.root_scope());
+    let nav = use_navigator::<Page>(t.root_scope()).unwrap();
     assert_eq!(nav.depth(), 1);
     assert_eq!(nav.stack(), [Page::Second]);
     assert_eq!(t.find(by_id("second")).text(), "second");

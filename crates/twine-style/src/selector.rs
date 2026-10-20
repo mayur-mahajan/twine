@@ -146,7 +146,9 @@ bitflags::bitflags! {
     /// | 6 | [`PRESSED`](State::PRESSED) | being pressed |
     /// | 7 | [`SCROLLED`](State::SCROLLED) | being scrolled |
     /// | 8 | [`DISABLED`](State::DISABLED) | disabled |
-    /// | 9–12 | [`custom::<0>()`](State::custom) … `custom::<3>()` | the application's states (higher index wins) |
+    /// | 9 | [`STALE`](State::STALE) | showing a value that is too old (`Validity::Stale`) |
+    /// | 10 | [`INVALID`](State::INVALID) | showing no valid value (`Validity::Failed` / `NoData`) |
+    /// | 11–14 | [`custom::<0>()`](State::custom) … `custom::<3>()` | the application's states (higher index wins) |
     ///
     /// **The rule:** compare the two selectors' highest-ranked states; the higher rank wins. If
     /// they are the same state, compare the next highest state of each, and so on; a selector
@@ -203,6 +205,19 @@ bitflags::bitflags! {
         const SCROLLED = 1 << 8;
         /// `LV_STATE_DISABLED`: disabled.
         const DISABLED = 1 << 9;
+        /// Not in LVGL: the widget shows a value that is too old (a
+        /// [`Validity::Stale`](twine_core::validity::Validity::Stale) property value). The view
+        /// layer sets and clears it with the value; the engine marks a stale node with a sparse
+        /// hatch (its standard look) and themes may style it (R7: the `VALIDITY_INVALID` role's
+        /// recipe). Ranks above every other built-in state except [`INVALID`](State::INVALID),
+        /// so a stale reading never looks like a pressed or disabled one.
+        const STALE = 1 << 10;
+        /// Not in LVGL: the widget has no valid value to show (a
+        /// [`Validity::Failed`](twine_core::validity::Validity::Failed) or
+        /// [`NoData`](twine_core::validity::Validity::NoData) property value): its text shows
+        /// dashes and the engine draws a cross-hatch over it (the standard invalid look; themes
+        /// may style the state further). The highest-ranked built-in state.
+        const INVALID = 1 << 11;
         // The application's states (`State::custom`), LVGL's `LV_STATE_USER_1..4`.
         const _ = 0xF000;
     }
@@ -213,7 +228,7 @@ const CUSTOM_SHIFT: u32 = 12;
 /// Longest custom state name kept (bytes).
 const NAME_MAX: usize = 16;
 /// The built-in states with their names, in precedence order (lowest first).
-const BUILT_IN: [(State, &str); 9] = [
+const BUILT_IN: [(State, &str); 11] = [
     (State::ALT, "ALT"),
     (State::CHECKED, "CHECKED"),
     (State::FOCUSED, "FOCUSED"),
@@ -223,6 +238,8 @@ const BUILT_IN: [(State, &str); 9] = [
     (State::PRESSED, "PRESSED"),
     (State::SCROLLED, "SCROLLED"),
     (State::DISABLED, "DISABLED"),
+    (State::STALE, "STALE"),
+    (State::INVALID, "INVALID"),
 ];
 
 impl State {
@@ -242,14 +259,14 @@ impl State {
     ///   widget is in every state at once; Twine gives it the only useful meaning.)
     /// - **As a filter** (`remove_style`'s selector) it matches the styles of every state.
     /// - **As a state change** (`set_state(node, State::ANY, false)`) it sets or clears every
-    ///   state. Its value is the union of the defined states (`0xF3FD`), so a node never gets
+    ///   state. Its value is the union of the defined states (`0xFFFD`), so a node never gets
     ///   undefined state bits.
     pub const ANY: State = State::all();
 
     /// The states in precedence order, lowest first (see [Precedence](State#precedence)): a
     /// state outranks every combination of the states before it. [`Selector::weight`] orders
     /// selectors by this list.
-    pub const PRECEDENCE: [State; 13] = [
+    pub const PRECEDENCE: [State; 15] = [
         State::ALT,
         State::CHECKED,
         State::FOCUSED,
@@ -259,6 +276,8 @@ impl State {
         State::PRESSED,
         State::SCROLLED,
         State::DISABLED,
+        State::STALE,
+        State::INVALID,
         State::custom::<0>(),
         State::custom::<1>(),
         State::custom::<2>(),
@@ -748,7 +767,7 @@ mod tests {
             State::ANY,
             State::PRECEDENCE.iter().fold(State::DEFAULT, |a, s| a | *s)
         );
-        assert_eq!(State::ANY.bits(), 0xF3FD);
+        assert_eq!(State::ANY.bits(), 0xFFFD);
         assert_eq!(Selector::state(State::ANY).weight(), 0);
         assert_eq!(State::CUSTOM_ALL.bits(), 0xF000);
         assert_eq!(Selector::default(), Selector::MAIN);
@@ -806,7 +825,8 @@ mod tests {
         assert_eq!(format!("{SELECTED}"), "CUSTOM_1");
         assert_eq!(format!("{:?}", State::DEFAULT), "State(DEFAULT)");
         assert_eq!(format!("{}", State::DEFAULT), "DEFAULT");
-        assert_eq!(format!("{}", State::from_bits_retain(0x0402)), "0x0402");
+        assert_eq!(format!("{}", State::from_bits_retain(0x0002)), "0x0002");
+        assert_eq!(format!("{}", State::STALE | State::INVALID), "STALE|INVALID");
         assert_eq!(
             format!("{:?}", State::PRESSED | State::from_bits_retain(0x0002)),
             "State(PRESSED | 0x0002)"

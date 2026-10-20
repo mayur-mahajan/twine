@@ -63,13 +63,13 @@ impl ModalHandle {
     /// The backdrop node (once shown).
     #[must_use]
     pub fn node(&self) -> Option<NodeId> {
-        self.state.try_with(|s| s.node).flatten()
+        self.state.try_with(|s| s.node).ok().flatten()
     }
 
     /// Whether the modal is open.
     #[must_use]
     pub fn is_open(&self) -> bool {
-        self.open.try_get().unwrap_or(false)
+        self.open.try_get().ok().unwrap_or(false)
     }
 }
 
@@ -106,7 +106,7 @@ pub(crate) fn show_modal<V: View>(
     cx.on_cleanup(move || {
         // Cleanups run before the scope's stored values are dropped.
         // Without the engine (disposed outside `Ui::update`): at the next update.
-        if let Some((node, grp)) = state.try_with_mut(ModalState::take) {
+        if let Ok((node, grp)) = state.try_with_mut(ModalState::take) {
             if EngineAccess::with(rt, |e| close_modal(e, node, grp)).is_none() {
                 crate::engine_queue::defer(cx, crate::engine_queue::EngineCmd::close_modal(node, grp));
             }

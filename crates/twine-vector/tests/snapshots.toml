@@ -1,0 +1,38 @@
+# Golden-image manifest (R5.S08): one entry per snapshot test image,
+#   <name> = "<width>x<height> xxh64:<hash>"
+# the XXH64 (seed 0) of the image's 8-bit RGB pixels, row-major (`xxhsum -H64` of the raw RGB
+# bytes). Written by `cargo xtask snapshots --update | --propose | --accept`; do not edit by hand.
+# Reference PNGs are not committed: `tests/snapshots/*.png` is a local cache used for diffs.
+
+[approved]
+dash_pattern = "160x90 xxh64:5be55b9588a79e25"
+extend_radial_reflect = "160x60 xxh64:a3e1d1c84f7a2815"
+extend_repeat_reflect = "160x90 xxh64:9cf56c902f0f54a0"
+gradient_strokes = "120x80 xxh64:b63657dec1cfad7f"
+image_pattern_fill = "140x70 xxh64:8b42feabd3890f96"
+linear_gradient_rect = "120x70 xxh64:f00f60c90984db8d"
+opa_and_multiply_blend = "120x70 xxh64:28a4bfdf148b2640"
+radial_focal = "100x100 xxh64:0d6ccbf3eda840ca"
+radial_gradient_circle = "100x100 xxh64:3f7fe6e434c44ebd"
+raster_chunk_scene = "120x120 xxh64:fb38c2851849bcff"
+star_evenodd = "80x80 xxh64:c5a2b65c24aad7f5"
+star_nonzero = "80x80 xxh64:7f0e6dfa324b4c13"
+stroke_caps_butt = "120x60 xxh64:df96b6c35e43da09"
+stroke_caps_round = "120x60 xxh64:1bca74d1456aa4e6"
+stroke_caps_square = "120x60 xxh64:da8361091bf5f9dc"
+stroke_joins_bevel = "140x84 xxh64:b08d1e6b55528138"
+stroke_joins_miter = "140x84 xxh64:da6fff387d184726"
+stroke_joins_round = "140x84 xxh64:2cffc1b733fe5bcd"
+stroke_zoom_4x = "170x200 xxh64:e122106b0e41b585"
+svg_features = "160x100 xxh64:cda6f429303fb3eb"
+svg_icon_add = "96x60 xxh64:1075a5fd83e6fdcd"
+svg_icon_check = "96x60 xxh64:b228590c76663990"
+svg_icon_close = "96x60 xxh64:40ea9bfa95411e67"
+svg_icon_delete = "96x60 xxh64:66d4a55c2ff8435c"
+svg_icon_favorite = "96x60 xxh64:6943d40695f3946d"
+svg_icon_home = "96x60 xxh64:ab61d2816041d13a"
+svg_icon_info = "96x60 xxh64:a3a4ea43bd5144fa"
+svg_icon_menu = "96x60 xxh64:2ddf379ddf65421b"
+svg_icon_search = "96x60 xxh64:201eb5a69f90baa5"
+svg_icon_star = "96x60 xxh64:b58036328554f427"
+triangle_fill = "80x60 xxh64:5d537fd6d4561368"

@@ -842,6 +842,15 @@ impl Widget for Arc {
         &ARC_CLASS
     }
 
+    /// The range and the value (little-endian `i32`s; an unset value as `i32::MIN`), for
+    /// display-integrity cross-checks.
+    #[cfg(feature = "display-integrity")]
+    fn value_digest(&self, crc: &mut twine_core::crc::Crc32) {
+        for v in [self.min, self.max, self.value.unwrap_or(i32::MIN)] {
+            crc.update(&v.to_le_bytes());
+        }
+    }
+
     fn init(&mut self, cx: &mut WidgetCx<'_>) {
         let id = cx.node();
         cx.engine_mut().set_size(id, ARC_DEFAULT_SIZE, ARC_DEFAULT_SIZE);

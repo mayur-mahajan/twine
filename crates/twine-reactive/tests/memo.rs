@@ -49,7 +49,7 @@ fn memo_caches_until_dependency_changes() {
     a.set(6);
     assert_eq!(m.get(), 12);
     assert_eq!(runs.get(), 2);
-    assert_eq!(m.try_get(), Some(12));
+    assert_eq!(m.try_get(), Ok(12));
 }
 
 #[test]

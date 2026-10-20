@@ -1,11 +1,13 @@
 //! Build failures (R0.S04): a widget that cannot be created gets `DEAD_NODE`, never another
 //! node's id; its build steps, bindings and children are skipped; the failure is raised as a
 //! `BuildFailed` fault and the runtime constructors return an error.
+//!
+//! req: SAF-029
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use twine_core::ColorFormat;
-use twine_engine::{Engine, EngineConfig, Obj};
+use twine_engine::{Engine, Obj};
 use twine_hal::DisplayInfo;
 use twine_style::StyleValue;
 use twine_testing::{EngineHarness, MemoryDisplay, MockClock, TestUi, by_id};
@@ -20,11 +22,8 @@ fn rt() -> Runtime {
 }
 
 /// A small tree budget, so filling it is cheap (tree mutations are O(n) under `debug-checks`).
-fn small() -> EngineConfig {
-    EngineConfig {
-        max_nodes: 24,
-        ..EngineConfig::default()
-    }
+fn small() -> Limits {
+    twine_testing::HARNESS_LIMITS.max_nodes(24)
 }
 
 /// Fills the tree with filler nodes under a detached root, leaving room for `free` nodes.
@@ -52,9 +51,11 @@ fn bg(e: &Engine, n: NodeId) -> StyleValue {
     e.style_prop(n, Part::Main, PropId::BgColor)
 }
 
+/// fault: `BuildFailed`
+/// req: SAF-031
 #[test]
 fn regression_failed_widget_is_not_aliased_to_its_parent() {
-    let mut h = EngineHarness::new(100, 60).config(small());
+    let mut h = EngineHarness::new(100, 60).limits(small());
     let screen = h.screen();
     fill(h.engine_mut(), 1); // room for the column only
     let before = build_failed(h.engine());
@@ -96,7 +97,7 @@ fn regression_failed_widget_is_not_aliased_to_its_parent() {
 
 #[test]
 fn children_of_a_failed_node_are_not_built_into_the_parent() {
-    let mut h = EngineHarness::new(100, 60).config(small());
+    let mut h = EngineHarness::new(100, 60).limits(small());
     let screen = h.screen();
     fill(h.engine_mut(), 1);
     let len = h.engine().tree().len();
@@ -126,7 +127,7 @@ fn children_of_a_failed_node_are_not_built_into_the_parent() {
 fn no_binding_of_a_failed_widget_touches_its_parent() {
     let mut show = None;
     let mut opa = None;
-    let mut t = TestUi::new(100, 60).config(small()).mount(|cx| {
+    let mut t = TestUi::new(100, 60).limits(small()).mount(|cx| {
         let s = cx.signal(false);
         let o = cx.signal(Opa::COVER);
         show = Some(s);
@@ -182,10 +183,7 @@ fn try_build_reports_a_build_failure() {
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .clock(MockClock::new())
-        .config(EngineConfig {
-            max_nodes: 8,
-            ..EngineConfig::default()
-        })
+        .limits(twine_testing::HARNESS_LIMITS.max_nodes(8))
         .fault_hook(count_build_faults)
         .try_build(|_| column((0..12).map(|_| label("x")).collect::<Vec<_>>()));
     let Err(UiError::Build(e)) = r else {
@@ -205,7 +203,7 @@ fn try_build_succeeds_within_the_budget() {
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .clock(MockClock::new())
-        .config(small())
+        .limits(small())
         .try_build(|_| column((label("a"), label("b"))))
         .unwrap();
     assert!(!ui.take_faults().contains(FaultKind::BuildFailed));
@@ -213,7 +211,7 @@ fn try_build_succeeds_within_the_budget() {
 
 #[test]
 fn failed_mount_leaves_the_engine_as_it_was() {
-    let mut h = EngineHarness::new(100, 60).config(small());
+    let mut h = EngineHarness::new(100, 60).limits(small());
     let d = h.display();
     let len = h.engine().tree().len();
     let screen = h.screen();
@@ -233,10 +231,7 @@ fn failed_mount_leaves_the_engine_as_it_was() {
 #[test]
 fn test_ui_try_mount_reports_the_error() {
     let r = TestUi::new(100, 60)
-        .config(EngineConfig {
-            max_nodes: 6,
-            ..EngineConfig::default()
-        })
+        .limits(twine_testing::HARNESS_LIMITS.max_nodes(6))
         .try_mount(|_| column((0..10).map(|_| label("x")).collect::<Vec<_>>()));
     assert!(r.is_err());
 }
@@ -245,7 +240,7 @@ fn test_ui_try_mount_reports_the_error() {
 
 #[test]
 fn build_report_counts_every_failure_with_first_and_last_cause() {
-    let mut h = EngineHarness::new(100, 60).config(small());
+    let mut h = EngineHarness::new(100, 60).limits(small());
     let d = h.display();
     fill(h.engine_mut(), 2); // the column and one label fit; three labels do not
     let screen = h.screen();
@@ -265,7 +260,7 @@ fn build_report_counts_every_failure_with_first_and_last_cause() {
 fn build_report_includes_nested_builds_during_mount() {
     // The rows of a `for_each` are built by its effect while the mount runs (a nested
     // `BuildCx`): their failure fails the mount, whatever the fault counters say.
-    let mut h = EngineHarness::new(100, 60).config(small());
+    let mut h = EngineHarness::new(100, 60).limits(small());
     let d = h.display();
     fill(h.engine_mut(), 3); // column, the `for_each` wrapper and one row fit
     let e = UiCore::mount(Runtime::current_thread(), h.engine_mut(), d, |_| {
@@ -281,7 +276,7 @@ fn regression_unrelated_build_fault_does_not_fail_the_mount() {
     // A `BuildFailed` fault raised on the engine during the mount by something other than the
     // application's build (here: a build under an unrelated scope) is telemetry only: it no
     // longer fails the mount (it did when the mount diffed the fault counter).
-    let mut h = EngineHarness::new(100, 60).config(small());
+    let mut h = EngineHarness::new(100, 60).limits(small());
     let d = h.display();
     let other = Runtime::current_thread().create_root();
     let core = UiCore::mount(Runtime::current_thread(), h.engine_mut(), d, move |_| {
@@ -303,7 +298,7 @@ fn regression_unrelated_build_fault_does_not_fail_the_mount() {
 fn build_report_after_mount_is_faults_only() {
     // A `when` branch built after the mount into a full tree: a fault, the `Ui` keeps running.
     let mut show = None;
-    let mut t = TestUi::new(100, 60).config(small()).mount(|cx| {
+    let mut t = TestUi::new(100, 60).limits(small()).mount(|cx| {
         let s = cx.signal(false);
         show = Some(s);
         column(when(move || s.get(), |_| label("late")))

@@ -3,9 +3,14 @@
 //! Every reactive node carries its subscriber list, so its size dominates the per-signal memory
 //! budget (≤ 96 bytes per `u32` signal). `twine_core::SmallVec<_, 3>` is 24 bytes;
 //! this list is 16 and still stores the common case (≤ 3 subscribers) without a heap allocation.
+//!
+//! In the safety profile a node key is 8 bytes (48-bit generations, R5.S04), so the list is 32
+//! bytes on 64-bit hosts (28 on 32-bit targets) for the same three inline keys.
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+
+use twine_core::alloc_guard::AllocSite;
 
 use crate::runtime::NodeKey;
 
@@ -40,7 +45,8 @@ impl KeyList {
     /// The keys, in insertion order.
     pub(crate) fn as_slice(&self) -> &[NodeKey] {
         match self {
-            KeyList::Inline { len, buf } => &buf[..usize::from(*len)],
+            // `len <= INLINE` (only `insert` and `remove` change it).
+            KeyList::Inline { len, buf } => buf.get(..usize::from(*len)).unwrap_or(&[]),
             KeyList::Heap(v) => v,
         }
     }
@@ -49,9 +55,9 @@ impl KeyList {
     pub(crate) fn heap_bytes(&self) -> usize {
         match self {
             KeyList::Inline { .. } => 0,
-            KeyList::Heap(v) => {
-                core::mem::size_of::<Vec<NodeKey>>() + v.capacity() * core::mem::size_of::<NodeKey>()
-            }
+            KeyList::Heap(v) => core::mem::size_of::<NodeKey>()
+                .saturating_mul(v.capacity())
+                .saturating_add(core::mem::size_of::<Vec<NodeKey>>()),
         }
     }
 
@@ -72,18 +78,19 @@ impl KeyList {
         }
         match self {
             KeyList::Inline { len, buf } => {
-                let n = usize::from(*len);
-                if n < INLINE {
-                    buf[n] = k;
-                    *len += 1;
+                if let Some(free) = buf.get_mut(usize::from(*len)) {
+                    *free = k;
+                    // `len < INLINE` here.
+                    *len = len.saturating_add(1);
                 } else {
+                    twine_core::alloc_guard::grew(AllocSite::ReactiveEdges);
                     let mut v = Vec::with_capacity(INLINE * 2);
                     v.extend_from_slice(buf);
                     v.push(k);
                     *self = KeyList::Heap(Box::new(v));
                 }
             }
-            KeyList::Heap(v) => v.push(k),
+            KeyList::Heap(v) => twine_core::alloc_guard::push(v, k, AllocSite::ReactiveEdges),
         }
     }
 
@@ -91,11 +98,18 @@ impl KeyList {
     pub(crate) fn remove(&mut self, k: NodeKey) {
         match self {
             KeyList::Inline { len, buf } => {
-                let n = usize::from(*len);
-                if let Some(i) = buf[..n].iter().position(|&x| x == k) {
-                    buf.copy_within(i + 1..n, i);
-                    buf[n - 1] = NodeKey::DANGLING;
-                    *len -= 1;
+                let Some(live) = buf.get_mut(..usize::from(*len)) else {
+                    return;
+                };
+                if let Some(i) = live.iter().position(|&x| x == k) {
+                    // Shift the keys after `i` down by one; the removed key ends up last.
+                    if let Some(tail) = live.get_mut(i..) {
+                        tail.rotate_left(1);
+                    }
+                    if let Some(last) = live.last_mut() {
+                        *last = NodeKey::DANGLING;
+                    }
+                    *len = len.saturating_sub(1);
                 }
             }
             KeyList::Heap(v) => {
@@ -111,13 +125,15 @@ impl KeyList {
 mod tests {
     use super::*;
 
-    fn k(i: u32) -> NodeKey {
-        NodeKey::from_raw((1 << 16) | i)
+    fn k(i: u16) -> NodeKey {
+        NodeKey::from_raw((1 << 16) | twine_core::RawId::from(i))
     }
 
     #[test]
     fn key_list_is_16_bytes() {
-        assert_eq!(core::mem::size_of::<KeyList>(), 16);
+        // Three keys inline: 4-byte keys by default, 8-byte keys in the safety profile.
+        let expected = if cfg!(feature = "safety") { 32 } else { 16 };
+        assert_eq!(core::mem::size_of::<KeyList>(), expected);
     }
 
     #[test]

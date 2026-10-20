@@ -11,10 +11,16 @@ use twine_view::{CapacityFault, UiCore};
 
 #[test]
 fn exhausted_waker_pool_raises_a_fault_and_shares_a_waker() {
-    WakerLease::set_heap_limit(0); // static slots only: the bound a safety profile would set
     let mut h = EngineHarness::new(64, 32);
     let d = h.display();
     let rt = Runtime::current_thread();
+    // Static slots only — the bound a safety profile would set — through `Limits` (R5.S03:
+    // `AppConfig::apply_limits` sets the process-wide pool bound).
+    AppConfig::new()
+        .limits(twine_testing::HARNESS_LIMITS.max_heap_wakers(0))
+        .apply_limits(rt, h.engine_mut())
+        .unwrap();
+    assert_eq!(WakerLease::heap_limit(), 0);
     let mut cores = Vec::new();
     for _ in 0..WakerLease::STATIC_SLOTS {
         cores.push(UiCore::mount(rt, h.engine_mut(), d, |_| label("x")).unwrap());

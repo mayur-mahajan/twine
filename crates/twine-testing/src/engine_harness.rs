@@ -2,7 +2,7 @@
 //! tests (feature `engine`).
 
 use std::rc::Rc;
-use twine_core::{ColorFormat, Duration, Instant, Point, Rect, Rotation};
+use twine_core::{ColorFormat, Duration, Instant, Limits, Point, Rect, Rotation};
 
 use twine_engine::{
     BufferMode, BufferSpec, DisplayId, Engine, EngineConfig, InputId, IntoTheme, InvalidateReason, NodeId,
@@ -170,6 +170,8 @@ struct Settings {
     format: ColorFormat,
     buffers: BufferSpec,
     config: EngineConfig,
+    /// Applied before the display is added (`Engine::set_limits`).
+    limits: Limits,
     kind: Kind,
     rotation: Rotation,
     align: u8,
@@ -177,6 +179,51 @@ struct Settings {
     dpi: u16,
     /// Installed on the display after it is added.
     theme: Option<Rc<dyn ThemeHook>>,
+}
+
+/// The harness's limits unless a test sets its own: [`Limits::DEFAULT`], except in the safety
+/// profile, which refuses limits that are not preallocated and where preallocating the default
+/// maxima (65 535 nodes, 64 KiB texts) would make every test reserve megabytes: there the
+/// bounds are test-sized (4 096 nodes and handlers, 1 024 animations, 256 timers, 4 KiB texts)
+/// and preallocated. Tests that build a `Ui` themselves pass it to `UiBuilder::limits` (or
+/// `AppConfig::limits`), so they run in both profiles.
+///
+/// ```
+/// use twine_testing::HARNESS_LIMITS;
+/// assert_eq!(HARNESS_LIMITS.preallocate, twine_core::SAFETY_PROFILE);
+/// assert!(HARNESS_LIMITS.validate().is_ok());
+/// ```
+pub const HARNESS_LIMITS: Limits = if twine_core::SAFETY_PROFILE {
+    Limits::DEFAULT
+        .max_nodes(4096)
+        .max_handlers(4096)
+        .max_anims(1024)
+        .max_timers(256)
+        .max_text_len(4096)
+        .preallocated()
+} else {
+    Limits::DEFAULT
+};
+
+/// `limits` as a test can apply them in either profile: unchanged, except preallocated in the
+/// safety profile, which refuses any other ([`Limits::validate`]). What the harness does with
+/// the limits a test gives it; for tests that build a `Ui` with limits of their own. Never
+/// panics.
+///
+/// ```
+/// use twine_core::Limits;
+/// use twine_testing::profile_limits;
+/// let l = profile_limits(Limits::DEFAULT.max_nodes(64));
+/// assert_eq!(l.max_nodes, 64);
+/// assert!(l.validate().is_ok());
+/// ```
+#[must_use]
+pub const fn profile_limits(limits: Limits) -> Limits {
+    if twine_core::SAFETY_PROFILE {
+        limits.preallocated()
+    } else {
+        limits
+    }
 }
 
 impl Settings {
@@ -191,6 +238,9 @@ impl Settings {
     /// A fresh engine with the harness display.
     fn build(&self) -> (Engine, DisplayId) {
         let mut engine = Engine::new(self.config).expect("valid engine config");
+        engine
+            .set_limits(&profile_limits(self.limits))
+            .expect("valid limits");
         let info = self.info();
         let display = match self.kind {
             Kind::Framebuffer(mode, delay) => {
@@ -250,6 +300,7 @@ impl EngineHarness {
             format: ColorFormat::Rgb565,
             buffers: BufferSpec::PartialDouble { rows: 40 },
             config: EngineConfig::default(),
+            limits: HARNESS_LIMITS,
             kind: Kind::Memory,
             rotation: Rotation::Deg0,
             align: 1,
@@ -334,10 +385,12 @@ impl EngineHarness {
     pub(crate) fn configure(
         mut self,
         config: EngineConfig,
+        limits: Limits,
         theme: Option<Rc<dyn ThemeHook>>,
         rotation: Option<Rotation>,
     ) -> Self {
         self.s.config = config;
+        self.s.limits = limits;
         self.s.theme = theme;
         if let Some(r) = rotation {
             self.s.rotation = r;
@@ -389,6 +442,28 @@ impl EngineHarness {
     #[must_use]
     pub fn config(mut self, c: EngineConfig) -> Self {
         self.s.config = c;
+        self.rebuild();
+        self
+    }
+
+    /// Applies `limits` to the engine before its display is added (`Engine::set_limits`;
+    /// rebuilds the engine), e.g. a small node budget so filling the tree is cheap. In the
+    /// safety profile they are applied [`preallocated`](Limits::preallocated), as the profile
+    /// requires. Without a call the harness uses [`HARNESS_LIMITS`].
+    ///
+    /// # Panics
+    /// When `limits` are invalid ([`Limits::validate`]).
+    ///
+    /// ```
+    /// use twine_core::Limits;
+    /// use twine_testing::EngineHarness;
+    ///
+    /// let h = EngineHarness::new(64, 32).limits(Limits::DEFAULT.max_nodes(16));
+    /// assert_eq!(h.engine().limits().max_nodes, 16);
+    /// ```
+    #[must_use]
+    pub fn limits(mut self, limits: Limits) -> Self {
+        self.s.limits = limits;
         self.rebuild();
         self
     }
@@ -857,9 +932,10 @@ impl EngineHarness {
         self.run_until_idle();
     }
 
-    /// Redraws the whole screen and compares the panel with the snapshot `name` of the crate
-    /// under test (`tests/snapshots/<name>.png`, located through the `CARGO_MANIFEST_DIR` and
-    /// `CARGO_PKG_NAME` that cargo sets when running tests).
+    /// Redraws the whole screen and compares the panel with the golden image `name` of the
+    /// crate under test (its entry in `tests/snapshots.toml`, see [`snapshot`](crate::snapshot);
+    /// the crate is found through the `CARGO_MANIFEST_DIR` and `CARGO_PKG_NAME` that cargo sets
+    /// when running tests).
     #[track_caller]
     pub fn assert_snapshot(&mut self, name: &str) {
         let cfg = runtime_snapshot_config();

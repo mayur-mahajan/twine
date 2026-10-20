@@ -1,0 +1,11 @@
+# Golden-image manifest (R5.S08): one entry per snapshot test image,
+#   <name> = "<width>x<height> xxh64:<hash>"
+# the XXH64 (seed 0) of the image's 8-bit RGB pixels, row-major (`xxhsum -H64` of the raw RGB
+# bytes). Written by `cargo xtask snapshots --update | --propose | --accept`; do not edit by hand.
+# Reference PNGs are not committed: `tests/snapshots/*.png` is a local cache used for diffs.
+
+[approved]
+theme_default_container_dark = "240x160 xxh64:fbad29eeccc86897"
+theme_default_container_light = "240x160 xxh64:b511079b7f6b46a7"
+theme_mono_container = "240x160 xxh64:19f8984cc51cca11"
+theme_simple_container = "240x160 xxh64:a818b9342b359b9d"

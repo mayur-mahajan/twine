@@ -154,7 +154,7 @@ fn reactive_symbol_icon_follows_signal() {
         list(list_button(s, "media").test_id("b"))
     });
     t.run_until_idle();
-    let s = t.root_scope().expect_context::<Signal<Option<Symbol>>>();
+    let s = t.root_scope().use_context::<Signal<Option<Symbol>>>().unwrap();
     let img = images(&t, node(&t, "b"))[0];
     s.set(Some(Symbol::Pause));
     t.run_until_idle();
@@ -205,7 +205,7 @@ fn symbol_in_labels_and_text_macro() {
     assert_eq!(text_of(&t, node(&t, "plain")), "\u{F00C}");
     assert_eq!(text_of(&t, node(&t, "static")), "\u{F0C7} Save");
     assert_eq!(text_of(&t, node(&t, "dynamic")), "\u{F0F3} 3");
-    let n = t.root_scope().expect_context::<Signal<u32>>();
+    let n = t.root_scope().use_context::<Signal<u32>>().unwrap();
     n.set(4);
     t.run_until_idle();
     assert_eq!(text_of(&t, node(&t, "dynamic")), "\u{F0F3} 4");

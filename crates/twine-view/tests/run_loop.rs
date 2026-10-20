@@ -48,7 +48,9 @@ fn ui_on(platform: &MockPlatform, app: impl FnOnce(Scope) -> AnyView) -> Ui {
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }))
         .platform(platform)
-        .build(app)
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(app)
+        .unwrap()
 }
 
 #[test]
@@ -172,10 +174,12 @@ fn wake_from_another_thread_ends_the_wait_without_builder_platform() {
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }))
         .clock(platform.clone())
-        .build(move |cx| {
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(move |cx| {
             cx.on_message(&FROM_THREAD, move |v| g.set(Some(v)));
             label("waiting")
-        });
+        })
+        .unwrap();
     let start = StdInstant::now();
     let mut sender = None;
     let mut events = Vec::new();

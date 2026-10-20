@@ -12,6 +12,11 @@ workspace = true
 
 [features]
 default = []
+## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
+## safety lints of library code and the refusal of excluded features.
+safety = ["twine-core/safety", "display-integrity"]
+## Display-integrity mechanisms: cache-free "fresh" drawing and `Painter::in_layer` (`docs/safety/profile.md` § 11); implied by `safety`. Off: not linked.
+display-integrity = []
 ## Draw buffers in RGB565 (little-endian).
 color-rgb565 = []
 ## Draw buffers in RGB565 with swapped bytes (SPI panels).

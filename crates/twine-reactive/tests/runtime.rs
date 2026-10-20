@@ -1,6 +1,6 @@
 //! Runtime storage and global access.
 
-use twine_reactive::Runtime;
+use twine_reactive::{HandleKind, ReactiveError, Runtime};
 
 /// The calling thread's reactive runtime.
 fn rt() -> Runtime {
@@ -42,7 +42,7 @@ fn reset_clears_everything() {
     let cx2 = rt().create_root();
     let s2 = cx2.signal(2u32);
     assert_ne!(cx, cx2);
-    assert_eq!(s.try_get(), None);
+    assert_eq!(s.try_get(), Err(ReactiveError::Disposed(HandleKind::Signal)));
     assert_eq!(s2.get(), 2);
 }
 

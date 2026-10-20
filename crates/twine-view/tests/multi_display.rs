@@ -114,7 +114,8 @@ fn two_uis() -> TwoUis {
             .runtime(rt)
             .clock(clock.clone())
             .buffers(bufs())
-            .build(move |cx| {
+            .limits(twine_testing::HARNESS_LIMITS)
+            .try_build(move |cx| {
                 cx.on_message(rx, move |v| shared.set(v));
                 let bound = label(text!("{} {}", name, shared.get()));
                 let fixed = label(format!("{name} fixed"));
@@ -124,6 +125,7 @@ fn two_uis() -> TwoUis {
                     column((fixed, bound)).into_any()
                 }
             })
+            .unwrap()
     };
     let a = build("a", to_a, false);
     let b = build("b", to_b, true);
@@ -249,6 +251,7 @@ fn dashboard() -> Dashboard {
     let (mt, at) = (main_taps.clone(), aux_taps.clone());
     let ui = Ui::builder(panel(128, 128))
         .runtime(rt)
+        .limits(twine_testing::HARNESS_LIMITS)
         .clock(clock.clone())
         .buffers(bufs())
         .theme(DefaultTheme::light())
@@ -268,7 +271,7 @@ fn dashboard() -> Dashboard {
                 ))
             },
         )
-        .build(move |_| {
+        .try_build(move |_| {
             column((
                 label(text!("main {}", speed.get())),
                 label(text!("only {}", main_only.get())),
@@ -276,7 +279,8 @@ fn dashboard() -> Dashboard {
                     .on_click(move || mt.set(mt.get() + 1))
                     .test_id("main-tap"),
             ))
-        });
+        })
+        .unwrap();
     let mut displays = ui.displays();
     let (main, aux) = (displays.next().unwrap(), displays.next().unwrap());
     drop(displays);
@@ -407,7 +411,9 @@ fn per_display_theme_mode_and_commands() {
                 .display_commands(&AUX_CMDS),
             |_| label("aux"),
         )
-        .build(|_| label("main"));
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(|_| label("main"))
+        .unwrap();
     settle(&mut ui, &clock);
     let main = ui.display();
     let aux = ui.displays().nth(1).unwrap();
@@ -455,7 +461,9 @@ fn one_waker_for_every_display_of_a_ui() {
         .runtime(Runtime::current_thread())
         .clock(clock.clone())
         .buffers(bufs())
-        .build(|_| label("main"));
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(|_| label("main"))
+        .unwrap();
     ui.mount_on(DisplayBuilder::new(panel(64, 32)).buffers(bufs()), move |cx| {
         cx.on_message(ch, move |v| g.set(v));
         label("aux")
@@ -512,12 +520,14 @@ fn blocking_run_loop_drives_both_displays() {
     let n = rt.create_root().signal(0u32);
     let ui = Ui::builder(panel(96, 48))
         .runtime(rt)
+        .limits(twine_testing::HARNESS_LIMITS)
         .platform(&platform)
         .buffers(bufs())
         .display(DisplayBuilder::new(panel(64, 32)).buffers(bufs()), move |_| {
             label(text!("aux {}", n.get()))
         })
-        .build(move |_| label(text!("main {}", n.get())));
+        .try_build(move |_| label(text!("main {}", n.get())))
+        .unwrap();
     let mut seen = Vec::new();
     let result = catch_unwind(AssertUnwindSafe(|| -> () {
         run::blocking_with(ui, &mut platform, |ui, event| {

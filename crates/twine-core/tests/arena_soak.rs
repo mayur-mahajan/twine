@@ -7,7 +7,10 @@
 //! (≈ 10⁷ here, 0.15 s natively, days under Miri), and the arena contains no `unsafe` for Miri to
 //! check (`twine-core` is `#![forbid(unsafe_code)]`). The arena's model proptest and unit tests
 //! still run under Miri.
-#![cfg(not(miri))]
+//!
+//! Not built in the safety profile either: its 48-bit generations put the bound at ≈ 1.6 × 10¹⁶
+//! cycles for this arena (see `arena_generations.rs` for the safety profile's behaviour).
+#![cfg(not(any(miri, feature = "safety")))]
 
 use twine_core::{Arena, Id};
 

@@ -246,6 +246,10 @@ pub struct GradientCache {
     max_entries: usize,
     tick: u32,
     stats: CacheStats,
+    /// Fresh mode ([`RenderCaches::set_fresh`](crate::RenderCaches::set_fresh)): a hit
+    /// rebuilds its map from the stops before it is used.
+    #[cfg(feature = "display-integrity")]
+    fresh: bool,
 }
 
 impl GradientCache {
@@ -257,7 +261,15 @@ impl GradientCache {
             max_entries: n,
             tick: 0,
             stats: CacheStats::default(),
+            #[cfg(feature = "display-integrity")]
+            fresh: false,
         }
+    }
+
+    /// Fresh mode: every [`lookup`](Self::lookup) rebuilds the map it returns.
+    #[cfg(feature = "display-integrity")]
+    pub(crate) fn set_fresh(&mut self, on: bool) {
+        self.fresh = on;
     }
 
     pub(crate) fn bytes_reserved(&self) -> usize {
@@ -278,6 +290,10 @@ impl GradientCache {
         {
             self.entries[i].last_use = self.tick;
             self.stats.hits = self.stats.hits.saturating_add(1);
+            #[cfg(feature = "display-integrity")]
+            if self.fresh {
+                self.rebuild(i, g);
+            }
             return i;
         }
         self.stats.misses = self.stats.misses.saturating_add(1);
@@ -302,6 +318,17 @@ impl GradientCache {
         };
         build_map(g.stops(), &mut self.maps[i * 256..(i + 1) * 256]);
         i
+    }
+
+    /// Rebuilds the map at `index` from `g`'s stops (fresh mode; cold: critical nodes only).
+    #[cfg(feature = "display-integrity")]
+    #[cold]
+    #[inline(never)]
+    fn rebuild(&mut self, index: usize, g: &Gradient) {
+        let start = index.saturating_mul(256);
+        if let Some(map) = self.maps.get_mut(start..start.saturating_add(256)) {
+            build_map(g.stops(), map);
+        }
     }
 
     /// The color map at `index` (from [`lookup`](Self::lookup)).

@@ -88,6 +88,9 @@ fn fps_and_cpu_computed_over_window() {
     assert_eq!(h.last_frame().cpu_percent, 25);
 }
 
+// The overlay is excluded from the safety profile (`cargo test -p twine-engine --features
+// perf-monitor`).
+#[cfg(feature = "perf-monitor")]
 #[test]
 fn perf_overlay_excluded_from_dirty_px() {
     let cfg = EngineConfig {
@@ -167,6 +170,9 @@ fn debug_refresh_tints_only_dirty_area() {
     h.assert_panel_snapshot("debug_refresh_tint");
 }
 
+// The overlay is excluded from the safety profile (`cargo test -p twine-engine --features
+// perf-monitor`).
+#[cfg(feature = "perf-monitor")]
 #[test]
 fn perf_overlay_uses_the_theme_font() {
     // No `default_font` configured: the display theme's font draws the overlay.

@@ -55,6 +55,14 @@ jobs:
       # `eg_simulator` (embedded-graphics-simulator, SDL2): build + clippy only.
       - run: cargo xtask ci --only eg-sim
 
+  # The stack of the engine's recursive tree walks at the reference depth (R5.S05; release build).
+  stack-budget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask stack-budget
+
   nostd:
     runs-on: ubuntu-latest
     steps:
@@ -114,6 +122,30 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - run: cargo xtask coverage
+
+  # MC/DC of the core crates (R5.S08): rustc's MC/DC instrumentation needs nightly.
+  coverage-mcdc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - run: cargo xtask coverage --mcdc
+
+  # Verification evidence (R5.S08): no golden image awaits approval, and the requirements →
+  # tests matrix is current (skipped with a note when `docs/` is not in the checkout).
+  evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask snapshots --check
+      - run: cargo xtask traceability --check
 
   miri:
     runs-on: ubuntu-latest

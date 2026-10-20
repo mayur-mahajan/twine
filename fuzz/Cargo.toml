@@ -1,6 +1,6 @@
 [package]
 name = "twine-fuzz"
-description = "Fuzz targets for Twine's image decoders, decompressors, SVG parser and Lottie loader (cargo-fuzz, nightly)"
+description = "Fuzz targets for Twine's image decoders, decompressors, SVG parser and Lottie loader, and operation sequences on the widget tree, input and reactive runtime (cargo-fuzz, nightly)"
 version = "0.0.0"
 edition = "2024"
 publish = false
@@ -19,6 +19,9 @@ twine-vector = { path = "../crates/twine-vector", features = ["std", "svg"] }
 twine-lottie = { path = "../crates/twine-lottie", features = ["std"] }
 twine-render = { path = "../crates/twine-render", features = ["color-rgb565"] }
 twine-core = { path = "../crates/twine-core" }
+# The operation-sequence interpreters (`twine_testing::fuzz`) of `tree_ops`, `input_events`,
+# `reactive_ops` (R5.S08).
+twine-testing = { path = "../crates/twine-testing" }
 # Host implementation of `critical-section` (twine-lottie's widget pulls in twine-reactive).
 critical-section = { version = "1", features = ["std"] }
 
@@ -88,6 +91,27 @@ bench = false
 [[bin]]
 name = "path_raster"
 path = "fuzz_targets/path_raster.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tree_ops"
+path = "fuzz_targets/tree_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "input_events"
+path = "fuzz_targets/input_events.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "reactive_ops"
+path = "fuzz_targets/reactive_ops.rs"
 test = false
 doc = false
 bench = false

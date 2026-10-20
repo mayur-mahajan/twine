@@ -137,7 +137,7 @@ fn init_bytes(size: Ssd1306Size, rotation: Rotation) -> Vec<u8, 32> {
         0xD5,
         0x80,
         0xA8,
-        (h - 1) as u8,
+        h.saturating_sub(1) as u8,
         0xD3,
         0x00,
         0x40,
@@ -156,6 +156,15 @@ fn init_bytes(size: Ssd1306Size, rotation: Rotation) -> Vec<u8, 32> {
     v
 }
 
+/// The column range (with the panel's column offset) and the last page of a checked flush
+/// area (`check_area`: not empty, inside a panel of at most 128 × 64 pixels, so every value
+/// fits `u8`).
+fn window(offset: u8, area: Rect, pages: &core::ops::Range<usize>) -> ((u8, u8), u8) {
+    let x0 = (area.x0 as u8).saturating_add(offset);
+    let x1 = (area.x1.saturating_sub(1) as u8).saturating_add(offset);
+    ((x0, x1), pages.end.saturating_sub(1) as u8)
+}
+
 /// Shared checks of a flush; returns `(stride, pages)`.
 fn check_area(native: (u16, u16), area: Rect, len: usize) -> Option<(usize, core::ops::Range<usize>)> {
     let panel = Rect::new(0, 0, i32::from(native.0), i32::from(native.1));
@@ -163,7 +172,7 @@ fn check_area(native: (u16, u16), area: Rect, len: usize) -> Option<(usize, core
         return None;
     }
     let stride = ColorFormat::I1.stride(area.width() as u32) as usize;
-    if len < stride * area.height() as usize {
+    if len < stride.saturating_mul(area.height() as usize) {
         return None;
     }
     Some((stride, (area.y0 / 8) as usize..(area.y1 / 8) as usize))
@@ -240,14 +249,13 @@ impl<I: DcsInterface> Ssd1306<I> {
             return Err(OledError::BadArea);
         };
         trace!(target: "twine::driver", "ssd1306: flush {:?}", area);
-        let off = self.size.column_offset();
-        let (x0, x1) = (area.x0 as u8 + off, (area.x1 - 1) as u8 + off);
-        self.commands(&[0x21, x0, x1, 0x22, pages.start as u8, (pages.end - 1) as u8])?;
+        let (cols, last_page) = window(self.size.column_offset(), area, &pages);
+        self.commands(&[0x21, cols.0, cols.1, 0x22, pages.start as u8, last_page])?;
         let w = area.width() as usize;
-        let first = pages.start;
-        for p in pages {
-            i1_to_page(buf, stride, w, p - first, &mut self.scratch);
-            let data = &self.scratch[..w];
+        for i in 0..pages.len() {
+            i1_to_page(buf, stride, w, i, &mut self.scratch);
+            // `w <= 128` (inside the panel): the whole scratch otherwise.
+            let data = self.scratch.get(..w).unwrap_or(&self.scratch);
             self.iface.write_pixels(data).map_err(|e| {
                 warn!(target: "twine::driver", "ssd1306: data write failed");
                 OledError::Interface(e)
@@ -309,7 +317,7 @@ mod asynch {
     use twine_core::log::{error, warn};
     use twine_hal::{AsyncDisplayDriver, DisplayInfo, Rotation};
 
-    use super::{OLED_DPI, OledError, Ssd1306Size, check_area, init_bytes, oled_info};
+    use super::{OLED_DPI, OledError, Ssd1306Size, check_area, init_bytes, oled_info, window};
     use crate::interface::AsyncDcsInterface;
     use crate::mono::i1_to_page;
 
@@ -408,15 +416,15 @@ mod asynch {
                 error!(target: "twine::driver", "ssd1306: bad flush area {:?}", area);
                 return Err(OledError::BadArea);
             };
-            let off = self.size.column_offset();
-            let (x0, x1) = (area.x0 as u8 + off, (area.x1 - 1) as u8 + off);
-            self.commands(&[0x21, x0, x1, 0x22, pages.start as u8, (pages.end - 1) as u8])
+            let (cols, last_page) = window(self.size.column_offset(), area, &pages);
+            self.commands(&[0x21, cols.0, cols.1, 0x22, pages.start as u8, last_page])
                 .await?;
             let w = area.width() as usize;
-            let first = pages.start;
-            for p in pages {
-                i1_to_page(buf, stride, w, p - first, &mut self.scratch);
-                if let Err(e) = self.iface.write_pixels(&self.scratch[..w]).await {
+            for i in 0..pages.len() {
+                i1_to_page(buf, stride, w, i, &mut self.scratch);
+                // `w <= 128` (inside the panel): the whole scratch otherwise.
+                let data = self.scratch.get(..w).unwrap_or(&self.scratch);
+                if let Err(e) = self.iface.write_pixels(data).await {
                     warn!(target: "twine::driver", "ssd1306: data write failed");
                     return Err(OledError::Interface(e));
                 }

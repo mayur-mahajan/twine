@@ -123,31 +123,35 @@ impl<ROW: OutputPin, COL: InputPin, C: Clock, const R: usize, const N: usize> Gp
     pub fn scan(&mut self) {
         let now = self.clock.now();
         let mut failed = false;
-        for r in 0..R {
-            if self.rows[r].set_low().is_err() {
+        let rows = self
+            .rows
+            .iter_mut()
+            .zip(self.keys.iter_mut())
+            .zip(self.keymap.iter());
+        for ((row, keys), keymap) in rows {
+            if row.set_low().is_err() {
                 warn!(target: "twine::driver", "keypad: row pin error");
                 failed = true;
                 continue;
             }
-            for c in 0..N {
-                let raw = if let Ok(low) = self.cols[c].is_low() {
+            for ((col, state), &key) in self.cols.iter_mut().zip(keys.iter_mut()).zip(keymap.iter()) {
+                let raw = if let Ok(low) = col.is_low() {
                     low
                 } else {
                     failed = true;
                     // An unreadable key keeps its debounced state.
-                    self.keys[r][c].level()
+                    state.level()
                 };
-                let before = self.keys[r][c].level();
-                let after = self.keys[r][c].update(raw, now);
+                let before = state.level();
+                let after = state.update(raw, now);
                 if before != after {
-                    let key = self.keymap[r][c];
                     debug!(target: "twine::driver", "keypad {} {}", key, if after { "down" } else { "up" });
                     if self.queue.push_back((key, after)).is_err() {
                         warn!(target: "twine::driver", "keypad: event queue full, dropped {}", key);
                     }
                 }
             }
-            if self.rows[r].set_high().is_err() {
+            if row.set_high().is_err() {
                 warn!(target: "twine::driver", "keypad: row pin error");
                 failed = true;
             }

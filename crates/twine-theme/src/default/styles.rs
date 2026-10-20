@@ -309,7 +309,7 @@ pub(crate) fn elements(p: &Params, mode: ThemeMode) -> ElementTable {
         .with(design::SPACE_L, Length::Px(dpx(pick(32, 28, 24), p.dpi)))
         .with(design::RADIUS_S, Radius::Px(m.radius_default / 2))
         .with(design::RADIUS_M, Radius::Px(m.radius_default))
-        .with(design::RADIUS_L, Radius::Px(m.radius_default * 2))
+        .with(design::RADIUS_L, Radius::Px(m.radius_default.saturating_mul(2)))
         .with(design::RADIUS_FULL, Radius::Circle)
         .with(design::FOCUS_RING_OPACITY, c.focus_ring_opacity)
         .with(design::SHADOW_OPACITY, c.shadow_opacity)
@@ -482,7 +482,9 @@ impl Styles {
         // #define OUTLINE_WIDTH LV_DPX_CALC(theme->disp_dpi, 3)
         let outline_width = d(3);
         // lv_style_set_rotary_sensitivity(..., theme->disp_dpi / 4 * 256)
-        let rotary = Scale::from_raw_256(u16::try_from(u32::from(p.dpi) / 4 * 256).unwrap_or(u16::MAX));
+        let rotary = Scale::from_raw_256(
+            u16::try_from((u32::from(p.dpi) / 4).saturating_mul(256)).unwrap_or(u16::MAX),
+        );
         let rc = Rc::new;
 
         // lv_style_set_transition(&theme->styles.transition_delayed, &theme->trans_delayed)
@@ -653,7 +655,7 @@ impl Styles {
 
         // #if LV_USE_SWITCH (lines 427-431)
         let switch_knob = StyleBuf::new()
-            .padding(-d(4)) // lv_style_set_pad_all(&switch_knob, -LV_DPX_CALC(dpi, 4))
+            .padding(d(4).saturating_neg()) // lv_style_set_pad_all(&switch_knob, -LV_DPX_CALC(dpi, 4))
             // lv_style_set_bg_color(&switch_knob, lv_color_white()): `ON_PRIMARY` is white in
             // light and dark mode and follows the night and high-contrast palettes.
             .bg_color(design::ON_PRIMARY);
@@ -677,7 +679,7 @@ impl Styles {
         let ta_cursor = StyleBuf::new()
             .border_color(design::ON_SURFACE) // lv_style_set_border_color(&ta_cursor, theme->color_text)
             .border_width(d(2)) // lv_style_set_border_width(&ta_cursor, LV_DPX_CALC(dpi, 2))
-            .padding_left(-d(1)) // lv_style_set_pad_left(&ta_cursor, -LV_DPX_CALC(dpi, 1))
+            .padding_left(d(1).saturating_neg()) // lv_style_set_pad_left(&ta_cursor, -LV_DPX_CALC(dpi, 1))
             .border_side(BorderSide::LEFT) // lv_style_set_border_side(&ta_cursor, LV_BORDER_SIDE_LEFT)
             .anim_duration(Duration::ms(400)); // lv_style_set_anim_duration(&ta_cursor, 400)
         // lv_style_set_text_color(&ta_placeholder, dark ? darken(GREY, 2) : lighten(GREY, 1))
@@ -695,7 +697,7 @@ impl Styles {
 
         // #if LV_USE_DROPDOWN (lines 408-411)
         // lv_style_set_max_height(&dropdown_list, LV_DPI_DEF * 2): a constant, not scaled
-        let dropdown_list = StyleBuf::new().max_height(i32::from(DEFAULT_DPI) * 2);
+        let dropdown_list = StyleBuf::new().max_height(i32::from(DEFAULT_DPI).saturating_mul(2));
 
         // #if LV_USE_MENU (lines 460-519)
         let menu_bg = StyleBuf::new()
@@ -755,11 +757,11 @@ impl Styles {
         // #if LV_USE_TABVIEW (lines 572-581)
         let tab_btn = StyleBuf::new()
             .border_color(design::PRIMARY) // lv_style_set_border_color(&tab_btn, color_primary)
-            .border_width(border_width * 2) // lv_style_set_border_width(&tab_btn, BORDER_WIDTH * 2)
+            .border_width(border_width.saturating_mul(2)) // lv_style_set_border_width(&tab_btn, BORDER_WIDTH * 2)
             .border_side(BorderSide::BOTTOM) // lv_style_set_border_side(&tab_btn, LV_BORDER_SIDE_BOTTOM)
-            .padding_top(border_width * 2); // lv_style_set_pad_top(&tab_btn, BORDER_WIDTH * 2)
+            .padding_top(border_width.saturating_mul(2)); // lv_style_set_pad_top(&tab_btn, BORDER_WIDTH * 2)
         // lv_style_set_outline_pad(&tab_bg_focus, -BORDER_WIDTH)
-        let tab_bg_focus = StyleBuf::new().outline_offset(-border_width);
+        let tab_bg_focus = StyleBuf::new().outline_offset(border_width.saturating_neg());
 
         // #if LV_USE_LIST (lines 583-598)
         let list_bg = StyleBuf::new()

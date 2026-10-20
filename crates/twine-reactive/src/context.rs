@@ -4,9 +4,6 @@
 //! The user-facing documentation (lookup cost, failure convention) is on [`Scope`], section
 //! "Context values".
 
-// NOTE(R5.S02): the `safety` profile removes or gates the panicking `expect_*` forms (thin
-// `#[track_caller]` wrappers over the `Result` forms, which stay).
-
 use alloc::rc::Rc;
 use core::any::{Any, TypeId, type_name};
 use core::fmt;
@@ -58,9 +55,24 @@ impl MissingContext {
     /// Panics with this error's message at the caller's location (the shared, out-of-line
     /// panic path of [`Scope::expect_context`] and the `expect_*` hooks).
     ///
+    /// Not available with the `safety` feature (the profile has no panicking context lookups:
+    /// handle the `Result` of [`Scope::use_context`]).
+    ///
+    /// ```
+    /// # #[cfg(not(feature = "safety"))] {
+    /// let cx = twine_reactive::Runtime::take().unwrap().create_root();
+    /// let r = std::panic::catch_unwind(|| match cx.use_context::<u8>() {
+    ///     Ok(v) => v,
+    ///     Err(e) => e.panic(),
+    /// });
+    /// assert!(r.is_err());
+    /// # }
+    /// ```
+    ///
     /// # Panics
     ///
     /// Always, with `"context {type_name} not provided"`.
+    #[cfg(not(feature = "safety"))]
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -102,6 +114,7 @@ impl Scope {
     /// assert_eq!(root.expect_context::<Theme>(), Theme("dark"));
     /// ```
     pub fn provide<T: Clone + 'static>(self, value: T) {
+        twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::ReactiveContext);
         let value: Rc<dyn Any> = Rc::new(value);
         let old = with_runtime(|rt| {
             let mut inner = rt.inner.borrow_mut();
@@ -112,7 +125,11 @@ impl Scope {
             if let Some(slot) = data.contexts.iter_mut().find(|(t, _)| *t == id) {
                 Ok(Some(core::mem::replace(&mut slot.1, value)))
             } else {
-                data.contexts.push((id, value));
+                twine_core::alloc_guard::push(
+                    &mut data.contexts,
+                    (id, value),
+                    twine_core::alloc_guard::AllocSite::ReactiveContext,
+                );
                 Ok(None)
             }
         });
@@ -168,6 +185,9 @@ impl Scope {
     /// `#[track_caller]` wrapper (the panic reports the caller's location), for application
     /// code where a missing context is a bug.
     ///
+    /// Not available with the `safety` feature: the profile has no panicking lookups (use
+    /// [`use_context`](Scope::use_context) and handle the error).
+    ///
     /// ```
     /// let root = twine_reactive::Runtime::take().unwrap().create_root();
     /// root.provide(42u32);
@@ -178,6 +198,7 @@ impl Scope {
     ///
     /// With `"context {type_name} not provided"` if neither this scope nor an ancestor
     /// provides a `T` (see [`MissingContext`]).
+    #[cfg(not(feature = "safety"))]
     #[inline]
     #[track_caller]
     pub fn expect_context<T: Clone + 'static>(self) -> T {

@@ -14,9 +14,9 @@
 //! - **Owner:** each [`UiCore`] creates one queue and provides it as a context of its root
 //!   scope, so a cleanup or handle finds the queue of *its* `Ui` from its scope (several `Ui`s
 //!   may share one reactive runtime). The lookup happens only on the engine-less path.
-//! - **Bounded, no allocation:** a ring of [`DEFAULT_ENGINE_QUEUE_CAPACITY`] slots (or
-//!   [`UiBuilder::engine_queue_capacity`]) allocated once when the `Ui` is built; queuing never
-//!   allocates. A full queue drops the command and the next update raises
+//! - **Bounded, no allocation:** a ring of [`Limits::engine_queue`](twine_core::Limits::engine_queue)
+//!   slots (default 16; [`UiBuilder::limits`]) allocated once when the `Ui` is built; queuing
+//!   never allocates. A full queue drops the command and the next update raises
 //!   [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity) with code
 //!   [`CapacityFault::EngineQueue`] (one record, the number of dropped commands as occurrences);
 //!   the commands already queued are applied. Never a panic.
@@ -33,7 +33,7 @@
 //! [`UiCore`]: crate::UiCore
 //! [`UiCore::update`]: crate::UiCore::update
 //! [`UiCore::dispose`]: crate::UiCore::dispose
-//! [`UiBuilder::engine_queue_capacity`]: crate::UiBuilder::engine_queue_capacity
+//! [`UiBuilder::limits`]: crate::UiBuilder::limits
 
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -45,14 +45,9 @@ use twine_reactive::{Scope, UiWaker};
 
 #[cfg(doc)]
 use crate::access::EngineAccess;
-use crate::error::CapacityFault;
 use crate::hooks::{AnimController, AnimOp, UiContext};
 use crate::navigator::NavTeardown;
-
-/// Engine commands a `Ui` can hold while the engine is not lent (see the module docs). Sized
-/// for scopes disposed outside `Ui::update` with a few animations, timers and modals each.
-// NOTE(R5.S03): moves into `Limits` with the other capacity bounds.
-pub const DEFAULT_ENGINE_QUEUE_CAPACITY: usize = 16;
+use twine_core::fault::CapacityFault;
 
 /// An engine side effect deferred to the next update of its `Ui`: what to do (a plain `fn`)
 /// and what to do it on.
@@ -207,8 +202,9 @@ pub(crate) struct EngineQueue {
     waker: Cell<Option<&'static UiWaker>>,
 }
 
-/// `capacity` empty slots (one allocation).
+/// `capacity` empty slots (one allocation, noted for the allocation guard).
 fn slots(capacity: usize) -> Box<[Option<EngineCmd>]> {
+    twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::EngineQueue);
     (0..capacity).map(|_| None).collect()
 }
 
@@ -239,10 +235,12 @@ impl EngineQueue {
     /// Heap bytes of the queue: its `Rc` allocation and the ring of command slots (queued
     /// commands' own boxes are transient and not included). Never panics.
     pub(crate) fn heap_bytes(&self) -> usize {
+        /// The `Rc` counters and the queue itself.
+        const FIXED: usize = 2 * core::mem::size_of::<usize>() + core::mem::size_of::<EngineQueue>();
         let slots = self.slots.try_borrow().map_or(0, |s| s.len());
-        2 * core::mem::size_of::<usize>()
-            + core::mem::size_of::<EngineQueue>()
-            + slots * core::mem::size_of::<Option<EngineCmd>>()
+        core::mem::size_of::<Option<EngineCmd>>()
+            .saturating_mul(slots)
+            .saturating_add(FIXED)
     }
 
     /// Queued commands.
@@ -259,7 +257,7 @@ impl EngineQueue {
         while let Some(cmd) = self.pop() {
             if let Some(slot) = new.get_mut(kept) {
                 *slot = Some(cmd);
-                kept += 1;
+                kept = kept.saturating_add(1);
             } else {
                 self.dropped.set(self.dropped.get().saturating_add(1));
                 self.pending.set(true);
@@ -276,13 +274,18 @@ impl EngineQueue {
     fn push(&self, cmd: EngineCmd) {
         let rejected = match self.slots.try_borrow_mut() {
             Ok(mut slots) if self.len.get() < slots.len() => {
-                let mut i = self.head.get() + self.len.get();
-                if i >= slots.len() {
-                    i -= slots.len();
+                // `head < capacity` and `len < capacity`: the sum wraps around the ring once at
+                // most, and cannot overflow.
+                let end = self.head.get().saturating_add(self.len.get());
+                let end = end.checked_sub(slots.len()).unwrap_or(end);
+                match slots.get_mut(end) {
+                    Some(slot) => {
+                        *slot = Some(cmd);
+                        self.len.set(self.len.get().saturating_add(1));
+                        None
+                    }
+                    None => Some(cmd),
                 }
-                slots[i] = Some(cmd);
-                self.len.set(self.len.get() + 1);
-                None
             }
             _ => Some(cmd),
         };
@@ -290,7 +293,7 @@ impl EngineQueue {
             self.dropped.set(self.dropped.get().saturating_add(1));
             twine_core::error!(
                 target: "twine::view",
-                "engine command queue full ({} commands): command dropped (raise UiBuilder::engine_queue_capacity)",
+                "engine command queue full ({} commands): command dropped (raise Limits::engine_queue)",
                 self.len.get()
             );
             drop(cmd); // outside the borrow: a theme's `Drop` is user code
@@ -309,9 +312,10 @@ impl EngineQueue {
         let mut slots = self.slots.try_borrow_mut().ok()?;
         let head = self.head.get();
         let cmd = slots.get_mut(head).and_then(Option::take);
-        let next = head + 1;
+        let next = head.saturating_add(1);
         self.head.set(if next >= slots.len() { 0 } else { next });
-        self.len.set(self.len.get() - 1);
+        // Not 0 (checked above).
+        self.len.set(self.len.get().saturating_sub(1));
         cmd
     }
 

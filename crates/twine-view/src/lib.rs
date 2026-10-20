@@ -45,10 +45,15 @@
 //! | [`when`], [`dynamic`], [`for_each`], [`virtual_list`] (items: [`IntoItems`], [`Items`]) | structural reactivity limited to one region; keyed collections with one item signal per row, updated in place |
 //! | [`NodeRef`], [`ScopeExt`] | the imperative escape hatch, tweens and animations of any [`Interpolate`](twine_anim::Interpolate) value (timed by an [`AnimSpec`](twine_anim::AnimSpec)), timers, modals |
 //! | [`Ui`], [`UiBuilder`], [`UiCore`] | the runtime: the update cycle, [`Wake`], [`StepBudget`] |
+//! | [`Ui::timing`], [`Ui::reset_worst`], [`TimingReport`] | worst-case update, render and flush times (bounded time evidence; the budget is `EngineConfig::step_budget`) |
 //! | [`UiBuilder::display`], [`Ui::mount_on`], [`DisplayBuilder`], [`Ui::display_mut`], [`DisplayMut`] | several displays in one `Ui`: each with its own buffers, inputs, theme and application, updated by the same loop |
 //! | [`Ui::set_rotation`], [`Ui::set_brightness`], [`Ui::set_display_sleep`], [`UiBuilder::display_commands`], [`DisplayCmd`](twine_engine::DisplayCmd) | display control at run time (rotation, brightness, sleep / wake), also from other tasks and interrupts through a command channel |
 //! | [`BuildReport`], [`BuildFault`], [`BuildError`] | widgets that could not be created while mounting: the per-mount report and the error that fails the mount |
-//! | [`AppConfig`], [`UiBuilder::app_config`], [`UiCore::mount_configured`], [`UiCore::mount_configured_with_waker`] | the application's configuration (engine, theme, motion, rotation, budgets, fault hook), one value for firmware, simulator and tests |
+//! | [`AppConfig`], [`UiBuilder::app_config`], [`UiCore::mount_configured`], [`UiCore::mount_configured_with_waker`] | the application's configuration (engine, limits, theme, motion, rotation, fault hook), one value for firmware, simulator and tests |
+//! | [`Limits`](twine_core::Limits), [`UiBuilder::limits`], [`AppConfig::apply_limits`], [`CapacityFault`] | the memory bounds of everything that grows (nodes, tree depth, texts, handlers, timers, animations, reactive nodes and scopes, effects, queues, navigation, keyed lists, wakers, heap budget), enforced as `Capacity` faults, optionally preallocated |
+//! | [`Ui::seal`], [`UiCore::seal`] | end of start-up: heap budget checked, then any allocation by Twine raises [`FaultKind::AllocAfterSeal`](twine_core::fault::FaultKind::AllocAfterSeal) ([`twine_core::alloc_guard`]) |
+//! | [`AppConfig::audit_report`] | the complete configuration as stable `section.key=value` lines for audit evidence ([`twine_core::audit`]), ending with its CRC-32 digest |
+//! | [`Ui::heartbeat`]; with the `display-integrity` feature `Ui::set_fail_safe`, `Ui::enter_fail_safe`, `UiBuilder::frame_observer`, `ViewExt::validity`, `ViewExt::safety_critical`, `ScopeExt::watch_fresh`, `INVALID_TEXT` ([`Validity`](twine_core::validity::Validity) texts) | display integrity: liveness, the static fail-safe screen, an independent frame monitor, data validity and its standard look (critical nodes and region checks: the engine's `ObjFlags::SAFETY_CRITICAL`, `Engine::check_region`) |
 //! | [`typestate`] | the builder's required parts (runtime, clock / platform, draw buffers), checked at compile time |
 //! | [`run::blocking`], [`run::blocking_with`], [`run::LoopEvent`] | the run loop over a [`Platform`](twine_hal::Platform) (bare metal, an RTOS task, a host thread) |
 //! | [`draw_buffers!`], [`DrawBuffers`] | `static` draw buffers sized at compile time and taken once ([`UiBuilder::buffers`]) |
@@ -119,8 +124,32 @@
 //! ## Features
 //!
 //! `std`, `log`, `defmt`: as in every Twine crate.
+//!
+//! `safety`: the safety profile (enabled by the `twine` facade's `safety` feature, see
+//! `docs/safety/profile.md` in the repository): the profile's lints, and no panicking
+//! convenience APIs — `UiBuilder::build` (and the async builder's), [`expect_navigator`] and
+//! `Scope::expect_context` are removed; use [`UiBuilder::try_build`], [`use_navigator`] and
+//! `Scope::use_context`, which return a `Result`. Implies `display-integrity`.
+//!
+//! `display-integrity`: the fail-safe screen (`Ui::set_fail_safe`, `enter_fail_safe`), frame
+//! observers (`UiBuilder::frame_observer`), `.safety_critical`, `.validity`, `Validity` texts
+//! and `ScopeExt::watch_fresh` (`docs/safety/profile.md` § 11); off, none of it is compiled.
 #![no_std]
 #![forbid(unsafe_code)]
+// The safety profile's lints (`docs/safety/profile.md` § Lints): denied in library code under
+// the `safety` feature (`cargo xtask ci` stage `clippy-safety`).
+#![cfg_attr(
+    all(feature = "safety", not(test)),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::arithmetic_side_effects,
+    )
+)]
+#![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 
 extern crate alloc;
 
@@ -164,8 +193,7 @@ pub use containers::{
 };
 pub use display::{DisplayBuilder, DisplayMut};
 pub use draw_buffers::{DrawBuffers, LayerBuffer};
-pub use engine_queue::DEFAULT_ENGINE_QUEUE_CAPACITY;
-pub use error::{BuildError, BuildFailure, BuildFault, BuildReport, CapacityFault, UiError};
+pub use error::{BuildError, BuildFailure, BuildFault, BuildReport, UiError};
 pub use flow::{
     Dynamic, ForEach, IntoItems, Items, VirtualList, When, WhenElse, dynamic, for_each, virtual_list, when,
 };
@@ -174,20 +202,22 @@ pub use memory::MemoryReport;
 pub use model::{IntoModel, Model, bind_model, event_value, on_value_changed};
 pub use modifiers::ViewExt;
 pub use nav::ModalHandle;
-pub use navigator::{
-    Leave, NavOutcome, Navigator, NavigatorView, expect_navigator, navigator, use_navigator,
-};
+#[cfg(not(feature = "safety"))]
+pub use navigator::expect_navigator;
+pub use navigator::{Leave, NavOutcome, Navigator, NavigatorView, navigator, use_navigator};
 pub use node_ref::NodeRef;
 pub use prop::{Icon, IntoProp, Prop, marker};
 pub use style_ext::{StyleExt, StyleScope};
+#[cfg(feature = "display-integrity")]
+pub use text::INVALID_TEXT;
 pub use text::{IntoOptions, IntoText, OptionsProp, TextFn, TextProp};
+pub use twine_core::fault::CapacityFault;
 /// Turns a function into a component: a view with a props builder (see the [`component`](mod@component)
 /// module). Defined in `twine-macros`.
 pub use twine_macros::component;
 pub use typestate::{HasBuffers, HasClock, HasRuntime, NoBuffers, NoClock, NoRuntime};
 #[cfg(feature = "async")]
 pub use typestate::{HasPlatform, NoPlatform};
-pub use ui::DEFAULT_MESSAGES_PER_CHANNEL;
 pub use ui::{DisplaySetup, Framebuffer, Partial, Ui, UiBuilder, UiCore};
 pub use view::{AnyView, IntoAnyView, View, ViewSeq};
 pub use widgets::{
@@ -202,9 +232,12 @@ pub use widgets::{VectorCanvas, vector_canvas};
 /// When `Ui::update` must be called again (defined by the engine, re-exported here).
 pub use twine_engine::Wake;
 
-/// How much one budgeted update may render ([`Ui::update_budgeted`]; defined by the engine,
-/// re-exported here).
+/// How much one update may render ([`EngineConfig::step_budget`](twine_engine::EngineConfig::step_budget),
+/// [`Ui::update_budgeted`]; defined by the engine, re-exported here).
 pub use twine_engine::StepBudget;
+
+/// The worst-case timings of a UI ([`Ui::timing`]; defined by the engine, re-exported here).
+pub use twine_engine::TimingReport;
 
 /// Screen load animations (defined by the engine, re-exported here).
 pub use twine_engine::{ScreenAnim, ScreenLoad};

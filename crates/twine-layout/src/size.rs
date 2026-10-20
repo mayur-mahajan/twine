@@ -92,8 +92,54 @@ pub(crate) struct Resolved {
     pub pct: [bool; 2],
 }
 
+/// The style values [`resolve_node`] needs of a node, read once (out of line, so the frame of
+/// the recursive measurement holds only this compact copy).
+#[derive(Clone, Copy)]
+struct Sizing {
+    x: AxisSizing,
+    y: AxisSizing,
+}
+
+/// [`Sizing`] on one axis.
+#[derive(Clone, Copy)]
+struct AxisSizing {
+    /// Size, min and max lengths.
+    styles: [Length; 3],
+    /// The sum of both margins.
+    margin: i32,
+    /// The sum of both spaces (padding + border).
+    space: i32,
+}
+
+impl Sizing {
+    const fn of(&self, axis: Axis) -> AxisSizing {
+        match axis {
+            Axis::X => self.x,
+            Axis::Y => self.y,
+        }
+    }
+}
+
+#[inline(never)]
+fn sizing<T: LayoutTree + ?Sized>(t: &T, id: T::Id) -> Sizing {
+    let m = margins(t, id);
+    let sp = spaces(t, id);
+    let axis = |a: Axis| AxisSizing {
+        styles: [size_prop(a), min_prop(a), max_prop(a)].map(|p| crate::tree::length(t, id, p)),
+        margin: sum(m, a),
+        space: sum(sp, a),
+    };
+    Sizing {
+        x: axis(Axis::X),
+        y: axis(Axis::Y),
+    }
+}
+
 /// Resolves the size of `id` in a parent whose content area has size `parent`. `ovr` forces
 /// the size on an axis (flex grow, grid stretch: LVGL `w_layout`/`h_layout`).
+///
+/// Recursive through [`measure_content`] (a content-sized node measures its children), so
+/// its frame is kept small: the styles are read by [`sizing`].
 pub(crate) fn resolve_node<T: LayoutTree + ?Sized>(
     t: &T,
     s: &mut LayoutScratch<T::Id>,
@@ -101,17 +147,18 @@ pub(crate) fn resolve_node<T: LayoutTree + ?Sized>(
     parent: Size,
     ovr: [Option<i32>; 2],
 ) -> Resolved {
-    let m = margins(t, id);
-    let sp = spaces(t, id);
-    let styles = [Axis::X, Axis::Y]
-        .map(|a| [size_prop(a), min_prop(a), max_prop(a)].map(|p| crate::tree::length(t, id, p)));
+    let slot = t.slot(id);
+    if let Some(r) = s.memo.get(slot, parent, ovr) {
+        return r;
+    }
+    let z = sizing(t, id);
     let sized = [
-        ovr[0].is_none() && styles[0][0] == Length::Content,
-        ovr[1].is_none() && styles[1][0] == Length::Content,
+        ovr[0].is_none() && z.x.styles[0] == Length::Content,
+        ovr[1].is_none() && z.y.styles[0] == Length::Content,
     ];
-    let needs = |a: usize| ovr[a].is_none() && styles[a].contains(&Length::Content);
+    let needs = |axis: Axis| ovr[axis.index()].is_none() && z.of(axis).styles.contains(&Length::Content);
     // A content size may depend on the other axis (wrapping flex): resolve that one first.
-    let order = if needs(0) && !needs(1) {
+    let order = if needs(Axis::X) && !needs(Axis::Y) {
         [Axis::Y, Axis::X]
     } else {
         [Axis::X, Axis::Y]
@@ -123,13 +170,15 @@ pub(crate) fn resolve_node<T: LayoutTree + ?Sized>(
         pct: [false; 2],
     };
     let mut known = ovr;
+    let mut measured = false;
     for axis in order {
         let a = axis.index();
         let v = if let Some(v) = ovr[a] {
             v
         } else {
             let pc = axis.of(parent);
-            let msum = sum(m, axis);
+            let (za, zo) = (z.of(axis), z.of(axis.other()));
+            let (msum, styles) = (za.margin, za.styles);
             let fixed = |l: Length| match l {
                 Length::Content => None,
                 Length::Px(v) | Length::Dp(v) => Some(v),
@@ -138,15 +187,16 @@ pub(crate) fn resolve_node<T: LayoutTree + ?Sized>(
             let mut content: Option<i32> = None;
             let mut vals = [0; 3];
             for (k, val) in vals.iter_mut().enumerate() {
-                *val = match fixed(styles[a][k]) {
+                *val = match fixed(styles[k]) {
                     Some(v) => v,
                     None => *content.get_or_insert_with(|| {
-                        let own = fixed(styles[a][0]).map_or(0, |v| v - sum(sp, axis));
-                        let other = known[1 - a].map_or(0, |v| v - sum(sp, axis.other()));
+                        let own = fixed(styles[0]).map_or(0, |v| v - za.space);
+                        let other = known[1 - a].map_or(0, |v| v - zo.space);
                         let avail = match axis {
                             Axis::X => Size::new(own, other),
                             Axis::Y => Size::new(other, own),
                         };
+                        measured = true;
                         measure_content(t, s, id, axis, avail, sized)
                     }),
                 };
@@ -154,7 +204,7 @@ pub(crate) fn resolve_node<T: LayoutTree + ?Sized>(
             let [v, mn, mx] = vals;
             out.min[a] = mn;
             out.max[a] = mx;
-            out.pct[a] = size_in_effect_is_pct(v, mn, mx, styles[a]);
+            out.pct[a] = size_in_effect_is_pct(v, mn, mx, styles);
             mn.max(v.min(mx))
         };
         match axis {
@@ -162,6 +212,17 @@ pub(crate) fn resolve_node<T: LayoutTree + ?Sized>(
             Axis::Y => out.size.h = v,
         }
         known[a] = Some(v);
+    }
+    if measured {
+        // Only content-sized nodes are worth remembering (the others resolve in O(1)). The
+        // parent size matters only through a `Pct` length on an axis the parent does not
+        // force.
+        let pct = |forced: Option<i32>, axis: Axis| {
+            forced.is_none() && z.of(axis).styles.iter().any(|l| matches!(l, Length::Pct(_)))
+        };
+        let [ox, oy] = ovr;
+        s.memo
+            .put(slot, parent, pct(ox, Axis::X) || pct(oy, Axis::Y), ovr, out);
     }
     out
 }
@@ -196,6 +257,7 @@ pub(crate) fn measure_content<T: LayoutTree + ?Sized>(
     avail: Size,
     sized: [bool; 2],
 ) -> i32 {
+    s.memo.count_measurement();
     let own = axis.of(t.content_size(id));
     let ext = children_extent(t, s, id, axis, avail, sized);
     sum(spaces(t, id), axis).saturating_add(ext.map_or(own, |e| e.max(own)))

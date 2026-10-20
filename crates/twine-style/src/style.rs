@@ -111,6 +111,8 @@ pub const fn merge_props<const N: usize>(parts: &[&[StyleProp]]) -> [StyleProp; 
             let p = parts[i][j];
             let id = p.id() as usize;
             if slot[id] == usize::MAX {
+                // PANIC: evaluated at compile time (the style macros call it for `const` items,
+                // with `N` from `merged_len`): a wrong `N` fails the build, never a device.
                 assert!(n < N, "merge_props: N is smaller than merged_len");
                 slot[id] = n;
                 out[n] = p;
@@ -122,6 +124,7 @@ pub const fn merge_props<const N: usize>(parts: &[&[StyleProp]]) -> [StyleProp; 
         }
         i += 1;
     }
+    // PANIC: compile-time only, as above.
     assert!(n == N, "merge_props: N is larger than merged_len");
     out
 }
@@ -383,7 +386,8 @@ impl StyleBuf {
             *slot = p;
             return true;
         }
-        self.props.push(p);
+        // A property set for the first time grows the list (noted after a seal).
+        twine_core::alloc_guard::push(&mut self.props, p, twine_core::alloc_guard::AllocSite::StyleProps);
         self.has_group |= id.group_bit();
         true
     }

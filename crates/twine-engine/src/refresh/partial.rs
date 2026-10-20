@@ -399,13 +399,10 @@ impl Engine {
             h(slot as u8);
         }
         // 2. Render (and rotate / convert).
-        let (target, src) = {
-            let st = self.partial(d);
-            if rotation == Rotation::Deg0 {
-                (st.bufs[slot].take(), None)
-            } else {
-                (st.scratch[slot].take(), st.bufs[slot].take())
-            }
+        let (target, src) = match self.partial(d) {
+            Some(st) if rotation == Rotation::Deg0 => (st.bufs[slot].take(), None),
+            Some(st) => (st.scratch[slot].take(), st.bufs[slot].take()),
+            None => (None, None),
         };
         let Some(mut mem) = target else {
             twine_core::error!(target: "twine::refresh", "slot {} has no buffer", slot);
@@ -418,9 +415,11 @@ impl Engine {
             mem.as_mut_slice(),
             src.as_mut().map(DrawBufferMem::as_mut_slice),
         );
-        if let Some(src) = src {
-            self.partial(d).bufs[slot] = Some(src);
+        if let (Some(src), Some(st)) = (src, self.partial(d)) {
+            st.bufs[slot] = Some(src);
         }
+        #[cfg(feature = "display-integrity")]
+        self.observe_chunk(d, flush_area, mem.as_slice(), None);
         // 3. Flush.
         let t_flush = self.hires_us();
         let since = self.wait_stamp();
@@ -466,24 +465,33 @@ impl Engine {
         // 4. Reclaim a finished buffer without blocking before the next chunk.
         self.reclaim_buffers(d);
         let t_end = self.hires_us();
-        let job = self.job_mut(d);
-        job.vsync_pending = false;
-        job.stats.chunks = job.stats.chunks.saturating_add(1);
-        let us = |a: Option<u64>, b: Option<u64>| {
-            a.zip(b)
-                .map_or(0, |(a, b)| b.saturating_sub(a))
-                .min(u64::from(u32::MAX)) as u32
-        };
-        job.stats.flush_wait_us = job.stats.flush_wait_us.saturating_add(us(t_wait, t_render));
-        job.stats.render_us = job
-            .stats
-            .render_us
-            .saturating_add(render_us.min(u64::from(u32::MAX)) as u32);
-        let post = us(t_render, t_flush).saturating_sub(render_us.min(u64::from(u32::MAX)) as u32);
-        job.stats.flush_us = job
-            .stats
-            .flush_us
-            .saturating_add(post.saturating_add(us(t_flush, t_end)));
+        if let Some(job) = self.job_mut(d) {
+            job.vsync_pending = false;
+            job.stats.chunks = job.stats.chunks.saturating_add(1);
+            let us = |a: Option<u64>, b: Option<u64>| {
+                a.zip(b)
+                    .map_or(0, |(a, b)| b.saturating_sub(a))
+                    .min(u64::from(u32::MAX)) as u32
+            };
+            job.stats.flush_wait_us = job.stats.flush_wait_us.saturating_add(us(t_wait, t_render));
+            job.stats.render_us = job
+                .stats
+                .render_us
+                .saturating_add(render_us.min(u64::from(u32::MAX)) as u32);
+            let post = us(t_render, t_flush).saturating_sub(render_us.min(u64::from(u32::MAX)) as u32);
+            job.stats.flush_us = job
+                .stats
+                .flush_us
+                .saturating_add(post.saturating_add(us(t_flush, t_end)));
+        }
+        if let (Some(a), Some(b)) = (t_wait, t_end) {
+            // The chunk's flush as the step sees it: waiting for the buffer, converting and
+            // handing it over — everything but drawing.
+            crate::TimingReport::raise(
+                &mut self.timing.worst_flush_us,
+                b.saturating_sub(a).saturating_sub(render_us),
+            );
+        }
         ChunkStep::Next(chunk.y1)
     }
 
@@ -500,7 +508,10 @@ impl Engine {
         src: Option<&mut [u8]>,
     ) -> (Rect, u64) {
         let info = self.displays[d].info;
-        let rotation = self.partial(d).rotation;
+        let Some(rotation) = self.partial(d).map(|st| st.rotation) else {
+            twine_core::error!(target: "twine::refresh", "display {} renders no chunks", d);
+            return (chunk, 0);
+        };
         let (w, h) = (chunk.width() as usize, chunk.height() as usize);
         let mono = info.format == ColorFormat::I1;
         let rotating = rotation != Rotation::Deg0;
@@ -511,9 +522,10 @@ impl Engine {
         };
         let render_us;
         if mono {
-            let st = self.partial(d);
-            let mut l8 = core::mem::take(&mut st.l8);
-            let mut l8_rot = core::mem::take(&mut st.l8_rot);
+            let (mut l8, mut l8_rot) = self
+                .partial(d)
+                .map(|st| (core::mem::take(&mut st.l8), core::mem::take(&mut st.l8_rot)))
+                .unwrap_or_default();
             render_us = self.render_buffer(d, &mut l8[..w * h], ColorFormat::L8, w, chunk, chunk);
             let (src_l8, pw, ph) = if rotating {
                 super::rotate::rotate_chunk(&l8[..w * h], &mut l8_rot[..w * h], w, h, 1, rotation);
@@ -525,9 +537,10 @@ impl Engine {
             if let Err(e) = twine_render::convert_l8_to_i1(src_l8, target, pw, ph) {
                 twine_core::error!(target: "twine::refresh", "mono conversion failed: {:?}", e);
             }
-            let st = self.partial(d);
-            st.l8 = l8;
-            st.l8_rot = l8_rot;
+            if let Some(st) = self.partial(d) {
+                st.l8 = l8;
+                st.l8_rot = l8_rot;
+            }
         } else if rotating {
             let stride = info.format.stride(w as u32) as usize;
             let Some(src) = src else {
@@ -544,10 +557,12 @@ impl Engine {
         (phys, render_us)
     }
 
-    fn partial(&mut self, d: usize) -> &mut PartialState {
+    /// The partial-refresh state of display `d`; `None` for a framebuffer display (the
+    /// callers run only for chunked displays, so `None` means there is no chunk to render).
+    fn partial(&mut self, d: usize) -> Option<&mut PartialState> {
         match &mut self.displays[d].refresher.strategy {
-            super::Strategy::Partial(p) => p,
-            _ => unreachable!("partial strategy expected"),
+            super::Strategy::Partial(p) => Some(p),
+            _ => None,
         }
     }
 
@@ -561,7 +576,7 @@ impl Engine {
         let yields = self.config.cooperative_flush
             || (self.config.flush_timeout.is_some() && self.config.hires_timer.is_none());
         loop {
-            if let Some(s) = self.partial(d).free_slot() {
+            if let Some(s) = self.partial(d).and_then(|st| st.free_slot()) {
                 return Acquire::Slot(s);
             }
             let disp = &mut self.displays[d];

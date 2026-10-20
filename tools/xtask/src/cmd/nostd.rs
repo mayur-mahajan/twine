@@ -1,4 +1,5 @@
-//! `cargo xtask nostd`: builds every `no_std` crate for every embedded target (P4, P11).
+//! `cargo xtask nostd`: builds every `no_std` crate for every embedded target (P4, P11), and
+//! the facade in the safety profile for every target ([`NOSTD_SAFETY_SETS`]).
 
 use crate::cmd::layers::LAYERS;
 use crate::util::{R, cargo_ci, has_target, run as run_cmd};
@@ -125,6 +126,17 @@ pub const NOSTD_TARGET_FEATURE_SETS: &[(&str, &str, &str)] = &[
     ("twine-accel-stm32", "stm32h743zi,log", "thumbv7em-none-eabihf"),
 ];
 
+/// Facade feature sets of the safety profile (`docs/safety/profile.md`), built for **every**
+/// target with `--no-default-features` (the default `perf-monitor` is excluded by the profile):
+/// a minimal firmware with `log`, and a full one with `defmt`, embassy, drivers, vector
+/// graphics, SVG, the decoders and fonts the profile keeps, and right-to-left text.
+pub const NOSTD_SAFETY_SETS: &[&str] = &[
+    "safety,log,color-rgb565,img-qoi",
+    "safety,defmt,embassy,drivers-st7789,drivers-ft6x36,drivers-spi-dma,drivers-ssd1306,\
+     drivers-i2c,color-rgb565-swapped,color-i1,vector,svg,img-qoi,img-png,img-gif,img-bmp,\
+     img-lz4,bidi,arabic-shaping,fonts-latin-small,fonts-mono",
+];
+
 /// Targets without atomic compare-and-swap. The library crates leave `portable-atomic`'s
 /// fallback to the application; these builds pick the single-core one.
 pub const NO_CAS_TARGETS: &[&str] = &["thumbv6m-none-eabi", "riscv32imc-unknown-none-elf"];
@@ -168,14 +180,27 @@ pub fn run() -> R {
         for (krate, features) in NOSTD_FEATURE_SETS {
             run_cmd(target_cargo(t).args(["build", "--target", t, "-p", krate, "--features", features]))?;
         }
+        for features in NOSTD_SAFETY_SETS {
+            run_cmd(target_cargo(t).args([
+                "build",
+                "--target",
+                t,
+                "-p",
+                "twine",
+                "--no-default-features",
+                "--features",
+                features,
+            ]))?;
+        }
     }
     for (krate, features, t) in NOSTD_TARGET_FEATURE_SETS {
         run_cmd(target_cargo(t).args(["build", "--target", t, "-p", krate, "--features", features]))?;
     }
     println!(
-        "nostd: {} crates built for {} targets",
+        "nostd: {} crates built for {} targets (and the safety profile: {} feature sets)",
         nostd_crates().count(),
-        TARGETS.len()
+        TARGETS.len(),
+        NOSTD_SAFETY_SETS.len()
     );
     Ok(())
 }
@@ -191,6 +216,17 @@ mod tests {
                 LAYERS.iter().any(|(n, _)| n == h),
                 "{h} is not in the layer table"
             );
+        }
+    }
+
+    #[test]
+    fn safety_sets_select_the_profile_without_excluded_parts() {
+        for set in NOSTD_SAFETY_SETS {
+            let features: Vec<&str> = set.split(',').collect();
+            assert!(features.contains(&crate::cmd::safety::FEATURE), "{set}");
+            for excluded in crate::cmd::safety::EXCLUDED_FEATURES {
+                assert!(!features.contains(excluded), "{set} enables {excluded}");
+            }
         }
     }
 

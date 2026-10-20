@@ -158,12 +158,16 @@ impl Mask {
     /// Rebuilds `shown` from `text` (reusing its capacity).
     fn update(&mut self, text: &str) {
         self.shown.clear();
+        let cap = self.shown.capacity();
         for (i, c) in text.chars().enumerate() {
             if Some(i) == self.reveal || c == '\n' {
                 self.shown.push(c);
             } else {
                 self.shown.push_str(&self.bullet);
             }
+        }
+        if self.shown.capacity() != cap {
+            twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
         }
     }
 }
@@ -298,16 +302,21 @@ impl Label {
 
     /// Edits the text in place with `f` (a Twine extension for the textarea: inserting or
     /// removing characters reuses the buffer's capacity). A `'static` text is copied into
-    /// the owned buffer first. Always redraws and re-measures.
+    /// the owned buffer first. Always redraws and re-measures. The result is cut to
+    /// [`Limits::max_text_len`](twine_core::Limits::max_text_len) like
+    /// [`set_text`](Self::set_text).
     pub fn edit_text(&mut self, cx: &mut WidgetCx<'_>, f: impl FnOnce(&mut String)) {
         if let LabelText::Static(s) = self.text {
             let mut buf = core::mem::take(&mut self.scratch);
-            buf.clear();
-            buf.push_str(s);
+            cx.store_text(&mut buf, s);
             self.text = LabelText::Owned(buf);
+            // The second buffer too, now (with `preallocate`): see `write_text`.
+            cx.reserve_text(&mut self.scratch);
         }
         if let LabelText::Owned(buf) = &mut self.text {
+            let cap = buf.capacity();
             f(buf);
+            cx.limit_text(buf, cap);
         }
         log_set(LABEL_CLASS.name, cx.node(), "text");
         self.text_changed(cx);
@@ -353,23 +362,24 @@ impl Label {
     /// Sets the text, copying it into the label's own buffer. Idempotent: an equal text does
     /// nothing. A different text overwrites the buffer in place (`clear` + `push_str`, so no
     /// allocation when it fits), invalidates the label and marks its layout if it is
-    /// content-sized.
+    /// content-sized. A text longer than [`Limits::max_text_len`](twine_core::Limits::max_text_len)
+    /// is cut at a character boundary (a `Capacity` fault, code `TextLen`); with
+    /// `Limits::preallocate` the buffer is reserved to that length when it first grows.
     pub fn set_text(&mut self, cx: &mut WidgetCx<'_>, s: &str) {
+        let s = cx.fit_text(s);
         if self.text() == s {
             return;
         }
         log_set(LABEL_CLASS.name, cx.node(), "text");
         match &mut self.text {
-            LabelText::Owned(buf) => {
-                buf.clear();
-                buf.push_str(s);
-            }
+            LabelText::Owned(buf) => cx.store_text(buf, s),
             LabelText::Static(_) => {
                 // Reuse the scratch buffer's capacity when there is one.
                 let mut buf = core::mem::take(&mut self.scratch);
-                buf.clear();
-                buf.push_str(s);
+                cx.store_text(&mut buf, s);
                 self.text = LabelText::Owned(buf);
+                // The second buffer too, now (with `preallocate`): see `write_text`.
+                cx.reserve_text(&mut self.scratch);
             }
         }
         self.text_changed(cx);
@@ -401,7 +411,10 @@ impl Label {
 
     /// Builds the text in place with `f` (which receives an empty buffer) and applies it if
     /// it differs from the current text; returns whether it changed. Two buffers are
-    /// swapped, so formatting a text of a stable length never allocates.
+    /// swapped, so formatting a text of a stable length never allocates (with
+    /// `Limits::preallocate`, both are reserved to `Limits::max_text_len`). The result is
+    /// cut to [`Limits::max_text_len`](twine_core::Limits::max_text_len) like
+    /// [`set_text`](Self::set_text).
     ///
     /// ```
     /// use core::fmt::Write;
@@ -419,7 +432,10 @@ impl Label {
     /// ```
     pub fn write_text(&mut self, cx: &mut WidgetCx<'_>, f: impl FnOnce(&mut String)) -> bool {
         self.scratch.clear();
+        cx.reserve_text(&mut self.scratch);
+        let cap = self.scratch.capacity();
         f(&mut self.scratch);
+        cx.limit_text(&mut self.scratch, cap);
         if self.scratch == self.text() {
             return false;
         }
@@ -428,6 +444,10 @@ impl Label {
             LabelText::Owned(buf) => core::mem::swap(buf, &mut self.scratch),
             LabelText::Static(_) => {
                 self.text = LabelText::Owned(core::mem::take(&mut self.scratch));
+                // The label now owns its text: reserve the second buffer at once (with
+                // `preallocate`), so both exist from the first owned text — a later write
+                // (after a seal) swaps them without allocating.
+                cx.reserve_text(&mut self.scratch);
             }
         }
         self.text_changed(cx);
@@ -571,7 +591,11 @@ impl Label {
             self.shaped = self.shaping && twine_text::needs_shaping(self.text.as_str());
             if self.shaped {
                 self.shaped_text.clear();
+                let cap = self.shaped_text.capacity();
                 twine_text::shape_into(self.text.as_str(), &mut self.shaped_text);
+                if self.shaped_text.capacity() != cap {
+                    twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
+                }
             }
         }
         if let Some((_, b)) = self.sel {

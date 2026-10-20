@@ -215,7 +215,7 @@ fn queue_overflow_raises_a_fault_and_applies_the_rest() {
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .clock(clock.clone())
-        .engine_queue_capacity(2)
+        .limits(twine_testing::HARNESS_LIMITS.engine_queue(2))
         .try_build(move |cx| {
             let (_, a) = cx.animation(0, 100, forever());
             let (_, b) = cx.animation(0, 100, forever());

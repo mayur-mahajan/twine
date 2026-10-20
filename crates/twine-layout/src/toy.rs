@@ -195,6 +195,10 @@ impl LayoutTree for ToyTree {
         self.nodes[id].coords = r;
     }
 
+    fn slot(&self, id: usize) -> u32 {
+        u32::try_from(id).unwrap_or(u32::MAX)
+    }
+
     fn coords(&self, id: usize) -> Rect {
         self.nodes[id].coords
     }

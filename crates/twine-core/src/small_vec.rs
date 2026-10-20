@@ -127,11 +127,12 @@ impl<T: Copy + Default, const N: usize> SmallVec<T, N> {
                 *len += 1;
             }
             Repr::Inline { .. } => {
+                crate::alloc_guard::grew(crate::alloc_guard::AllocSite::SmallVec);
                 let mut h = self.to_heap();
                 h.push(v);
                 self.repr = Repr::Heap(h);
             }
-            Repr::Heap(h) => h.push(v),
+            Repr::Heap(h) => crate::alloc_guard::push(h, v, crate::alloc_guard::AllocSite::SmallVec),
         }
     }
 

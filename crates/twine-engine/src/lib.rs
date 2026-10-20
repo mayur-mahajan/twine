@@ -46,15 +46,19 @@
 //! | themes | [`ThemeHook`], [`IntoTheme`], [`Engine::set_theme`], [`Engine::set_theme_mode`], [`Engine::theme_mode`], [`Engine::theme_modes`], [`Engine::design_value`], [`Engine::resolve_design_value`], [`Engine::design_table`], [`Engine::design_epoch`] ([design elements](twine_style::design)) |
 //! | displays | [`Engine::add_display`], [`Engine::add_framebuffer_display`], [`Engine::add_chunked_display`], [`BufferMode`], [`BufferSpec`], [`DisplayId`] |
 //! | display control | [`Engine::set_rotation`], [`Engine::set_display_brightness`], [`Engine::set_display_sleep`], [`Engine::display_command`], [`DisplayCmd`], [`Engine::reserve_rotation`], [`DisplayControlFault`] |
-//! | refresh | [`Engine::step`], [`Engine::step_budgeted`], [`StepBudget`], [`Wake`] ([`Wake::IdleFor`]), [`RefreshStats`], [`PerfMonitor`], [`InvalidateReason`] |
+//! | refresh | [`Engine::step`], [`Engine::step_budgeted`], [`StepBudget`] ([`EngineConfig::step_budget`], [`EngineConfig::on_chunk`]), [`Wake`] ([`Wake::IdleFor`]), [`RefreshStats`], [`PerfMonitor`], [`InvalidateReason`] |
+//! | timing | [`Engine::timing`], [`Engine::reset_worst`], [`TimingReport`] (worst update / chunk render / chunk flush; `FrameOverrun` faults) |
 //! | events | [`Engine::send_event`], [`Engine::add_event_handler`], [`Event`], [`EventCode`], [`EventCx`] |
 //! | input | [`Engine::add_input`], [`Engine::notify_input`], [`Engine::read_inputs`], [`Engine::inactive_for`], [`Engine::trigger_activity`], [`InputId`] |
 //! | layout | [`Engine::set_size`], [`Engine::set_pos`], [`Engine::align`], [`Engine::align_to`], [`Engine::set_flex_flow`], [`Engine::set_grid_tracks`], [`Engine::set_local_grid_tracks`] (grid tracks: [`GridTracks`](twine_style::GridTracks)), [`Engine::set_grid_cell`], [`Engine::update_layout`], [`Engine::layout_passes`], [`LayoutStats`]; docking (keyboard avoidance): [`ObjFlags::DOCK_BOTTOM`] |
 //! | animation | [`Engine::anim_start`], [`Engine::anim_start_fn`], [`Engine::timer_add`], [`Engine::load_screen_anim`], [`Engine::finish_screen_anim`], [`Engine::set_motion`], [`Engine::motion`], [`Motion`], [`AnimProp`], [`AnimSpec`], [`ScreenAnim`], [`Deferred`] |
 //! | focus | [`Engine::create_group`], [`Engine::group_add`], [`Engine::focus_next`], [`gridnav`] |
-//! | faults | [`Engine::raise_fault`], [`Engine::take_faults`], [`Engine::set_fault_hook`], [`FaultRecord`], [`FaultKind`](twine_core::fault::FaultKind) |
+//! | faults | [`Engine::raise_fault`], [`Engine::take_faults`], [`Engine::set_fault_hook`], [`Engine::raise_alloc_after_seal`], [`FaultRecord`], [`FaultKind`](twine_core::fault::FaultKind), [`CapacityFault`](twine_core::fault::CapacityFault) |
 //! | scrolling | [`Engine::scroll_by`], [`Engine::scroll_to`], [`Engine::scroll_to_view`], [`Engine::scroll_to_view_after_layout`], [`Engine::scroll_top`], [`Engine::set_scroll_snap_x`], [`Engine::update_snap`], [`Engine::scrollbar_areas`], [`ScrollbarMode`] |
 //! | memory | [`Engine::memory_report`], [`EngineMemory`], [`HeapPeak`], [`MemInfo`], [`Engine::with_layer_buf`] |
+//! | bounds | [`Engine::set_limits`], [`Engine::limits`] ([`Limits`](twine_core::Limits): nodes, tree depth, text length, handlers, timers, animations; preallocation), [`WidgetCx::fit_text`], [`EngineError::TooDeep`] |
+//! | display integrity | [`Engine::heartbeat`], [`Engine::now`]; with the `display-integrity` feature: `FrameObserver`, `FrameChunk`, `FrameReport`, `Engine::set_frame_observer`, `Engine::region`, `Engine::render_region_to`, `Engine::read_back`, `Engine::check_region` (`IntegrityCheck`), `ObjFlags::SAFETY_CRITICAL`, `Engine::critical_nodes`, `Engine::critical_report` (`CriticalReport`, `Widget::value_digest`), `Engine::set_fail_safe_screen`, `Engine::enter_fail_safe`, `Engine::leave_fail_safe`, `Engine::fail_safe` |
+//! | audit | `impl Audit for EngineConfig` ([`twine_core::audit`]), [`audit_features`], [`ThemeHook::audit`] |
 //! | draw acceleration | [`Engine::set_accel`], [`Engine::clear_accel`] |
 //!
 //! ## Features
@@ -65,6 +69,13 @@
 //! - `perf-monitor`: the on-screen performance overlay.
 //! - `test-ids`: keep node test ids in release builds.
 //! - `color-*`: pixel formats compiled into the renderer.
+//! - `safety`: the safety profile (enabled by the `twine` facade's `safety` feature, see
+//!   `docs/safety/profile.md` in the repository): the profile's lints; it refuses `perf-monitor`
+//!   and `fs`; it implies `display-integrity`.
+//! - `display-integrity`: frame observers, region re-render / read-back / checks,
+//!   `ObjFlags::SAFETY_CRITICAL`, the stale / invalid marks and the fail-safe screen
+//!   (`docs/safety/profile.md` § 11). Off (the default), none of it is compiled: no flag test
+//!   per drawn node, no observer branch per chunk.
 //!
 //! ## Example
 //!
@@ -96,7 +107,31 @@
 //! ```
 #![no_std]
 #![forbid(unsafe_code)]
+// The safety profile's lints (`docs/safety/profile.md` § Lints): denied in library code under
+// the `safety` feature (`cargo xtask ci` stage `clippy-safety`).
+#![cfg_attr(
+    all(feature = "safety", not(test)),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable,)
+)]
+// NOTE(R5.S12): sites of these lints remain (counts: `docs/safety/profile.md` § Lint status,
+// `cargo xtask safety-lints`); a lint moves to `deny` above when its last site is fixed.
+#![cfg_attr(
+    all(feature = "safety", not(test)),
+    allow(clippy::indexing_slicing, clippy::arithmetic_side_effects,)
+)]
 #![cfg_attr(not(test), deny(clippy::float_arithmetic))]
+
+// The safety profile refuses the parts it excludes (`docs/safety/profile.md` § Exclusions).
+#[cfg(all(feature = "safety", feature = "perf-monitor"))]
+compile_error!(
+    "the `safety` profile excludes the performance overlay (`perf-monitor`, a default feature \
+     of `twine`: depend on `twine` with `default-features = false`); see docs/safety/profile.md"
+);
+#[cfg(all(feature = "safety", feature = "fs"))]
+compile_error!(
+    "the `safety` profile excludes the file system (`fs`: run-time file images); embed images \
+     at build time instead; see docs/safety/profile.md"
+);
 
 extern crate alloc;
 #[cfg(any(test, feature = "std"))]
@@ -121,6 +156,8 @@ mod handlers;
 mod health;
 mod id;
 mod input;
+#[cfg(feature = "display-integrity")]
+mod integrity;
 mod invalidate;
 mod layout;
 mod memory;
@@ -164,6 +201,8 @@ pub use handlers::{EventFilter, Handler, HandlerId};
 pub use health::{DisplayHealth, DisplayState, FlushPolicy};
 pub use id::{DEAD_NODE, DisplayId, NodeId, NodeIdFmt, fmt_node_id};
 pub use input::{InputId, MAX_INPUTS};
+#[cfg(feature = "display-integrity")]
+pub use integrity::{CriticalReport, FrameChunk, FrameObserver, FrameReport, IntegrityCheck, Region};
 pub use invalidate::InvalidateReason;
 pub use layout::{LayoutStats, MAX_LAYOUT_ITERATIONS};
 pub use memory::EngineMemory;
@@ -173,7 +212,7 @@ pub use perf_overlay::{PERF_OVERLAY_CLASS, PerfOverlay};
 pub use refresh::{FrameInfo, RefreshOutcome};
 pub use screen_anim::{ScreenAnim, ScreenLoad};
 pub use scroll::{SCROLL_ANIM_TIME_MAX, SCROLL_ANIM_TIME_MIN, SCROLL_ELASTIC_FACTOR};
-pub use stats::{HeapPeak, MemInfo, PerfMonitor, RefreshStats};
+pub use stats::{HeapPeak, MemInfo, PerfMonitor, RefreshStats, TimingReport};
 pub use style_cache::MainStyle;
 pub use style_list::StyleList;
 pub use theme_hook::{IntoTheme, ThemeCx, ThemeHook};
@@ -187,3 +226,40 @@ pub use widget::{
     AsAny, Editable, GroupDef, Lineage, MAX_CLASS_DEPTH, MeasureCx, Widget, WidgetClass, WidgetCx,
     default_covers, default_hit_test,
 };
+
+/// Writes the engine's cargo features of this build as `build.engine_<feature>=<bool>`
+/// entries of an audit report (`AppConfig::audit_report` calls it): `debug-checks`,
+/// `perf-monitor`, `test-ids`, `fs`, `svg` and every `color-*` renderer. Never allocates.
+///
+/// ```
+/// use twine_core::audit::{Audit, AuditSink, KeyValues};
+///
+/// struct Features;
+/// impl Audit for Features {
+///     fn audit(&self, out: &mut dyn AuditSink) { twine_engine::audit_features(out) }
+/// }
+/// assert!(KeyValues(&Features).to_string().contains("build.engine_color_rgb565="));
+/// ```
+pub fn audit_features(out: &mut dyn twine_core::audit::AuditSink) {
+    use twine_core::audit::AuditValue::Bool;
+    let features = [
+        ("engine_debug_checks", cfg!(feature = "debug-checks")),
+        ("engine_perf_monitor", cfg!(feature = "perf-monitor")),
+        ("engine_test_ids", cfg!(feature = "test-ids")),
+        ("engine_fs", cfg!(feature = "fs")),
+        ("engine_svg", cfg!(feature = "svg")),
+        ("engine_color_rgb565", cfg!(feature = "color-rgb565")),
+        (
+            "engine_color_rgb565_swapped",
+            cfg!(feature = "color-rgb565-swapped"),
+        ),
+        ("engine_color_rgb888", cfg!(feature = "color-rgb888")),
+        ("engine_color_xrgb8888", cfg!(feature = "color-xrgb8888")),
+        ("engine_color_argb8888", cfg!(feature = "color-argb8888")),
+        ("engine_color_l8", cfg!(feature = "color-l8")),
+        ("engine_color_i1", cfg!(feature = "color-i1")),
+    ];
+    for (key, on) in features {
+        out.entry("build", key, Bool(on));
+    }
+}

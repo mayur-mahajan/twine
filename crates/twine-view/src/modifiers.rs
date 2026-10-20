@@ -33,6 +33,20 @@ fn state_op(state: State, p: Prop<bool>) -> impl FnOnce(&mut BuildCx<'_>, NodeId
     move |cx, node| bind_node(cx, node, p, move |e, n, on| e.set_state(n, state, on))
 }
 
+#[cfg(feature = "display-integrity")]
+/// The build step of [`ViewExt::validity`]: the `STALE` / `INVALID` states follow `p`.
+fn validity_op(
+    p: Prop<twine_core::validity::ValidityStatus>,
+) -> impl FnOnce(&mut BuildCx<'_>, NodeId) + 'static {
+    use twine_core::validity::ValidityStatus;
+    move |cx, node| {
+        bind_node(cx, node, p, |e, n, v: ValidityStatus| {
+            e.set_state(n, State::STALE, v == ValidityStatus::Stale);
+            e.set_state(n, State::INVALID, v == ValidityStatus::Invalid);
+        });
+    }
+}
+
 /// The current value of `p` (a dynamic one is evaluated: its reads are tracked by the running
 /// binding).
 fn current<T: Copy>(p: &Prop<T>) -> T {
@@ -339,6 +353,44 @@ pub trait ViewExt: View + Sized {
         event_bubble => EVENT_BUBBLE;
         /// Children are not clipped to the node.
         overflow_visible => OVERFLOW_VISIBLE;
+    }
+
+    /// Safety-critical ([`ObjFlags::SAFETY_CRITICAL`], feature `display-integrity`): drawn
+    /// whole on every change, without caches, transitions or ancestors' opacity and layers,
+    /// and reported by `Engine::critical_report` for cross-checks.
+    /// ```
+    /// use twine_view::prelude::*;
+    /// let _v = label("88 km/h").safety_critical(true);
+    /// ```
+    #[cfg(feature = "display-integrity")]
+    #[must_use]
+    fn safety_critical<M>(self, on: impl IntoProp<bool, M>) -> Self {
+        self.flag(ObjFlags::SAFETY_CRITICAL, on)
+    }
+
+    #[cfg(feature = "display-integrity")]
+    /// Shows how far the displayed value can be trusted: the standard look of a
+    /// [`Validity`](twine_core::validity::Validity) — nothing for a valid value, the `STALE`
+    /// state (a sparse hatch) for a stale one, the `INVALID` state (a cross-hatch) when there
+    /// is no valid value. Takes a [`ValidityStatus`](twine_core::validity::ValidityStatus) or
+    /// anything converting into one: a `Validity<T>`, or a signal, memo or closure of one —
+    /// typically the same source as the widget's value (`label(speed).validity(speed)`; the
+    /// label then shows dashes for an invalid value). One binding; idempotent.
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    ///
+    /// static SPEED: Latest<Validity<u16>> = Latest::new(Validity::NoData);
+    ///
+    /// fn app(cx: Scope) -> impl View {
+    ///     let speed = cx.watch_fresh(&SPEED, Duration::ms(500));
+    ///     label(speed).validity(speed)
+    /// }
+    /// # let _ = app;
+    /// ```
+    #[must_use]
+    fn validity<M>(self, status: impl IntoProp<twine_core::validity::ValidityStatus, M>) -> Self {
+        self.op(validity_op(status.into_prop()))
     }
 
     /// Disabled: the `DISABLED` state (no input, disabled look).

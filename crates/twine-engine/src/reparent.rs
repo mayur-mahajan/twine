@@ -26,7 +26,11 @@ impl Engine {
     ///
     /// # Errors
     /// [`EngineError::NodeNotFound`] for unknown nodes; [`EngineError::InvalidConfig`] when
-    /// `before` is not a child of `parent` or `parent` is inside `id`'s subtree (all logged).
+    /// `before` is not a child of `parent` or `parent` is inside `id`'s subtree (all logged);
+    /// [`EngineError::TooDeep`] (with a [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity)
+    /// fault, code `TreeDepth`) when a node of the moved subtree would end up deeper than
+    /// [`Limits::max_tree_depth`](twine_core::Limits::max_tree_depth) — checked only when the
+    /// parent changes (O(subtree)); the node stays where it was.
     pub fn move_node(
         &mut self,
         id: NodeId,
@@ -43,6 +47,9 @@ impl Engine {
             if next == before || before == Some(id) {
                 return Ok(());
             }
+        }
+        if old_parent != Some(parent) && self.too_deep_under(id, parent) {
+            return Err(self.refuse_node(Some(parent), EngineError::TooDeep));
         }
         let wide = n
             .flags()
@@ -62,7 +69,11 @@ impl Engine {
         self.mark_layout(id, LayoutDirty::SELF);
         if let Some(op) = old_parent.filter(|p| *p != parent && self.tree.contains(*p)) {
             self.mark_layout(op, LayoutDirty::CHILDREN);
-            self.layout.readjust.push(op);
+            twine_core::alloc_guard::push(
+                &mut self.layout.readjust,
+                op,
+                twine_core::alloc_guard::AllocSite::EngineScratch,
+            );
             self.scrollbar_invalidate_tracks(op);
             self.send_event(op, EventCode::ChildChanged, EventParam::None);
         }
@@ -71,5 +82,16 @@ impl Engine {
             self.send_event(parent, EventCode::ChildChanged, EventParam::None);
         }
         Ok(())
+    }
+
+    /// Whether moving `id`'s subtree under `parent` would put a node deeper than
+    /// `Limits::max_tree_depth`.
+    fn too_deep_under(&self, id: NodeId, parent: NodeId) -> bool {
+        let Some(d) = self.tree.depth(parent) else {
+            return false;
+        };
+        // `id` lands one level below `parent`, its deepest descendant `height` below that.
+        d.saturating_add(1).saturating_add(self.tree.subtree_height(id))
+            > usize::from(self.limits.max_tree_depth)
     }
 }

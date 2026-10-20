@@ -3424,6 +3424,7 @@ dependencies = [
  "env_logger",
  "log",
  "png 0.17.16",
+ "proptest",
  "twine-assets",
  "twine-core",
  "twine-engine",
@@ -4149,6 +4150,7 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "twine-cli",
  "twine-style",
+ "twine-testing",
 ]
 
 [[package]]

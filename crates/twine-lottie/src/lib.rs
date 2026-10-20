@@ -81,6 +81,14 @@
     clippy::neg_cmp_op_on_partial_ord
 )]
 
+// The safety profile excludes this crate (`docs/safety/profile.md` § Exclusions): a build that
+// links it together with the profile (`twine_core::SAFETY_PROFILE`, unified across the build)
+// fails here, whichever crate depends on it.
+const _: () = assert!(
+    !twine_core::SAFETY_PROFILE,
+    "the `safety` profile excludes `twine-lottie` (floating-point animation player for run-time JSON); see docs/safety/profile.md"
+);
+
 extern crate alloc;
 #[cfg(test)]
 extern crate std;

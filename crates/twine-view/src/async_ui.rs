@@ -21,7 +21,7 @@ use twine_core::fault::{FaultCounts, FaultKind, Faults};
 use twine_core::{Duration, Fraction, Instant, Rect, Rotation};
 use twine_engine::{
     BufferMode, DisplayCmd, DisplayId, DisplayRequests, DisplayResponses, DriverErrorCode, Engine,
-    EngineConfig, EngineError, FaultHook, FaultRecord, IntoTheme, Wake,
+    EngineConfig, EngineError, FaultHook, FaultRecord, IntoTheme, TimingReport, Wake,
 };
 use twine_hal::{
     AsyncDisplayDriver, AsyncInputWait, AsyncPlatform, DrawBufferMem, InputData, InputDevice, InputKind,
@@ -287,6 +287,15 @@ impl<D, W, R, P, B> AsyncUiBuilder<D, W, R, P, B> {
         self
     }
 
+    #[cfg(feature = "display-integrity")]
+    /// Registers a [`FrameObserver`](twine_engine::FrameObserver) when the engine is built,
+    /// as [`UiBuilder::frame_observer`](crate::UiBuilder::frame_observer) (it sees every chunk
+    /// the async loop flushes). A later call replaces it. Never panics.
+    pub fn frame_observer(mut self, observer: impl twine_engine::FrameObserver + 'static) -> Self {
+        self.settings.frame_observer(observer);
+        self
+    }
+
     /// Caller memory for the engine's layer buffer, as
     /// [`UiBuilder::layer_buf`](crate::UiBuilder::layer_buf) (typically a
     /// [`LayerBuffer`](crate::LayerBuffer) static; without it the layer buffer is heap). A
@@ -449,9 +458,9 @@ impl<D, W, R, P, B> AsyncUiBuilder<D, W, R, P, B> {
     /// # }
     /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
     /// use twine_engine::EngineConfig;
-    /// let config = EngineConfig { max_nodes: 256, ..EngineConfig::default() };
+    /// let config = EngineConfig { refr_period: Duration::ms(20), ..EngineConfig::default() };
     /// let ui = Ui::builder_async(Panel).runtime(Runtime::take().unwrap()).buffers(BufferMode::partial_single(buf())).platform(&MockPlatform::new()).config(config).build(|_| label("hi"));
-    /// assert_eq!(ui.engine().config().max_nodes, 256);
+    /// assert_eq!(ui.engine().config().refr_period, Duration::ms(20));
     /// ```
     pub fn config(mut self, c: EngineConfig) -> Self {
         self.settings.app.engine = c;
@@ -505,11 +514,8 @@ impl<D, W, R, P, B> AsyncUiBuilder<D, W, R, P, B> {
         self
     }
 
-    /// How many engine commands the `AsyncUi` can queue while the engine is not lent (see
-    /// [`UiBuilder::engine_queue_capacity`]): a full queue drops the command and raises a
-    /// [`FaultKind::Capacity`] fault with code
-    /// [`CapacityFault::EngineQueue`](crate::CapacityFault::EngineQueue); `0` drops (and
-    /// reports) every such command.
+    /// The memory bounds of the `AsyncUi` (sets [`AppConfig::limits`](crate::AppConfig::limits);
+    /// see [`UiBuilder::limits`]): applied when it is built, before anything is created.
     /// ```
     /// # use twine_core::{ColorFormat, Rect};
     /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
@@ -522,34 +528,16 @@ impl<D, W, R, P, B> AsyncUiBuilder<D, W, R, P, B> {
     /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
     /// # }
     /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
-    /// let ui = Ui::builder_async(Panel).runtime(Runtime::take().unwrap()).buffers(BufferMode::partial_single(buf())).platform(&MockPlatform::new()).engine_queue_capacity(64).build(|_| label("hi"));
-    /// # let _ = ui;
-    /// ```
-    pub fn engine_queue_capacity(mut self, capacity: usize) -> Self {
-        self.settings.app.engine_queue_capacity = capacity;
-        self
-    }
-
-    /// How many messages each channel delivers per update (see
-    /// [`UiBuilder::messages_per_channel`]; default
-    /// [`DEFAULT_MESSAGES_PER_CHANNEL`](crate::DEFAULT_MESSAGES_PER_CHANNEL), `0` counts as `1`).
-    /// ```
-    /// # use twine_core::{ColorFormat, Rect};
-    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
-    /// # use twine_testing::MockPlatform;
-    /// # use twine_view::prelude::*;
-    /// # struct Panel;
-    /// # impl AsyncDisplayDriver for Panel {
-    /// #     type Error = ();
-    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
-    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
-    /// # }
-    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
-    /// let ui = Ui::builder_async(Panel).runtime(Runtime::take().unwrap()).buffers(BufferMode::partial_single(buf())).platform(&MockPlatform::new()).messages_per_channel(4).build(|_| label("hi"));
+    /// let ui = Ui::builder_async(Panel)
+    ///     .runtime(Runtime::take().unwrap())
+    ///     .buffers(BufferMode::partial_single(buf()))
+    ///     .platform(&MockPlatform::new())
+    ///     .limits(Limits::DEFAULT.engine_queue(64).messages_per_channel(4))
+    ///     .build(|_| label("hi"));
     /// assert_eq!(ui.messages_per_channel(), 4);
     /// ```
-    pub fn messages_per_channel(mut self, n: usize) -> Self {
-        self.settings.app.messages_per_channel = n;
+    pub fn limits(mut self, limits: twine_core::Limits) -> Self {
+        self.settings.app.limits = limits;
         self
     }
 
@@ -785,6 +773,8 @@ impl<D, W, R, P, B> AsyncUiBuilder<D, W, R, P, B> {
 
     /// [`try_build`](Self::try_build), panicking on an error.
     ///
+    /// Not available with the `safety` feature (use [`try_build`](Self::try_build)).
+    ///
     /// # Panics
     /// When the engine rejects the display, buffers or inputs, or when a widget of `app`
     /// cannot be created. A missing runtime, platform or buffers is a compile error.
@@ -803,6 +793,7 @@ impl<D, W, R, P, B> AsyncUiBuilder<D, W, R, P, B> {
     /// let ui = Ui::builder_async(Panel).runtime(Runtime::take().unwrap()).buffers(BufferMode::partial_single(buf())).platform(&MockPlatform::new()).build(|_| label("hi"));
     /// # let _ = ui;
     /// ```
+    #[cfg(not(feature = "safety"))]
     pub fn build<V: View>(self, app: impl FnOnce(Scope) -> V) -> AsyncUi<D, W>
     where
         D: AsyncDisplayDriver + 'static,
@@ -997,19 +988,14 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
             return;
         };
         // Two buffers: the flush of chunk k (DMA) overlaps the rendering of chunk k + 1.
-        let mut bufs = [a, b];
-        let mut pending: Option<(Rect, usize)> = None;
-        let mut free = 0;
+        // `free`: whether `b` (not `a`) is the buffer to render into next.
+        let mut pending: Option<(Rect, bool)> = None;
+        let mut free = false;
         loop {
             let next = match pending.take() {
-                None => engine.render_chunk(bufs[free].as_mut_slice()),
+                None => engine.render_chunk(if free { &mut *b } else { &mut *a }.as_mut_slice()),
                 Some((area, prev)) => {
-                    let (lo, hi) = bufs.split_at_mut(1);
-                    let (prev_buf, free_buf) = if prev == 0 {
-                        (&*lo[0], &mut *hi[0])
-                    } else {
-                        (&*hi[0], &mut *lo[0])
-                    };
+                    let (prev_buf, free_buf) = if prev { (&*b, &mut *a) } else { (&*a, &mut *b) };
                     let t0 = us();
                     let (next, t1, result) = {
                         let mut flush = pin!(display.flush(area, prev_buf.as_slice()));
@@ -1048,7 +1034,7 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
             match next {
                 Some(area) => {
                     pending = Some((area, free));
-                    free = 1 - free;
+                    free = !free;
                 }
                 None => break,
             }
@@ -1116,14 +1102,15 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
         self.core.waker()
     }
 
-    /// Messages each channel delivers per update (see [`UiBuilder::messages_per_channel`]).
+    /// Messages each channel delivers per update (see [`Limits::messages_per_channel`](twine_core::Limits::messages_per_channel)).
     #[must_use]
     pub fn messages_per_channel(&self) -> usize {
         self.core.messages_per_channel()
     }
 
     /// Changes how many messages each channel delivers per update (see
-    /// [`UiBuilder::messages_per_channel`]; `0` counts as `1`). Never panics.
+    /// [`Limits::messages_per_channel`](twine_core::Limits::messages_per_channel); `0` counts
+    /// as `1`). Never panics.
     ///
     /// ```
     /// # use twine_core::{ColorFormat, Rect};
@@ -1218,11 +1205,83 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
         let bufs = [Some(a), b.as_ref()];
         let bufs = bufs.iter().flatten();
         if self.bufs_heap {
-            m.engine.draw_buffers_heap += bufs.map(|b| b.len() + BufferMode::ALLOC_PADDING).sum::<usize>();
+            let bytes = bufs.fold(0, |sum: usize, b| {
+                sum.saturating_add(b.len())
+                    .saturating_add(BufferMode::ALLOC_PADDING)
+            });
+            m.engine.draw_buffers_heap = m.engine.draw_buffers_heap.saturating_add(bytes);
         } else {
-            m.engine.draw_buffers_static += bufs.map(|b| b.len()).sum::<usize>();
+            let bytes = bufs.fold(0, |sum: usize, b| sum.saturating_add(b.len()));
+            m.engine.draw_buffers_static = m.engine.draw_buffers_static.saturating_add(bytes);
         }
         m
+    }
+
+    /// The worst-case timings since start-up or the last [`reset_worst`](Self::reset_worst)
+    /// (see [`Ui::timing`](crate::Ui::timing)): the chunks this runtime renders count in
+    /// `worst_render_us`, the flushes it awaits in `worst_flush_us`; `worst_update_us` is the
+    /// update before them. Never panics; allocates nothing.
+    ///
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockPlatform;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// let mut ui = Ui::builder_async(Panel)
+    ///     .runtime(Runtime::take().unwrap())
+    ///     .platform(&MockPlatform::new())
+    ///     .buffers(BufferMode::alloc(BufferSpec::PartialDouble { rows: 8 }))
+    ///     .build(|_| label("hi"));
+    /// ui.reset_worst();
+    /// assert_eq!(ui.timing(), TimingReport::default()); // no hires_timer: nothing measured
+    /// ```
+    #[must_use]
+    pub fn timing(&self) -> TimingReport {
+        self.engine.timing()
+    }
+
+    /// Clears the high-water marks of [`timing`](Self::timing). Never panics.
+    pub fn reset_worst(&mut self) {
+        self.engine.reset_worst();
+    }
+
+    /// The number of completed updates, as [`Ui::heartbeat`](crate::Ui::heartbeat). Never
+    /// panics.
+    #[must_use]
+    pub fn heartbeat(&self) -> u32 {
+        self.engine.heartbeat()
+    }
+
+    /// Ends start-up, as [`Ui::seal`](crate::Ui::seal): checks the heap budget against this
+    /// report (draw buffers included), then seals the allocation guard. Returns the report.
+    /// ```
+    /// # use twine_core::{ColorFormat, Rect};
+    /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
+    /// # use twine_testing::MockPlatform;
+    /// # use twine_view::prelude::*;
+    /// # struct Panel;
+    /// # impl AsyncDisplayDriver for Panel {
+    /// #     type Error = ();
+    /// #     fn info(&self) -> DisplayInfo { DisplayInfo::new(64, 32, ColorFormat::Rgb565) }
+    /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
+    /// # }
+    /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
+    /// let mut ui = Ui::builder_async(Panel).runtime(Runtime::take().unwrap()).buffers(BufferMode::partial_single(buf())).platform(&MockPlatform::new()).build(|_| label("hi"));
+    /// let report = ui.seal();
+    /// assert!(twine_core::alloc_guard::is_sealed());
+    /// assert_eq!(report, ui.memory_report());
+    /// twine_core::alloc_guard::unseal();
+    /// ```
+    pub fn seal(&mut self) -> crate::MemoryReport {
+        let report = self.memory_report();
+        crate::memory::seal(&mut self.engine, &report);
+        report
     }
 
     /// The engine.

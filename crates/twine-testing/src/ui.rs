@@ -266,12 +266,76 @@ impl TestUi {
     /// assert_eq!(t.engine().motion(), Motion::Reduced);
     /// assert_eq!(t.find(by_id("l")).text(), "hi");
     /// ```
+    ///
+    /// In the safety profile the limits are applied preallocated
+    /// ([`profile_limits`](crate::profile_limits)), and an `AppConfig` that keeps
+    /// [`Limits::DEFAULT`](twine_core::Limits::DEFAULT) runs with the harness's test-sized
+    /// [`HARNESS_LIMITS`](crate::HARNESS_LIMITS), as the harness does.
     #[must_use]
-    pub fn app_config(self, config: AppConfig) -> Self {
-        let (engine, theme, rotation) = (config.engine, config.theme.clone(), config.rotation);
-        let mut t = self.map_harness(|h| h.configure(engine, theme, rotation));
+    pub fn app_config(self, mut config: AppConfig) -> Self {
+        if twine_core::SAFETY_PROFILE && config.limits == twine_core::Limits::DEFAULT {
+            config.limits = crate::HARNESS_LIMITS;
+        }
+        config.limits = crate::profile_limits(config.limits);
+        let (engine, limits, theme, rotation) = (
+            config.engine,
+            config.limits,
+            config.theme.clone(),
+            config.rotation,
+        );
+        let mut t = self.map_harness(|h| h.configure(engine, limits, theme, rotation));
         t.app = Some(config);
         t
+    }
+
+    /// Uses `limits` (also [`AppConfig::limits`] after [`app_config`](Self::app_config)):
+    /// applied to the harness engine before its display is added, and to the runtime by the
+    /// mount when an [`AppConfig`] is set. Rebuilds the engine.
+    ///
+    /// # Panics
+    /// When `limits` are invalid.
+    ///
+    /// ```
+    /// use twine_testing::TestUi;
+    /// use twine_view::prelude::*;
+    ///
+    /// let t = TestUi::new(64, 32).limits(Limits::DEFAULT.max_nodes(32)).mount(|_| label("hi"));
+    /// assert_eq!(t.engine().limits().max_nodes, 32);
+    /// ```
+    #[must_use]
+    pub fn limits(mut self, limits: twine_core::Limits) -> Self {
+        if let Some(app) = &mut self.app {
+            app.limits = crate::profile_limits(limits);
+        }
+        self.map_harness(|h| h.limits(limits))
+    }
+
+    /// Seals the mounted application as `Ui::seal` does ([`UiCore::seal`]: the heap budget is
+    /// checked, then Twine's allocation guard is sealed for this thread) and returns the
+    /// memory report at sealing time. Pair it with
+    /// [`assert_no_alloc_after_seal`](crate::alloc::assert_no_alloc_after_seal) around the
+    /// steady-state updates; unseal with `twine_core::alloc_guard::unseal` when the test
+    /// goes on building.
+    ///
+    /// # Panics
+    /// Before [`mount`](Self::mount).
+    ///
+    /// ```
+    /// use twine_testing::TestUi;
+    /// use twine_view::prelude::*;
+    ///
+    /// let mut t = TestUi::new(64, 32).mount(|_| label("hi"));
+    /// t.run_until_idle();
+    /// let m = t.seal();
+    /// assert!(twine_core::alloc_guard::is_sealed());
+    /// assert_eq!(m.engine.nodes, t.engine().tree().len());
+    /// twine_core::alloc_guard::unseal();
+    /// ```
+    pub fn seal(&mut self) -> MemoryReport {
+        let core = self.core.clone().expect("TestUi::mount first");
+        let core = core.borrow();
+        let core = core.as_ref().expect("TestUi::mount first");
+        core.seal(self.h.get_mut().engine_mut())
     }
 
     /// Mounts with the application's own `waker` (typically a `static UiWaker` of the test)

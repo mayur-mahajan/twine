@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use proptest::prelude::*;
+use twine_core::arena::RawId;
 use twine_core::{Arena, Id};
 
 #[derive(Debug, Clone)]
@@ -27,7 +28,7 @@ proptest! {
     #[test]
     fn arena_matches_hashmap_model(ops in prop::collection::vec(op(), 1..300)) {
         let mut arena = Arena::new();
-        let mut model: HashMap<u32, i32> = HashMap::new();
+        let mut model: HashMap<RawId, i32> = HashMap::new();
         let mut issued: Vec<Id<i32>> = Vec::new();
         for op in ops {
             match op {
@@ -59,8 +60,8 @@ proptest! {
             }
             prop_assert_eq!(arena.len(), model.len());
         }
-        let mut live: Vec<(u32, i32)> = arena.iter().map(|(id, v)| (id.to_raw(), *v)).collect();
-        let mut expected: Vec<(u32, i32)> = model.into_iter().collect();
+        let mut live: Vec<(RawId, i32)> = arena.iter().map(|(id, v)| (id.to_raw(), *v)).collect();
+        let mut expected: Vec<(RawId, i32)> = model.into_iter().collect();
         live.sort_unstable();
         expected.sort_unstable();
         prop_assert_eq!(live, expected);

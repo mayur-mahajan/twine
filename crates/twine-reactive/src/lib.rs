@@ -33,7 +33,7 @@
 //! |------|------|
 //! | [`Runtime`] | the token of the UI context's runtime ([`Runtime::take`]); root scopes ([`Runtime::create_root`]) and every runtime-wide operation |
 //! | [`Scope`] | owns nodes, child scopes, cleanups, context values |
-//! | [`Scope::provide`], [`Scope::use_context`], [`Scope::expect_context`], [`MissingContext`] | context values: provided by a scope for its descendants, found by type (allocation-free scope-chain walk); `Result` or panicking lookup |
+//! | [`Scope::provide`], [`Scope::use_context`], `Scope::expect_context`, [`MissingContext`] | context values: provided by a scope for its descendants, found by type (allocation-free scope-chain walk); `Result` or panicking lookup (not in the `safety` profile) |
 //! | [`Signal`], [`ReadSignal`], [`WriteSignal`] | reactive values |
 //! | [`Memo`] | lazy, cached, equality-checked derived values |
 //! | [`StoredValue`] | a plain, non-reactive value owned by a scope (`Copy` handle) |
@@ -43,14 +43,57 @@
 //! | [`Latest`] | ISR/task-safe latest-value cell into the UI ([`Scope::watch`], [`Scope::on_latest`]): no queue, nothing dropped |
 //! | [`Outbox`] | FIFO from the UI to a task: `try_recv`, or `recv().await` (feature `async`) |
 //! | [`UiWaker`], [`WakerLease`] | wake-ups of the UI loop (and of an `Outbox` consumer); one waker per root scope ([`Scope::set_ui_waker`]); [`WakerLease::set_heap_limit`] caps the heap the waker pool may grow to |
-//! | [`Runtime::take_faults`], [`Runtime::set_fault_hook`], [`Runtime::stats`] | faults the runtime recovered from, counters |
+//! | [`Runtime::take_faults`], [`Runtime::take_capacity_faults`], [`Runtime::set_fault_hook`], [`Runtime::stats`] | faults the runtime recovered from (capacity faults per bound), counters |
+//! | [`Runtime::set_limits`] | the runtime's share of [`Limits`](twine_core::Limits): nodes, scopes, pending effects; preallocation |
+//! | [`audit_features`] | the runtime's cargo features for an audit report |
 //! | [`Runtime::memory`], [`RuntimeMemory`] | the runtime's heap use, by part (arenas, values, scope data, queues) |
 //! | [`TakeOnce`] | a `static` value handed out once as `&'static mut` (draw buffers, DMA memory), from any context |
 //! | [`set_interrupt_probe`], [`in_interrupt`] | the platform's "am I in an interrupt?" answer, for diagnostics |
 //!
-//! All handles are `Copy` and `!Send`/`!Sync`. Using a handle whose scope was disposed panics
-//! (with the creation location in debug builds); `try_get`/`is_alive` exist for handles
-//! intentionally shared across scopes.
+//! | [`ReactiveError`], [`HandleKind`] | why an operation on a handle failed (the `try_*` forms) |
+//!
+//! All handles are `Copy` and `!Send`/`!Sync`.
+//!
+//! ## Failures
+//!
+//! Operations on handles fail only through programming errors — a handle used after its scope
+//! was disposed, a write inside a read of the same value, a memo that reads itself — or an
+//! exhausted bound ([`Limits::max_reactive_nodes`](twine_core::Limits::max_reactive_nodes) or
+//! [`Limits::max_scopes`](twine_core::Limits::max_scopes), see [`Runtime::set_limits`]); never because of input data. Each
+//! fallible operation comes in two forms:
+//!
+//! - **`try_*`** ([`Signal::try_get`], [`Signal::try_with`], [`Signal::try_set`],
+//!   [`Signal::try_update`], [`Memo::try_get`], [`StoredValue::try_set`],
+//!   [`Scope::try_signal`], [`Scope::try_memo`], [`Scope::try_effect`], [`Scope::try_child`],
+//!   [`Runtime::try_create_root`], …) returns `Result<_, ReactiveError>`, never panics and
+//!   raises no fault: the caller decides. Use them (or `is_alive`) for handles that may
+//!   outlive their scope.
+//! - **The usual form** (`get`, `with`, `set`, `update`, `signal`, `memo`, `effect`, `child`,
+//!   …) is a thin `#[track_caller]` wrapper over the same code. The success path costs the
+//!   same as before the split (one `match`), and the failure path is a `#[cold]
+//!   #[inline(never)]` function, so the hot path carries no extra code.
+//!
+//! What the usual form does on failure depends on the `no-panic-runtime` feature (implied by
+//! `safety`):
+//!
+//! | Failure | Default | `no-panic-runtime` |
+//! |---------|---------|--------------------|
+//! | write to a disposed signal / stored value (`set`, `update`, `set_if_changed`) | panic | skipped (the value is dropped), `warn!` + [`FaultKind::DisposedHandle`] |
+//! | write inside a read of the same value | panic | skipped, `warn!` + [`FaultKind::ReentrantAccess`] |
+//! | creation in a disposed scope (`signal`, `memo`, `effect`, `child`, `map`, …) | panic | a handle that is never alive, `warn!` + [`FaultKind::DisposedHandle`] |
+//! | creation beyond `Limits::max_reactive_nodes` / `max_scopes` | panic | a handle that is never alive, `warn!` + [`FaultKind::Capacity`] (code `ReactiveNodes` / `ReactiveScopes`) |
+//! | a memo that reads itself (cycle) | panic | the memo's previous value, `warn!` + [`FaultKind::MemoCycle`] |
+//! | a read that has no value: disposed handle, value mutably borrowed, cycle on a memo's first computation | panic | fault raised, then panic |
+//!
+//! Reads that have no value to return still panic in every profile: they must return a `T`,
+//! and inventing one (a default, another value of the type) would show wrong data without
+//! anyone noticing. With `no-panic-runtime` the fault is raised first, so the application's
+//! fault hook runs before its panic handler (`docs/safety/panics.md` in the repository lists
+//! this site). Code that must not panic reads with the `try_*` forms.
+//!
+//! Faults raised by `no-panic-runtime` are counted, reported to the
+//! [fault hook](Runtime::set_fault_hook) and kept for [`Runtime::take_faults`] like the
+//! runtime's other faults (§ Faults); a `Ui` forwards them to its fault stream.
 //!
 //! ## Algorithm (push-pull coloring)
 //!
@@ -123,8 +166,9 @@
 //! Situations the runtime recovers from but that the application must be able to see are
 //! recorded as faults (the [`FaultKind`] vocabulary of `twine-core`): an effect loop cut by the
 //! iteration limit ([`FaultKind::EffectLoopCut`] — dropped effects may leave bound values
-//! outdated), the deep-chain guard ([`FaultKind::DepthGuard`]) and messages dropped by a full
-//! [`Channel`] ([`FaultKind::ChannelOverflow`]). Each is logged, counted in [`Runtime::stats`],
+//! outdated), the deep-chain guard ([`FaultKind::DepthGuard`]), messages dropped by a full
+//! [`Channel`] ([`FaultKind::ChannelOverflow`]) and, with `no-panic-runtime`, the operations
+//! it skips (§ Failures). Each is logged, counted in [`Runtime::stats`],
 //! reported to the [`Runtime::set_fault_hook`] function and kept for [`Runtime::take_faults`]; `Ui` forwards them
 //! to the engine's fault stream at every update.
 //!
@@ -174,11 +218,37 @@
 //!   feature).
 //! - `async`: `Outbox::recv`, an executor-agnostic future (no dependency).
 //! - `log` / `defmt`: logging backend (target `twine::reactive`).
+//! - `no-panic-runtime`: failed writes and creations, capacity exhaustion and memo cycles are
+//!   skipped with a `warn!` and a fault instead of panicking (§ Failures). Costs nothing on
+//!   the success paths; the failure paths stay out of line.
+//! - `safety`: the safety profile (enabled by the `twine` facade's `safety` feature, see
+//!   `docs/safety/profile.md` in the repository): the profile's lints, `no-panic-runtime`,
+//!   and no panicking context lookups ([`Scope::expect_context`] and
+//!   [`MissingContext::panic`] are removed; handle the `Result` of [`Scope::use_context`]).
 //!
 //! The cross-context types use `critical-section`; the final binary provides its implementation (embassy,
 //! esp-hal, `cortex-m`'s single-core implementation, or `critical-section/std` on the host).
 #![no_std]
 #![deny(unsafe_code)]
+// The safety profile's lints (`docs/safety/profile.md` § Lints): denied in library code under
+// the `safety` feature (`cargo xtask ci` stage `clippy-safety`).
+#![cfg_attr(
+    all(feature = "safety", not(test)),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::unreachable,
+        clippy::arithmetic_side_effects,
+    )
+)]
+// SAFETY-MANUAL: limitation L1 and constraint C10 (`docs/safety/manual.md`). The two `panic!`
+// sites left are deliberate and justified (`docs/safety/panics.md`): a read with no value to
+// return (`ReactiveError::fail`, every profile) and the `debug-checks` interrupt-context
+// assertion. `clippy::panic` stays listed here (no per-site `allow`), so a new site changes
+// the count.
+#![cfg_attr(all(feature = "safety", not(test)), allow(clippy::panic,))]
+#![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 
 extern crate alloc;
 #[cfg(feature = "std")]
@@ -189,6 +259,7 @@ mod batch;
 mod channel;
 mod context;
 mod effect;
+mod error;
 mod global;
 mod handles;
 mod key_list;
@@ -205,6 +276,7 @@ mod take_once;
 pub use channel::{Channel, UiWaker, WakerLease};
 pub use context::MissingContext;
 pub use effect::EffectId;
+pub use error::{HandleKind, ReactiveError};
 pub use global::{Runtime, in_interrupt, interrupt_probe, set_interrupt_probe};
 pub use latest::Latest;
 pub use memo::Memo;
@@ -218,6 +290,35 @@ pub use signal::{ReadSignal, Signal, WriteSignal};
 pub use stored::StoredValue;
 pub use take_once::TakeOnce;
 pub use twine_core::fault::{FaultCounts, FaultKind, Faults};
+
+/// Writes the reactive runtime's cargo features of this build as
+/// `build.reactive_<feature>=<bool>` entries of an audit report (`AppConfig::audit_report`
+/// calls it): `no-panic-runtime`, `debug-checks`, `async`, `std`. Never allocates.
+///
+/// ```
+/// use twine_core::audit::{Audit, AuditSink, KeyValues};
+///
+/// struct Features;
+/// impl Audit for Features {
+///     fn audit(&self, out: &mut dyn AuditSink) { twine_reactive::audit_features(out) }
+/// }
+/// assert!(KeyValues(&Features).to_string().contains("build.reactive_no_panic_runtime="));
+/// ```
+pub fn audit_features(out: &mut dyn twine_core::audit::AuditSink) {
+    use twine_core::audit::AuditValue::Bool;
+    out.entry(
+        "build",
+        "reactive_no_panic_runtime",
+        Bool(cfg!(feature = "no-panic-runtime")),
+    );
+    out.entry(
+        "build",
+        "reactive_debug_checks",
+        Bool(cfg!(feature = "debug-checks")),
+    );
+    out.entry("build", "reactive_async", Bool(cfg!(feature = "async")));
+    out.entry("build", "reactive_std", Bool(cfg!(feature = "std")));
+}
 
 /// What a reactive runtime's heap is used for, from [`Runtime::memory`].
 ///
@@ -261,7 +362,10 @@ impl RuntimeMemory {
     /// Total heap bytes: `arenas + values + scope_data + queues`.
     #[must_use]
     pub fn bytes(&self) -> usize {
-        self.arenas + self.values + self.scope_data + self.queues
+        self.arenas
+            .saturating_add(self.values)
+            .saturating_add(self.scope_data)
+            .saturating_add(self.queues)
     }
 }
 
@@ -286,8 +390,10 @@ pub struct Stats {
     pub memo_runs: u64,
     /// Faults recorded since start-up, per kind (see [`Runtime::take_faults`]).
     pub faults: FaultCounts,
-    /// Retired arena slots of nodes and scopes: slots that used up their 65 535 generations
-    /// and are never reused ([`twine_core::Arena::retired`]). Non-zero only after millions of
-    /// create/dispose cycles; each one is a few dozen bytes the runtime can no longer reuse.
+    /// Retired arena slots of nodes and scopes: slots that used up their generations (65 535
+    /// by default, ≈ 2.8 × 10¹⁴ in the safety profile) and are never reused
+    /// ([`twine_core::Arena::retired`]). By default non-zero only after millions of
+    /// create/dispose cycles, in the safety profile 0 in practice; each one is a few dozen
+    /// bytes the runtime can no longer reuse.
     pub retired_slots: usize,
 }

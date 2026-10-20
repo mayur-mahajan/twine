@@ -12,6 +12,9 @@ workspace = true
 
 [features]
 default = ["montserrat-14"]
+## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
+## safety lints of library code and the refusal of excluded features.
+safety = ["twine-text/safety"]
 #! ### Bundles
 #! Sets of the individual fonts below, for applications that do not want to list sizes one by
 #! one; the individual features stay available for precise flash budgets. Bundles only add

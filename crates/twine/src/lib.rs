@@ -77,12 +77,86 @@
 //!   (`vector` module, `vector_canvas`); `svg`: SVG images drawn as vectors (implies
 //!   `vector`).
 //! - `full`: every optional, platform-neutral part above (all pixel formats, decoders, fonts,
-//!   `vector`, `svg`, `ttf`, `fs`, `bidi`, `arabic-shaping`, `async`, `perf-monitor`) — for
+//!   `vector`, `svg`, `ttf`, `fs`, `bidi`, `arabic-shaping`, `async`, `perf-monitor`, `display-integrity`) — for
 //!   hosts, simulators, tests and documentation. It leaves out `std`, the logging backends,
 //!   platforms, drivers and the debugging aids; firmware enables only what it uses.
 //!
+//! - `safety`: the [safety profile](#safety-profile) (not in `default` or `full`).
+//! - `display-integrity`: frame observers, region checks against the panel's read-back,
+//!   safety-critical nodes, the fail-safe screen and the `Validity` looks
+//!   (`docs/safety/profile.md` § 11); in `full`, implied by `safety`, otherwise not linked.
+//! - `no-panic-runtime`: reactive failures that can be skipped (a write to a disposed signal, a
+//!   creation in a disposed scope or a full arena, a memo cycle) raise a fault instead of
+//!   panicking (`reactive` crate docs § Failures); implied by `safety`.
+//!
 //! Firmware that offers alternatives as its own cargo features (one display of several, at
 //! most one touch controller) checks their combinations with [`feature_rules!`].
+//!
+//! ## Safety profile
+//!
+//! The `safety` feature selects the profile for certifiable products (bounded, observable,
+//! analysable behaviour; `docs/safety/profile.md` in the repository is the reference):
+//!
+//! - **Excluded parts are compile errors**, not silent omissions: the performance overlay
+//!   (`perf-monitor`, a default feature, so depend on `twine` with `default-features = false`),
+//!   the file system (`fs`, and the `twine-fs` crate), run-time TrueType fonts (`ttf`, a
+//!   floating-point rasterizer), the JPEG decoder (`img-jpeg`), `full`, and the `twine-lottie`
+//!   crate (floating point, run-time JSON). Everything else (drivers, platforms, `vector`,
+//!   `svg`, the other decoders, fonts, `bidi`, `async`, `embassy`) is available.
+//! - **Library code is linted** for panics, unchecked indexing, overflowing arithmetic and
+//!   floating point (`clippy::{indexing_slicing, unwrap_used, expect_used, panic, unreachable,
+//!   arithmetic_side_effects, float_arithmetic}` denied; crates with remaining sites carry a
+//!   tracked allow-list whose counts the repository's CI ratchets down). Every remaining panic
+//!   site is listed in the panic inventory (`docs/safety/panics.md`).
+//! - **No panicking convenience APIs**: `UiBuilder::build`, `Scope::expect_context` and
+//!   `expect_navigator` do not exist in the profile; use `try_build`, `use_context` and
+//!   `use_navigator`, which return a `Result`.
+//! - **No-panic reactive runtime** (`no-panic-runtime`): a write to a disposed signal, a
+//!   creation in a disposed scope or beyond its limit and a memo cycle are skipped with a `warn!`
+//!   and a fault ([`FaultKind::DisposedHandle`](core::fault::FaultKind::DisposedHandle),
+//!   `Capacity`, `MemoCycle`, `ReentrantAccess`); a read that has no value to return still
+//!   panics (after the fault), and the reactive `try_*` forms never do.
+//! - **Bounded memory**: every growing structure is bounded by
+//!   [`AppConfig::limits`](view::AppConfig::limits) ([`Limits`](core::Limits); reaching a
+//!   bound is a `Capacity` fault naming it, never growth), and the profile requires
+//!   [`preallocated`](core::Limits::preallocated) limits, reserved when the `Ui` is built.
+//!   `Ui::seal()` ends start-up: Twine's growth points then report any allocation as
+//!   [`FaultKind::AllocAfterSeal`](core::fault::FaultKind::AllocAfterSeal).
+//!   [`AppConfig::audit_report`](view::AppConfig::audit_report) dumps the whole configuration
+//!   (limits, caches, timeouts, features) as audit evidence.
+//! - **Bounded time**: [`EngineConfig::step_budget`](engine::EngineConfig::step_budget) bounds
+//!   what one update renders (chunks and/or time; the rest of a frame continues in the next
+//!   update, and an update past its time raises
+//!   [`FaultKind::FrameOverrun`](core::fault::FaultKind::FrameOverrun)), `on_chunk` feeds a
+//!   watchdog between chunks, [`Ui::timing`](view::Ui::timing) reports the worst update,
+//!   render and flush times, and the recursion of drawing, hit testing and layout is bounded
+//!   by `Limits::max_tree_depth` with a measured stack cost per level (CI-checked budget).
+//! - **Display integrity** (feature `display-integrity`, implied by `safety`; not linked
+//!   without it): a frame observer sees every chunk sent to a
+//!   panel (`UiBuilder::frame_observer`), `Engine::check_region` compares a cache-free
+//!   off-screen re-render with what the panel reads back
+//!   ([`FaultKind::DisplayIntegrity`](core::fault::FaultKind::DisplayIntegrity)),
+//!   `ObjFlags::SAFETY_CRITICAL` nodes are drawn whole, without caches, transitions or
+//!   ancestors' opacity, `Ui::heartbeat` feeds an external watchdog, `Ui::enter_fail_safe`
+//!   switches to a static screen built at start-up (no allocation), and `Validity<T>` values
+//!   show dashes and a cross-hatch when invalid (`docs/safety/profile.md` § 11).
+//! - **Fault reporting** (`Faults`, the fault hook) is always on, in every profile.
+//! - The firmware builds with `overflow-checks = true` and `panic = "abort"`, and its panic
+//!   handler follows the contract in `docs/safety/profile.md` (record, put the display and
+//!   outputs in a safe state, reset; never resume Twine).
+//!
+//! ```toml
+//! [dependencies]
+//! twine = { version = "0.1", default-features = false, features = ["safety", "color-rgb565", "img-qoi", "defmt"] }
+//!
+//! [profile.release]
+//! overflow-checks = true
+//! panic = "abort"
+//! ```
+//!
+//! [`core::SAFETY_PROFILE`] tells code whether it is built in the profile. Further run-time
+//! guarantees of the profile (wide arena generations, bounded time, …) are listed with their
+//! status in `docs/safety/profile.md`.
 //!
 //! ## Bring-up
 //!
@@ -136,8 +210,8 @@
 //!
 //! ## One configuration everywhere
 //!
-//! What the application decides — engine configuration, theme, motion, rotation, channel and
-//! queue budgets, fault hook — is one [`AppConfig`](view::AppConfig), written once as a
+//! What the application decides — engine configuration, memory limits, theme, motion,
+//! rotation, fault hook — is one [`AppConfig`](view::AppConfig), written once as a
 //! function and handed to every host, so the simulator and the tests run what ships:
 //!
 //! ```
@@ -178,7 +252,8 @@
     not(feature = "embassy"),
     doc = "`twine::embassy::run` (feature `embassy`) on an embassy executor. Schedulers that bound\n  each step"
 )]
-//! use [`Ui::update_budgeted`](view::Ui::update_budgeted).
+//! use [`EngineConfig::step_budget`](engine::EngineConfig::step_budget) or
+//! [`Ui::update_budgeted`](view::Ui::update_budgeted).
 //!
 //! ```no_run
 //! # fn main_loop(display: impl twine::hal::DisplayDriver + 'static, mut platform: impl twine::hal::Platform + Clone + 'static) -> ! {
@@ -277,6 +352,20 @@
 //! are in the repository's `firmware/` directory.
 #![no_std]
 #![forbid(unsafe_code)]
+#![cfg_attr(not(test), deny(clippy::float_arithmetic))]
+// The safety profile's lints (`docs/safety/profile.md` § Lints): denied in library code under
+// the `safety` feature (`cargo xtask ci` stage `clippy-safety`).
+#![cfg_attr(
+    all(feature = "safety", not(test)),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::arithmetic_side_effects,
+    )
+)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub use twine_anim as anim;
@@ -344,6 +433,15 @@ pub use twine_view::run;
 
 mod feature_rules;
 pub mod guide;
+
+// `full` enables parts the safety profile excludes: say so once, in the facade's terms (the
+// crates owning `perf-monitor`, `fs`, `ttf` and `img-jpeg` refuse them too).
+#[cfg(all(feature = "safety", feature = "full"))]
+compile_error!(
+    "the `safety` profile cannot be combined with `full`, which enables parts the profile \
+     excludes (`perf-monitor`, `fs`, `ttf`, `img-jpeg`): list the features you use instead; \
+     see docs/safety/profile.md"
+);
 
 /// Everything an application needs: `use twine::prelude::*;`.
 ///

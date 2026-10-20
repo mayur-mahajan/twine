@@ -237,13 +237,18 @@ impl Dropdown {
 
     /// Sets the options (`'\n'`-separated), copied into the owned buffer (its capacity is
     /// reused); the selection goes to the first option (LVGL `lv_dropdown_set_options`).
+    /// The options are one widget text: cut to
+    /// [`Limits::max_text_len`](twine_core::Limits::max_text_len) bytes like a label's text
+    /// (a `Capacity` fault, code `TextLen`), and with
+    /// [`Limits::preallocate`](twine_core::Limits::preallocate) the buffer is reserved for the
+    /// limit when it first grows, so later option lists allocate nothing.
     /// Idempotent: the same options change nothing (and keep the selection).
     pub fn set_options(&mut self, cx: &mut WidgetCx<'_>, options: &str) {
         if self.options.same_as(options) {
             return;
         }
         log_set(DROPDOWN_CLASS.name, cx.node(), "options");
-        self.options.set_owned(options);
+        self.options.set_owned(cx, options);
         self.options_changed(cx, true);
     }
 
@@ -274,15 +279,19 @@ impl Dropdown {
     }
 
     /// Inserts `option` before option `pos` (`u32::MAX` or any index past the end: at the
-    /// end; LVGL `lv_dropdown_add_option`). The selection index is kept.
+    /// end; LVGL `lv_dropdown_add_option`), in place in the owned buffer (static options are
+    /// copied into it first). The selection index is kept. Refused (a `Capacity` fault,
+    /// code `TextLen`) when the options would exceed
+    /// [`Limits::max_text_len`](twine_core::Limits::max_text_len) bytes.
     pub fn add_option(&mut self, cx: &mut WidgetCx<'_>, option: &str, pos: u32) {
         if option.contains('\n') {
             twine_core::warn!(target: "twine::engine", "dropdown: an option cannot contain '\\n'");
             return;
         }
-        log_set(DROPDOWN_CLASS.name, cx.node(), "add_option");
-        self.options.insert(option, pos);
-        self.options_changed(cx, false);
+        if self.options.insert(cx, option, pos) {
+            log_set(DROPDOWN_CLASS.name, cx.node(), "add_option");
+            self.options_changed(cx, false);
+        }
     }
 
     /// Removes every option (LVGL `lv_dropdown_clear_options`). Idempotent.

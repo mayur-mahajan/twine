@@ -1,0 +1,21 @@
+# Golden-image manifest (R5.S08): one entry per snapshot test image,
+#   <name> = "<width>x<height> xxh64:<hash>"
+# the XXH64 (seed 0) of the image's 8-bit RGB pixels, row-major (`xxhsum -H64` of the raw RGB
+# bytes). Written by `cargo xtask snapshots --update | --propose | --accept`; do not edit by hand.
+# Reference PNGs are not committed: `tests/snapshots/*.png` is a local cache used for diffs.
+
+[approved]
+arabic_label = "240x70 xxh64:4fe9bb4bd7f66719"
+cjk_16_sample = "240x120 xxh64:82effb7edec399ed"
+hebrew_16_sample = "240x70 xxh64:60504bd7ad37d711"
+imgfont_emoji = "200x44 xxh64:90293d355861c0b8"
+rtl_label = "160x90 xxh64:d18652c7da959ac6"
+text_basic_left_center_right = "240x160 xxh64:fe6345e67ed74879"
+text_ellipsis = "240x160 xxh64:2fbf0b52a55c21c9"
+text_letter_space = "240x160 xxh64:e42460242e8d1601"
+text_opa_50 = "240x160 xxh64:8ee8cf66f4d58954"
+text_selection = "240x160 xxh64:e1d185fe19587e30"
+text_subpx_hor = "240x160 xxh64:092e8e07fd1ed80b"
+text_underline_strike = "240x160 xxh64:adb9bdd1330e57c9"
+text_wrap_and_line_space = "240x160 xxh64:f7be098ac4cb818e"
+ttf_montserrat_sizes = "240x120 xxh64:bf759149302897eb"

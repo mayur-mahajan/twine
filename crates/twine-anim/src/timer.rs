@@ -6,23 +6,40 @@ use alloc::vec::Vec;
 use core::any::Any;
 use core::fmt;
 
-use twine_core::{Duration, Instant};
+use twine_core::arena::next_generation;
+use twine_core::{Duration, Generation, Id, Instant};
 
 /// Handle of a timer in [`Timers`]. Generational: stale ids are rejected after the timer is
-/// removed, even if its slot is reused.
+/// removed, even if its slot is reused. The handle is a [`twine_core::Id`] (4 bytes; 8 with a
+/// 48-bit [`Generation`] in the safety profile, `Option<TimerId>` as small) and never wraps: a
+/// slot that used up its generations is retired (see [`Timers::retired`]), so a stale id can
+/// never name a later timer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct TimerId {
-    index: u16,
-    generation: u16,
-}
+pub struct TimerId(Id<Slot>);
+
+// As small as an arena id in both profiles (4 / 8 bytes), `Option` included (R5.S04).
+const _: () = {
+    use core::mem::size_of;
+    assert!(size_of::<TimerId>() == size_of::<Id<()>>());
+    assert!(size_of::<Option<TimerId>>() == size_of::<Option<Id<()>>>());
+};
 
 impl TimerId {
     /// An id that never refers to a timer (returned when the table is full).
-    pub const DANGLING: TimerId = TimerId {
-        index: u16::MAX,
-        generation: u16::MAX,
-    };
+    pub const DANGLING: TimerId = TimerId(Id::INVALID);
+
+    const fn new(index: u16, generation: Generation) -> Self {
+        TimerId(Id::from_parts(index, generation))
+    }
+
+    const fn index(self) -> u16 {
+        self.0.index()
+    }
+
+    const fn generation(self) -> Generation {
+        self.0.generation()
+    }
 }
 
 /// Context of a timer callback.
@@ -62,7 +79,8 @@ impl fmt::Debug for TimerCx<'_> {
 type TimerCb = Box<dyn FnMut(&mut TimerCx<'_>)>;
 
 struct Slot {
-    generation: u16,
+    /// Starts at 0; bumped on removal; a slot removed at `MAX_GENERATION` is retired.
+    generation: Generation,
     live: bool,
     period: Duration,
     last_run: Instant,
@@ -107,7 +125,6 @@ impl Slot {
 /// assert_eq!(timers.run(t0 + Duration::ms(450), &mut ctx), Some(t0 + Duration::ms(550)));
 /// assert_eq!(ctx, 1);
 /// ```
-#[derive(Default)]
 pub struct Timers {
     slots: Vec<Slot>,
     free: Vec<u16>,
@@ -115,6 +132,12 @@ pub struct Timers {
     order: Vec<u16>,
     /// Slots removed during `run`, freed when it ends.
     pending_free: Vec<u16>,
+    /// A timer was removed during `run`: `order` is cleaned up when it ends.
+    order_dirty: bool,
+    /// Slots that used up their generations and are never reused.
+    retired: u16,
+    /// Most timers at once ([`set_limit`](Timers::set_limit)).
+    limit: u16,
     running: bool,
     epoch: u32,
 }
@@ -127,6 +150,13 @@ impl fmt::Debug for Timers {
     }
 }
 
+impl Default for Timers {
+    /// [`Timers::new`].
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Timers {
     /// An empty table (does not allocate).
     #[must_use]
@@ -136,9 +166,64 @@ impl Timers {
             free: Vec::new(),
             order: Vec::new(),
             pending_free: Vec::new(),
+            order_dirty: false,
+            retired: 0,
+            limit: Self::MAX_TIMERS,
             running: false,
             epoch: 0,
         }
+    }
+
+    /// The largest number of timers a table can hold (65 534: slot indices are `u16`, one
+    /// value is reserved).
+    pub const MAX_TIMERS: u16 = u16::MAX - 1;
+
+    /// Sets how many timers the table may hold at once (capped at
+    /// [`MAX_TIMERS`](Self::MAX_TIMERS); at least 1). Adding one more returns
+    /// [`TimerId::DANGLING`] (the caller reports it, e.g. the engine's `Capacity` fault).
+    /// Never panics.
+    ///
+    /// ```
+    /// use twine_anim::{TimerId, Timers};
+    /// use twine_core::{Duration, Instant};
+    ///
+    /// let mut timers = Timers::new();
+    /// timers.set_limit(1);
+    /// assert_ne!(timers.add(Duration::ms(10), Instant::ZERO, |_| {}), TimerId::DANGLING);
+    /// assert_eq!(timers.add(Duration::ms(10), Instant::ZERO, |_| {}), TimerId::DANGLING);
+    /// ```
+    pub fn set_limit(&mut self, limit: u16) {
+        self.limit = limit.clamp(1, Self::MAX_TIMERS);
+    }
+
+    /// The limit set with [`set_limit`](Self::set_limit) (default
+    /// [`MAX_TIMERS`](Self::MAX_TIMERS)).
+    ///
+    /// ```
+    /// use twine_anim::Timers;
+    /// assert_eq!(Timers::new().limit(), Timers::MAX_TIMERS);
+    /// ```
+    #[must_use]
+    pub fn limit(&self) -> u16 {
+        self.limit
+    }
+
+    /// Reserves the storage of `n` timers (slots, free list, run order, removal list), so
+    /// adding and removing timers never allocates while at most `n` exist. Allocates once;
+    /// never panics.
+    ///
+    /// ```
+    /// use twine_anim::Timers;
+    /// let mut timers = Timers::new();
+    /// timers.reserve(4);
+    /// ```
+    pub fn reserve(&mut self, n: u16) {
+        let n = usize::from(n);
+        self.slots.reserve_exact(n.saturating_sub(self.slots.len()));
+        self.free.reserve_exact(n.saturating_sub(self.free.len()));
+        self.order.reserve_exact(n.saturating_sub(self.order.len()));
+        self.pending_free
+            .reserve_exact(n.saturating_sub(self.pending_free.len()));
     }
 
     /// Adds a timer calling `cb` every `period`, first at `now + period`. It repeats forever
@@ -149,6 +234,10 @@ impl Timers {
         now: Instant,
         cb: impl FnMut(&mut TimerCx<'_>) + 'static,
     ) -> TimerId {
+        if self.order.len() >= usize::from(self.limit) {
+            twine_core::warn!(target: "twine::anim", "timer table full ({} timers), timer dropped", self.limit);
+            return TimerId::DANGLING;
+        }
         let slot = Slot {
             generation: 0,
             live: true,
@@ -161,39 +250,39 @@ impl Timers {
             epoch: self.epoch,
             cb: Some(Box::new(cb)),
         };
-        let index = if let Some(i) = self.free.pop() {
-            let s = &mut self.slots[usize::from(i)];
+        let (index, generation) = if let Some(i) = self.free.pop()
+            && let Some(s) = self.slots.get_mut(usize::from(i))
+        {
             *s = Slot {
                 generation: s.generation,
                 ..slot
             };
-            i
-        } else if self.slots.len() < usize::from(u16::MAX) {
-            self.slots.push(slot);
-            (self.slots.len() - 1) as u16
+            (i, s.generation)
+        } else if let Ok(i) = u16::try_from(self.slots.len())
+            && i < u16::MAX
+        {
+            twine_core::alloc_guard::push(&mut self.slots, slot, twine_core::alloc_guard::AllocSite::Timer);
+            (i, 0)
         } else {
             twine_core::warn!(target: "twine::anim", "timer table full, timer dropped");
             return TimerId::DANGLING;
         };
-        self.order.push(index);
-        let id = TimerId {
-            index,
-            generation: self.slots[usize::from(index)].generation,
-        };
+        twine_core::alloc_guard::push(&mut self.order, index, twine_core::alloc_guard::AllocSite::Timer);
+        let id = TimerId::new(index, generation);
         twine_core::debug!(target: "twine::anim", "timer {:?} added, period {}", id, period);
         id
     }
 
     fn slot_mut(&mut self, id: TimerId) -> Option<&mut Slot> {
         self.slots
-            .get_mut(usize::from(id.index))
-            .filter(|s| s.live && s.generation == id.generation)
+            .get_mut(usize::from(id.index()))
+            .filter(|s| s.live && s.generation == id.generation())
     }
 
     fn slot(&self, id: TimerId) -> Option<&Slot> {
         self.slots
-            .get(usize::from(id.index))
-            .filter(|s| s.live && s.generation == id.generation)
+            .get(usize::from(id.index()))
+            .filter(|s| s.live && s.generation == id.generation())
     }
 
     /// Removes a timer (safe from inside any timer callback, including its own). Returns `false`
@@ -203,12 +292,34 @@ impl Timers {
         let Some(s) = self.slot_mut(id) else { return false };
         s.live = false;
         s.cb = None;
-        s.generation = s.generation.wrapping_add(1);
-        if running {
-            self.pending_free.push(id.index);
+        // A slot whose generation would wrap is retired (never reused), so no stale id can
+        // match a later timer (no ABA).
+        let reuse = if let Some(next) = next_generation(s.generation) {
+            s.generation = next;
+            true
         } else {
-            self.order.retain(|&i| i != id.index);
-            self.free.push(id.index);
+            self.retired = self.retired.saturating_add(1);
+            twine_core::debug!(target: "twine::anim", "timer slot {} retired", id.index());
+            false
+        };
+        if running {
+            self.order_dirty = true;
+            if reuse {
+                twine_core::alloc_guard::push(
+                    &mut self.pending_free,
+                    id.index(),
+                    twine_core::alloc_guard::AllocSite::Timer,
+                );
+            }
+        } else {
+            self.order.retain(|&i| i != id.index());
+            if reuse {
+                twine_core::alloc_guard::push(
+                    &mut self.free,
+                    id.index(),
+                    twine_core::alloc_guard::AllocSite::Timer,
+                );
+            }
         }
         twine_core::debug!(target: "twine::anim", "timer {:?} removed", id);
         true
@@ -284,13 +395,32 @@ impl Timers {
         self.len() == 0
     }
 
+    /// Number of **retired** slots: slots whose timers used up every [`Generation`] (65 535
+    /// removals by default, ≈ 2.8 × 10¹⁴ in the safety profile) and that are never reused, so
+    /// a stale [`TimerId`] can never name a later timer. Each costs one slot of memory; 0 in
+    /// practice. Never panics; O(1).
+    ///
+    /// ```
+    /// use twine_anim::Timers;
+    /// use twine_core::{Duration, Instant};
+    ///
+    /// let mut timers = Timers::new();
+    /// let id = timers.add(Duration::ms(10), Instant::ZERO, |_| {});
+    /// timers.remove(id);
+    /// assert_eq!(timers.retired(), 0);
+    /// ```
+    #[must_use]
+    pub fn retired(&self) -> usize {
+        usize::from(self.retired)
+    }
+
     /// The earliest time a non-paused timer is due, never earlier than `now` (`now` for due and
     /// [`ready`](Timers::ready) timers); `None` when every timer is paused or there is none.
     #[must_use]
     pub fn next_deadline(&self, now: Instant) -> Option<Instant> {
         self.order
             .iter()
-            .map(|&i| &self.slots[usize::from(i)])
+            .filter_map(|&i| self.slots.get(usize::from(i)))
             .filter(|s| s.live && !s.paused)
             .map(|s| s.due_at(now))
             .min()
@@ -302,18 +432,16 @@ impl Timers {
     pub fn run(&mut self, now: Instant, ctx: &mut dyn Any) -> Option<Instant> {
         self.epoch = self.epoch.wrapping_add(1);
         self.running = true;
-        let mut pos = 0;
-        while pos < self.order.len() {
-            let index = self.order[pos];
-            pos += 1;
-            let slot = &mut self.slots[usize::from(index)];
+        // `order` may grow while callbacks run (timers added now are skipped by the epoch).
+        for pos in 0..usize::MAX {
+            let Some(&index) = self.order.get(pos) else { break };
+            let Some(slot) = self.slots.get_mut(usize::from(index)) else {
+                continue;
+            };
             if !slot.live || slot.paused || slot.epoch == self.epoch {
                 continue;
             }
-            let id = TimerId {
-                index,
-                generation: slot.generation,
-            };
+            let id = TimerId::new(index, slot.generation);
             if slot.due_at(now) <= now {
                 // LVGL: decrement the repeat count before running; a count already at zero does
                 // not run the callback.
@@ -350,9 +478,11 @@ impl Timers {
             }
         }
         self.running = false;
-        if !self.pending_free.is_empty() {
+        if self.order_dirty {
+            self.order_dirty = false;
             let slots = &self.slots;
-            self.order.retain(|&i| slots[usize::from(i)].live);
+            self.order
+                .retain(|&i| slots.get(usize::from(i)).is_some_and(|s| s.live));
             self.free.append(&mut self.pending_free);
         }
         self.next_deadline(now)
@@ -365,6 +495,7 @@ mod tests {
     use alloc::rc::Rc;
     use alloc::vec;
     use core::cell::RefCell;
+    use twine_core::arena::MAX_GENERATION;
 
     fn ms(v: u64) -> Instant {
         Instant::from_millis(v)
@@ -376,6 +507,37 @@ mod tests {
     fn rec(log: &Log, tag: u16) -> impl FnMut(&mut TimerCx<'_>) + 'static {
         let log = log.clone();
         move |cx| log.borrow_mut().push((tag, cx.now.as_millis()))
+    }
+
+    /// A slot removed at the last generation retires instead of wrapping (no stale id can
+    /// name a later timer); also when the removal happens during `run`. Both generation
+    /// widths (the generation is set directly).
+    #[test]
+    fn last_generation_retires_the_slot() {
+        let mut t = Timers::new();
+        let first = t.add(Duration::ms(10), ms(0), |_| {});
+        assert!(t.remove(first));
+        t.slots[0].generation = MAX_GENERATION;
+        let last = t.add(Duration::ms(10), ms(0), |_| {});
+        assert_eq!((last.index(), last.generation()), (0, MAX_GENERATION));
+        assert!(t.remove(last));
+        assert_eq!((t.retired(), t.len()), (1, 0));
+        let next = t.add(Duration::ms(10), ms(0), |_| {});
+        assert_eq!(next.index(), 1, "retired slot 0 must not be reused");
+        assert!(!t.contains(first) && !t.contains(last) && !t.remove(last));
+        assert!(t.contains(next));
+        // Removed during `run` (the deferred path: its repeat count runs out).
+        let mut t = Timers::new();
+        let id = t.add(Duration::ms(10), ms(0), |_| {});
+        assert!(t.remove(id));
+        t.slots[0].generation = MAX_GENERATION;
+        let id = t.add(Duration::ms(10), ms(0), |_| {});
+        assert_eq!(id.generation(), MAX_GENERATION);
+        assert!(t.set_repeat_count(id, Some(1)));
+        assert_eq!(t.run(ms(10), &mut ()), None); // ran once, removed itself, retired
+        assert_eq!((t.retired(), t.len(), t.order.len()), (1, 0, 0));
+        assert!(!t.contains(id));
+        assert_eq!(t.add(Duration::ms(10), ms(10), |_| {}).index(), 1);
     }
 
     #[test]
@@ -490,7 +652,7 @@ mod tests {
         assert_eq!(t.len(), 2);
         // The freed slot is reused; the stale id stays invalid.
         let third = t.add(Duration::ms(1), ms(10), |_| {});
-        assert_eq!(third.index, first.index);
+        assert_eq!(third.index(), first.index());
         assert!(!t.contains(first));
     }
 

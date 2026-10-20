@@ -271,19 +271,24 @@ impl<I2C: I2c, IRQ> Stmpe811<I2C, IRQ> {
         self.read_regs(reg::FIFO_SIZE, &mut b)?;
         let n = usize::from(b[0].min(3));
         let (mut xs, mut ys) = ([0u16; 3], [0u16; 3]);
-        for i in 0..n {
+        for (x, y) in xs.iter_mut().zip(ys.iter_mut()).take(n) {
             let mut d = [0u8; 4];
             self.read_regs(reg::TSC_DATA_XYZ, &mut d)?;
-            xs[i] = u16::from(d[0]) << 4 | u16::from(d[1] >> 4);
-            ys[i] = u16::from(d[1] & 0x0F) << 8 | u16::from(d[2]);
+            let [d0, d1, d2, _] = d;
+            *x = u16::from(d0) << 4 | u16::from(d1 >> 4);
+            *y = u16::from(d1 & 0x0F) << 8 | u16::from(d2);
         }
         self.clear()?;
-        if n == 0 {
+        // `n <= 3`.
+        let (Some(xs), Some(ys)) = (xs.get(..n), ys.get(..n)) else {
             return Ok(Some(None));
-        }
+        };
+        let (Some(&last_x), Some(&last_y)) = (xs.last(), ys.last()) else {
+            return Ok(Some(None)); // no sample ready yet
+        };
         let (x, y) = match self.filter {
-            Filter::None => (xs[n - 1], ys[n - 1]),
-            Filter::Median3 => (median3(&xs[..n]), median3(&ys[..n])),
+            Filter::None => (last_x, last_y),
+            Filter::Median3 => (median3(xs), median3(ys)),
         };
         trace!(target: "twine::driver", "stmpe811 raw x {} y {} ({} samples)", x, y, n);
         Ok(Some(Some((x, y))))

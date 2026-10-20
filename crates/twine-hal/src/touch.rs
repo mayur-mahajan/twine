@@ -252,15 +252,18 @@ impl TouchTransform {
     #[must_use]
     #[inline]
     pub fn apply(&self, x: i32, y: i32) -> Point {
-        let (mut x, mut y) = if self.swap_xy { (y, x) } else { (x, y) };
-        let (w, h) = (i32::from(self.width.max(1)), i32::from(self.height.max(1)));
-        if self.invert_x {
-            x = w - 1 - x;
-        }
-        if self.invert_y {
-            y = h - 1 - y;
-        }
-        Point::new(x.clamp(0, w - 1), y.clamp(0, h - 1))
+        let (x, y) = if self.swap_xy { (y, x) } else { (x, y) };
+        // Clamp first, then mirror: the same result (mirroring maps `0..=max` onto itself), and
+        // the mirror of a clamped value cannot overflow for any raw input.
+        let (max_x, max_y) = (
+            i32::from(self.width.saturating_sub(1)),
+            i32::from(self.height.saturating_sub(1)),
+        );
+        let (x, y) = (x.clamp(0, max_x), y.clamp(0, max_y));
+        Point::new(
+            if self.invert_x { max_x.saturating_sub(x) } else { x },
+            if self.invert_y { max_y.saturating_sub(y) } else { y },
+        )
     }
 }
 
@@ -284,6 +287,20 @@ mod tests {
             (info.width, info.height)
         };
         TouchTransform::for_rotation(info.rotation, native.0, native.1)
+    }
+
+    #[test]
+    fn regression_extreme_raw_points_do_not_overflow() {
+        // Mirroring used to compute `w - 1 - x` before clamping: overflow for `x = i32::MIN`.
+        let t = TouchTransform::for_rotation(Rotation::Deg180, 240, 320);
+        assert_eq!(t.apply(i32::MIN, i32::MIN), Point::new(239, 319));
+        assert_eq!(t.apply(i32::MAX, i32::MAX), Point::new(0, 0));
+        let empty = TouchTransform {
+            width: 0,
+            height: 0,
+            ..t
+        };
+        assert_eq!(empty.apply(i32::MIN, 7), Point::new(0, 0));
     }
 
     #[test]

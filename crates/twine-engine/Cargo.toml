@@ -12,6 +12,23 @@ workspace = true
 
 [features]
 default = []
+## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
+## safety lints of library code and the refusal of excluded features.
+safety = [
+    "twine-anim/safety",
+    "twine-core/safety",
+    "twine-hal/safety",
+    "twine-image/safety",
+    "twine-layout/safety",
+    "twine-render/safety",
+    "twine-style/safety",
+    "twine-text/safety",
+    "twine-vector?/safety",
+    "display-integrity",
+]
+## Display-integrity mechanisms: frame observers, region re-render / read-back /
+## checks, `ObjFlags::SAFETY_CRITICAL`, the validity marks and the fail-safe screen (`docs/safety/profile.md` § 11); implied by `safety`. Off: not linked.
+display-integrity = ["twine-render/display-integrity", "twine-text/display-integrity"]
 ## std-only conveniences.
 std = [
     "twine-core/std",
@@ -89,11 +106,14 @@ heapless = { version = "0.8", default-features = false }
 thiserror = { version = "2", default-features = false }
 defmt = { version = "1", optional = true }
 
+# No excluded part of the safety profile here (`perf-monitor`, `fs`, `twine-fs`): the suite also
+# runs with `--features safety` (`cargo xtask ci` stage `test-features`), and the tests of those
+# parts run with `--features perf-monitor,fs` (same stage; `twine-fs` is then the optional
+# normal dependency).
 [dev-dependencies]
 twine-engine = { path = ".", features = [
     "std",
     "debug-checks",
-    "perf-monitor",
     "color-rgb565",
     "color-rgb565-swapped",
     "color-rgb888",
@@ -101,9 +121,7 @@ twine-engine = { path = ".", features = [
     "color-argb8888",
     "color-l8",
     "color-i1",
-    "fs",
 ] }
-twine-fs = { path = "../twine-fs" }
 twine-testing = { path = "../twine-testing", default-features = false, features = ["engine", "debug-checks"] }
 twine-assets = { path = "../twine-assets", features = ["montserrat-14"] }
 proptest = "1"

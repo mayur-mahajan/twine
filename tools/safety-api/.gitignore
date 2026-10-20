@@ -1,0 +1,2 @@
+# Copied from the workspace by `cargo xtask ci` (stage `safety-exclusions`) before each check.
+Cargo.lock

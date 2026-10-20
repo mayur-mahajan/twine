@@ -92,6 +92,9 @@ pub struct RenderCaches {
     pub(crate) image_copy_rows: u32,
     /// Scratch state of a higher-level drawing crate (see [`take_extension`](Self::take_extension)).
     ext: Option<Box<dyn Any>>,
+    /// Fresh mode ([`set_fresh`](Self::set_fresh)).
+    #[cfg(feature = "display-integrity")]
+    fresh: bool,
 }
 
 /// Where the layer buffer lives: on the heap ([`RenderCaches::new`]) or in caller memory
@@ -185,6 +188,8 @@ impl RenderCaches {
             layer_buf,
             image_copy_rows: 0,
             ext: None,
+            #[cfg(feature = "display-integrity")]
+            fresh: false,
         }
     }
 
@@ -198,6 +203,39 @@ impl RenderCaches {
     #[must_use]
     pub fn max_span(&self) -> usize {
         self.cov.len()
+    }
+
+    /// Fresh mode on or off. In fresh mode no cached entry is used as it is: the
+    /// quarter-circle coverage is computed per row, and a hit in the gradient or shadow cache
+    /// rebuilds its map from the source before it is used — so what is drawn depends only on
+    /// the shapes being drawn, never on what a cache holds (a cache corrupted by a memory
+    /// fault, or by a bug, cannot change it). The engine turns it on while it draws a
+    /// safety-critical node and for off-screen integrity re-renders
+    /// (`ObjFlags::SAFETY_CRITICAL`, `Engine::render_region_to`); drawing is slower then (the
+    /// work the caches save is done again), so it is meant for small, important regions.
+    ///
+    /// Allocates nothing (rebuilt entries reuse their memory); never panics. Idempotent.
+    ///
+    /// ```
+    /// use twine_render::{RenderCaches, RenderConfig};
+    /// let mut caches = RenderCaches::new(&RenderConfig::default());
+    /// assert!(!caches.fresh());
+    /// caches.set_fresh(true);
+    /// assert!(caches.fresh());
+    /// ```
+    #[cfg(feature = "display-integrity")]
+    pub fn set_fresh(&mut self, on: bool) {
+        self.fresh = on;
+        self.circle.set_fresh(on);
+        self.gradient.set_fresh(on);
+        self.shadow.set_fresh(on);
+    }
+
+    /// Whether fresh mode is on ([`set_fresh`](Self::set_fresh)).
+    #[cfg(feature = "display-integrity")]
+    #[must_use]
+    pub fn fresh(&self) -> bool {
+        self.fresh
     }
 
     /// Heap bytes reserved by the scratch buffers, the caches and a heap layer buffer:

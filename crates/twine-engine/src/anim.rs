@@ -21,6 +21,7 @@ use core::cell::RefCell;
 use twine_anim::{
     Anim, AnimCx, AnimId, AnimTarget, Motion, NodeKey, PropKey, TickSink, Timeline, TimerId, Timers,
 };
+use twine_core::alloc_guard::AllocSite;
 use twine_core::{Angle, Duration, Instant, Opa, Scale};
 use twine_style::{Length, PropId, Selector, StyleProp, StyleValue};
 
@@ -305,7 +306,11 @@ impl AnimState {
     fn after_add(&mut self, id: AnimId) {
         self.added_since_tick = true;
         if self.clock.is_none() {
-            self.pending.push((id, Pending::Restart));
+            twine_core::alloc_guard::push(
+                &mut self.pending,
+                (id, Pending::Restart),
+                AllocSite::EngineScratch,
+            );
         }
     }
 }
@@ -316,6 +321,18 @@ fn clamp_u(v: i32, max: i32) -> i32 {
 }
 
 impl Engine {
+    /// Book-keeping after a timeline `add`: a refused animation ([`AnimId::DANGLING`]: the
+    /// timeline holds `Limits::max_anims`) raises the `Capacity` fault, an added one waits
+    /// for the next step's time. Returns `id`.
+    fn anim_added(&mut self, id: AnimId) -> AnimId {
+        if id == AnimId::DANGLING {
+            self.capacity_refused(twine_core::fault::CapacityFault::Animations, None);
+        } else {
+            self.anim.after_add(id);
+        }
+        id
+    }
+
     /// Starts `anim` on property `prop` of `node` (its target is set to
     /// [`AnimTarget::Node`]); a running animation of the same node and property is replaced
     /// (LVGL). Values are written through the idempotent setters:
@@ -334,7 +351,11 @@ impl Engine {
     /// updates). Deleting the node stops it. Its timing is adjusted to the engine's
     /// [`motion`](Self::motion) preference unless it is essential ([`Anim::essential`]); this
     /// holds for every way an animation is started (also [`anim_start_fn`](Self::anim_start_fn),
-    /// style transitions, screen loads and scroll animations).
+    /// style transitions, screen loads and scroll animations). When
+    /// [`Limits::max_anims`](twine_core::Limits::max_anims) animations run already, it is not
+    /// started: the result is [`AnimId::DANGLING`] and a
+    /// [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity) fault (code
+    /// `Animations`) is raised.
     ///
     /// ```
     /// use twine_anim::Anim;
@@ -360,7 +381,7 @@ impl Engine {
         self.anim.adjust(&mut anim);
         let now = self.anim.now();
         let id = self.anim.timeline.add(anim, now);
-        self.anim.after_add(id);
+        self.anim_added(id);
         id
     }
 
@@ -395,7 +416,7 @@ impl Engine {
             },
             now,
         );
-        self.anim.after_add(id);
+        self.anim_added(id);
         id
     }
 
@@ -409,7 +430,7 @@ impl Engine {
         self.anim.adjust(&mut anim);
         let now = self.anim.now();
         let id = self.anim.timeline.add_fn(anim, exec, now);
-        self.anim.after_add(id);
+        self.anim_added(id);
         id
     }
 
@@ -420,7 +441,7 @@ impl Engine {
         self.anim.adjust(&mut anim);
         let now = self.anim.now();
         let id = self.anim.timeline.add(anim, now);
-        self.anim.after_add(id);
+        self.anim_added(id);
         id
     }
 
@@ -448,7 +469,11 @@ impl Engine {
         if let Some(now) = self.anim.clock {
             self.anim.timeline.resume(id, now)
         } else {
-            self.anim.pending.push((id, Pending::Resume));
+            twine_core::alloc_guard::push(
+                &mut self.anim.pending,
+                (id, Pending::Resume),
+                AllocSite::EngineScratch,
+            );
             self.anim.added_since_tick = true;
             true
         }
@@ -470,7 +495,7 @@ impl Engine {
         if !self.anim.timeline.restart(id, now) {
             return false;
         }
-        self.anim.after_add(id);
+        self.anim_added(id);
         true
     }
 
@@ -577,7 +602,10 @@ impl Engine {
     /// Adds a timer calling `cb(engine, id)` every `period` (LVGL `lv_timer_create`), first one
     /// period after the current update (or after the next update when called between
     /// updates). A timer late by several periods runs once. `step` wakes up exactly when the
-    /// next timer is due.
+    /// next timer is due. When [`Limits::max_timers`](twine_core::Limits::max_timers) timers
+    /// exist already, it is not added: the result is [`TimerId::DANGLING`] and a
+    /// [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity) fault (code `Timers`)
+    /// is raised.
     ///
     /// ```
     /// use core::cell::Cell;
@@ -602,15 +630,17 @@ impl Engine {
                 q.ops.push(Op::Timer(f.clone(), id));
             }
         });
-        if self.anim.clock.is_none() {
-            self.anim.pending_timers.push(id);
+        if id == TimerId::DANGLING {
+            self.capacity_refused(twine_core::fault::CapacityFault::Timers, None);
+        } else if self.anim.clock.is_none() {
+            twine_core::alloc_guard::push(&mut self.anim.pending_timers, id, AllocSite::EngineScratch);
         }
         id
     }
 
     fn timer_skip(&mut self, id: TimerId) {
         if self.anim.draining_timers && !self.anim.timer_skip.contains(&id) {
-            self.anim.timer_skip.push(id);
+            twine_core::alloc_guard::push(&mut self.anim.timer_skip, id, AllocSite::EngineScratch);
         }
     }
 
@@ -730,7 +760,23 @@ impl Engine {
         self.anim.clock = None;
     }
 
-    /// Records `now` as the latest known time (start of an update).
+    /// The engine's current time: the time of the running step (`step`, `Ui::update` — the
+    /// platform clock's reading), else the last one it knew. Timers and animations run on it;
+    /// view-layer hooks timestamp data with it (`ScopeExt::watch_fresh`). Never panics.
+    ///
+    /// ```
+    /// use twine_core::Instant;
+    /// use twine_engine::{Engine, EngineConfig};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// e.step(Instant::from_millis(40));
+    /// assert_eq!(e.now(), Instant::from_millis(40));
+    /// ```
+    #[must_use]
+    pub fn now(&self) -> Instant {
+        self.anim.now()
+    }
+
     /// The engine's current time: the running step's time, else the last known one.
     pub(crate) fn anim_now(&self) -> Instant {
         self.anim.now()

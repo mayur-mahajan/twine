@@ -82,19 +82,22 @@ impl Span {
 
     /// Sets the text (copied, reusing the buffer); returns whether it changed. Call
     /// [`SpanGroup::refresh`] afterwards (or use [`SpanGroup::set_span_text`]).
-    pub fn set_text(&mut self, s: &str) -> bool {
+    ///
+    /// Cut to [`Limits::max_text_len`](twine_core::Limits::max_text_len) like a label's text
+    /// (at a character boundary, with a `Capacity` fault, code `TextLen`); with
+    /// [`Limits::preallocate`](twine_core::Limits::preallocate) the span's buffer is reserved
+    /// for the limit when it first gets an owned text, so later texts allocate nothing.
+    /// Never panics.
+    pub fn set_text(&mut self, cx: &mut WidgetCx<'_>, s: &str) -> bool {
+        let s = cx.fit_text(s);
         if self.text() == s {
             return false;
         }
         match &mut self.text {
-            LabelText::Owned(b) => {
-                b.clear();
-                b.push_str(s);
-            }
+            LabelText::Owned(b) => cx.store_text(b, s),
             LabelText::Static(_) => {
                 let mut b = core::mem::take(&mut self.scratch);
-                b.clear();
-                b.push_str(s);
+                cx.store_text(&mut b, s);
                 self.text = LabelText::Owned(b);
             }
         }
@@ -363,7 +366,11 @@ impl SpanGroup {
     pub fn add_span(&mut self, cx: &mut WidgetCx<'_>) -> SpanId {
         let id = SpanId(self.next_id);
         self.next_id = self.next_id.wrapping_add(1);
-        self.spans.push((id, Span::new()));
+        twine_core::alloc_guard::push(
+            &mut self.spans,
+            (id, Span::new()),
+            twine_core::alloc_guard::AllocSite::WidgetBuffer,
+        );
         log_set(SPANGROUP_CLASS.name, cx.node(), "add_span");
         self.refresh(cx);
         id
@@ -379,9 +386,11 @@ impl SpanGroup {
         }
     }
 
-    /// Sets the text of a span (LVGL `lv_spangroup_set_span_text`). Idempotent.
+    /// Sets the text of a span (LVGL `lv_spangroup_set_span_text`), cut to
+    /// [`Limits::max_text_len`](twine_core::Limits::max_text_len) ([`Span::set_text`]).
+    /// Idempotent.
     pub fn set_span_text(&mut self, cx: &mut WidgetCx<'_>, id: SpanId, s: &str) {
-        if self.span_mut(id).is_some_and(|sp| sp.set_text(s)) {
+        if self.span_mut(id).is_some_and(|sp| sp.set_text(cx, s)) {
             log_set(SPANGROUP_CLASS.name, cx.node(), "span_text");
             self.refresh(cx);
         }
@@ -672,13 +681,18 @@ impl SpanGroup {
                         break;
                     }
                 }
-                c.snippets.push(Snippet {
-                    span: span_i,
-                    range: ofs..ofs + next,
-                    w,
-                    font,
-                    letter_space: ls,
-                });
+                // Kept between layouts: grows only for more pieces than ever (noted).
+                twine_core::alloc_guard::push(
+                    &mut c.snippets,
+                    Snippet {
+                        span: span_i,
+                        range: ofs..ofs + next,
+                        w,
+                        font,
+                        letter_space: ls,
+                    },
+                    twine_core::alloc_guard::AllocSite::WidgetBuffer,
+                );
                 ofs += next;
                 if max_line_h < line_h {
                     max_line_h = line_h;
@@ -692,13 +706,18 @@ impl SpanGroup {
             if c.snippets.len() == start {
                 break;
             }
-            c.lines.push(LineInfo {
-                snippets: start..c.snippets.len(),
-                y,
-                h: max_line_h,
-                base_line,
-                x: if first { indent } else { 0 },
-            });
+            let snippets = start..c.snippets.len();
+            twine_core::alloc_guard::push(
+                &mut c.lines,
+                LineInfo {
+                    snippets,
+                    y,
+                    h: max_line_h,
+                    base_line,
+                    x: if first { indent } else { 0 },
+                },
+                twine_core::alloc_guard::AllocSite::WidgetBuffer,
+            );
             first = false;
             y += max_line_h;
             max_w = max_width;

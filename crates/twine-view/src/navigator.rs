@@ -36,6 +36,17 @@
 //! the pages below it that were shown before). Requests allocate nothing once the capacity is
 //! reached ([`reset`](Navigator::reset) collects its routes into a `Vec`); building a page
 //! allocates what its view needs, once. The page function and each guard are boxed once.
+//!
+//! The depth is bounded by [`Limits::max_nav_depth`](twine_core::Limits::max_nav_depth) (read
+//! from the engine when the navigator is built): a request that would make the stack deeper
+//! is refused with [`NavOutcome::Full`] and a
+//! [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity) fault (code
+//! [`CapacityFault::NavDepth`](twine_core::fault::CapacityFault::NavDepth)) at the next effect
+//! flush. With [`Limits::preallocate`](twine_core::Limits::preallocate) both stacks (and the
+//! list of pages waiting to be deleted) are reserved to that depth when the navigator is
+//! built, so requests and pops back to built pages allocate nothing after a seal (disposing a
+//! page allocates nothing either); pushing a page that was never built builds its view, which
+//! allocates.
 
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -102,6 +113,9 @@ pub enum NavOutcome {
     Empty,
     /// Requested by a leave guard while it decides about another navigation (ignored).
     Busy,
+    /// The stack would be deeper than [`Limits::max_nav_depth`](twine_core::Limits::max_nav_depth):
+    /// nothing changes, and a `Capacity` fault (code `NavDepth`) is raised.
+    Full,
     /// The navigator's scope was disposed (logged with `warn!`).
     Disposed,
 }
@@ -178,6 +192,11 @@ struct Core {
     base_group: Option<GroupId>,
     /// A leave guard is running.
     guarding: bool,
+    /// The deepest stack allowed (`Limits::max_nav_depth`, read when the navigator is built).
+    max_depth: usize,
+    /// Requests refused for depth since the last transition was applied (reported as a
+    /// `Capacity` fault there, where the engine is lent).
+    refused: u32,
     /// The first page was built (later pages get focus groups of their own).
     built_any: bool,
 }
@@ -268,7 +287,7 @@ impl<R> Eq for Navigator<R> {}
 
 impl<R> core::fmt::Debug for Navigator<R> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let depth = self.state.try_with(|s| s.routes.len()).unwrap_or(0);
+        let depth = self.state.try_with(|s| s.routes.len()).ok().unwrap_or(0);
         f.debug_struct("Navigator").field("depth", &depth).finish()
     }
 }
@@ -291,8 +310,9 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
     /// Shows the page of `route` on top of the current one with `anim`; the current page stays
     /// alive below (its state is kept for the way back).
     ///
-    /// Returns [`NavOutcome::Accepted`] (or `Busy` / `Disposed`). Allocates nothing once the
-    /// stack's capacity has reached this depth. Never panics.
+    /// Returns [`NavOutcome::Accepted`] (or `Busy` / `Disposed`, or `Full` at
+    /// [`Limits::max_nav_depth`](twine_core::Limits::max_nav_depth)). Allocates nothing once
+    /// the stack's capacity has reached this depth. Never panics.
     ///
     /// ```
     /// use twine_view::prelude::*;
@@ -332,12 +352,9 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
         self.navigate(
             "pop",
             anim.into(),
-            |r| {
-                if r.len() > 1 {
-                    Ok(r.len() - 1)
-                } else {
-                    Err(NavOutcome::AtRoot)
-                }
+            |r| match r.len().checked_sub(1) {
+                Some(keep) if keep > 0 => Ok(keep),
+                _ => Err(NavOutcome::AtRoot),
             },
             NewRoutes::None,
         )
@@ -393,7 +410,8 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
             "pop_to",
             anim.into(),
             |r| match r.iter().rposition(|x| x == route) {
-                Some(i) => Ok(i + 1),
+                // `i < r.len()`: keeping `i + 1` routes cannot overflow.
+                Some(i) => Ok(i.saturating_add(1)),
                 None => Err(NavOutcome::NotFound),
             },
             NewRoutes::None,
@@ -437,7 +455,8 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
     /// built). Every current page is removed (their leave guards decide first, top first);
     /// only the new top page is built.
     ///
-    /// Returns `Accepted`, `Empty` (no routes: nothing happens), `Denied`, `Busy` or
+    /// Returns `Accepted`, `Empty` (no routes: nothing happens), `Full` (more routes than
+    /// [`Limits::max_nav_depth`](twine_core::Limits::max_nav_depth)), `Denied`, `Busy` or
     /// `Disposed`. Collects `stack` into a `Vec` (one allocation). Never panics.
     ///
     /// ```
@@ -515,16 +534,20 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
             twine_core::warn!(target: "twine::view", "Navigator::on_leave outside the navigator's pages; ignored");
             return;
         };
-        let Some(id) = self.state.try_with_mut(|s| {
-            let id = s.core.next_guard;
-            s.core.next_guard = id.wrapping_add(1);
-            s.guards.push(Guard {
-                id,
-                page: mark.page,
-                f: Some(Box::new(guard)),
-            });
-            id
-        }) else {
+        let Some(id) = self
+            .state
+            .try_with_mut(|s| {
+                let id = s.core.next_guard;
+                s.core.next_guard = id.wrapping_add(1);
+                s.guards.push(Guard {
+                    id,
+                    page: mark.page,
+                    f: Some(Box::new(guard)),
+                });
+                id
+            })
+            .ok()
+        else {
             return nav_disposed("on_leave");
         };
         let state = self.state;
@@ -536,6 +559,7 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
                         .position(|g| g.id == id)
                         .map(|i| s.guards.remove(i))
                 })
+                .ok()
                 .flatten();
             drop(g); // outside the borrow
         });
@@ -612,16 +636,16 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
 
     /// The depth without tracking (for logs).
     fn depth_untracked(&self) -> usize {
-        self.state.try_with(|s| s.routes.len()).unwrap_or(0)
+        self.state.try_with(|s| s.routes.len()).ok().unwrap_or(0)
     }
 
     /// Reads the state, tracking the navigation.
     fn read<T>(&self, f: impl FnOnce(&NavState<R>) -> T) -> Option<T> {
-        let tick = self.state.try_with(|s| s.core.tick)?;
+        let tick = self.state.try_with(|s| s.core.tick).ok()?;
         if tick.is_alive() {
             let _ = tick.get();
         }
-        self.state.try_with(f)
+        self.state.try_with(f).ok()
     }
 
     /// The common path of every request: `keep` says how many pages stay (from the bottom),
@@ -633,19 +657,34 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
         keep: impl FnOnce(&[R]) -> Result<usize, NavOutcome>,
         new: NewRoutes<R>,
     ) -> NavOutcome {
-        let checked = self.state.try_with(|s| {
-            if s.core.guarding {
-                return Err(NavOutcome::Busy);
-            }
-            let keep = keep(&s.routes)?.min(s.routes.len());
-            let removed = s.core.pages.get(keep..).unwrap_or_default();
-            let guarded = s.guards.iter().any(|g| removed.iter().any(|p| p.id == g.page));
-            Ok((keep, guarded, s.routes.len()))
-        });
+        let checked = self
+            .state
+            .try_with(|s| {
+                if s.core.guarding {
+                    return Err(NavOutcome::Busy);
+                }
+                let keep = keep(&s.routes)?.min(s.routes.len());
+                let added = match &new {
+                    NewRoutes::None => 0,
+                    NewRoutes::One(_) => 1,
+                    NewRoutes::Many(v) => v.len(),
+                };
+                if keep.saturating_add(added) > s.core.max_depth {
+                    return Err(NavOutcome::Full);
+                }
+                let removed = s.core.pages.get(keep..).unwrap_or_default();
+                let guarded = s.guards.iter().any(|g| removed.iter().any(|p| p.id == g.page));
+                Ok((keep, guarded, s.routes.len()))
+            })
+            .ok();
         let (keep, guarded, len) = match checked {
             None => {
                 nav_disposed(what);
                 return NavOutcome::Disposed;
+            }
+            Some(Err(NavOutcome::Full)) => {
+                self.refuse_full(what);
+                return NavOutcome::Full;
             }
             Some(Err(outcome)) => {
                 nav_refused(what, outcome);
@@ -663,6 +702,7 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
                 NewRoutes::None => self
                     .state
                     .try_with(|s| s.routes.get(keep.wrapping_sub(1)).cloned())
+                    .ok()
                     .flatten(),
             };
             if let Some(dest) = dest
@@ -677,12 +717,34 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
         NavOutcome::Accepted
     }
 
+    /// A request refused at `Limits::max_nav_depth`: logged, counted and reported as a
+    /// `Capacity` fault by the transition effect (woken here), which has the engine.
+    #[cold]
+    #[inline(never)]
+    fn refuse_full(&self, what: &str) {
+        twine_core::error!(target: "twine::view", "navigator: {} refused: Limits::max_nav_depth reached", what);
+        let tick = self
+            .state
+            .try_with_mut(|s| {
+                s.core.refused = s.core.refused.saturating_add(1);
+                s.core.tick
+            })
+            .ok();
+        if let Some(tick) = tick.filter(Signal::is_alive) {
+            tick.update(|t| *t = t.wrapping_add(1));
+        }
+    }
+
     /// Runs the guards of the pages above `keep`, newest first, until one denies.
     fn run_guards(&self, keep: usize, dest: &R) -> Leave {
-        let Some(rt) = self.state.try_with_mut(|s| {
-            s.core.guarding = true;
-            s.core.scope.runtime()
-        }) else {
+        let Some(rt) = self
+            .state
+            .try_with_mut(|s| {
+                s.core.guarding = true;
+                s.core.scope.runtime()
+            })
+            .ok()
+        else {
             return Leave::Allow;
         };
         let mut below: Option<u32> = None;
@@ -699,6 +761,7 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
                         .max_by_key(|g| g.id)?;
                     Some((g.id, g.f.take()))
                 })
+                .ok()
                 .flatten();
             let Some((id, f)) = next else { break };
             below = Some(id);
@@ -714,10 +777,11 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
                     }
                     None => Some(f),
                 })
+                .ok()
                 .flatten();
             drop(orphan);
         }
-        self.state.try_with_mut(|s| s.core.guarding = false);
+        self.state.try_with_mut(|s| s.core.guarding = false).ok();
         verdict
     }
 
@@ -725,27 +789,30 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
     /// on top, and the transition effect is woken.
     fn commit(&self, keep: usize, new: NewRoutes<R>, load: ScreenLoad) {
         // One item at a time, dropped outside the borrow.
-        while let Some(item) = self.state.try_with_mut(|s| take_removed(s, keep)).flatten() {
+        while let Some(item) = self.state.try_with_mut(|s| take_removed(s, keep)).ok().flatten() {
             drop(item);
         }
-        let Some(tick) = self.state.try_with_mut(move |s| {
-            let add = |s: &mut NavState<R>, r: R| {
-                let page = s.core.new_page();
-                s.core.pages.push(page);
-                s.routes.push(r);
-            };
-            match new {
-                NewRoutes::None => {}
-                NewRoutes::One(r) => add(s, r),
-                NewRoutes::Many(v) => {
-                    for r in v {
-                        add(s, r);
+        let Some(tick) = self
+            .state
+            .try_with_mut(move |s| {
+                let add = |s: &mut NavState<R>, r: R| {
+                    let page = s.core.new_page();
+                    push_page(s, page, r);
+                };
+                match new {
+                    NewRoutes::None => {}
+                    NewRoutes::One(r) => add(s, r),
+                    NewRoutes::Many(v) => {
+                        for r in v {
+                            add(s, r);
+                        }
                     }
                 }
-            }
-            s.core.pending = Some(load);
-            s.core.tick
-        }) else {
+                s.core.pending = Some(load);
+                s.core.tick
+            })
+            .ok()
+        else {
             return nav_disposed("navigate");
         };
         if tick.is_alive() {
@@ -753,15 +820,28 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
         }
     }
 
-    /// Applies the pending transition (engine required).
+    /// Applies the pending transition (engine required), after reporting the requests
+    /// refused for depth.
     fn apply(&self, e: &mut Engine) {
+        let refused = self
+            .state
+            .try_with_mut(|s| core::mem::take(&mut s.core.refused))
+            .unwrap_or(0);
+        if refused > 0 {
+            e.raise_fault(
+                twine_engine::FaultRecord::new(twine_core::fault::FaultKind::Capacity)
+                    .occurrences(refused)
+                    .code(twine_core::fault::CapacityFault::NavDepth.code()),
+            );
+        }
         for _ in 0..MAX_APPLY_PASSES {
-            let Some(Some(load)) = self.state.try_with_mut(|s| s.core.pending.take()) else {
+            let Some(Some(load)) = self.state.try_with_mut(|s| s.core.pending.take()).ok() else {
                 return;
             };
             let Some(display) = self
                 .state
                 .try_with(|s| s.core.scope)
+                .ok()
                 .and_then(|c| display_of(c, e))
             else {
                 return;
@@ -769,7 +849,7 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
             // The screen the transition leaves is the active one once a running load ended.
             e.finish_screen_anim(display);
             self.build_top(e, display);
-            if self.state.try_with(|s| s.core.pending.is_some()) != Some(false) {
+            if self.state.try_with(|s| s.core.pending.is_some()).ok() != Some(false) {
                 continue; // the page navigated while it was built: go on with that
             }
             let top = self
@@ -780,13 +860,14 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
                         .last()
                         .and_then(|p| p.entry.as_ref().map(|en| (en.node, en.group)))
                 })
+                .ok()
                 .flatten();
             show(e, display, top, load, &|f| {
-                self.state.try_with_mut(|s| f(&mut s.core));
+                self.state.try_with_mut(|s| f(&mut s.core)).ok();
             });
             twine_core::debug!(target: "twine::view", "navigator: depth {}", self.depth_untracked());
         }
-        if self.state.try_with(|s| s.core.pending.is_some()) == Some(true) {
+        if self.state.try_with(|s| s.core.pending.is_some()).ok() == Some(true) {
             twine_core::warn!(target: "twine::view", "navigator: pages kept navigating while built; the rest waits for the next request");
         }
     }
@@ -794,20 +875,24 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
     /// Builds the top page if it is not built yet (the first page with the current focus
     /// group, later ones with a group of their own).
     fn build_top(&self, e: &mut Engine, display: DisplayId) {
-        let Some(Some((id, route, page, scope, anchor, own_group))) = self.state.try_with(|s| {
-            let top = s.core.pages.last()?;
-            if top.entry.is_some() {
-                return None;
-            }
-            Some((
-                top.id,
-                s.routes.last()?.clone(),
-                s.page.clone(),
-                s.core.scope,
-                s.core.anchor,
-                s.core.built_any,
-            ))
-        }) else {
+        let Some(Some((id, route, page, scope, anchor, own_group))) = self
+            .state
+            .try_with(|s| {
+                let top = s.core.pages.last()?;
+                if top.entry.is_some() {
+                    return None;
+                }
+                Some((
+                    top.id,
+                    s.routes.last()?.clone(),
+                    s.page.clone(),
+                    s.core.scope,
+                    s.core.anchor,
+                    s.core.built_any,
+                ))
+            })
+            .ok()
+        else {
             return;
         };
         let mark = PageMark { nav: *self, page: id };
@@ -819,15 +904,21 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
                 .map_or(twine_engine::DEAD_NODE, |r| page(e, screen, child, r))
         });
         let mut entry = entry;
-        self.state.try_with_mut(|s| {
-            s.core.built_any = true;
-            if let Some(en) = entry.take() {
-                match s.core.pages.iter_mut().find(|p| p.id == id) {
-                    Some(p) => p.entry = Some(en),
-                    None => s.core.doomed.push(en), // removed while it was built
+        self.state
+            .try_with_mut(|s| {
+                s.core.built_any = true;
+                if let Some(en) = entry.take() {
+                    match s.core.pages.iter_mut().find(|p| p.id == id) {
+                        Some(p) => p.entry = Some(en),
+                        None => twine_core::alloc_guard::push(
+                            &mut s.core.doomed,
+                            en,
+                            twine_core::alloc_guard::AllocSite::NavStack,
+                        ), // removed while it was built
+                    }
                 }
-            }
-        });
+            })
+            .ok();
         // The navigator went away while the page was built: nothing will show it.
         if let Some(en) = entry
             && e.tree().contains(en.node)
@@ -835,6 +926,14 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
             let _ = e.delete(en.node);
         }
     }
+}
+
+/// Appends a page and its route (the two stacks stay parallel), noting growth for the
+/// allocation guard.
+fn push_page<R>(s: &mut NavState<R>, page: Page, route: R) {
+    use twine_core::alloc_guard::{self, AllocSite};
+    alloc_guard::push(&mut s.core.pages, page, AllocSite::NavStack);
+    alloc_guard::push(&mut s.routes, route, AllocSite::NavStack);
 }
 
 /// Takes one thing the removal of the pages above `keep` drops: a guard of a removed page, or
@@ -850,7 +949,11 @@ fn take_removed<R>(s: &mut NavState<R>, keep: usize) -> Option<Removed<R>> {
     }
     if s.core.pages.len() > keep {
         if let Some(Page { entry: Some(en), .. }) = s.core.pages.pop() {
-            s.core.doomed.push(en);
+            twine_core::alloc_guard::push(
+                &mut s.core.doomed,
+                en,
+                twine_core::alloc_guard::AllocSite::NavStack,
+            );
         }
         return Some(Removed::Route(s.routes.pop()));
     }
@@ -1066,6 +1169,8 @@ where
         home: None,
         base_group: None,
         guarding: false,
+        max_depth: usize::from(twine_core::Limits::DEFAULT.max_nav_depth),
+        refused: 0,
         built_any: false,
     };
     let root = core.new_page();
@@ -1083,12 +1188,16 @@ where
     // The pages' screens are deleted with the navigator (its scope's cleanup runs before
     // its state is dropped).
     cx.on_cleanup(move || {
-        let Some(t) = nav.state.try_with_mut(|s| NavTeardown {
-            home: s.core.home,
-            base_group: s.core.base_group,
-            pages: core::mem::take(&mut s.core.pages),
-            doomed: core::mem::take(&mut s.core.doomed),
-        }) else {
+        let Some(t) = nav
+            .state
+            .try_with_mut(|s| NavTeardown {
+                home: s.core.home,
+                base_group: s.core.base_group,
+                pages: core::mem::take(&mut s.core.pages),
+                doomed: core::mem::take(&mut s.core.doomed),
+            })
+            .ok()
+        else {
             return;
         };
         if t.pages.iter().all(|p| p.entry.is_none()) && t.doomed.is_empty() {
@@ -1162,15 +1271,16 @@ impl<R: Clone + PartialEq + 'static> NavigatorView<R> {
             return self;
         }
         let nav = self.nav;
-        while let Some(item) = nav.state.try_with_mut(|s| take_removed(s, 0)).flatten() {
+        while let Some(item) = nav.state.try_with_mut(|s| take_removed(s, 0)).ok().flatten() {
             drop(item);
         }
         for r in stack {
-            nav.state.try_with_mut(move |s| {
-                let page = s.core.new_page();
-                s.core.pages.push(page);
-                s.routes.push(r);
-            });
+            nav.state
+                .try_with_mut(move |s| {
+                    let page = s.core.new_page();
+                    push_page(s, page, r);
+                })
+                .ok();
         }
         self
     }
@@ -1188,11 +1298,41 @@ impl<R: Clone + PartialEq + 'static> View for NavigatorView<R> {
         let e = cx.engine();
         let display = display_of(nav.state.with(|s| s.core.scope), e);
         let (home, base_group) = (display.map(|d| (d, e.active_screen(d))), e.default_group());
+        let limits = *e.limits();
         nav.state.with_mut(|s| {
             s.core.anchor = Some(anchor);
             s.core.home = home;
             s.core.base_group = base_group;
+            s.core.max_depth = usize::from(limits.max_nav_depth);
+            if limits.preallocate {
+                let n = s.core.max_depth;
+                s.core.pages.reserve_exact(n.saturating_sub(s.core.pages.len()));
+                s.routes.reserve_exact(n.saturating_sub(s.routes.len()));
+                // The pages waiting to be deleted: every page of a full stack, plus the one
+                // still shown during a transition.
+                let doomed = n.saturating_add(1);
+                s.core
+                    .doomed
+                    .reserve_exact(doomed.saturating_sub(s.core.doomed.len()));
+            }
         });
+        // A restored stack deeper than the limit keeps its lower pages.
+        let max = nav.state.with(|s| s.core.max_depth);
+        let mut cut = 0u32;
+        while let Some(item) = nav.state.try_with_mut(|s| take_removed(s, max)).ok().flatten() {
+            if matches!(item, Removed::Route(_)) {
+                cut = cut.saturating_add(1);
+            }
+            drop(item);
+        }
+        if cut > 0 {
+            twine_core::error!(target: "twine::view", "navigator: restored stack cut to Limits::max_nav_depth = {}", max);
+            e.raise_fault(
+                twine_engine::FaultRecord::new(twine_core::fault::FaultKind::Capacity)
+                    .occurrences(cut)
+                    .code(twine_core::fault::CapacityFault::NavDepth.code()),
+            );
+        }
         if let Some(display) = display {
             nav.build_top(e, display);
             if let Some(node) = nav.state.with(|s| {
@@ -1208,7 +1348,12 @@ impl<R: Clone + PartialEq + 'static> View for NavigatorView<R> {
         cx.provide(|| {
             scope.effect_with_cx(move |_| {
                 tick.get();
-                if nav.state.try_with(|s| s.core.pending.is_none()).unwrap_or(true) {
+                if nav
+                    .state
+                    .try_with(|s| s.core.pending.is_none() && s.core.refused == 0)
+                    .ok()
+                    .unwrap_or(true)
+                {
                     return;
                 }
                 if EngineAccess::with(rt, |e| nav.apply(e)).is_none() {
@@ -1259,6 +1404,9 @@ pub fn use_navigator<R: 'static>(cx: Scope) -> Result<Navigator<R>, MissingConte
 /// panicking form of [`use_navigator`], a thin `#[track_caller]` wrapper for pages, which are
 /// always inside their navigator.
 ///
+/// Not available with the `safety` feature (the profile has no panicking context lookups:
+/// use [`use_navigator`] and handle the error).
+///
 /// # Panics
 ///
 /// If `cx` is not inside a navigator over `R`, with `"context
@@ -1277,6 +1425,7 @@ pub fn use_navigator<R: 'static>(cx: Scope) -> Result<Navigator<R>, MissingConte
 /// }
 /// # let _ = details;
 /// ```
+#[cfg(not(feature = "safety"))]
 #[must_use]
 #[track_caller]
 pub fn expect_navigator<R: 'static>(cx: Scope) -> Navigator<R> {

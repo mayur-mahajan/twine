@@ -29,8 +29,9 @@ use twine_engine::{EngineError, NodeId, fmt_node_id};
 #[repr(u32)]
 #[non_exhaustive]
 pub enum BuildFailure {
-    /// The widget tree is full ([`EngineConfig::max_nodes`](twine_engine::EngineConfig::max_nodes)
-    /// or the 65 535 nodes of the arena); the engine raised a `Capacity` fault as well.
+    /// A bound of the widget tree was reached ([`Limits::max_nodes`](twine_core::Limits::max_nodes)
+    /// or [`Limits::max_tree_depth`](twine_core::Limits::max_tree_depth)); the engine raised a
+    /// `Capacity` fault as well (its code tells which).
     Capacity = 1,
     /// The parent does not exist (deleted while the view was being built).
     ParentGone = 2,
@@ -43,7 +44,7 @@ impl BuildFailure {
     #[must_use]
     pub fn of(e: &EngineError) -> BuildFailure {
         match e {
-            EngineError::TooManyNodes => BuildFailure::Capacity,
+            EngineError::TooManyNodes | EngineError::TooDeep => BuildFailure::Capacity,
             EngineError::NodeNotFound(_) => BuildFailure::ParentGone,
             _ => BuildFailure::Engine,
         }
@@ -62,53 +63,6 @@ impl BuildFailure {
             1 => Some(BuildFailure::Capacity),
             2 => Some(BuildFailure::ParentGone),
             3 => Some(BuildFailure::Engine),
-            _ => None,
-        }
-    }
-}
-
-/// Which bound of the view layer a [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity)
-/// record raised by the view layer is about: the stable
-/// [`code`](twine_engine::FaultRecord::code) of the record (the engine's own capacity faults,
-/// e.g. a full widget tree, have code `0`).
-///
-/// ```
-/// use twine_view::CapacityFault;
-/// assert_eq!(CapacityFault::EngineQueue.code(), 1);
-/// assert_eq!(CapacityFault::from_code(1), Some(CapacityFault::EngineQueue));
-/// assert_eq!(CapacityFault::from_code(2), Some(CapacityFault::WakerPool));
-/// assert_eq!(CapacityFault::from_code(0), None);
-/// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[repr(u32)]
-#[non_exhaustive]
-pub enum CapacityFault {
-    /// The `Ui`'s engine command queue was full: engine side effects issued without the
-    /// engine (a scope disposed or a handle called outside `Ui::update`) were dropped; the
-    /// record's `occurrences` is their number (see
-    /// [`UiBuilder::engine_queue_capacity`](crate::UiBuilder::engine_queue_capacity)).
-    EngineQueue = 1,
-    /// The process-wide waker pool was exhausted when the `Ui` was mounted: it got the shared
-    /// fallback waker instead of its own (see [`WakerLease`](twine_reactive::WakerLease) §
-    /// Exhausted pool and [`WakerLease::set_heap_limit`](twine_reactive::WakerLease::set_heap_limit)),
-    /// so channel and interrupt wake-ups are no longer routed to this UI alone.
-    WakerPool = 2,
-}
-
-impl CapacityFault {
-    /// The stable numeric code (the fault record's `code`).
-    #[must_use]
-    pub const fn code(self) -> u32 {
-        self as u32
-    }
-
-    /// The bound with code `code` (`None` for an unknown code).
-    #[must_use]
-    pub const fn from_code(code: u32) -> Option<CapacityFault> {
-        match code {
-            1 => Some(CapacityFault::EngineQueue),
-            2 => Some(CapacityFault::WakerPool),
             _ => None,
         }
     }
@@ -406,6 +360,7 @@ impl defmt::Format for UiError {
 /// firmware does not link `core::fmt` and the `Debug` code of every error type it contains;
 /// otherwise it is a `core` panic with the error's `Display`. Cold and out of line: the
 /// generic `build` methods keep only the call.
+#[cfg(not(feature = "safety"))]
 #[cold]
 #[inline(never)]
 #[track_caller]

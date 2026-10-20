@@ -26,9 +26,9 @@
 //! DCS `MADCTL`). Otherwise the engine rotates the pixels in software and `area` is in physical
 //! panel coordinates.
 //!
-//! # Power and rotation at run time
+//! # Controls at run time: power, rotation, read back
 //!
-//! Besides flushing, a driver may offer three controls, each a provided method that answers
+//! Besides flushing, a driver may offer four controls, each a provided method that answers
 //! [`ControlError::Unsupported`] unless the driver overrides it:
 //!
 //! | Control | Method | When the driver does not support it |
@@ -36,6 +36,7 @@
 //! | brightness | [`DisplayDriver::set_brightness`] | the engine raises `FaultKind::DisplayControl`; panels dimmed by a backlight pin are dimmed by the application (its PWM) |
 //! | sleep / wake | [`DisplayDriver::sleep`] | the engine still stops drawing while "asleep" (and raises the fault) |
 //! | rotation | [`DisplayDriver::set_rotation`] | the engine rotates in software (needs `Engine::reserve_rotation`) |
+//! | read back (display integrity) | [`DisplayDriver::read_back`] | `Engine::read_back` / `check_region` answer "unsupported"; the application checks with a frame observer instead |
 //!
 //! The engine calls them only between frames, with no flush in flight (never in the middle of
 //! a transfer), and never sends anything to the panel before the settle time a
@@ -336,6 +337,42 @@ pub trait DisplayDriver {
     /// (the driver must then keep reporting its previous rotation).
     fn set_rotation(&mut self, rotation: Rotation) -> Result<DisplayInfo, ControlError<Self::Error>> {
         let _ = rotation;
+        Err(ControlError::Unsupported)
+    }
+
+    /// Reads the pixels of `area` back from the panel's frame memory (GRAM; MIPI DCS `RAMRD`)
+    /// into `buf`, in the layout of a flush (see [§ Pixel layout](self#pixel-layout-of-a-flush):
+    /// rows of `area`, tightly packed, in [`DisplayInfo::format`]; `area` in the same
+    /// coordinates as a flush). It is the "actual" half of a display-integrity check: the
+    /// engine compares a checksum of what the panel holds with a checksum of an independent
+    /// re-render (`Engine::check_region`). Optional — the default answers
+    /// [`ControlError::Unsupported`]; panels without a readable frame memory (no MISO line,
+    /// write-only interfaces) keep it.
+    ///
+    /// Called by the engine only between frames with no flush in flight. A driver converts
+    /// the controller's read format (often 18-bit) to the write format, so the bytes compare
+    /// with what was flushed.
+    ///
+    /// # Errors
+    /// [`ControlError::Unsupported`] (default), or [`ControlError::Driver`] when reading
+    /// failed (bus error, `area` outside the panel, `buf` too short).
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Rect};
+    /// use twine_hal::{ControlError, DisplayDriver, DisplayInfo, DrawBufferMem};
+    ///
+    /// struct WriteOnly;
+    /// impl DisplayDriver for WriteOnly {
+    ///     type Error = ();
+    ///     fn info(&self) -> DisplayInfo { DisplayInfo::new(8, 8, ColorFormat::Rgb565) }
+    ///     fn begin_flush(&mut self, _: Rect, _: DrawBufferMem) -> Result<(), ()> { Ok(()) }
+    ///     fn poll_flush(&mut self) -> Option<DrawBufferMem> { None }
+    /// }
+    /// let mut buf = [0u8; 8];
+    /// assert_eq!(WriteOnly.read_back(Rect::from_xywh(0, 0, 2, 2), &mut buf), Err(ControlError::Unsupported));
+    /// ```
+    fn read_back(&mut self, area: Rect, buf: &mut [u8]) -> Result<(), ControlError<Self::Error>> {
+        let _ = (area, buf);
         Err(ControlError::Unsupported)
     }
 }

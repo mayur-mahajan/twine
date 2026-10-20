@@ -2,15 +2,17 @@
 
 use alloc::boxed::Box;
 use core::fmt;
+use core::num::{NonZeroU32, NonZeroU64};
 
 use twine_core::Duration;
 
 use crate::timeline::AnimCx;
 use crate::{AnimSpec, Easing, Repeat};
 
-/// A raw engine node key (the engine converts its node ids to and from `u32`; this crate sits
-/// below the engine and cannot name them).
-pub type NodeKey = u32;
+/// A raw engine node key: the engine's node id packed into a [`RawId`](twine_core::RawId)
+/// (`u32`; `u64` in the safety profile, whose generations are 32 bits). This crate sits below
+/// the engine and cannot name its ids.
+pub type NodeKey = twine_core::RawId;
 
 /// A raw node property code: which property of a node an animation writes. This crate only
 /// compares codes (an animation started on the same node and code replaces the running one);
@@ -221,12 +223,13 @@ impl Anim {
     /// ```
     #[must_use]
     pub fn speed(mut self, px_per_s: u32) -> Self {
-        if px_per_s == 0 {
+        let Some(px) = NonZeroU32::new(px_per_s) else {
             twine_core::warn!(target: "twine::anim", "Anim::speed: zero speed ignored");
             return self;
-        }
+        };
         let dist = u64::from(self.start.abs_diff(self.end));
-        let us = dist * 1_000_000 / u64::from(px_per_s);
+        // `dist < 2^32`, so `dist · 10^6 < 2^52`: the multiplication is exact.
+        let us = dist.saturating_mul(1_000_000) / NonZeroU64::from(px);
         self.spec.duration = Duration::us(us.max(1_000));
         self
     }
@@ -333,7 +336,10 @@ impl Anim {
         let s = &self.spec;
         let d = u128::from(s.duration.as_micros());
         match s.playback {
-            Some(pb) => d + u128::from(s.playback_delay.as_micros()) + u128::from(pb.as_micros()),
+            // Three `u64` terms: the `u128` sum cannot overflow (saturating states the bound).
+            Some(pb) => d
+                .saturating_add(u128::from(s.playback_delay.as_micros()))
+                .saturating_add(u128::from(pb.as_micros())),
             None => d,
         }
     }
@@ -350,8 +356,15 @@ impl Anim {
     /// Total time from the end of the initial delay to the end of the animation, `None` if
     /// infinite. Used for the finished check.
     fn active_len(&self) -> Option<u128> {
-        let cycles = u128::from(self.spec.repeat.cycles()?);
-        Some(cycles * self.play_len() + (cycles - 1) * u128::from(self.spec.repeat_delay.as_micros()))
+        let cycles = self.spec.repeat.cycles()?;
+        // `u16` cycles times `< 2^66` µs: far inside `u128` (saturating states the bound).
+        let delays = u128::from(cycles.saturating_sub(1))
+            .saturating_mul(u128::from(self.spec.repeat_delay.as_micros()));
+        Some(
+            u128::from(cycles)
+                .saturating_mul(self.play_len())
+                .saturating_add(delays),
+        )
     }
 
     /// The state of the animation `elapsed` after it was started. Pure and allocation-free.
@@ -365,16 +378,16 @@ impl Anim {
         let e = elapsed.as_micros();
         let spec = &self.spec;
         let delay = spec.delay.as_micros();
-        if e < delay {
+        let Some(t) = e.checked_sub(delay) else {
             return Sample {
                 value: self.start,
                 phase: Phase::Delay,
                 finished: false,
                 repeats_done: 0,
-                phase_left: Duration::us(delay - e),
+                phase_left: Duration::us(delay.saturating_sub(e)),
             };
-        }
-        let t = u128::from(e - delay);
+        };
+        let t = u128::from(t);
         let last_phase = if spec.playback.is_some() {
             Phase::Backward
         } else {
@@ -388,14 +401,14 @@ impl Anim {
             phase_left: Duration::ZERO,
         };
         let play = self.play_len();
-        let cycle = play + u128::from(spec.repeat_delay.as_micros());
+        let cycle = play.saturating_add(u128::from(spec.repeat_delay.as_micros()));
         if let (Some(cycles), Some(total)) = (spec.repeat.cycles(), self.active_len()) {
             if t >= total {
-                return finished(cycles - 1);
+                return finished(cycles.saturating_sub(1));
             }
         }
-        if cycle == 0 {
-            // Infinite animation without any duration: sits at its final value.
+        let (Some(k), Some(w)) = (t.checked_div(cycle), t.checked_rem(cycle)) else {
+            // `cycle == 0`: an infinite animation without any duration sits at its final value.
             return Sample {
                 value: self.final_value(),
                 phase: last_phase,
@@ -403,11 +416,12 @@ impl Anim {
                 repeats_done: 0,
                 phase_left: Duration::ZERO,
             };
-        }
-        let k = t / cycle;
-        let w = (t % cycle) as u64;
+        };
+        let w = w as u64;
         let repeats_done = k.min(u128::from(u16::MAX)) as u16;
-        let left = |end: u128| Duration::us((end - u128::from(w)).min(u128::from(u64::MAX)) as u64);
+        // Called with a phase end `end > w`.
+        let left =
+            |end: u128| Duration::us(end.saturating_sub(u128::from(w)).min(u128::from(u64::MAX)) as u64);
 
         let d = spec.duration.as_micros();
         if w < d {
@@ -433,7 +447,7 @@ impl Anim {
             }
             let back_end = pd_end.saturating_add(pb.as_micros());
             if w < back_end {
-                let p = Duration::fraction_1024(Duration::us(w - pd_end), pb);
+                let p = Duration::fraction_1024(Duration::us(w.saturating_sub(pd_end)), pb);
                 return Sample {
                     value: spec.easing.value(p, self.end, self.start),
                     phase: Phase::Backward,

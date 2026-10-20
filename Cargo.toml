@@ -33,7 +33,7 @@ members = [
     "tools/twine-cli",
     "tools/twine-bench",
 ]
-exclude = ["firmware", "fuzz", "crates/twine-esp"]
+exclude = ["firmware", "fuzz", "crates/twine-esp", "tools/safety-api"]
 
 [workspace.package]
 version = "0.1.0"

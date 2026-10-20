@@ -63,10 +63,32 @@ bitflags::bitflags! {
         /// the bounding box of its children, it draws nothing, does not clip its children and
         /// is transparent to hit-testing.
         const LAYOUT_PASSTHROUGH = 1 << 22;
-        /// Reserved for layouts.
-        const LAYOUT_1 = 1 << 23;
-        /// Reserved for layouts.
-        const LAYOUT_2 = 1 << 24;
+        /// A safety-critical node (not in LVGL; display integrity, see
+        /// `docs/safety/profile.md` § 11): a value whose wrong display would be a hazard. The
+        /// engine draws it on its own terms —
+        ///
+        /// - **whole on every change:** a partial invalidation of the node
+        ///   ([`Engine::invalidate_node_area`](crate::Engine::invalidate_node_area), widget
+        ///   setters redrawing a part) redraws all of it;
+        /// - **no caches:** its drawing runs in fresh mode (circle, gradient, shadow and glyph
+        ///   caches recomputed from their sources), so a corrupted cache cannot change it;
+        /// - **no transitions:** state changes apply its new style at once (no style
+        ///   transition, no theme motion);
+        /// - **no opacity or layer from ancestors:** it is drawn opaque to its ancestors'
+        ///   opacity and outside their layers (an ancestor's opacity group, blend mode,
+        ///   transform or bitmap mask does not apply to it; it is drawn right after that
+        ///   ancestor's layer, at its own coordinates); its own styles still apply;
+        /// - **reported:** [`Engine::critical_nodes`](crate::Engine::critical_nodes) lists the
+        ///   critical nodes and [`Engine::critical_report`](crate::Engine::critical_report)
+        ///   gives each one's drawn rectangle, its value digest and the frame it was last
+        ///   drawn in, for cross-checks ([`Engine::check_region`](crate::Engine::check_region)).
+        ///
+        /// Costs nothing for other nodes beyond one flag test where the draw walk reads the
+        /// flags anyway; the engine keeps the critical nodes in a list (registration allocates
+        /// once per node, at start-up).
+        #[doc(alias = "certified")]
+        #[cfg(feature = "display-integrity")]
+        const SAFETY_CRITICAL = 1 << 23;
         /// Reserved for widgets.
         const WIDGET_1 = 1 << 25;
         /// Reserved for widgets.
@@ -179,6 +201,16 @@ mod tests {
             assert_eq!(seen & f.bits(), 0, "{name} overlaps");
             seen |= f.bits();
         }
-        assert_eq!(seen.count_ones(), 32);
+        // Bit 24 is free (LVGL's `LAYOUT_2`; `LAYOUT_1`'s bit is `SAFETY_CRITICAL`, which
+        // exists with the `display-integrity` feature).
+        assert_eq!(
+            seen.count_ones(),
+            if cfg!(feature = "display-integrity") {
+                31
+            } else {
+                30
+            }
+        );
+        assert_eq!(seen & (1 << 24), 0);
     }
 }

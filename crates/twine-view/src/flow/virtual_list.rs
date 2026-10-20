@@ -10,6 +10,8 @@ use twine_engine::{Engine, EventCode, EventFilter, EventResult, NodeId, Obj, Obj
 use twine_reactive::{ReadSignal, Scope, Signal};
 use twine_style::{Axis, Length, ScrollbarMode, Selector, StyleProp};
 
+use twine_core::alloc_guard::{self, AllocSite};
+
 use super::for_each::{delete_row, sync_item};
 use super::items::{IntoItems, Items};
 use crate::access::EngineAccess;
@@ -30,9 +32,16 @@ use crate::view::{AnyView, IntoAnyView, View};
 ///
 /// Size the list with modifiers (default: the parent's full content area).
 ///
+/// **Bound.** At most [`Limits::max_list_items`](twine_core::Limits::max_list_items) rows
+/// exist: visible items beyond it get no row, and a
+/// [`CapacityFault::ListItems`](twine_core::fault::CapacityFault::ListItems) fault is raised.
+///
 /// **Cost.** Per visible row: a scope and a signal holding a copy of its item. A scroll that
 /// does not change the visible range reads nothing; one that does compares the visible keys.
-/// A change of the items compares the keys and values of the visible rows only.
+/// A change of the items compares the keys and values of the visible rows only. The sync's
+/// scratch is kept between syncs (reserved for the bound with
+/// [`Limits::preallocate`](twine_core::Limits::preallocate)), so scrolling and changes
+/// allocate nothing beyond the rows they build.
 ///
 /// ```
 /// use twine_view::prelude::*;
@@ -65,10 +74,24 @@ where
             count: 0,
             range: (0, 0),
             content: None,
+            bound: usize::MAX,
+            scratch: Scratch {
+                shown: Vec::new(),
+                gone: Vec::new(),
+                added: Vec::new(),
+            },
         }),
     });
     let inner = widget_view(|| Obj).op(move |cx, node| {
         let e = cx.engine();
+        let limits = *e.limits();
+        {
+            let mut s = list.state.borrow_mut();
+            s.bound = usize::from(limits.max_list_items);
+            if limits.preallocate {
+                s.reserve();
+            }
+        }
         for p in [
             StyleProp::BgOpacity(Opa::TRANSP.into()),
             StyleProp::BorderWidth(Length::Px(0).into()),
@@ -101,7 +124,9 @@ where
         let rt = scope.runtime();
         let l = list.clone();
         cx.on_delete(node, move || {
-            for row in l.state.borrow_mut().rows.drain(..) {
+            // Taken out first: disposing runs user cleanups.
+            let rows = core::mem::take(&mut l.state.borrow_mut().rows);
+            for row in rows {
                 row.scope.dispose();
             }
         });
@@ -155,6 +180,32 @@ struct ListState<T: 'static, K> {
     range: (usize, usize),
     /// The spacer child giving the list its scroll height.
     content: Option<NodeId>,
+    /// The most rows that exist at once ([`Limits::max_list_items`](twine_core::Limits::max_list_items)).
+    bound: usize,
+    /// Kept between syncs (cleared, not freed), so a sync allocates nothing beyond the rows
+    /// it builds once the scratch has reached its size (or was reserved for `bound`).
+    scratch: Scratch<T, K>,
+}
+
+/// What a sync works with.
+struct Scratch<T: 'static, K> {
+    /// Whether each visible index has a row.
+    shown: Vec<bool>,
+    /// Rows to dispose and delete.
+    gone: Vec<VRow<T, K>>,
+    /// Rows to build: `(index, key, item)`.
+    added: Vec<(usize, K, T)>,
+}
+
+impl<T: 'static, K> ListState<T, K> {
+    /// Reserves the rows and the scratch for `bound` rows ([`Limits::preallocate`](twine_core::Limits::preallocate)).
+    fn reserve(&mut self) {
+        let n = self.bound;
+        self.rows.reserve_exact(n);
+        self.scratch.shown.reserve_exact(n);
+        self.scratch.gone.reserve_exact(n);
+        self.scratch.added.reserve_exact(n);
+    }
 }
 
 /// A built row.
@@ -169,14 +220,28 @@ struct VRow<T: 'static, K> {
     moved: bool,
 }
 
-/// What a sync does in the engine.
-struct Changes<T: 'static, K> {
-    /// Rows to dispose and delete.
-    gone: Vec<VRow<T, K>>,
-    /// Rows to build: `(index, key, item)`.
-    added: Vec<(usize, K, T)>,
-    /// The new content height, when the number of items changed.
-    height: Option<i32>,
+/// Raises the `ListItems` capacity fault of a list that left `n` visible items without a row.
+#[cold]
+#[inline(never)]
+fn cut_fault(e: &mut Engine, node: NodeId, n: usize) {
+    twine_core::warn!(
+        target: "twine::view",
+        "virtual_list {}: {} visible item(s) beyond Limits::max_list_items not shown",
+        twine_engine::fmt_node_id(node),
+        n
+    );
+    e.raise_fault(
+        twine_engine::FaultRecord::new(twine_core::fault::FaultKind::Capacity)
+            .node(node)
+            .code(twine_core::fault::CapacityFault::ListItems.code()),
+    );
+}
+
+/// The y offset of row `i` (`i · row_height`, saturated); `row_height >= 1`.
+fn y_of(i: usize, row_height: i32) -> i32 {
+    // DIV: `row_height >= 1` (clamped by the constructor); the fallback is never taken.
+    let max_rows = i32::MAX.checked_div(row_height).unwrap_or(i32::MAX);
+    i32::try_from(i).unwrap_or(max_rows).saturating_mul(row_height)
 }
 
 impl<T: Clone + PartialEq + 'static, K: PartialEq + 'static> List<T, K> {
@@ -188,8 +253,10 @@ impl<T: Clone + PartialEq + 'static, K: PartialEq + 'static> List<T, K> {
         if count == 0 || area.height() <= 0 {
             return (0, 0);
         }
-        let first = usize::try_from(scroll_y / rh).unwrap_or(0);
-        let last = usize::try_from((scroll_y + area.height()) / rh).unwrap_or(0) + 1;
+        // DIV: `row_height >= 1` (clamped by the constructor); the fallbacks are never taken.
+        let row_at = |y: i32| usize::try_from(y.checked_div(rh).unwrap_or(0)).unwrap_or(0);
+        let first = row_at(scroll_y);
+        let last = row_at(scroll_y.saturating_add(area.height())).saturating_add(1);
         (first.min(count), last.min(count))
     }
 
@@ -209,65 +276,89 @@ impl<T: Clone + PartialEq + 'static, K: PartialEq + 'static> List<T, K> {
             // row signals written here notify their bindings after the sync.
             rt.untrack(|| rt.batch(|| changes = Some(self.diff(e, node, items))));
         });
-        if let Some(c) = changes {
-            self.apply(e, node, scope, c);
+        if let Some((height, cut)) = changes {
+            if cut > 0 {
+                cut_fault(e, node, cut);
+            }
+            self.apply(e, node, scope, height);
         }
     }
 
     /// Matches the rows with the visible items: kept rows get their item updated and their
-    /// new index; the rest is returned.
-    fn diff(&self, e: &Engine, node: NodeId, items: &[T]) -> Changes<T, K> {
-        let (first, last) = self.visible(e, node, items.len());
-        let mut s = self.state.borrow_mut();
-        let height = (s.count != items.len()).then(|| {
-            i32::try_from(items.len())
-                .unwrap_or(i32::MAX / self.row_height)
-                .saturating_mul(self.row_height)
-        });
-        s.count = items.len();
-        s.range = (first, last);
-        // Which row shows each visible index.
-        let mut shown: Vec<bool> = alloc::vec![false; last - first];
-        let mut gone = Vec::new();
-        let mut r = 0;
-        while r < s.rows.len() {
-            let row = &s.rows[r];
-            let free = |i: usize| !shown[i - first];
-            let same = (first..last).contains(&row.index)
-                && free(row.index)
-                && (self.key)(&items[row.index]) == row.key;
-            let pos = if same {
+    /// new index; the rows to delete and to build are left in the scratch. Returns the new
+    /// content height (when the number of items changed) and the number of visible items
+    /// beyond the bound (not shown).
+    fn diff(&self, e: &Engine, node: NodeId, items: &[T]) -> (Option<i32>, usize) {
+        let (first, visible_last) = self.visible(e, node, items.len());
+        let mut st = self.state.borrow_mut();
+        let ListState {
+            rows,
+            count,
+            range,
+            bound,
+            scratch: Scratch { shown, gone, added },
+            ..
+        } = &mut *st;
+        let last = visible_last.min(first.saturating_add(*bound));
+        let cut = visible_last.saturating_sub(last);
+        let height = (*count != items.len()).then(|| y_of(items.len(), self.row_height));
+        *count = items.len();
+        *range = (first, visible_last);
+        // Which row shows each visible index (`first <= last <= items.len()`, from `visible`).
+        let n = last.saturating_sub(first);
+        shown.clear();
+        alloc_guard::reserve(shown, n, AllocSite::Reconcile);
+        shown.resize(n, false);
+        // Whether visible index `i` has no row yet (`false` outside `first..last`).
+        let free = |shown: &[bool], i: usize| i.checked_sub(first).and_then(|o| shown.get(o)) == Some(&false);
+        let mut r = 0usize;
+        while let Some(row) = rows.get(r) {
+            let shows = |i: usize| items.get(i).is_some_and(|item| (self.key)(item) == row.key);
+            let pos = if free(shown, row.index) && shows(row.index) {
                 Some(row.index)
             } else {
-                (first..last).find(|&i| free(i) && (self.key)(&items[i]) == row.key)
+                (first..last).find(|&i| free(shown, i) && shows(i))
             };
             match pos {
                 Some(i) => {
-                    shown[i - first] = true;
-                    let row = &mut s.rows[r];
-                    sync_item(row.item, &items[i]);
-                    if row.index != i {
-                        row.index = i;
-                        row.moved = true;
+                    if let Some(flag) = i.checked_sub(first).and_then(|o| shown.get_mut(o)) {
+                        *flag = true;
                     }
-                    r += 1;
+                    if let (Some(row), Some(item)) = (rows.get_mut(r), items.get(i)) {
+                        sync_item(row.item, item);
+                        if row.index != i {
+                            row.index = i;
+                            row.moved = true;
+                        }
+                    }
+                    r = r.saturating_add(1);
                 }
-                None => gone.push(s.rows.swap_remove(r)),
+                None => alloc_guard::push(gone, rows.swap_remove(r), AllocSite::Reconcile),
             }
         }
-        let added = (first..last)
-            .filter(|&i| !shown[i - first])
-            .map(|i| (i, (self.key)(&items[i]), items[i].clone()))
-            .collect();
-        Changes { gone, added, height }
+        for i in (first..last).filter(|&i| free(shown, i)) {
+            if let Some(item) = items.get(i) {
+                alloc_guard::push(added, (i, (self.key)(item), item.clone()), AllocSite::Reconcile);
+            }
+        }
+        (height, cut)
     }
 
     /// Deletes the rows that left, places the moved ones and builds the new ones.
-    fn apply(&self, e: &mut Engine, node: NodeId, scope: Scope, c: Changes<T, K>) {
+    fn apply(&self, e: &mut Engine, node: NodeId, scope: Scope, height: Option<i32>) {
         let rt = scope.runtime();
         let rh = self.row_height;
-        let y_of = |i: usize| i32::try_from(i).unwrap_or(i32::MAX / rh).saturating_mul(rh);
-        for row in c.gone {
+        let y_of = |i: usize| y_of(i, rh);
+        // Taken out for the time of the apply (user code runs: cleanups, views), given back
+        // empty with their capacity.
+        let (mut gone, mut added) = {
+            let mut s = self.state.borrow_mut();
+            (
+                core::mem::take(&mut s.scratch.gone),
+                core::mem::take(&mut s.scratch.added),
+            )
+        };
+        for row in gone.drain(..) {
             delete_row(e, row.scope, row.node);
         }
         let content = {
@@ -278,11 +369,10 @@ impl<T: Clone + PartialEq + 'static, K: PartialEq + 'static> List<T, K> {
             }
             s.content
         };
-        if let (Some(h), Some(content)) = (c.height, content) {
+        if let (Some(h), Some(content)) = (height, content) {
             e.set_local_prop(content, Selector::MAIN, StyleProp::Height(Length::Px(h).into()));
         }
-        let mut built = Vec::with_capacity(c.added.len());
-        for (index, key, item) in c.added {
+        for (index, key, item) in added.drain(..) {
             let child = scope.child();
             let item = child.signal(item);
             // The engine is lent to the hooks the row's view uses.
@@ -293,16 +383,23 @@ impl<T: Clone + PartialEq + 'static, K: PartialEq + 'static> List<T, K> {
             };
             e.set_pos(row, 0, y_of(index));
             e.set_size(row, Length::pct(100), rh);
-            built.push(VRow {
-                index,
-                key,
-                node: row,
-                scope: child,
-                item,
-                moved: false,
-            });
+            let mut s = self.state.borrow_mut();
+            alloc_guard::push(
+                &mut s.rows,
+                VRow {
+                    index,
+                    key,
+                    node: row,
+                    scope: child,
+                    item,
+                    moved: false,
+                },
+                AllocSite::Reconcile,
+            );
         }
-        self.state.borrow_mut().rows.append(&mut built);
+        let mut s = self.state.borrow_mut();
+        s.scratch.gone = gone;
+        s.scratch.added = added;
     }
 }
 

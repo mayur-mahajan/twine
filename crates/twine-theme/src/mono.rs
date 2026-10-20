@@ -109,7 +109,7 @@ fn expand_border(w: i32) -> StyleBuf {
     // lv_style_set_pad_all(&style, PAD_DEF + BORDER_W_NORMAL - BORDER_W_x)
     StyleBuf::new()
         .border_width(w)
-        .padding(PAD_DEF + BORDER_W_NORMAL - w)
+        .padding((PAD_DEF + BORDER_W_NORMAL).saturating_sub(w))
 }
 
 /// The mono theme's design elements in `mode`: `COLOR_FG` / `COLOR_BG` of LVGL (black and

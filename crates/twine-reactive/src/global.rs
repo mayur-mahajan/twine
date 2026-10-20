@@ -16,8 +16,10 @@
 
 use core::marker::PhantomData;
 
-use twine_core::fault::FaultCounts;
+use twine_core::Limits;
+use twine_core::fault::{CapacityFault, FaultCounts};
 
+use crate::error::ReactiveError;
 use crate::runtime::{FaultHook, RuntimeState};
 use crate::scope::Scope;
 use crate::{Stats, runtime};
@@ -153,6 +155,8 @@ fn used_from_interrupt() -> ! {
         target: "twine::reactive",
         "reactive runtime used from interrupt context (send a message through a Channel instead)"
     );
+    // PANIC: `debug-checks` only (a debugging aid): the runtime reached from interrupt context
+    // through `unsafe` code would be a data race; stopping is the only sound reaction.
     panic!(
         "twine-reactive: the reactive runtime was used from interrupt context; only `Channel` and \
          `UiWaker` may be used there (debug-checks)"
@@ -261,8 +265,7 @@ impl Runtime {
     /// Creates a new root scope.
     ///
     /// Multiple roots may coexist (each `Ui` owns one). A root lives until it is
-    /// [disposed](Scope::dispose). Allocates the scope's arena slot (amortized); panics only
-    /// when the arena already holds 65 535 live scopes.
+    /// [disposed](Scope::dispose). Allocates the scope's arena slot (amortized).
     ///
     /// ```
     /// let rt = twine_reactive::Runtime::take().unwrap();
@@ -271,9 +274,39 @@ impl Runtime {
     /// assert_eq!(n.get(), 1);
     /// cx.dispose();
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Only when the runtime already holds [`Limits::max_scopes`](twine_core::Limits::max_scopes) live scopes. With `no-panic-runtime` it
+    /// never panics: it returns a scope that is never alive after a `warn!` and a
+    /// [`Capacity`](crate::FaultKind::Capacity) fault.
+    /// [`try_create_root`](Self::try_create_root) returns the error instead.
     #[must_use]
+    #[inline]
+    #[track_caller]
     pub fn create_root(self) -> Scope {
-        create_root()
+        match try_create_root() {
+            Ok(s) => s,
+            Err(e) => crate::scope::dead_scope(e),
+        }
+    }
+
+    /// Like [`create_root`](Self::create_root), returning
+    /// [`ReactiveError::Capacity`] (`HandleKind::Scope`) when the runtime already holds `Limits::max_scopes`
+    /// live scopes instead of panicking. Raises no fault.
+    ///
+    /// ```
+    /// let rt = twine_reactive::Runtime::take().unwrap();
+    /// let cx = rt.try_create_root().expect("fewer than 65 535 scopes");
+    /// assert!(cx.is_alive());
+    /// cx.dispose();
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`ReactiveError::Capacity`], as above.
+    pub fn try_create_root(self) -> Result<Scope, ReactiveError> {
+        try_create_root()
     }
 
     /// Drops every node, scope, channel registration and pending effect of the runtime.
@@ -313,7 +346,7 @@ impl Runtime {
                 effect_runs,
                 memo_runs,
                 faults,
-                retired_slots: inner.nodes.retired() + inner.scopes.retired(),
+                retired_slots: inner.nodes.retired().saturating_add(inner.scopes.retired()),
             }
         })
     }
@@ -359,6 +392,69 @@ impl Runtime {
     /// ```
     pub fn take_faults(self) -> FaultCounts {
         with_runtime(|rt| core::mem::take(&mut rt.faults.borrow_mut().new))
+    }
+
+    /// Which bound the runtime's [`FaultKind::Capacity`](crate::FaultKind::Capacity) faults
+    /// since the last call were about: the occurrences per bound
+    /// ([`CapacityFault::ReactiveNodes`], [`ReactiveScopes`](CapacityFault::ReactiveScopes),
+    /// [`PendingEffects`](CapacityFault::PendingEffects)), clearing them. Their sum is the
+    /// `Capacity` count of [`take_faults`](Self::take_faults); `Ui` forwards each as a record
+    /// with its code. Allocates nothing; never panics.
+    ///
+    /// ```
+    /// use twine_core::Limits;
+    /// use twine_core::fault::CapacityFault;
+    ///
+    /// let rt = twine_reactive::Runtime::take().unwrap();
+    /// rt.set_limits(&Limits::DEFAULT.max_scopes(1)).unwrap();
+    /// let cx = rt.create_root();
+    /// assert!(cx.try_child().is_err()); // `try_*`: an error, no fault
+    /// let counts = rt.take_capacity_faults();
+    /// assert!(counts.iter().all(|&(_, n)| n == 0));
+    /// assert_eq!(counts[1].0, CapacityFault::ReactiveScopes);
+    /// cx.dispose();
+    /// ```
+    pub fn take_capacity_faults(self) -> [(CapacityFault, u32); 3] {
+        let counts = with_runtime(|rt| core::mem::take(&mut rt.faults.borrow_mut().capacity));
+        let [a, b, c] = counts;
+        let [ka, kb, kc] = runtime::RUNTIME_BOUNDS;
+        [(ka, a), (kb, b), (kc, c)]
+    }
+
+    /// Applies the runtime's share of `limits` (process-wide without `std`, per thread with
+    /// it): [`max_reactive_nodes`](Limits::max_reactive_nodes),
+    /// [`max_scopes`](Limits::max_scopes) and
+    /// [`max_pending_effects`](Limits::max_pending_effects) bound creations and the effect
+    /// queues from now on (a creation beyond them fails with
+    /// [`ReactiveError::Capacity`]; an effect beyond the queue bound is not queued and raises
+    /// a `Capacity` fault with code [`CapacityFault::PendingEffects`]). With
+    /// [`preallocate`](Limits::preallocate) it also reserves the node and scope arenas, both
+    /// effect queues and the propagation stack, so staying within the bounds allocates
+    /// nothing there. Lowering a bound below the current count refuses further creations
+    /// until enough are disposed. The `Ui` builders call it with `AppConfig::limits`.
+    ///
+    /// Allocates (the reservation) only with `preallocate`; never panics.
+    ///
+    /// # Errors
+    /// [`twine_core::Error::InvalidArgument`] from [`Limits::validate`]; nothing is applied.
+    ///
+    /// ```
+    /// use twine_core::Limits;
+    /// use twine_reactive::{HandleKind, ReactiveError};
+    ///
+    /// let rt = twine_reactive::Runtime::take().unwrap();
+    /// rt.set_limits(&Limits::DEFAULT.max_reactive_nodes(2).preallocated()).unwrap();
+    /// let cx = rt.create_root();
+    /// let _a = cx.signal(1);
+    /// let _b = cx.signal(2);
+    /// assert_eq!(cx.try_signal(3).err(), Some(ReactiveError::Capacity(HandleKind::Signal)));
+    /// cx.dispose();
+    /// rt.set_limits(&Limits::DEFAULT).unwrap();
+    /// ```
+    pub fn set_limits(self, limits: &Limits) -> Result<(), twine_core::Error> {
+        limits.validate()?;
+        with_runtime(|rt| rt.inner.borrow_mut().set_limits(limits));
+        Ok(())
     }
 
     /// Sets the function called for every fault the runtime records (`None` removes it), with
@@ -426,12 +522,10 @@ impl Scope {
     }
 }
 
-/// Creates a new root scope (lazily initializing the runtime); see [`Runtime::create_root`].
-pub(crate) fn create_root() -> Scope {
-    with_runtime(|rt| match rt.create_scope(None) {
-        Some(key) => Scope::from_key(key),
-        None => unreachable!("a root scope has no parent that could be dead"),
-    })
+/// Creates a new root scope (lazily initializing the runtime); see
+/// [`Runtime::try_create_root`].
+pub(crate) fn try_create_root() -> Result<Scope, ReactiveError> {
+    with_runtime(|rt| rt.create_scope(None)).map(Scope::from_key)
 }
 
 /// Sets the function that tells whether the caller runs in interrupt context (`None` removes

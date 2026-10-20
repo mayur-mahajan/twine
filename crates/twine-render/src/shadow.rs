@@ -167,6 +167,10 @@ pub struct ShadowCache {
     arena: Vec<u8>,
     tick: u32,
     stats: CacheStats,
+    /// Fresh mode ([`RenderCaches::set_fresh`](crate::RenderCaches::set_fresh)): a hit
+    /// recomputes its corner map before it is used.
+    #[cfg(feature = "display-integrity")]
+    fresh: bool,
 }
 
 impl ShadowCache {
@@ -178,7 +182,15 @@ impl ShadowCache {
             arena: Vec::with_capacity(n * MAP_BYTES_PER_ENTRY),
             tick: 0,
             stats: CacheStats::default(),
+            #[cfg(feature = "display-integrity")]
+            fresh: false,
         }
+    }
+
+    /// Fresh mode: every [`corner`](Self::corner) recomputes the map it returns.
+    #[cfg(feature = "display-integrity")]
+    pub(crate) fn set_fresh(&mut self, on: bool) {
+        self.fresh = on;
     }
 
     pub(crate) fn bytes_reserved(&self) -> usize {
@@ -235,6 +247,12 @@ impl ShadowCache {
             self.entries[i].last_use = self.tick;
             self.stats.hits = self.stats.hits.saturating_add(1);
             let e = self.entries[i];
+            #[cfg(feature = "display-integrity")]
+            if self.fresh {
+                if let Some(map) = self.arena.get_mut(e.off..e.off.saturating_add(e.len)) {
+                    build_corner(g, map, scratch);
+                }
+            }
             return &self.arena[e.off..e.off + e.len];
         }
         self.stats.misses = self.stats.misses.saturating_add(1);

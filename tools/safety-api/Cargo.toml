@@ -1,0 +1,15 @@
+# Compile checks of the `safety` profile's API (CI stage `safety-exclusions`, `cargo xtask ci`):
+# the panicking convenience forms do not exist in the profile (`src/bin/no_*.rs` must fail to
+# compile, naming the missing item), while their `Result` forms do (`src/bin/fallible_forms.rs`
+# must compile). Its own workspace (excluded from the main one): enabling `twine/safety` in a
+# member would turn the profile on for every crate of a workspace build.
+[package]
+name = "twine-safety-api-check"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+twine = { path = "../../crates/twine", default-features = false, features = ["safety", "log"] }

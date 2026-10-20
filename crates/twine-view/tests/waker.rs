@@ -20,7 +20,8 @@ fn ui_on(ch: &'static Channel<u32, 4>, seen: Signal<u32>) -> Ui {
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .clock(MockClock::new())
-        .build(move |cx| {
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(move |cx| {
             let local = cx.signal(0u32);
             cx.on_message(ch, move |v| {
                 local.set(v);
@@ -28,6 +29,7 @@ fn ui_on(ch: &'static Channel<u32, 4>, seen: Signal<u32>) -> Ui {
             });
             label(text!("{}", local.get()))
         })
+        .unwrap()
 }
 
 #[test]
@@ -100,10 +102,12 @@ fn app_provided_static_waker_is_used() {
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .clock(MockClock::new())
         .waker(&WAKER)
-        .build(|cx| {
+        .limits(twine_testing::HARNESS_LIMITS)
+        .try_build(|cx| {
             cx.on_message(&CH, |_| {});
             label("x")
-        });
+        })
+        .unwrap();
     assert!(core::ptr::eq(ui.waker(), &raw const WAKER));
     ui.update();
     CH.try_send(1).unwrap();

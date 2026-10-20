@@ -49,7 +49,7 @@ fn dropdown_view_two_way() {
         dropdown(names, sel).test_id("dd").align(Align::TopMid)
     });
     t.run_until_idle();
-    let sel = t.root_scope().expect_context::<Signal<usize>>();
+    let sel = t.root_scope().use_context::<Signal<usize>>().unwrap();
     let d = node(&t, "dd");
     assert_eq!(t.engine().widget::<Dropdown>(d).unwrap().selected(), 1);
     assert_eq!(
@@ -82,7 +82,7 @@ fn dropdown_view_options_signal_keeps_selection() {
         dropdown(opts, 2usize).test_id("dd")
     });
     t.run_until_idle();
-    let opts = t.root_scope().expect_context::<Signal<Vec<String>>>();
+    let opts = t.root_scope().use_context::<Signal<Vec<String>>>().unwrap();
     let d = node(&t, "dd");
     opts.set(vec![
         "x".to_string(),
@@ -149,7 +149,7 @@ fn roller_view_two_way() {
             .align(Align::Center)
     });
     t.run_until_idle();
-    let sel = t.root_scope().expect_context::<Signal<usize>>();
+    let sel = t.root_scope().use_context::<Signal<usize>>().unwrap();
     let r = node(&t, "r");
     {
         let e = t.engine();
@@ -223,7 +223,7 @@ fn list_view_for_each_reorder_minimal_moves() {
         .test_id("list")
     });
     t.run_until_idle();
-    let items = t.root_scope().expect_context::<Signal<Vec<u32>>>();
+    let items = t.root_scope().use_context::<Signal<Vec<u32>>>().unwrap();
     let ((), logs) = twine_testing::capture_logs(|| {
         items.set(vec![1, 3, 2, 4]);
         t.run_until_idle();
@@ -360,7 +360,7 @@ fn tabview_model_two_way() {
         .test_id("tv")
     });
     t.run_until_idle();
-    let tab_idx = t.root_scope().expect_context::<Signal<usize>>();
+    let tab_idx = t.root_scope().use_context::<Signal<usize>>().unwrap();
     let tv = node(&t, "tv");
     // User → signal.
     let b2 = t
@@ -377,7 +377,7 @@ fn tabview_model_two_way() {
     t.run_until_idle();
     assert_eq!(t.engine().widget::<Tabview>(tv).unwrap().active(), 1);
     // A dynamic title.
-    let title = t.root_scope().expect_context::<Signal<String>>();
+    let title = t.root_scope().use_context::<Signal<String>>().unwrap();
     title.set(String::from("Renamed"));
     t.run_until_idle();
     let e = t.engine();
@@ -422,7 +422,7 @@ fn tileview_model_two_way() {
         .test_id("tv")
     });
     t.run_until_idle();
-    let at = t.root_scope().expect_context::<Signal<TilePos>>();
+    let at = t.root_scope().use_context::<Signal<TilePos>>().unwrap();
     let tv = node(&t, "tv");
     let c = center_of(&t, tv);
     t.drag(c, Point::new(c.x - 150, c.y), Duration::ms(150));
@@ -488,7 +488,7 @@ fn msgbox_view_modal_buttons_and_close() {
         button(label("Behind")).test_id("behind")
     });
     t.run_until_idle();
-    let modal = t.root_scope().expect_context::<ModalHandle>();
+    let modal = t.root_scope().use_context::<ModalHandle>().unwrap();
     assert!(modal.is_open());
     let footer: Vec<NodeId> = t
         .find_all(twine_testing::by_class("msgbox_footer_button"))
@@ -540,7 +540,7 @@ fn msgbox_buttons_translated_by_text_fn() {
         label("behind")
     });
     t.run_until_idle();
-    let lang = t.root_scope().expect_context::<Signal<usize>>();
+    let lang = t.root_scope().use_context::<Signal<usize>>().unwrap();
     let labels = |t: &TestUi| -> Vec<String> {
         let e = t.engine();
         t.find_all(twine_testing::by_class("msgbox_footer_button"))
@@ -576,7 +576,7 @@ fn dropdown_items_are_texts_translated_in_one_binding() {
         .test_id("dd")
     });
     t.run_until_idle();
-    let lang = t.root_scope().expect_context::<Signal<usize>>();
+    let lang = t.root_scope().use_context::<Signal<usize>>().unwrap();
     let d = node(&t, "dd");
     assert_eq!(
         t.engine().widget::<Dropdown>(d).unwrap().options(),
@@ -611,7 +611,7 @@ fn roller_options_from_a_closure_and_a_memo() {
         ))
     });
     t.run_until_idle();
-    let n = t.root_scope().expect_context::<Signal<u32>>();
+    let n = t.root_scope().use_context::<Signal<u32>>().unwrap();
     let opts = |t: &TestUi, id| {
         t.engine()
             .widget::<Roller>(node(t, id))

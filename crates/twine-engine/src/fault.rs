@@ -251,7 +251,47 @@ impl Engine {
     /// assert_eq!(e.fault_counts().get(FaultKind::Capacity), 1); // counters are kept
     /// ```
     pub fn take_faults(&mut self) -> Faults {
+        self.raise_alloc_after_seal();
         core::mem::take(&mut self.faults.pending)
+    }
+
+    /// Raises [`FaultKind::AllocAfterSeal`] for the allocations Twine's growth points noted
+    /// since the last call while sealed ([`twine_core::alloc_guard`]): one record, `code` = the
+    /// last [`AllocSite`](twine_core::alloc_guard::AllocSite), `occurrences` = their number.
+    /// Does nothing when there were none (a few loads). `Ui` calls it at every update, and
+    /// [`take_faults`](Self::take_faults) before it reports. Never panics; allocates nothing.
+    ///
+    /// ```
+    /// use twine_core::alloc_guard::{self, AllocSite};
+    /// use twine_core::fault::FaultKind;
+    /// use twine_engine::{Engine, EngineConfig, Obj};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// alloc_guard::seal();
+    /// e.create_root(Box::new(Obj)).unwrap(); // a widget created after the seal
+    /// e.raise_alloc_after_seal();
+    /// let r = e.last_fault(FaultKind::AllocAfterSeal).unwrap();
+    /// assert_eq!(r.code, AllocSite::Widget.code());
+    /// alloc_guard::unseal();
+    /// ```
+    pub fn raise_alloc_after_seal(&mut self) {
+        if let Some(r) = twine_core::alloc_guard::take() {
+            self.raise_fault(
+                FaultRecord::new(FaultKind::AllocAfterSeal)
+                    .occurrences(r.count)
+                    .code(r.last.code()),
+            );
+        }
+    }
+
+    /// Logs and raises a [`FaultKind::Capacity`] fault for a creation refused at the bound
+    /// `bound` (with the node concerned, if any). Cold.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn capacity_refused(&mut self, bound: twine_core::fault::CapacityFault, node: Option<NodeId>) {
+        twine_core::error!(target: "twine::engine", "capacity reached: {}", bound.name());
+        let r = FaultRecord::new(FaultKind::Capacity).code(bound.code());
+        self.raise_fault(if let Some(n) = node { r.node(n) } else { r });
     }
 
     /// The kinds raised since the last [`take_faults`](Self::take_faults), without clearing

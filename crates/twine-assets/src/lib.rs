@@ -22,6 +22,9 @@
 //! `assets/fonts/fonts.toml` (sources, licenses and SHA-256 hashes of the TTF files are in
 //! `assets/fonts/SOURCES.md`); never edit them by hand.
 //!
+//! Besides the fonts, the feature `safety` selects the safety profile (enabled by the `twine`
+//! facade's `safety` feature, see `docs/safety/profile.md` in the repository).
+//!
 //! ## Bundles
 //!
 //! Sets of fonts for applications that do not want to list sizes one by one (the individual
@@ -84,6 +87,20 @@
 //! ```
 #![no_std]
 #![forbid(unsafe_code)]
+#![cfg_attr(not(test), deny(clippy::float_arithmetic))]
+// The safety profile's lints (`docs/safety/profile.md` § Lints): denied in library code under
+// the `safety` feature (`cargo xtask ci` stage `clippy-safety`).
+#![cfg_attr(
+    all(feature = "safety", not(test)),
+    deny(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::arithmetic_side_effects,
+    )
+)]
 
 /// The built-in fonts (each behind its cargo feature).
 #[allow(clippy::unreadable_literal)] // generated tables: large bitmap offsets

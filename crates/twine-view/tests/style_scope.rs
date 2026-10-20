@@ -55,7 +55,7 @@ fn indicator_colour_follows_a_signal() {
                 .test_id("bar"),
         ))
     });
-    let alarm = t.root_scope().expect_context::<Signal<bool>>();
+    let alarm = t.root_scope().use_context::<Signal<bool>>().unwrap();
     for id in ["slider", "bar"] {
         assert_eq!(color(&t, id, Part::Indicator), OK, "{id}");
         assert_ne!(color(&t, id, Part::Main), OK, "{id}: only the indicator");
@@ -124,7 +124,7 @@ fn part_in_a_state_combines_both() {
     assert_eq!(color(&t, "s", Part::Knob), DANGER);
     assert_ne!(color(&t, "s", Part::Main), PRESSED, "the main part is not styled");
     // The binding inside the nested scope stays reactive.
-    let hot = t.root_scope().expect_context::<Signal<bool>>();
+    let hot = t.root_scope().use_context::<Signal<bool>>().unwrap();
     hot.set(true);
     t.update();
     assert_eq!(color(&t, "s", Part::Indicator), DANGER);
@@ -250,7 +250,7 @@ fn idempotent_rerun_does_not_invalidate() {
             })
             .test_id("b")
     });
-    let n = t.root_scope().expect_context::<Signal<i32>>();
+    let n = t.root_scope().use_context::<Signal<i32>>().unwrap();
     let runs = rt().stats().effect_runs;
     n.set(2); // every binding re-runs with the same value
     t.update();
@@ -327,7 +327,7 @@ fn grid_tracks_are_reactive_in_a_state_scope() {
             .state(State::CHECKED, true)
             .test_id("g")
     });
-    let n = t.root_scope().expect_context::<Signal<usize>>();
+    let n = t.root_scope().use_context::<Signal<usize>>().unwrap();
     assert_eq!(tracks(&t, "g"), Some(3));
     // The second cell starts after one 20 px column (and the gap).
     let checked = t.find(by_id("cell")).coords().x0 - node_x(&t, "g");
@@ -393,7 +393,10 @@ fn shared_tracks_are_released_with_values_and_nodes() {
             },
         ))
     });
-    let (show, pick) = t.root_scope().expect_context::<(Signal<bool>, Signal<usize>)>();
+    let (show, pick) = t
+        .root_scope()
+        .use_context::<(Signal<bool>, Signal<usize>)>()
+        .unwrap();
     let g = node(&t, "g");
     assert_eq!(t.engine().grid_column_tracks(g), Some(&all[0][..]));
     let c = counts(&all);

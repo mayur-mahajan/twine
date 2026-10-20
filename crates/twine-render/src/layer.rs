@@ -124,6 +124,11 @@ impl Painter<'_> {
     /// Renders `f` into an `Argb8888` layer and composites it with `dsc`. `f` draws in screen
     /// coordinates and may be called several times (once per strip) for large layers.
     ///
+    /// A layer inside a layer (the layer buffer is in use) is drawn directly, without a
+    /// layer of its own. That case is handled inline: nested layers recurse through `f`
+    /// (the engine's draw traversal), so only this small check stays on the stack per
+    /// nesting level, not the strip and transform set-up of the outermost layer.
+    ///
     /// ```
     /// use twine_core::{Color, ColorFormat, Opa, Rect};
     /// use twine_render::{DrawBuf, LayerDsc, Painter, RenderCaches};
@@ -140,6 +145,7 @@ impl Painter<'_> {
     /// drop(p); // the buffer is read after the painter (and any accelerator) is done
     /// assert_eq!(data[0], data[3]);
     /// ```
+    #[inline]
     pub fn layer(&mut self, area: Rect, dsc: &LayerDsc, mut f: impl FnMut(&mut Painter<'_>)) {
         if dsc.opa.is_transparent() || area.is_empty() {
             return;
@@ -149,6 +155,13 @@ impl Painter<'_> {
             f(self);
             return;
         }
+        self.layer_with_buf(area, dsc, f);
+    }
+
+    /// [`layer`](Self::layer) with the layer buffer available: renders `f` strip by strip
+    /// (or once, transformed) into the buffer and composites it.
+    #[inline(never)]
+    fn layer_with_buf(&mut self, area: Rect, dsc: &LayerDsc, mut f: impl FnMut(&mut Painter<'_>)) {
         if let Some(t) = dsc.transform.filter(|t| !t.is_identity()) {
             let need = area.width() as usize * area.height() as usize * 4;
             if need <= self.caches_mut().layer_buf.len() {
@@ -192,6 +205,10 @@ impl Painter<'_> {
                     break;
                 };
                 let mut child = Painter::new(buf, self.caches_mut());
+                #[cfg(feature = "display-integrity")]
+                {
+                    child.in_layer = true;
+                }
                 f(&mut child);
                 child.touched_area()
             };
@@ -221,6 +238,10 @@ impl Painter<'_> {
             match DrawBuf::new_packed(&mut lb[..w * h * 4], ColorFormat::Argb8888, area) {
                 Ok(buf) => {
                     let mut child = Painter::new(buf, self.caches_mut());
+                    #[cfg(feature = "display-integrity")]
+                    {
+                        child.in_layer = true;
+                    }
                     f(&mut child);
                     child.touched_area().is_some()
                 }
