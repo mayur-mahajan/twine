@@ -96,20 +96,30 @@ fn star(path: &mut Path, c: FxPoint, r: i32, pentagram: bool) {
 }
 
 fn shapes(scene: &mut VectorScene) {
-    let (path, dsc) = scene.path_mut();
+    let Some((path, dsc)) = scene.path_mut() else {
+        return;
+    };
     path.rect(Rect::from_xywh(10, 10, 80, 60), 0);
     *dsc = fill(0x0042_A5F5);
-    let (path, dsc) = scene.path_mut();
+    let Some((path, dsc)) = scene.path_mut() else {
+        return;
+    };
     path.rounded_rect(FxRect::from_xywh(fx(100), fx(10), fx(80), fx(60)), fx(16), fx(16));
     *dsc = fill(0x0066_BB6A);
-    let (path, dsc) = scene.path_mut();
+    let Some((path, dsc)) = scene.path_mut() else {
+        return;
+    };
     path.circle(p(230, 40), fx(30));
     *dsc = fill(0x00FF_A726);
-    let (path, dsc) = scene.path_mut();
+    let Some((path, dsc)) = scene.path_mut() else {
+        return;
+    };
     path.ellipse(p(330, 40), fx(50), fx(25));
     *dsc = fill(0x00AB_47BC);
     // Curves: a quadratic wave, a cubic S and an elliptical arc.
-    let (path, dsc) = scene.path_mut();
+    let Some((path, dsc)) = scene.path_mut() else {
+        return;
+    };
     path.move_to(p(10, 150));
     path.quad_to(p(40, 90), p(70, 150));
     path.quad_to(p(100, 210), p(130, 150));
@@ -117,14 +127,18 @@ fn shapes(scene: &mut VectorScene) {
     path.line_to(p(10, 190));
     path.close();
     *dsc = fill(0x0026_A69A);
-    let (path, dsc) = scene.path_mut();
+    let Some((path, dsc)) = scene.path_mut() else {
+        return;
+    };
     path.move_to(p(150, 190));
     path.cubic_to(p(150, 90), p(230, 190), p(230, 100));
     path.line_to(p(250, 100));
     path.cubic_to(p(250, 200), p(170, 110), p(170, 190));
     path.close();
     *dsc = fill(0x00EF_5350);
-    let (path, dsc) = scene.path_mut();
+    let Some((path, dsc)) = scene.path_mut() else {
+        return;
+    };
     path.move_to(p(270, 150));
     path.arc_to(p(30, 20), Angle::deg(30), true, true, p(320, 160));
     path.line_to(p(295, 190));
@@ -132,7 +146,9 @@ fn shapes(scene: &mut VectorScene) {
     *dsc = fill(0x005C_6BC0);
     // Fill rules: the pentagram's center is inside for non-zero, outside for even-odd.
     for (cx, rule) in [(360, FillRule::NonZero), (420, FillRule::EvenOdd)] {
-        let (path, dsc) = scene.path_mut();
+        let Some((path, dsc)) = scene.path_mut() else {
+            return;
+        };
         star(path, p(cx, 150), 30, true);
         *dsc = VectorDsc {
             fill: Some((Paint::Solid(Color::hex(0x008D_6E63)), rule)),
@@ -184,7 +200,9 @@ fn gradients(scene: &mut VectorScene) {
         ),
     ];
     for (r, paint) in items {
-        let (path, dsc) = scene.path_mut();
+        let Some((path, dsc)) = scene.path_mut() else {
+            return;
+        };
         path.rect(r, 10);
         *dsc = VectorDsc {
             fill: Some((paint, FillRule::NonZero)),
@@ -200,7 +218,9 @@ fn strokes(scene: &mut VectorScene) {
         .enumerate()
     {
         let x = 20 + i as i32 * 140;
-        let (path, dsc) = scene.path_mut();
+        let Some((path, dsc)) = scene.path_mut() else {
+            return;
+        };
         path.move_to(p(x, 80));
         path.line_to(p(x + 30, 20));
         path.line_to(p(x + 60, 80));
@@ -213,17 +233,23 @@ fn strokes(scene: &mut VectorScene) {
         .enumerate()
     {
         let y = 115 + i as i32 * 24;
-        let (path, dsc) = scene.path_mut();
+        let Some((path, dsc)) = scene.path_mut() else {
+            return;
+        };
         path.move_to(p(40, y));
         path.line_to(p(180, y));
         *dsc = stroked(0x00FF_7043, 14, LineJoin::Miter, cap, None);
-        let (path, dsc) = scene.path_mut();
+        let Some((path, dsc)) = scene.path_mut() else {
+            return;
+        };
         path.move_to(p(40, y));
         path.line_to(p(180, y));
         *dsc = stroked(0x00FF_FFFF, 1, LineJoin::Miter, LineCap::Butt, None);
     }
     // Dashes on a circle, dots on a curve.
-    let (path, dsc) = scene.path_mut();
+    let Some((path, dsc)) = scene.path_mut() else {
+        return;
+    };
     path.circle(p(270, 145), fx(40));
     *dsc = stroked(
         0x001E_88E5,
@@ -232,7 +258,9 @@ fn strokes(scene: &mut VectorScene) {
         LineCap::Butt,
         Some(Dash::new(&[fx(14), fx(8)], Fx::ZERO)),
     );
-    let (path, dsc) = scene.path_mut();
+    let Some((path, dsc)) = scene.path_mut() else {
+        return;
+    };
     path.move_to(p(330, 180));
     path.cubic_to(p(350, 90), p(400, 200), p(430, 110));
     *dsc = stroked(
@@ -246,7 +274,9 @@ fn strokes(scene: &mut VectorScene) {
 
 /// A rotating, pulsing star (`angle` in 0.1°, `pulse` in ‰ of the radius).
 fn motion(scene: &mut VectorScene, angle: i32, pulse: i32) {
-    let (path, dsc) = scene.path_mut();
+    let Some((path, dsc)) = scene.path_mut() else {
+        return;
+    };
     star(path, p(80, 80), 40 + 20 * pulse / 1000, false);
     *dsc = VectorDsc {
         fill: Some((

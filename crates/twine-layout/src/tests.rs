@@ -216,6 +216,29 @@ mod flex {
     }
 
     #[test]
+    fn leaf_grid_without_templates_warns() {
+        #[cfg(all(feature = "log", not(feature = "defmt")))]
+        log_capture::install();
+        let mut t = ToyTree::new(100, 100);
+        let leaf = t.add(
+            ToyTree::ROOT,
+            StyleBuf::new().layout(LayoutKind::Grid).width(10).height(10),
+        );
+        run(&mut t);
+        assert_eq!(t.coords(leaf).width(), 10);
+        #[cfg(all(feature = "log", not(feature = "defmt")))]
+        {
+            let warnings = log_capture::take();
+            assert!(
+                warnings
+                    .iter()
+                    .any(|w| w.contains("grid layout without column and row templates")),
+                "{warnings:?}"
+            );
+        }
+    }
+
+    #[test]
     fn grow_distributes_free_space_exactly() {
         let (mut t, c) = flex(301, 100, FlexFlow::ROW);
         let ids: Vec<usize> = (1..=3)

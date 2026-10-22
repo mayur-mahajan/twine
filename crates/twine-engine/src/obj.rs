@@ -144,10 +144,10 @@ fn arrow_scroll(e: &mut Engine, obj: NodeId, k: Key) {
     let hor = e.scroll_dir(obj).intersects(Sides::HORIZONTAL)
         && (e.scroll_left(obj) > 0 || e.scroll_right(obj) > 0);
     match k {
-        Key::Right if hor => e.scroll_to_x(obj, off.x + dx, false),
-        Key::Left if hor => e.scroll_to_x(obj, off.x - dx, false),
-        Key::Down | Key::Right => e.scroll_to_y(obj, off.y + dy, false),
-        Key::Up | Key::Left => e.scroll_to_y(obj, off.y - dy, false),
+        Key::Right if hor => e.scroll_to_x(obj, off.x.saturating_add(dx), false),
+        Key::Left if hor => e.scroll_to_x(obj, off.x.saturating_sub(dx), false),
+        Key::Down | Key::Right => e.scroll_to_y(obj, off.y.saturating_add(dy), false),
+        Key::Up | Key::Left => e.scroll_to_y(obj, off.y.saturating_sub(dy), false),
         _ => {}
     }
 }

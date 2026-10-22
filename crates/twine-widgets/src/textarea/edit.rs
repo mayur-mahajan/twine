@@ -223,7 +223,9 @@ impl Textarea {
         if !self.insert_handler(cx, s) {
             return false;
         }
-        let sel = self.sel_range(cx.engine()).map_or(0, |(a, b)| b - a);
+        let sel = self
+            .sel_range(cx.engine())
+            .map_or(0, |(a, b)| b.saturating_sub(a));
         if !self.char_is_accepted(cx.engine(), c, sel) {
             twine_core::debug!(target: "twine::engine", "textarea: {:?} not accepted (length or list)", c);
             return false;
@@ -245,7 +247,7 @@ impl Textarea {
         if !self.add_char_inner(cx, c) {
             return;
         }
-        let p = self.cursor.pos + 1;
+        let p = self.cursor.pos.saturating_add(1);
         self.set_cursor_pos(cx, i32::try_from(p).unwrap_or(CURSOR_LAST));
         self.value_changed(cx);
     }
@@ -257,7 +259,7 @@ impl Textarea {
             if !self.add_char_inner(cx, c) {
                 continue;
             }
-            self.move_cursor(cx.engine(), self.cursor.pos + 1);
+            self.move_cursor(cx.engine(), self.cursor.pos.saturating_add(1));
             changed = true;
         }
         if changed {
@@ -286,12 +288,13 @@ impl Textarea {
         self.placeholder_refresh(cx);
         self.insert_at_cursor(cx, s);
         self.clear_selection(cx);
+        // `n ≥ 1` (`s` is not empty): the last inserted character is at `pos + n − 1`.
         let n = s.chars().count();
         if self.pwd.on {
-            self.auto_hide(cx, self.cursor.pos + n - 1);
+            self.auto_hide(cx, self.cursor.pos.saturating_add(n).saturating_sub(1));
         }
         self.log_edit(cx, "add text");
-        let p = self.cursor.pos + n;
+        let p = self.cursor.pos.saturating_add(n);
         self.set_cursor_pos(cx, i32::try_from(p).unwrap_or(CURSOR_LAST));
         self.value_changed(cx);
     }
@@ -315,7 +318,9 @@ impl Textarea {
         }
         let text = self.label_text(cx.engine());
         let b = self.cursor.byte.min(text.len());
-        let Some((pb, _)) = text[..b].char_indices().next_back() else {
+        // The cursor byte is a character boundary (kept with the cursor position).
+        let before = text.get(..b).unwrap_or("");
+        let Some((pb, _)) = before.char_indices().next_back() else {
             return;
         };
         let label = self.label;
@@ -329,7 +334,7 @@ impl Textarea {
         // The cursor's byte moved with the deleted character.
         self.cursor.byte = pb;
         self.log_edit(cx, "delete");
-        self.set_cursor_pos(cx, i32::try_from(pos - 1).unwrap_or(0));
+        self.set_cursor_pos(cx, i32::try_from(pos.saturating_sub(1)).unwrap_or(0));
         self.value_changed(cx);
     }
 
@@ -341,7 +346,7 @@ impl Textarea {
             return;
         }
         let cp = self.cursor.pos;
-        self.set_cursor_pos(cx, i32::try_from(cp + 1).unwrap_or(CURSOR_LAST));
+        self.set_cursor_pos(cx, i32::try_from(cp.saturating_add(1)).unwrap_or(CURSOR_LAST));
         if self.cursor.pos != cp {
             self.delete_char(cx);
         }
@@ -411,7 +416,12 @@ impl Textarea {
     pub fn set_cursor_pos(&mut self, cx: &mut WidgetCx<'_>, pos: i32) {
         let len = self.char_count(cx.engine());
         let p = if pos < 0 {
-            usize::try_from(i64::try_from(len).unwrap_or(i64::MAX) + i64::from(pos)).unwrap_or(0)
+            usize::try_from(
+                i64::try_from(len)
+                    .unwrap_or(i64::MAX)
+                    .saturating_add(i64::from(pos)),
+            )
+            .unwrap_or(0)
         } else {
             usize::try_from(pos).unwrap_or(usize::MAX).min(len)
         };
@@ -424,14 +434,14 @@ impl Textarea {
 
     /// Moves the cursor one character right (LVGL `lv_textarea_cursor_right`).
     pub fn cursor_right(&mut self, cx: &mut WidgetCx<'_>) {
-        let p = self.cursor.pos + 1;
+        let p = self.cursor.pos.saturating_add(1);
         self.set_cursor_pos(cx, i32::try_from(p).unwrap_or(CURSOR_LAST));
     }
 
     /// Moves the cursor one character left (LVGL `lv_textarea_cursor_left`).
     pub fn cursor_left(&mut self, cx: &mut WidgetCx<'_>) {
         if self.cursor.pos > 0 {
-            let p = self.cursor.pos - 1;
+            let p = self.cursor.pos.saturating_sub(1);
             self.set_cursor_pos(cx, i32::try_from(p).unwrap_or(0));
         }
     }
@@ -444,7 +454,8 @@ impl Textarea {
         let b = byte_of(l.shown_text(), self.cursor.pos);
         let pos = l.letter_pos(&lm, b);
         let m = cx.measure();
-        let step = i32::from(m.font(Part::Main).line_height) + m.style_i32(Part::Main, PropId::LineSpacing);
+        let step = i32::from(m.font(Part::Main).line_height)
+            .saturating_add(m.style_i32(Part::Main, PropId::LineSpacing));
         Some((pos, step))
     }
 
@@ -453,7 +464,7 @@ impl Textarea {
         let Some((mut pos, step)) = self.cursor_letter(cx) else {
             return;
         };
-        pos.y += step + 1;
+        pos.y = pos.y.saturating_add(step.saturating_add(1));
         pos.x = self.cursor.valid_x;
         let e = cx.engine();
         let label_h = e.coords(self.label).height();
@@ -475,7 +486,7 @@ impl Textarea {
         let Some((mut pos, step)) = self.cursor_letter(cx) else {
             return;
         };
-        pos.y -= step - 1;
+        pos.y = pos.y.saturating_sub(step.saturating_sub(1));
         pos.x = self.cursor.valid_x;
         let e = cx.engine();
         let Some(l) = e.widget::<Label>(self.label) else {

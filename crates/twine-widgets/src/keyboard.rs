@@ -265,20 +265,40 @@ pub enum KeyboardMode {
     User4,
 }
 
-impl KeyboardMode {
-    const ALL: [KeyboardMode; 8] = [
-        KeyboardMode::TextLower,
-        KeyboardMode::TextUpper,
-        KeyboardMode::Special,
-        KeyboardMode::Number,
-        KeyboardMode::User1,
-        KeyboardMode::User2,
-        KeyboardMode::User3,
-        KeyboardMode::User4,
-    ];
+/// The maps of the eight modes, reached by the mode (no index: one map per variant of
+/// [`KeyboardMode`], in its order).
+#[derive(Clone, Copy, Debug)]
+struct KbMaps([KbMap; 8]);
 
-    fn index(self) -> usize {
-        Self::ALL.iter().position(|m| *m == self).unwrap_or(0)
+impl KbMaps {
+    fn get(&self, mode: KeyboardMode) -> KbMap {
+        use KeyboardMode as M;
+        let [lower, upper, special, number, u1, u2, u3, u4] = self.0;
+        match mode {
+            M::TextLower => lower,
+            M::TextUpper => upper,
+            M::Special => special,
+            M::Number => number,
+            M::User1 => u1,
+            M::User2 => u2,
+            M::User3 => u3,
+            M::User4 => u4,
+        }
+    }
+
+    fn get_mut(&mut self, mode: KeyboardMode) -> &mut KbMap {
+        use KeyboardMode as M;
+        let [lower, upper, special, number, u1, u2, u3, u4] = &mut self.0;
+        match mode {
+            M::TextLower => lower,
+            M::TextUpper => upper,
+            M::Special => special,
+            M::Number => number,
+            M::User1 => u1,
+            M::User2 => u2,
+            M::User3 => u3,
+            M::User4 => u4,
+        }
     }
 }
 
@@ -350,7 +370,7 @@ pub struct Keyboard {
     ta: Option<NodeId>,
     mode: KeyboardMode,
     popovers: bool,
-    maps: [KbMap; 8],
+    maps: KbMaps,
 }
 
 impl Default for Keyboard {
@@ -368,7 +388,7 @@ impl Keyboard {
             ta: None,
             mode: KeyboardMode::TextLower,
             popovers: false,
-            maps: DEFAULT_MAPS,
+            maps: KbMaps(DEFAULT_MAPS),
         }
     }
 
@@ -547,12 +567,11 @@ impl Keyboard {
     /// assert_eq!((m.btn_count(), m.btn_text(3)), (4, Some("abc")));
     /// ```
     pub fn set_map(&mut self, cx: &mut WidgetCx<'_>, mode: KeyboardMode, map: &'static [&'static [MapBtn]]) {
-        let i = mode.index();
-        if core::ptr::eq(self.maps[i], map) {
+        if core::ptr::eq(self.maps.get(mode), map) {
             return;
         }
         log_set(KEYBOARD_CLASS.name, cx.node(), "map");
-        self.maps[i] = map;
+        *self.maps.get_mut(mode) = map;
         if self.mode == mode {
             self.update_map(cx);
         }
@@ -560,7 +579,7 @@ impl Keyboard {
 
     /// LVGL `lv_keyboard_update_map`.
     fn update_map(&mut self, cx: &mut WidgetCx<'_>) {
-        let map = self.maps[self.mode.index()];
+        let map = self.maps.get(self.mode);
         self.btnm.set_map(cx, BtnMap::Static(map));
         self.update_ctrl_map(cx);
     }
@@ -568,7 +587,7 @@ impl Keyboard {
     /// LVGL `lv_keyboard_update_ctrl_map`: the mode's control bits, without `POPOVER` when
     /// popovers are off.
     fn update_ctrl_map(&mut self, cx: &mut WidgetCx<'_>) {
-        let map = self.maps[self.mode.index()];
+        let map = self.maps.get(self.mode);
         let mask = if self.popovers {
             BtnCtrl::all()
         } else {
@@ -581,7 +600,7 @@ impl Keyboard {
 
     /// The text of key `idx` in the current (static) map.
     fn key_text(&self, idx: u16) -> Option<&'static str> {
-        nth_key(self.maps[self.mode.index()], usize::from(idx)).map(|b| b.text)
+        nth_key(self.maps.get(self.mode), usize::from(idx)).map(|b| b.text)
     }
 
     /// The attached textarea if it still exists; a dead one is warned about and cleared.
@@ -662,7 +681,7 @@ impl Keyboard {
                     } else {
                         t.set_cursor_pos(tcx, 0);
                         t.add_char(tcx, '-');
-                        t.set_cursor_pos(tcx, cur + 1);
+                        t.set_cursor_pos(tcx, cur.saturating_add(1));
                     }
                 })
             }
@@ -681,7 +700,8 @@ fn nth_key(map: KbMap, mut i: usize) -> Option<&'static MapBtn> {
         if let Some(b) = row.get(i) {
             return Some(b);
         }
-        i -= row.len();
+        // `i ≥ row.len()` (no key `i` in this row): exact.
+        i = i.saturating_sub(row.len());
     }
     None
 }

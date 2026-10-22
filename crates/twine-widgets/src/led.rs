@@ -18,6 +18,9 @@ use crate::util::{self, log_value};
 pub const LED_BRIGHT_MIN: Fraction = Fraction::from_raw(80);
 /// LVGL `LV_LED_BRIGHT_MAX` (255 of 255): the brightness of an LED that is on.
 pub const LED_BRIGHT_MAX: Fraction = Fraction::ONE;
+
+/// `LED_BRIGHT_MAX − LED_BRIGHT_MIN` (175): the brightness range scaling the shadow.
+const BRIGHT_SPAN: i64 = LED_BRIGHT_MAX.raw() as i64 - LED_BRIGHT_MIN.raw() as i64;
 /// LVGL `lv_led_class.width_def` / `height_def`: `LV_DPI_DEF / 5`.
 pub const LED_DEFAULT_SIZE: i32 = util::DPI_DEF / 5;
 /// The color an LED shows when its color is a design element its display's theme does not
@@ -70,7 +73,9 @@ impl Default for Led {
 /// LVGL `lv_color_brightness`: `(3 r + g + 4 b) / 8`.
 #[must_use]
 pub const fn color_brightness(c: Color) -> u8 {
-    ((3 * c.r as u16 + c.g as u16 + 4 * c.b as u16) >> 3) as u8
+    let (r, g, b) = (c.r as u16, c.g as u16, c.b as u16);
+    // SAFE-ARITH: `3·255 + 255 + 4·255 = 2040 < 2^16`.
+    (r.wrapping_mul(3).wrapping_add(g).wrapping_add(b.wrapping_mul(4)) >> 3) as u8
 }
 
 impl Led {
@@ -230,11 +235,15 @@ impl Widget for Led {
         let grad = d.bg_grad.map(|g| {
             let src = g.stops();
             let mut stops = [GradStop::new(Color::BLACK, Fraction::ZERO); MAX_STOPS];
-            stops[..src.len()].copy_from_slice(src);
+            for (d, s) in stops.iter_mut().zip(src) {
+                *d = *s;
+            }
             for s in stops.iter_mut().take(2.min(src.len())) {
                 s.color = self.tint(s.color);
             }
-            let mut n = Gradient::new(g.kind, &stops[..src.len()]);
+            // A gradient holds at most `MAX_STOPS` stops: the prefix always exists.
+            let used = stops.get(..src.len().min(MAX_STOPS)).unwrap_or_default();
+            let mut n = Gradient::new(g.kind, used);
             n.extend = g.extend;
             n.dither = g.dither;
             n
@@ -243,10 +252,12 @@ impl Widget for Led {
         d.shadow.color = self.tint(d.shadow.color);
         d.border_color = self.tint(d.border_color);
         d.outline_color = self.tint(d.outline_color);
-        let span = i32::from(LED_BRIGHT_MAX.raw() - LED_BRIGHT_MIN.raw());
-        let b = i32::from(self.bright - LED_BRIGHT_MIN.raw());
-        d.shadow.width = b * d.shadow.width / span;
-        d.shadow.spread = b * d.shadow.spread / span;
+        // The brightness above the minimum (`≤ 175`), scaling the shadow up to its full size.
+        let b = i64::from(self.bright.saturating_sub(LED_BRIGHT_MIN.raw()));
+        // SAFE-ARITH: `b < 2^8` and `|v| ≤ 2^31`: the product is below 2^39.
+        let scale = |v: i32| util::sat_i32(b.wrapping_mul(i64::from(v)) / BRIGHT_SPAN);
+        d.shadow.width = scale(d.shadow.width);
+        d.shadow.spread = scale(d.shadow.spread);
         let area = cx.engine().draw_area(cx.node());
         cx.painter().rect(area, &d);
     }

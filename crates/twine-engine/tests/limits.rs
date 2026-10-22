@@ -187,7 +187,7 @@ fn growth_after_seal_raises_alloc_after_seal_with_the_site() {
         let r = e.last_fault(FaultKind::AllocAfterSeal).copied();
         r.and_then(|r| AllocSite::from_code(r.code))
     };
-    alloc_guard::seal();
+    alloc_guard::seal(twine_core::Partition::MAIN);
     e.create(root, Box::new(Obj)).unwrap();
     assert_eq!(site(&mut e), Some(AllocSite::Widget));
     e.add_event_handler(root, EventFilter::All, |_, _| EventResult::Continue);
@@ -196,18 +196,22 @@ fn growth_after_seal_raises_alloc_after_seal_with_the_site() {
     assert_eq!(site(&mut e), Some(AllocSite::FocusGroup));
     // A timer within the preallocated table is noted for its boxed callback only through
     // the creation (`Timer` table growth is not reached).
-    let before = alloc_guard::total();
+    let before = alloc_guard::total(twine_core::Partition::MAIN);
     let ((), stats) = count_allocs(|| {
         e.timer_add(Duration::ms(5), |_, _| {});
     });
     assert!(stats.allocs > 0, "the callback is boxed");
-    assert_eq!(alloc_guard::total(), before, "the reserved table did not grow");
+    assert_eq!(
+        alloc_guard::total(twine_core::Partition::MAIN),
+        before,
+        "the reserved table did not grow"
+    );
     // Steady state: frames of an idle engine allocate nothing.
     e.run_timers(Instant::ZERO);
     assert_no_alloc_after_seal(|| {
         e.run_anims(Instant::from_millis(1));
     });
-    alloc_guard::unseal();
+    alloc_guard::unseal(twine_core::Partition::MAIN);
     assert_eq!(e.fault_counts().get(FaultKind::AllocAfterSeal), 3);
 }
 

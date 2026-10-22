@@ -47,6 +47,27 @@ impl Axis {
             Axis::Y => s.h,
         }
     }
+
+    /// This axis's entry of an `[x, y]` pair (no bounds check: the pair has an entry per
+    /// axis).
+    #[inline]
+    pub(crate) const fn pick<T: Copy>(self, pair: [T; 2]) -> T {
+        let [x, y] = pair;
+        match self {
+            Axis::X => x,
+            Axis::Y => y,
+        }
+    }
+
+    /// This axis's entry of an `[x, y]` pair, mutably.
+    #[inline]
+    pub(crate) fn pick_mut<T>(self, pair: &mut [T; 2]) -> &mut T {
+        let [x, y] = pair;
+        match self {
+            Axis::X => x,
+            Axis::Y => y,
+        }
+    }
 }
 
 bitflags::bitflags! {
@@ -253,11 +274,16 @@ pub(crate) fn spaces<T: LayoutTree + ?Sized>(t: &T, id: T::Id) -> Insets {
         .get::<BorderSide>()
         .unwrap_or(BorderSide::FULL);
     let b = |s: BorderSide| if side.contains(s) { bw } else { 0 };
+    // Style values are any `i32`: the sums saturate (as every coordinate sum of the layout).
     Insets::new(
-        t.style_i32(id, PropId::PaddingLeft) + b(BorderSide::LEFT),
-        t.style_i32(id, PropId::PaddingTop) + b(BorderSide::TOP),
-        t.style_i32(id, PropId::PaddingRight) + b(BorderSide::RIGHT),
-        t.style_i32(id, PropId::PaddingBottom) + b(BorderSide::BOTTOM),
+        t.style_i32(id, PropId::PaddingLeft)
+            .saturating_add(b(BorderSide::LEFT)),
+        t.style_i32(id, PropId::PaddingTop)
+            .saturating_add(b(BorderSide::TOP)),
+        t.style_i32(id, PropId::PaddingRight)
+            .saturating_add(b(BorderSide::RIGHT)),
+        t.style_i32(id, PropId::PaddingBottom)
+            .saturating_add(b(BorderSide::BOTTOM)),
     )
 }
 
@@ -287,9 +313,9 @@ pub(crate) const fn end(i: Insets, axis: Axis) -> i32 {
     }
 }
 
-/// Start + end inset along `axis`.
+/// Start + end inset along `axis` (saturating).
 pub(crate) const fn sum(i: Insets, axis: Axis) -> i32 {
-    start(i, axis) + end(i, axis)
+    start(i, axis).saturating_add(end(i, axis))
 }
 
 /// Sets the coordinates of `id` only if they change, then forgets the measurements that may
@@ -308,5 +334,10 @@ pub(crate) fn place<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::
 
 /// The content rectangle of a node's outer rectangle.
 pub(crate) const fn content_rect(r: Rect, sp: Insets) -> Rect {
-    Rect::new(r.x0 + sp.left, r.y0 + sp.top, r.x1 - sp.right, r.y1 - sp.bottom)
+    Rect::new(
+        r.x0.saturating_add(sp.left),
+        r.y0.saturating_add(sp.top),
+        r.x1.saturating_sub(sp.right),
+        r.y1.saturating_sub(sp.bottom),
+    )
 }

@@ -1,12 +1,15 @@
 //! One module per xtask subcommand.
 
+pub mod audit;
 pub mod bench;
 pub mod ci;
 pub mod coverage;
+pub mod divisions;
 pub mod feature_forwarding;
 pub mod firmware;
 pub mod fonts;
 pub mod fuzz;
+pub mod guidelines;
 pub mod images;
 pub mod layers;
 pub mod miri;
@@ -15,6 +18,7 @@ pub mod panel_colors;
 pub mod panics;
 pub mod progress;
 pub mod safety;
+pub mod shifts;
 pub mod sim;
 pub mod snapshots;
 pub mod stack;

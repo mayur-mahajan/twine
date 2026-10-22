@@ -179,11 +179,24 @@ pub enum FaultKind {
     /// checksum read back from the panel (the expected one is in the check's result).
     #[doc(alias = "DISPLAY_INTEGRITY")]
     DisplayIntegrity = 17,
+    /// A partition tried to register for a cross-context source another partition consumes
+    /// (ADR-001 § 5.5): a `Channel` or `Latest` has one consuming partition — the first one
+    /// that registered a handler (`on_message`, `on_latest`, `watch`), recorded permanently —
+    /// and a registration
+    /// from any other partition is refused (no handler, no wake-up routing) instead of
+    /// letting two runtimes share the source's waker slot or queue. Recorded in the refused
+    /// partition's runtime, so only that partition's `Ui` sees it. Fan out to two partitions
+    /// with one cell per consumer, set by the producer.
+    ///
+    /// Record: no display, no node; `occurrences` = the refused registrations (the `warn!`
+    /// names the owning partition).
+    #[doc(alias = "PARTITION_VIOLATION")]
+    PartitionViolation = 18,
 }
 
 impl FaultKind {
     /// Every kind, in [`index`](Self::index) order.
-    pub const ALL: [FaultKind; 18] = [
+    pub const ALL: [FaultKind; 19] = [
         FaultKind::FlushError,
         FaultKind::FlushTimeout,
         FaultKind::EffectLoopCut,
@@ -202,6 +215,7 @@ impl FaultKind {
         FaultKind::FrameOverrun,
         FaultKind::FailSafe,
         FaultKind::DisplayIntegrity,
+        FaultKind::PartitionViolation,
     ];
 
     /// The number of kinds (the length of per-kind tables such as fault counters).
@@ -227,10 +241,9 @@ impl FaultKind {
     /// ```
     #[must_use]
     pub const fn from_index(index: usize) -> Option<FaultKind> {
-        if index < Self::COUNT {
-            Some(Self::ALL[index])
-        } else {
-            None
+        match Self::ALL.split_at_checked(index) {
+            Some((_, [kind, ..])) => Some(*kind),
+            _ => None,
         }
     }
 
@@ -260,10 +273,13 @@ impl FaultKind {
             FaultKind::FrameOverrun => "FrameOverrun",
             FaultKind::FailSafe => "FailSafe",
             FaultKind::DisplayIntegrity => "DisplayIntegrity",
+            FaultKind::PartitionViolation => "PartitionViolation",
         }
     }
 
     const fn bit(self) -> u32 {
+        // SHIFT: the discriminants are the dense indices `0..COUNT` (const assertion below; every
+        // variant is in `ALL`: test `every_variant_is_listed_in_all`) and `COUNT ≤ 32`.
         1 << (self as u32)
     }
 }
@@ -276,6 +292,19 @@ impl fmt::Display for FaultKind {
 
 // `Faults` is a `u32` bit set: adding a 33rd kind must widen it.
 const _: () = assert!(FaultKind::COUNT <= 32);
+// The discriminants are the dense indices `0..COUNT` (`FaultKind::bit` shifts by them).
+const _: () = {
+    let mut i = 0;
+    let mut rest: &[FaultKind] = &FaultKind::ALL;
+    while let [kind, tail @ ..] = rest {
+        assert!(
+            *kind as usize == i,
+            "FaultKind::ALL must list the kinds in index order"
+        );
+        i += 1;
+        rest = tail;
+    }
+};
 
 /// A set of [`FaultKind`]s (e.g. the faults raised since they were last taken).
 ///
@@ -654,7 +683,12 @@ impl FaultCounts {
     /// ```
     #[must_use]
     pub const fn get(&self, kind: FaultKind) -> u32 {
-        self.0[kind.index()]
+        // SAFE-INDEX: `kind.index() < COUNT`, the array's length (dense discriminants, asserted
+        // at compile time); the fallback is never taken.
+        match self.0.split_at_checked(kind.index()) {
+            Some((_, [c, ..])) => *c,
+            _ => 0,
+        }
     }
 
     /// Adds `n` occurrences of `kind` (saturating).
@@ -668,8 +702,10 @@ impl FaultCounts {
     /// assert_eq!(c.get(FaultKind::FlushError), u32::MAX);
     /// ```
     pub fn add(&mut self, kind: FaultKind, n: u32) {
-        let c = &mut self.0[kind.index()];
-        *c = c.saturating_add(n);
+        // SAFE-INDEX: `kind.index() < COUNT`, the array's length; the fallback is never taken.
+        if let Some(c) = self.0.get_mut(kind.index()) {
+            *c = c.saturating_add(n);
+        }
     }
 
     /// The occurrences of every kind together (saturating).
@@ -704,6 +740,21 @@ mod tests {
     use super::*;
     use alloc::format;
     use alloc::vec::Vec;
+
+    /// Every variant is listed in `ALL`, so the dense-index assertion covers every discriminant
+    /// and `FaultKind::bit` shifts by less than `COUNT ≤ 32`.
+    #[test]
+    fn every_variant_is_listed_in_all() {
+        let src = include_str!("fault.rs");
+        let body = &src[src.find("pub enum FaultKind {").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let variants = body
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.ends_with(',') && l.starts_with(|c: char| c.is_ascii_uppercase()))
+            .count();
+        assert_eq!(variants, FaultKind::COUNT);
+    }
 
     #[test]
     fn indices_are_stable_and_dense() {

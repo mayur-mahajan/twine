@@ -14,6 +14,7 @@
 //! |------|---------|
 //! | [`run`], [`run_headless`] | declarative apps (`FnOnce(Scope) -> impl View`: a `fn app(cx: Scope) -> impl View` or a closure) with the `Ui` update cycle |
 //! | [`run_engine`], [`run_engine_headless`] | engine apps: an `Engine` on a simulated display, stepped only when it asks to be woken |
+//! | [`run_panels`], [`run_panels_headless`], [`SimPanel`], [`PanelLayout`], [`PanelCx`] | multi-panel apps: several independent `Ui`s (each with its own engine, display, devices and runtime token — e.g. one partition each) side by side in one window; input to the panel under the pointer or the focused one ([`panels`]) |
 //! | [`show_framebuffer`], [`show_framebuffer_with_input`] | draw raw frames without the engine (with per-frame input: [`SimFrame`]); window or headless |
 //! | [`run_headless_framebuffer`] | the same, headless, returning a [`HeadlessReport`] |
 //! | [`SimConfig`], [`Headless`] | configuration, environment overrides (`TWINE_SIM_*`) |
@@ -51,6 +52,7 @@ pub mod display;
 mod fb_display;
 pub mod hotkeys;
 pub mod input;
+pub mod panels;
 pub mod paths;
 mod png_out;
 pub mod script;
@@ -63,6 +65,7 @@ pub use display::{FlushStat, SimDisplay, SimDisplayError};
 pub use fb_display::SimFramebufferDisplay;
 pub use hotkeys::Hotkey;
 pub use input::{SimDevices, SimEncoder, SimKeypad, SimPointer};
+pub use panels::{PanelCx, PanelHook, PanelLayout, SimPanel};
 pub use title::set_title;
 
 use twine_core::ColorFormat;
@@ -260,8 +263,72 @@ fn build_ui_app<V: twine_view::View>(
     Ok(sim)
 }
 
+/// Runs a multi-panel app and never returns: one window showing every panel of `panels`
+/// side by side ([`PanelLayout::Row`]), each an independent `Ui` on its own engine, emulated
+/// display and input devices (see [`panels`]). `cfg` gives the title, scale, format, bus speed,
+/// input devices and headless settings (after [`SimConfig::from_env`]); its width and height
+/// are replaced by the layout's. Headless runs (`TWINE_SIM_HEADLESS=1`) execute the script,
+/// whose coordinates are window coordinates. Exits with code 1 when a panel cannot be built.
+///
+/// ```no_run
+/// use twine_core::Partition;
+/// use twine_reactive::Runtime;
+/// use twine_sim::{SimConfig, SimPanel, run_panels};
+/// use twine_view::prelude::*;
+///
+/// let critical = SimPanel::new(160, 120, Runtime::take().unwrap(), |_| label("88 km/h"));
+/// let p1 = Partition::new(1).expect("feature `partitions`");
+/// let media = SimPanel::new(160, 120, Runtime::take_partition(p1).unwrap(), |_| label("track 7"));
+/// run_panels(SimConfig::new(0, 0).title("Partitions").scale(2), vec![critical, media]);
+/// ```
+pub fn run_panels(cfg: SimConfig, panels: Vec<SimPanel>) -> ! {
+    init_logging();
+    match SimApp::panels(cfg.from_env(), panels, PanelLayout::Row) {
+        Ok(app) => app.run(),
+        Err(e) => {
+            eprintln!("twine-sim: {e}");
+            std::process::exit(1)
+        }
+    }
+}
+
+/// Runs a multi-panel app headless (with `cfg.headless` or the defaults) and returns a report
+/// instead of exiting. The environment is **not** applied.
+///
+/// # Errors
+///
+/// As [`SimApp::panels`], and [`SimError::Script`] / [`SimError::Io`] for the headless
+/// script and output.
+///
+/// ```
+/// use twine_reactive::Runtime;
+/// use twine_sim::{Headless, SimConfig, SimPanel, run_panels_headless};
+/// use twine_view::prelude::*;
+///
+/// let out = std::env::temp_dir().join(format!("twine-sim-panels-doc-{}", std::process::id()));
+/// let cfg = SimConfig::new(0, 0).headless(Some(Headless { frames: 2, script: None, out_dir: out.clone() }));
+/// let panels = vec![
+///     SimPanel::new(32, 16, Runtime::current_thread(), |_| label("a")),
+///     SimPanel::new(32, 16, Runtime::current_thread(), |_| label("b")),
+/// ];
+/// let report = run_panels_headless(cfg, panels).unwrap();
+/// assert_eq!(report.frames, 2);
+/// std::fs::remove_dir_all(out).unwrap();
+/// ```
+pub fn run_panels_headless(cfg: SimConfig, panels: Vec<SimPanel>) -> Result<HeadlessReport, SimError> {
+    let cfg = if cfg.headless.is_some() {
+        cfg
+    } else {
+        cfg.headless(Some(Headless::default()))
+    };
+    SimApp::panels(cfg, panels, PanelLayout::Row)?.run_headless()
+}
+
 /// Runs an engine app headless (with `cfg.headless` or the defaults) and returns a report
 /// instead of exiting. The environment is **not** applied.
+///
+/// # Errors
+/// As [`SimApp::engine`] and [`SimApp::run_headless`].
 pub fn run_engine_headless(
     cfg: SimConfig,
     setup: impl FnOnce(&mut twine_engine::Engine),
@@ -276,6 +343,9 @@ pub fn run_engine_headless(
 
 /// Runs [`show_framebuffer`] headless (with `cfg.headless` or the defaults) and returns a
 /// report instead of exiting. The environment is **not** applied.
+///
+/// # Errors
+/// As [`SimApp::run_headless`].
 ///
 /// ```
 /// use twine_sim::{Headless, SimConfig, run_headless_framebuffer};

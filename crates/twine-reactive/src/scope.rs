@@ -9,6 +9,7 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::panic::Location;
 
+use twine_core::Partition;
 use twine_core::log::warn;
 
 use crate::batch::batch;
@@ -17,7 +18,7 @@ use crate::error::{HandleKind, ReactiveError};
 use crate::global::with_runtime;
 use crate::handles::NodeHandle;
 use crate::memo::Memo;
-use crate::runtime::{Kind, ScopeKey, ValueRc};
+use crate::runtime::{Kind, NodeKey, ScopeKey, ValueRc};
 use crate::signal::Signal;
 use crate::stored::StoredValue;
 
@@ -76,7 +77,7 @@ use crate::stored::StoredValue;
 /// let root = Runtime::take().unwrap().create_root();
 /// root.provide(Volume(root.signal(5)));
 /// let page = root.child();
-/// let Volume(v) = page.expect_context::<Volume>(); // found in the root
+/// let Volume(v) = page.use_context::<Volume>().unwrap(); // found in the root
 /// v.set(6);
 /// assert_eq!(page.use_context::<u32>(), Err(MissingContext::of::<u32>()));
 /// ```
@@ -90,6 +91,8 @@ use crate::stored::StoredValue;
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Scope {
     key: ScopeKey,
+    /// The partition whose runtime holds the scope (zero-sized without `partitions`).
+    part: Partition,
     _m: PhantomData<*const ()>,
 }
 
@@ -100,23 +103,46 @@ impl fmt::Debug for Scope {
 }
 
 impl Scope {
-    pub(crate) fn from_key(key: ScopeKey) -> Self {
-        Scope { key, _m: PhantomData }
+    pub(crate) fn from_key(key: ScopeKey, part: Partition) -> Self {
+        Scope {
+            key,
+            part,
+            _m: PhantomData,
+        }
     }
 
-    /// A scope that is never alive (what a creation skipped under `no-panic-runtime`
-    /// returns).
-    pub(crate) fn dead() -> Self {
-        Scope::from_key(ScopeKey::INVALID)
+    /// A scope of partition `part` that is never alive (what a creation skipped under
+    /// `no-panic-runtime` returns).
+    pub(crate) fn dead(part: Partition) -> Self {
+        Scope::from_key(ScopeKey::INVALID, part)
     }
 
     pub(crate) fn key(self) -> ScopeKey {
         self.key
     }
 
+    /// The partition this scope belongs to: the partition of the [`Runtime`](crate::Runtime)
+    /// token its root was created with. Everything created in the scope (signals, memos,
+    /// effects, child scopes) belongs to it too. Free; never panics, also on a disposed scope.
+    ///
+    /// ```
+    /// use twine_core::Partition;
+    /// let rt = twine_reactive::Runtime::take().unwrap();
+    /// let cx = rt.create_root();
+    /// assert_eq!(cx.partition(), rt.partition());
+    /// assert_eq!(cx.child().partition(), Partition::MAIN);
+    /// cx.dispose();
+    /// ```
+    #[must_use]
+    #[inline]
+    pub fn partition(self) -> Partition {
+        self.part
+    }
+
     /// Inserts a node owned by this scope (`what`: the kind of handle made from it, for the
     /// error); the value and closure of a refused node are dropped here, outside the runtime's
     /// borrow.
+    #[inline]
     #[track_caller]
     pub(crate) fn try_create_node<T>(
         self,
@@ -125,23 +151,17 @@ impl Scope {
         what: HandleKind,
     ) -> Result<NodeHandle<T>, ReactiveError> {
         let loc = Location::caller();
-        match with_runtime(|rt| rt.create_node(self.key, value, kind, what)) {
-            Ok(key) => Ok(NodeHandle::new(key, loc)),
-            Err((e, value, kind)) => {
-                drop((value, kind)); // user values and closures, outside the borrow (R1)
-                Err(e)
-            }
-        }
+        create_node_in(self.part, self.key, value, kind, what).map(|key| NodeHandle::new(key, self.part, loc))
     }
 
     /// The panicking (under `no-panic-runtime`: skipping) form of a creation: on `Err`, a
     /// handle that is never alive, after [`ReactiveError::skip`] (out of line).
     #[inline]
     #[track_caller]
-    fn or_dead<T>(r: Result<NodeHandle<T>, ReactiveError>) -> NodeHandle<T> {
+    fn or_dead<T>(self, r: Result<NodeHandle<T>, ReactiveError>) -> NodeHandle<T> {
         match r {
             Ok(h) => h,
-            Err(e) => dead_node(e),
+            Err(e) => dead_node(self.part, e),
         }
     }
 
@@ -164,7 +184,7 @@ impl Scope {
     #[inline]
     #[track_caller]
     pub fn signal<T: 'static>(self, value: T) -> Signal<T> {
-        Signal::from_handle(Self::or_dead(self.signal_node(value)))
+        Signal::from_handle(self.or_dead(self.signal_node(value)))
     }
 
     /// Like [`signal`](Scope::signal), but returns the reason the signal could not be created
@@ -214,7 +234,7 @@ impl Scope {
     #[inline]
     #[track_caller]
     pub fn stored_value<T: 'static>(self, value: T) -> StoredValue<T> {
-        StoredValue::from_handle(Self::or_dead(self.stored_node(value)))
+        StoredValue::from_handle(self.or_dead(self.stored_node(value)))
     }
 
     /// Like [`stored_value`](Scope::stored_value), returning the reason the value could not be
@@ -264,7 +284,7 @@ impl Scope {
     #[inline]
     #[track_caller]
     pub fn memo<T: PartialEq + 'static>(self, f: impl Fn() -> T + 'static) -> Memo<T> {
-        Memo::from_handle(Self::or_dead(self.memo_node(f)))
+        Memo::from_handle(self.or_dead(self.memo_node(f)))
     }
 
     /// Like [`memo`](Scope::memo), returning the reason the memo could not be created (`f` is
@@ -394,7 +414,7 @@ impl Scope {
     pub fn effect_with_cx(self, f: impl FnMut(&mut dyn Any) + 'static) -> EffectId {
         match self.effect_node(f) {
             Ok(id) => id,
-            Err(e) => EffectId::from_handle(dead_node(e)),
+            Err(e) => EffectId::from_handle(dead_node(self.part, e)),
         }
     }
 
@@ -405,7 +425,7 @@ impl Scope {
             Some(Kind::Effect(Rc::new(RefCell::new(f)))),
             HandleKind::Effect,
         )?;
-        with_runtime(|rt| rt.run_new_effect(h.key));
+        // `create_node_in` ran the new effect once (in the same runtime access).
         Ok(EffectId::from_handle(h))
     }
 
@@ -430,7 +450,7 @@ impl Scope {
     pub fn child(self) -> Scope {
         match self.try_child() {
             Ok(s) => s,
-            Err(e) => dead_scope(e),
+            Err(e) => dead_scope(self.part, e),
         }
     }
 
@@ -451,7 +471,7 @@ impl Scope {
     /// [`ReactiveError::Capacity`] (`HandleKind::Scope`) if the runtime already holds `Limits::max_scopes`
     /// live scopes.
     pub fn try_child(self) -> Result<Scope, ReactiveError> {
-        with_runtime(|rt| rt.create_scope(Some(self.key))).map(Scope::from_key)
+        with_runtime(self.part, |rt| rt.create_scope(Some(self.key))).map(|k| Scope::from_key(k, self.part))
     }
 
     /// Disposes the scope: child scopes (depth-first, most recent first), then cleanups (most
@@ -469,13 +489,15 @@ impl Scope {
     /// assert_eq!(*log.borrow(), ["cleanup"]);
     /// ```
     pub fn dispose(self) {
-        batch(|| with_runtime(|rt| rt.dispose_scope(self.key)));
+        batch(self.part, || {
+            with_runtime(self.part, |rt| rt.dispose_scope(self.key));
+        });
     }
 
     /// Registers `f` to run when the scope is disposed. On a dead scope `f` is dropped with a
     /// warning.
     pub fn on_cleanup(self, f: impl FnOnce() + 'static) {
-        if let Err(f) = with_runtime(|rt| rt.add_cleanup(self.key, Box::new(f))) {
+        if let Err(f) = with_runtime(self.part, |rt| rt.add_cleanup(self.key, Box::new(f))) {
             warn!(target: "twine::reactive", "on_cleanup on disposed scope {:?}; ignored", self.key);
             drop(f);
         }
@@ -483,7 +505,7 @@ impl Scope {
 
     /// Whether the scope has not been disposed.
     pub fn is_alive(self) -> bool {
-        with_runtime(|rt| rt.scope_alive(self.key))
+        with_runtime(self.part, |rt| rt.scope_alive(self.key))
     }
 }
 
@@ -492,16 +514,42 @@ impl Scope {
 #[cold]
 #[inline(never)]
 #[track_caller]
-fn dead_node<T>(e: ReactiveError) -> NodeHandle<T> {
-    e.skip(None);
-    NodeHandle::dead(Location::caller())
+fn dead_node<T>(part: Partition, e: ReactiveError) -> NodeHandle<T> {
+    e.skip(part, None);
+    NodeHandle::dead(part, Location::caller())
+}
+
+/// The runtime half of [`Scope::try_create_node`]: not generic and out of line, so the
+/// signal, memo, stored-value and effect creations of an application share one copy of the
+/// runtime access and of the refusal path (flash). A new effect (`what` =
+/// [`HandleKind::Effect`]) also runs once here, in the same runtime access.
+#[inline(never)]
+fn create_node_in(
+    part: Partition,
+    scope: ScopeKey,
+    value: Option<ValueRc>,
+    kind: Option<Kind>,
+    what: HandleKind,
+) -> Result<NodeKey, ReactiveError> {
+    let (mut value, mut kind) = (value, kind);
+    let r = with_runtime(part, |rt| {
+        let key = rt.create_node(scope, &mut value, &mut kind, what)?;
+        if what == HandleKind::Effect {
+            rt.run_new_effect(key);
+        }
+        Ok(key)
+    });
+    // Taken on success; on failure the refused value and closure, dropped here, outside the
+    // runtime's borrow (R1).
+    drop((value, kind));
+    r
 }
 
 /// The failure path of a scope creation, like [`dead_node`].
 #[cold]
 #[inline(never)]
 #[track_caller]
-pub(crate) fn dead_scope(e: ReactiveError) -> Scope {
-    e.skip(None);
-    Scope::dead()
+pub(crate) fn dead_scope(part: Partition, e: ReactiveError) -> Scope {
+    e.skip(part, None);
+    Scope::dead(part)
 }

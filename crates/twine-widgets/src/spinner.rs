@@ -142,12 +142,27 @@ impl Spinner {
     }
 
     /// The indicator angles at animation value `v` (`0..=1024`, LVGL `arc_anim_angles`).
+    /// Other values extrapolate (`v · 360° / 1024`, saturated). Never panics.
+    ///
+    /// ```
+    /// use twine_core::Angle;
+    /// use twine_widgets::spinner::Spinner;
+    ///
+    /// let s = Spinner::default();
+    /// let (start, _) = s.angles_at(0);
+    /// assert_eq!(start, Angle::deci_deg(0));
+    /// let _ = s.angles_at(i32::MAX); // out of range: extrapolated, no overflow
+    /// ```
     #[must_use]
     pub fn angles_at(&self, v: i32) -> (Angle, Angle) {
         let t = u16::try_from(v.clamp(0, BEZIER_MAX)).unwrap_or(0);
         let step = START_EASING.value(t, 0, BEZIER_MAX);
-        let start = (step * 3600) >> 10;
-        let end = self.sweep.as_deci_deg() + ((v * 3600) >> 10);
+        // `x · 360° / 1024` in `i64` (exact for every `i32`; values outside `0..=1024` give
+        // angles beyond a turn, as before).
+        // SAFE-ARITH: `|x| ≤ 2^31`, so `3600 · x` is below 2^43 in magnitude.
+        let turn_of = |x: i32| util::sat_i32(i64::from(x).wrapping_mul(3600) >> 10);
+        let start = turn_of(step);
+        let end = self.sweep.as_deci_deg().saturating_add(turn_of(v));
         (Angle::deci_deg(start), Angle::deci_deg(end))
     }
 }

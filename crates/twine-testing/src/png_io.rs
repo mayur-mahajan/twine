@@ -19,6 +19,9 @@ pub struct RgbImage {
 ///
 /// The output is deterministic: no metadata chunks, fixed compression and filter settings.
 ///
+/// # Errors
+/// The PNG encoder's error (not expected for in-memory output).
+///
 /// # Panics
 /// If `rgb.len() != w * h * 3`.
 pub fn encode_rgb(w: u32, h: u32, rgb: &[u8]) -> Result<Vec<u8>, png::EncodingError> {
@@ -44,6 +47,9 @@ pub fn encode_rgb(w: u32, h: u32, rgb: &[u8]) -> Result<Vec<u8>, png::EncodingEr
 }
 
 /// Writes `rgb` as a PNG file (see [`encode_rgb`]), creating parent directories.
+///
+/// # Errors
+/// The I/O error when the directories or the file cannot be created or written.
 pub fn write_rgb_png(path: &Path, w: u32, h: u32, rgb: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -56,6 +62,10 @@ pub fn write_rgb_png(path: &Path, w: u32, h: u32, rgb: &[u8]) -> std::io::Result
 
 /// Reads a PNG file and converts it to 8-bit RGB (gray, palette, alpha and 16-bit inputs are
 /// expanded; alpha is dropped).
+///
+/// # Errors
+/// The I/O error when the file cannot be read; [`std::io::ErrorKind::InvalidData`] when it is not a
+/// PNG.
 pub fn read_rgb_png(path: &Path) -> std::io::Result<RgbImage> {
     let mut dec = png::Decoder::new(BufReader::new(File::open(path)?));
     dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);

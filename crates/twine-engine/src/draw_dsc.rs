@@ -6,6 +6,8 @@
 //! [`WidgetCx`](crate::WidgetCx) expose these as `rect_dsc`, `text_dsc`, `image_dsc`,
 //! `line_dsc` and `arc_dsc`.
 
+use core::num::{NonZeroU8, NonZeroU32};
+
 use twine_core::{Color, Opa, Rect};
 use twine_render::{
     ArcDsc, BlendMode, BorderSide, GradKind, GradStop, Gradient, ImageDsc, LineDsc, RectDsc, ShadowDsc,
@@ -79,10 +81,15 @@ fn over32(fg: Color32, bg: Color32) -> Color32 {
     if bg.alpha == 255 {
         return mix32(fg, bg);
     }
-    let inv = |a: u8| 255 - u32::from(a);
+    // `255 − a` of a `u8` cannot underflow.
+    let inv = |a: u8| u32::from(!a);
     // LV_OPA_MIX2(a, b) = a * b >> 8
-    let res_alpha = (255 - ((inv(fg.alpha) * inv(bg.alpha)) >> 8)) as u8;
-    let ratio = (u32::from(fg.alpha) * 255 / u32::from(res_alpha.max(1))).min(255) as u8;
+    // SAFE-ARITH: `inv(..) ≤ 255`, so the product is below 2^16 and `… >> 8 ≤ 254`.
+    let res_alpha = 255u8.wrapping_sub((inv(fg.alpha).wrapping_mul(inv(bg.alpha)) >> 8) as u8);
+    // `res_alpha ≥ 1` (see above); the fallback is never taken.
+    let div: NonZeroU32 = NonZeroU8::new(res_alpha).map_or(NonZeroU32::MIN, NonZeroU32::from);
+    // SAFE-ARITH: `alpha · 255 < 2^16`.
+    let ratio = (u32::from(fg.alpha).wrapping_mul(255) / div).min(255) as u8;
     let mut r = mix32(
         Color32 {
             color: fg.color,
@@ -261,7 +268,12 @@ impl Engine {
         if w == 0 && h == 0 {
             return c;
         }
-        Rect::new(c.x0 - w, c.y0 - h, c.x1 + w, c.y1 + h)
+        Rect::new(
+            c.x0.saturating_sub(w),
+            c.y0.saturating_sub(h),
+            c.x1.saturating_add(w),
+            c.y1.saturating_add(h),
+        )
     }
 
     /// The rectangle style of `part` of `id` (LVGL `lv_obj_init_draw_rect_dsc`): background

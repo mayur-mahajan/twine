@@ -1,6 +1,8 @@
 //! Dirty-area helpers: rounding to the display alignment and splitting into buffer-sized
 //! horizontal chunks.
 
+use core::num::{NonZeroU8, NonZeroU32};
+
 use twine_core::Rect;
 
 /// Expands `r` to multiples of `align` (x0/y0 down, x1/y1 up; `align ≤ 1` leaves it
@@ -20,14 +22,18 @@ pub(crate) fn chunks(area: Rect, max_rows: i32, align: u8) -> impl Iterator<Item
 /// The rows of one chunk: `max_rows` rounded down to a multiple of `align` (at least `align`,
 /// at least 1).
 pub(crate) fn chunk_rows(max_rows: i32, align: u8) -> i32 {
-    let a = i32::from(align.max(1));
-    ((max_rows / a) * a).max(a).max(1)
+    let a: NonZeroU32 = NonZeroU32::from(NonZeroU8::new(align).unwrap_or(NonZeroU8::MIN));
+    // A negative row count rounds to 0 like the old signed division did (then `max(a)`).
+    let rows = max_rows.max(0).unsigned_abs();
+    // SAFE-ARITH: `rows / a · a ≤ rows ≤ i32::MAX`.
+    let rounded = (rows / a).wrapping_mul(a.get());
+    i32::try_from(rounded.max(a.get())).unwrap_or(i32::MAX)
 }
 
 /// The chunk of `area` starting at row `y`.
 pub(crate) fn chunk_at(area: Rect, y: i32, max_rows: i32, align: u8) -> Rect {
     let rows = chunk_rows(max_rows, align);
-    Rect::new(area.x0, y, area.x1, (y + rows).min(area.y1))
+    Rect::new(area.x0, y, area.x1, y.saturating_add(rows).min(area.y1))
 }
 
 #[cfg(test)]

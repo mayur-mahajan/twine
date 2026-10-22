@@ -71,34 +71,36 @@ impl EngineMemory {
     /// Heap bytes of the engine: the tree, the renderer's scratch buffers and caches, the
     /// glyph and image caches, a heap layer buffer and heap draw buffers.
     ///
-    /// # Panics
-    /// Never for a report from [`Engine::memory_report`]; a hand-built value whose parts sum
-    /// past `usize::MAX` overflows (a panic in debug builds).
+    /// Never panics: a hand-built value whose parts sum past `usize::MAX` gives `usize::MAX`
+    /// (the sum saturates).
     ///
     /// ```
     /// use twine_engine::EngineMemory;
     /// let m = EngineMemory { tree: 100, layer_buf: 4096, draw_buffers_static: 9600, ..EngineMemory::default() };
     /// assert_eq!(m.heap_bytes(), 4196);
     /// assert_eq!(m.static_bytes(), 9600);
+    /// let huge = EngineMemory { tree: usize::MAX, glyph_cache: 1, ..EngineMemory::default() };
+    /// assert_eq!(huge.heap_bytes(), usize::MAX);
     /// ```
     #[must_use]
     pub fn heap_bytes(&self) -> usize {
         let layer = if self.layer_buf_static { 0 } else { self.layer_buf };
-        self.tree
-            + self.render_scratch
-            + self.render_caches
-            + self.glyph_cache
-            + self.image_cache
-            + layer
-            + self.draw_buffers_heap
+        [
+            self.render_scratch,
+            self.render_caches,
+            self.glyph_cache,
+            self.image_cache,
+            layer,
+            self.draw_buffers_heap,
+        ]
+        .into_iter()
+        .fold(self.tree, usize::saturating_add)
     }
 
     /// Caller memory the engine uses (a static layer buffer and static draw buffers): RAM
     /// the linker placed, not the heap. See [`heap_bytes`](Self::heap_bytes).
     ///
-    /// # Panics
-    /// As [`heap_bytes`](Self::heap_bytes): never for a report from
-    /// [`Engine::memory_report`].
+    /// Never panics (the sum saturates, as in [`heap_bytes`](Self::heap_bytes)).
     ///
     /// ```
     /// use twine_engine::EngineMemory;
@@ -109,7 +111,7 @@ impl EngineMemory {
     #[must_use]
     pub fn static_bytes(&self) -> usize {
         let layer = if self.layer_buf_static { self.layer_buf } else { 0 };
-        layer + self.draw_buffers_static
+        layer.saturating_add(self.draw_buffers_static)
     }
 }
 
@@ -147,8 +149,8 @@ impl Engine {
             m.image_cache = res.aux.images.bytes_reserved();
         }
         for d in &self.displays {
-            m.draw_buffers_heap += d.draw_buffers.heap;
-            m.draw_buffers_static += d.draw_buffers.caller;
+            m.draw_buffers_heap = m.draw_buffers_heap.saturating_add(d.draw_buffers.heap);
+            m.draw_buffers_static = m.draw_buffers_static.saturating_add(d.draw_buffers.caller);
         }
         m
     }

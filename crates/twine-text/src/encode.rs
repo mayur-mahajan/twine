@@ -16,7 +16,7 @@ use std::vec;
 use std::vec::Vec;
 
 use crate::bitmap_font::{BitmapFont, BitmapFormat, Cmap, CmapKind, GlyphDsc, GlyphIdOfs, Kern, KernPairIds};
-use crate::decode::Rle;
+use crate::decode::{Bpp, Rle};
 use crate::font::{Font, Subpx};
 
 /// Writes values MSB-first into a growing byte vector.
@@ -33,18 +33,30 @@ impl BitWriter {
         Self::default()
     }
 
-    /// Appends the low `n` (≤ 8) bits of `v`, most significant first.
+    /// Appends the low `n` bits of `v`, most significant first (for `n > 8`, the bits above
+    /// `v`'s eight are zeros).
+    ///
+    /// ```
+    /// use twine_text::encode::BitWriter;
+    /// let mut w = BitWriter::new();
+    /// w.write(0b101, 3);
+    /// w.write(0xFF, 10); // two zero bits, then eight ones
+    /// assert_eq!(w.finish(), [0b1010_0111, 0b1111_1000]);
+    /// ```
     pub fn write(&mut self, v: u8, n: u8) {
         for i in (0..n).rev() {
-            let bit = (v >> i) & 1;
+            let bit = v.checked_shr(u32::from(i)).unwrap_or(0) & 1;
             if self.bits % 8 == 0 {
                 self.bytes.push(0);
             }
             if bit == 1 {
-                let last = self.bytes.len() - 1;
-                self.bytes[last] |= 0x80 >> (self.bits % 8);
+                // A byte was pushed for bit 0 of every byte: `last_mut` is `Some`.
+                if let Some(last) = self.bytes.last_mut() {
+                    // SHIFT: `bits % 8 < 8`.
+                    *last |= 0x80 >> (self.bits % 8);
+                }
             }
-            self.bits += 1;
+            self.bits = self.bits.saturating_add(1);
         }
     }
 
@@ -78,8 +90,9 @@ pub fn prefilter(values: &[u8], w: usize) -> Vec<u8> {
     if w == 0 {
         return out;
     }
-    for i in (w..values.len()).rev() {
-        out[i] ^= values[i - w];
+    // Value `i ≥ w` is XOR-ed with original value `i − w`.
+    for (o, p) in out.iter_mut().skip(w).zip(values) {
+        *o ^= *p;
     }
     out
 }
@@ -105,9 +118,10 @@ pub fn rle_encode(values: &[u8], bpp: u8) -> Vec<u8> {
     let mut st = St::Single;
     let mut prev = 0u8;
     let mut cnt = 0u32;
-    let mut i = 0;
-    while i < values.len() {
-        let v = values[i];
+    let mut i: usize = 0;
+    // SAFE-ARITH: `i` only advances over values that exist (`i ≤ values.len()`), and
+    // `cnt ≤ 11`.
+    while let Some(&v) = values.get(i) {
         match st {
             St::Single => {
                 let first = w.bit_len() == 0;
@@ -117,22 +131,24 @@ pub fn rle_encode(values: &[u8], bpp: u8) -> Vec<u8> {
                     cnt = 0;
                 }
                 prev = v;
-                i += 1;
+                i = i.wrapping_add(1);
             }
             St::Repeated => {
                 if v == prev {
                     w.write(1, 1);
-                    cnt += 1;
-                    i += 1;
+                    cnt = cnt.wrapping_add(1);
+                    i = i.wrapping_add(1);
                     if cnt == 11 {
-                        let m = values[i..].iter().take_while(|&&x| x == prev).count();
-                        let n = (m + 1).min(63);
+                        let rest = values.get(i..).unwrap_or_default();
+                        let m = rest.iter().take_while(|&&x| x == prev).count();
+                        let n = m.saturating_add(1).min(63);
                         w.write(n as u8, 6);
-                        i += n - 1;
-                        if i < values.len() {
-                            prev = values[i];
+                        // `n − 1 ≤ m` further equal values exist.
+                        i = i.wrapping_add(n.wrapping_sub(1));
+                        if let Some(&next) = values.get(i) {
+                            prev = next;
                             w.write(prev, bpp);
-                            i += 1;
+                            i = i.wrapping_add(1);
                         }
                         st = St::Single;
                     }
@@ -140,7 +156,7 @@ pub fn rle_encode(values: &[u8], bpp: u8) -> Vec<u8> {
                     w.write(0, 1);
                     w.write(v, bpp);
                     prev = v;
-                    i += 1;
+                    i = i.wrapping_add(1);
                     st = St::Single;
                 }
             }
@@ -150,10 +166,22 @@ pub fn rle_encode(values: &[u8], bpp: u8) -> Vec<u8> {
 }
 
 /// Decodes `n` RLE values (bpp domain) — the counterpart of [`rle_encode`] for tests and tools.
+///
+/// `bpp` must be 1, 2, 4 or 8; any other depth decodes nothing (`n` zeros) and logs a warning.
+///
+/// ```
+/// use twine_text::encode::{rle_decode, rle_encode};
+/// assert_eq!(rle_decode(&rle_encode(&[2, 2, 1], 2), 2, 3), [2, 2, 1]);
+/// assert_eq!(rle_decode(&[0xFF], 3, 2), [0, 0]); // not a glyph depth
+/// ```
 #[must_use]
 pub fn rle_decode(bytes: &[u8], bpp: u8, n: usize) -> Vec<u8> {
-    let mut r = Rle::new(bytes, bpp);
     let mut out = vec![0; n];
+    let Some(bpp) = Bpp::new(bpp) else {
+        twine_core::warn!(target: "twine::text", "rle_decode: invalid bpp {}", bpp);
+        return out;
+    };
+    let mut r = Rle::new(bytes, bpp);
     r.decode_row(&mut out);
     out
 }

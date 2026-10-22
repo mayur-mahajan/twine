@@ -4,32 +4,35 @@ use core::any::Any;
 
 use twine_core::log::warn;
 
-use crate::global::{Runtime, with_runtime};
+use twine_core::Partition;
+
+use crate::global::{Runtime, enter_partition, with_runtime};
 use crate::runtime::{RuntimeState, ScopeKey};
 use crate::scope::Scope;
 
-/// Decrements `batch_depth` on scope exit (also on unwinding).
-struct BatchGuard;
+/// Decrements partition `.0`'s `batch_depth` on scope exit (also on unwinding).
+struct BatchGuard(Partition);
 
 impl Drop for BatchGuard {
     fn drop(&mut self) {
-        with_runtime(|rt| {
+        with_runtime(self.0, |rt| {
             let mut inner = rt.inner.borrow_mut();
             inner.batch_depth = inner.batch_depth.saturating_sub(1);
         });
     }
 }
 
-/// See [`Runtime::batch`].
-pub(crate) fn batch<R>(f: impl FnOnce() -> R) -> R {
-    with_runtime(|rt| {
+/// See [`Runtime::batch`] (in partition `p`).
+pub(crate) fn batch<R>(p: Partition, f: impl FnOnce() -> R) -> R {
+    let _running = enter_partition(p);
+    with_runtime(p, |rt| {
         let mut inner = rt.inner.borrow_mut();
         inner.batch_depth = inner.batch_depth.saturating_add(1);
     });
-    let guard = BatchGuard;
+    let guard = BatchGuard(p);
     let r = f();
     drop(guard);
-    with_runtime(|rt| {
+    with_runtime(p, |rt| {
         let flush = {
             let inner = rt.inner.borrow();
             inner.batch_depth == 0 && !inner.running_flush && !inner.pending.is_empty()
@@ -41,20 +44,20 @@ pub(crate) fn batch<R>(f: impl FnOnce() -> R) -> R {
     r
 }
 
-/// Restores the previous observer on scope exit (also on unwinding).
-struct UntrackGuard(Option<crate::runtime::NodeKey>);
+/// Restores partition `.0`'s previous observer on scope exit (also on unwinding).
+struct UntrackGuard(Partition, Option<crate::runtime::NodeKey>);
 
 impl Drop for UntrackGuard {
     fn drop(&mut self) {
-        let prev = self.0;
-        with_runtime(|rt| rt.inner.borrow_mut().observer = prev);
+        let prev = self.1;
+        with_runtime(self.0, |rt| rt.inner.borrow_mut().observer = prev);
     }
 }
 
-/// See [`Runtime::untrack`].
-pub(crate) fn untrack<R>(f: impl FnOnce() -> R) -> R {
-    let prev = with_runtime(|rt| rt.inner.borrow_mut().observer.take());
-    let _guard = UntrackGuard(prev);
+/// See [`Runtime::untrack`] (in partition `p`).
+pub(crate) fn untrack<R>(p: Partition, f: impl FnOnce() -> R) -> R {
+    let prev = with_runtime(p, |rt| rt.inner.borrow_mut().observer.take());
+    let _guard = UntrackGuard(p, prev);
     f()
 }
 
@@ -87,7 +90,7 @@ impl Runtime {
     /// ```
     #[inline]
     pub fn batch<R>(self, f: impl FnOnce() -> R) -> R {
-        batch(f)
+        batch(self.partition(), f)
     }
 
     /// Runs `f` without dependency tracking: reads inside `f` do not subscribe the running memo
@@ -112,7 +115,7 @@ impl Runtime {
     /// ```
     #[inline]
     pub fn untrack<R>(self, f: impl FnOnce() -> R) -> R {
-        untrack(f)
+        untrack(self.partition(), f)
     }
 
     /// Runs all pending effects, passing `ctx` to each (see
@@ -147,7 +150,8 @@ impl Runtime {
     /// assert_eq!(log, [2]);
     /// ```
     pub fn flush_effects_with(self, ctx: &mut dyn Any) {
-        with_runtime(|rt| rt.flush(ctx));
+        let _running = enter_partition(self.partition());
+        with_runtime(self.partition(), |rt| rt.flush(ctx));
     }
 
     /// Sets how many rounds of effects re-triggering each other a flush runs before cutting the
@@ -158,7 +162,9 @@ impl Runtime {
     /// rt.set_flush_iterations_limit(50);
     /// ```
     pub fn set_flush_iterations_limit(self, n: u32) {
-        with_runtime(|rt| rt.inner.borrow_mut().flush_iterations_limit = n.max(1));
+        with_runtime(self.partition(), |rt| {
+            rt.inner.borrow_mut().flush_iterations_limit = n.max(1);
+        });
     }
 
     /// Called from inside a running effect: re-queues it to run again at the next flush with a
@@ -187,7 +193,7 @@ impl Runtime {
     /// assert!(!rt.has_pending_effects());
     /// ```
     pub fn defer_current_effect(self) {
-        if !with_runtime(RuntimeState::defer_current_effect) {
+        if !with_runtime(self.partition(), RuntimeState::defer_current_effect) {
             warn!(target: "twine::reactive", "defer_current_effect called outside an effect; ignored");
         }
     }
@@ -211,7 +217,7 @@ impl Runtime {
     /// assert!(!e.is_alive());
     /// ```
     pub fn dispose_current_effect(self) {
-        if !with_runtime(RuntimeState::dispose_current_effect) {
+        if !with_runtime(self.partition(), RuntimeState::dispose_current_effect) {
             warn!(target: "twine::reactive", "dispose_current_effect called outside an effect; ignored");
         }
     }
@@ -226,7 +232,7 @@ impl Runtime {
     /// ```
     #[must_use]
     pub fn has_pending_effects(self) -> bool {
-        with_runtime(|rt| {
+        with_runtime(self.partition(), |rt| {
             let inner = rt.inner.borrow();
             !inner.pending.is_empty() || !inner.deferred.is_empty()
         })
@@ -234,12 +240,12 @@ impl Runtime {
 }
 
 /// Restores the previously active root when [`Scope::activate`] returns (also on unwinding).
-struct ActiveGuard(Option<ScopeKey>);
+struct ActiveGuard(Partition, Option<ScopeKey>);
 
 impl Drop for ActiveGuard {
     fn drop(&mut self) {
-        let prev = self.0;
-        with_runtime(|rt| rt.inner.borrow_mut().active_root = prev);
+        let prev = self.1;
+        with_runtime(self.0, |rt| rt.inner.borrow_mut().active_root = prev);
     }
 }
 
@@ -289,12 +295,14 @@ impl Scope {
     /// assert_eq!(ctx_seen_by_b.get(), Some((1, false)));
     /// ```
     pub fn activate<R>(self, f: impl FnOnce() -> R) -> R {
-        let prev = with_runtime(|rt| {
+        let p = self.partition();
+        let _running = enter_partition(p);
+        let prev = with_runtime(p, |rt| {
             let mut inner = rt.inner.borrow_mut();
             let root = inner.root_of(self.key());
             core::mem::replace(&mut inner.active_root, root)
         });
-        let _restore = ActiveGuard(prev);
+        let _restore = ActiveGuard(p, prev);
         f()
     }
 
@@ -319,7 +327,7 @@ impl Scope {
     /// ```
     #[must_use]
     pub fn has_pending_effects(self) -> bool {
-        with_runtime(|rt| {
+        with_runtime(self.partition(), |rt| {
             let inner = rt.inner.borrow();
             if inner.pending.is_empty() && inner.deferred.is_empty() {
                 return false;

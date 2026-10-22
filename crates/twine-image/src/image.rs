@@ -161,6 +161,10 @@ impl Image {
 
     /// Checks that the data is consistent with the header.
     ///
+    /// # Errors
+    /// [`Error::InvalidHeader`] for an inconsistent header; [`Error::SizeMismatch`] when the data
+    /// is shorter than the header requires.
+    ///
     /// ```
     /// use twine_core::ColorFormat;
     /// use twine_image::{Error, Image, ImageHeader};
@@ -190,7 +194,7 @@ impl Image {
     /// compressed or short data).
     #[must_use]
     pub fn palette(&self) -> Option<&[u8]> {
-        let n = self.header.format.palette_len() * 4;
+        let n = self.header.format.palette_len().saturating_mul(4);
         if n == 0 {
             return None;
         }
@@ -220,8 +224,9 @@ pub fn pixels_of<'a>(header: &ImageHeader, data: &'a [u8]) -> Option<ImagePixels
     if !h.is_valid() || data.len() < h.data_size() {
         return None;
     }
-    let pal_len = h.format.palette_len() * 4;
-    let (palette, rest) = data.split_at(pal_len);
+    let pal_len = h.format.palette_len().saturating_mul(4);
+    // `data_size()` includes the palette (checked above): never `None`.
+    let (palette, rest) = data.split_at_checked(pal_len)?;
     ImagePixels::from_parts(
         h.format,
         h.w,

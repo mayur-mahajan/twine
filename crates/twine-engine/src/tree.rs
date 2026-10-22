@@ -96,13 +96,15 @@ impl Node {
     /// vector, the layout extension and the event handlers. What the widget allocates itself
     /// (a label's text, a list's items) and shared styles are not included.
     fn heap_bytes(&self) -> usize {
-        core::mem::size_of_val(&*self.widget)
-            + self.styles.heap_bytes()
-            + self
-                .layout_ext
+        [
+            self.styles.heap_bytes(),
+            self.layout_ext
                 .as_ref()
-                .map_or(0, |_| core::mem::size_of::<LayoutExt>())
-            + self.handlers.as_ref().map_or(0, |h| h.heap_bytes())
+                .map_or(0, |_| core::mem::size_of::<LayoutExt>()),
+            self.handlers.as_ref().map_or(0, |h| h.heap_bytes()),
+        ]
+        .into_iter()
+        .fold(core::mem::size_of_val(&*self.widget), usize::saturating_add)
     }
 
     fn new(widget: Box<dyn Widget>) -> Self {
@@ -290,6 +292,19 @@ impl Tree {
         Self::default()
     }
 
+    /// The partition the tree's growth is noted in (see `Engine::set_partition`).
+    #[must_use]
+    #[inline]
+    pub fn partition(&self) -> twine_core::Partition {
+        self.nodes.partition()
+    }
+
+    /// Moves the tree (its node arena, delete scratch and node creation) to partition `p`'s
+    /// seal domain. Called by `Engine::set_partition`.
+    pub(crate) fn set_partition(&mut self, p: twine_core::Partition) {
+        self.nodes.set_partition(p);
+    }
+
     /// Number of live nodes.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -303,11 +318,23 @@ impl Tree {
     ///
     /// Allocates nothing; never panics; O(nodes).
     pub(crate) fn heap_bytes(&self) -> usize {
-        self.nodes.bytes_reserved()
-            + self.scratch.capacity() * core::mem::size_of::<NodeId>()
-            + self.roots.capacity() * core::mem::size_of::<NodeId>()
-            + self.style_links.capacity() * core::mem::size_of::<(NodeId, NodeId)>()
-            + self.nodes.iter().map(|(_, n)| n.heap_bytes()).sum::<usize>()
+        let vecs = [
+            self.scratch
+                .capacity()
+                .saturating_mul(core::mem::size_of::<NodeId>()),
+            self.roots
+                .capacity()
+                .saturating_mul(core::mem::size_of::<NodeId>()),
+            self.style_links
+                .capacity()
+                .saturating_mul(core::mem::size_of::<(NodeId, NodeId)>()),
+        ];
+        let own = vecs
+            .into_iter()
+            .fold(self.nodes.bytes_reserved(), usize::saturating_add);
+        self.nodes
+            .iter()
+            .fold(own, |sum, (_, n)| sum.saturating_add(n.heap_bytes()))
     }
 
     /// Reserves the storage of `n` nodes: the node arena and the delete scratch (see
@@ -391,6 +418,10 @@ impl Tree {
 
     /// Creates a node for `widget` as the last child of `parent` (or as a new root), with the
     /// class's default flags, state `DEFAULT` and zero coordinates. O(1).
+    ///
+    /// # Errors
+    /// [`EngineError::NodeNotFound`] for an unknown `parent`; [`EngineError::TooManyNodes`] when
+    /// the node arena is full.
     pub fn create(&mut self, parent: Option<NodeId>, widget: Box<dyn Widget>) -> Result<NodeId, EngineError> {
         if let Some(p) = parent {
             if !self.contains(p) {
@@ -406,7 +437,7 @@ impl Tree {
                 .remove(ObjFlags::PRESS_LOCK | ObjFlags::SCROLL_CHAIN | ObjFlags::GESTURE_BUBBLE);
         }
         let id = self.nodes.insert(node).map_err(|_| EngineError::TooManyNodes)?;
-        twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::Widget);
+        twine_core::alloc_guard::note(self.partition(), twine_core::alloc_guard::AllocSite::Widget);
         self.attach(id, parent, None);
         twine_core::trace!(
             target: "twine::engine",
@@ -472,6 +503,11 @@ impl Tree {
 
     /// Moves `id` under `new_parent` (`None` = make it a root) at `index` (`None` = last).
     /// Moving a node into its own subtree is rejected (`InvalidConfig("cycle")`).
+    ///
+    /// # Errors
+    /// [`EngineError::NodeNotFound`] for an unknown `id` or `new_parent`;
+    /// [`EngineError::InvalidConfig`] when `new_parent` lies in `id`'s subtree. Nothing moves on
+    /// error.
     pub fn move_to(
         &mut self,
         id: NodeId,
@@ -513,6 +549,12 @@ impl Tree {
     /// Unlike [`move_to`](Self::move_to) this needs no index lookup (O(1) apart from the cycle
     /// check). `before == Some(id)` keeps the node where it is when it already is a child of
     /// `parent`.
+    ///
+    /// # Errors
+    /// [`EngineError::NodeNotFound`] for an unknown `id` or `parent`;
+    /// [`EngineError::InvalidConfig`] when `before` is not a child of `parent` (or is `id` while
+    /// `id` is not yet a child of `parent`), or when `parent` lies in `id`'s subtree. Nothing moves
+    /// on error.
     pub fn move_before(
         &mut self,
         id: NodeId,
@@ -571,6 +613,9 @@ impl Tree {
     }
 
     /// Moves `id` to position `index` among its siblings (clamped to the last position).
+    ///
+    /// # Errors
+    /// [`EngineError::NodeNotFound`] for an unknown `id`.
     pub fn set_index(&mut self, id: NodeId, index: usize) -> Result<(), EngineError> {
         let parent = self.node(id).ok_or(EngineError::NodeNotFound(id))?.parent;
         self.move_to(id, parent, Some(index))
@@ -578,6 +623,10 @@ impl Tree {
 
     /// Swaps the positions of `a` and `b` in their parents (LVGL `lv_obj_swap`; they may have
     /// different parents). Rejected if one is an ancestor of the other.
+    ///
+    /// # Errors
+    /// [`EngineError::NodeNotFound`] for an unknown `a` or `b`; [`EngineError::InvalidConfig`] when
+    /// one is an ancestor of the other.
     pub fn swap(&mut self, a: NodeId, b: NodeId) -> Result<(), EngineError> {
         if a == b {
             return if self.contains(a) {
@@ -694,14 +743,17 @@ impl Tree {
         if !self.contains(to) {
             return Err(EngineError::NodeNotFound(to));
         }
-        if old.is_some_and(|i| self.style_links[i].1 == to) {
+        if old
+            .and_then(|i| self.style_links.get(i))
+            .is_some_and(|l| l.1 == to)
+        {
             return Ok(false);
         }
         if self.style_chain_reaches(to, id) {
             return Err(EngineError::InvalidConfig("cycle"));
         }
-        match old {
-            Some(i) => self.style_links[i].1 = to,
+        match old.and_then(|i| self.style_links.get_mut(i)) {
+            Some(l) => l.1 = to,
             None => self.style_links.push((id, to)),
         }
         Ok(true)
@@ -735,7 +787,8 @@ impl Tree {
                 );
                 self.style_links.swap_remove(i);
             } else {
-                i += 1;
+                // SAFE-ARITH: `i` indexes `style_links` (a `Vec`): below `isize::MAX`.
+                i = i.wrapping_add(1);
             }
         }
     }
@@ -799,7 +852,8 @@ impl Tree {
         if index >= 0 {
             self.children(id).nth(index as usize)
         } else {
-            self.children_rev(id).nth((-(i64::from(index)) - 1) as usize)
+            // `!index` of a negative `i32` is `−index − 1 ≥ 0` (`-1` → 0, the last child).
+            self.children_rev(id).nth((!index) as usize)
         }
     }
 
@@ -864,7 +918,12 @@ impl Tree {
         };
         let mut n = leftmost(id);
         loop {
-            twine_core::alloc_guard::push(out, n, twine_core::alloc_guard::AllocSite::DeleteScratch);
+            twine_core::alloc_guard::push(
+                self.partition(),
+                out,
+                n,
+                twine_core::alloc_guard::AllocSite::DeleteScratch,
+            );
             if n == id {
                 break;
             }
@@ -976,16 +1035,21 @@ impl Tree {
     /// Checks every structural invariant: parent/child links are consistent, `child_count`
     /// matches, `prev`/`next` are symmetric, there are no cycles, roots have no parent, every
     /// parentless node is a root, and style links join live nodes without a cycle.
+    ///
+    /// # Errors
+    /// The first violated invariant, as an [`InvariantError`] naming the node, the broken rule and
+    /// the related node (if any).
     pub fn check_invariants(&self) -> Result<(), InvariantError> {
-        let limit = self.nodes.len() + 1;
+        let limit = self.nodes.len().saturating_add(1);
         let err = |node, what, other| Err(InvariantError { node, what, other });
         let mut linked = 0usize;
         for (id, n) in self.nodes.iter() {
             // Parent chain must end at a root within `limit` steps.
-            let mut steps = 0;
+            let mut steps = 0usize;
             let mut cur = n.parent;
             while let Some(p) = cur {
-                steps += 1;
+                // SAFE-ARITH: `steps ≤ limit + 1` (returned below past `limit`).
+                steps = steps.wrapping_add(1);
                 if steps > limit {
                     return err(id, "cycle in parent chain", Some(p));
                 }
@@ -1008,7 +1072,8 @@ impl Tree {
             let mut prev: Option<NodeId> = None;
             let mut cur = n.first_child;
             while let Some(c) = cur {
-                count += 1;
+                // SAFE-ARITH: `count ≤ limit + 1` (returned below past `limit`).
+                count = count.wrapping_add(1);
                 if count > limit {
                     return err(id, "cycle in child list", Some(c));
                 }
@@ -1030,7 +1095,7 @@ impl Tree {
             if count != usize::from(n.child_count) {
                 return err(id, "child_count does not match the child list", None);
             }
-            linked += count;
+            linked = linked.saturating_add(count);
         }
         for &r in &self.roots {
             match self.nodes.get(r) {
@@ -1039,7 +1104,7 @@ impl Tree {
                 Some(_) => {}
             }
         }
-        if linked + self.roots.len() != self.nodes.len() {
+        if linked.saturating_add(self.roots.len()) != self.nodes.len() {
             return err(
                 self.roots.first().copied().unwrap_or_default(),
                 "node count differs from linked nodes",
@@ -1050,7 +1115,7 @@ impl Tree {
             if !self.contains(n) || !self.contains(p) {
                 return err(n, "style link to a dead node", Some(p));
             }
-            if self.style_links[..i].iter().any(|(m, _)| *m == n) {
+            if self.style_links.iter().take(i).any(|(m, _)| *m == n) {
                 return err(n, "duplicate style link", Some(p));
             }
             if self.style_chain_reaches(p, n) {
@@ -1075,9 +1140,16 @@ impl Tree {
     /// `obj n3g1 "test_id" [x0,y0 → x1,y1] state=PRESSED flags=CLICKABLE|… text="…"` (states as
     /// [`State`](crate::State)'s `Display`: application states by their
     /// [`set_custom_name`](crate::State::set_custom_name) names, `DEFAULT` for none).
+    ///
+    /// # Errors
+    /// Only the errors of `out`.
     pub fn dump(&self, root: NodeId, out: &mut dyn Write) -> fmt::Result {
         for id in self.descendants(root) {
-            let depth = self.ancestors(id).take_while(|a| *a != root).count() + usize::from(id != root);
+            let depth = self
+                .ancestors(id)
+                .take_while(|a| *a != root)
+                .count()
+                .saturating_add(usize::from(id != root));
             let Some(n) = self.node(id) else { continue };
             for _ in 0..depth {
                 out.write_str("  ")?;
@@ -1186,6 +1258,24 @@ impl Iterator for Descendants<'_> {
             }
         };
         Some(cur)
+    }
+}
+
+/// Sorts `v` by `key`, largest first, keeping the order of equal keys (an insertion sort: the
+/// engine sorts only short lists — wrappers above moved nodes, transition candidates — where it
+/// is as fast as `sort_by`, without linking the generic sort into firmware). No allocation;
+/// never panics.
+pub(crate) fn sort_desc_by_key<T, K: Ord>(v: &mut [T], key: impl Fn(&T) -> K) {
+    for i in 1..v.len() {
+        // `v[..i]` is sorted: the entries smaller than `v[i]` are a suffix of it, and `v[i]`
+        // goes before that suffix.
+        let Some(k) = v.get(i).map(&key) else { break };
+        let Some(head) = v.get(..i) else { break };
+        let at = head.iter().position(|x| key(x) < k).unwrap_or(i);
+        // SAFE-INDEX: `at ≤ i < v.len()`; the fallback is never taken.
+        if let Some(run) = v.get_mut(at..=i) {
+            run.rotate_right(1);
+        }
     }
 }
 

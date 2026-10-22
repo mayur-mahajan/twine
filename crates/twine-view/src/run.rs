@@ -68,7 +68,58 @@
 //!   earliest deadline. [`blocking`] never returns, so it drives one `Ui` per thread. Updates of
 //!   different `Ui`s never interfere: each runs only its own channel handlers and bindings, and
 //!   a binding of one `Ui` triggered by another `Ui`'s update waits for its own `Ui`'s update,
-//!   whose waker it wakes (see [`UiCore`](crate::UiCore) § Sharing the runtime).
+//!   whose waker it wakes (see [`UiCore`](crate::UiCore) § Sharing the runtime). They do share
+//!   the runtime's limits, effect queue and loop cut and its fault stream: for displays of
+//!   different criticality use partitions (next section).
+//!
+//! ## Partitions
+//!
+//! With the `partitions` feature (ADR-001) each `Ui` can have a runtime of its own: build it
+//! with the token of its partition ([`Runtime::take_partition`](twine_reactive::Runtime::take_partition)).
+//! Partitions share no state, so a loop cut, an exhausted bound, a fault or a slow update in
+//! one never changes another ([`Ui::partition`]; `docs/safety/profile.md` § 13). Run them:
+//!
+//! - **in their own contexts** — one `Ui` per core, RTOS task or executor, each with
+//!   [`blocking`] or `twine_embassy::run` and its own partition's token (each context claims its
+//!   partition once); the critical one in the higher-priority task or on its own core;
+//! - **or in one super-loop** stepping the critical partition first, then the others, and
+//!   waiting for the earliest deadline of all of them (each `Ui` wakes its own waker; one
+//!   platform `wait` serves both when both wakers notify it).
+//!
+//! Give the critical partition a dedicated `static` waker
+//! ([`UiBuilder::waker`](crate::UiBuilder::waker)) so the process-wide waker pool cannot
+//! affect it, and pass data between partitions only through `Latest`, `Channel` or `Outbox`.
+//!
+//! ```no_run
+//! use twine_core::{ColorFormat, Partition};
+//! use twine_hal::DisplayInfo;
+//! use twine_testing::{MemoryDisplay, MockClock};
+//! use twine_view::prelude::*;
+//!
+//! # fn panel() -> MemoryDisplay { MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)) }
+//! static CRITICAL_WAKER: UiWaker = UiWaker::new();
+//! let clock = MockClock::new();
+//! let mut critical = Ui::builder(panel())
+//!     .runtime(Runtime::take().unwrap()) // partition 0
+//!     .waker(&CRITICAL_WAKER)
+//!     .clock(clock.clone())
+//!     .buffers(BufferMode::alloc(BufferSpec::default()))
+//!     .try_build(|_| label("88 km/h"))
+//!     .unwrap();
+//! let other = Partition::new(1).expect("feature `partitions`");
+//! let mut media = Ui::builder(panel())
+//!     .runtime(Runtime::take_partition(other).unwrap())
+//!     .clock(clock.clone())
+//!     .buffers(BufferMode::alloc(BufferSpec::default()))
+//!     .try_build(|_| label("track 7"))
+//!     .unwrap();
+//! loop {
+//!     let a = critical.update(); // the critical partition first
+//!     let b = media.update();
+//!     # let _ = (a, b);
+//!     // … wait for the earlier of both deadlines, or a wake-up of either waker …
+//! }
+//! ```
 //!
 //! ## An RTOS task
 //!

@@ -15,6 +15,17 @@ pub(crate) fn display_dpi(e: &Engine, id: NodeId) -> u16 {
         .map_or(DPI_DEF as u16, |i| i.dpi)
 }
 
+/// `v` saturated to `i32`.
+pub(crate) const fn sat_i32(v: i64) -> i32 {
+    if v > i32::MAX as i64 {
+        i32::MAX
+    } else if v < i32::MIN as i64 {
+        i32::MIN
+    } else {
+        v as i32
+    }
+}
+
 /// LVGL `lv_obj_set_flex_flow`: a flex layout with `flow`.
 pub(crate) fn set_flex(e: &mut Engine, id: NodeId, flow: FlexFlow) {
     e.set_layout(id, LayoutKind::Flex);

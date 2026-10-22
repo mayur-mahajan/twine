@@ -5,6 +5,7 @@ mod popover;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::num::{NonZeroU16, NonZeroU64};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bitflags::bitflags;
@@ -208,7 +209,8 @@ impl ButtonMatrix {
             popover: None,
         };
         m.map = map;
-        m.parse_map();
+        // Part of the widget's construction (noted as its creation when the engine adds it).
+        m.fill_from_map();
         m
     }
 
@@ -305,15 +307,16 @@ impl ButtonMatrix {
             .and_then(|s| self.areas.get(usize::from(s)))
             .map(|a| {
                 let c = m.coords();
-                Point::new(c.x0 + a.x1 + (a.width() >> 1), c.y0 + a.y1 + (a.height() >> 1))
+                let at = |o: i32, a1: i32, len: i32| o.saturating_add(a1).saturating_add(len >> 1);
+                Point::new(at(c.x0, a.x1, a.width()), at(c.y0, a.y1, a.height()))
             });
         self.map = map;
-        self.parse_map();
+        self.parse_map(cx.partition());
         self.update_map(cx);
         if let Some(p) = sel_center {
             let new_sel = self
                 .button_from_point(&cx.measure(), p)
-                .filter(|&b| !self.ctrl[usize::from(b)].is_inactive());
+                .filter(|&b| self.btn_ctrl(b).is_some_and(|c| !c.is_inactive()));
             self.selected = new_sel;
             self.invalidate_btn(cx, new_sel);
         }
@@ -343,7 +346,7 @@ impl ButtonMatrix {
             return;
         }
         let text = cx.fit_text(text);
-        if let Some(buf) = self.map.text_buf(usize::from(idx), text) {
+        if let Some(buf) = self.map.text_buf(usize::from(idx), text, cx.partition()) {
             cx.store_text(buf, text);
             log_set(BUTTONMATRIX_CLASS.name, cx.node(), "btn_text");
             self.invalidate_btn(cx, Some(idx));
@@ -378,7 +381,9 @@ impl ButtonMatrix {
             self.clear_btn_ctrl_all(cx, BtnCtrl::CHECKED);
         }
         let width_changed = (ctrl & BtnCtrl::WIDTH_MASK) != BtnCtrl::empty();
-        self.ctrl[usize::from(idx)] |= ctrl;
+        if let Some(c) = self.ctrl.get_mut(usize::from(idx)) {
+            *c |= ctrl;
+        }
         self.warn_recolor();
         if width_changed {
             self.update_map(cx);
@@ -399,7 +404,9 @@ impl ButtonMatrix {
         }
         log_set(BUTTONMATRIX_CLASS.name, cx.node(), "btn_ctrl");
         let width_changed = cur.intersects(ctrl & BtnCtrl::WIDTH_MASK);
-        self.ctrl[usize::from(idx)] &= !ctrl;
+        if let Some(c) = self.ctrl.get_mut(usize::from(idx)) {
+            *c &= !ctrl;
+        }
         if width_changed {
             self.update_map(cx);
         } else {
@@ -436,7 +443,9 @@ impl ButtonMatrix {
             return;
         }
         log_set(BUTTONMATRIX_CLASS.name, cx.node(), "btn_width");
-        self.ctrl[usize::from(idx)] = new;
+        if let Some(c) = self.ctrl.get_mut(usize::from(idx)) {
+            *c = new;
+        }
         self.update_map(cx);
     }
 
@@ -451,8 +460,7 @@ impl ButtonMatrix {
         if on {
             let first = self.ctrl.iter().position(|c| c.contains(BtnCtrl::CHECKED));
             for i in 0..self.ctrl.len() {
-                if Some(i) != first && self.ctrl[i].contains(BtnCtrl::CHECKED) {
-                    self.ctrl[i].remove(BtnCtrl::CHECKED);
+                if Some(i) != first && self.uncheck(i) {
                     self.invalidate_btn(cx, u16::try_from(i).ok());
                 }
             }
@@ -476,6 +484,17 @@ impl ButtonMatrix {
         self.invalidate_btn(cx, idx);
     }
 
+    /// Removes `CHECKED` from button `i`; whether it was checked.
+    fn uncheck(&mut self, i: usize) -> bool {
+        match self.ctrl.get_mut(i) {
+            Some(c) if c.contains(BtnCtrl::CHECKED) => {
+                c.remove(BtnCtrl::CHECKED);
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn warn_recolor(&self) {
         if self.ctrl.iter().any(|c| c.contains(BtnCtrl::RECOLOR)) && !WARN_RECOLOR.load(Ordering::Relaxed) {
             WARN_RECOLOR.store(true, Ordering::Relaxed);
@@ -483,15 +502,22 @@ impl ButtonMatrix {
         }
     }
 
-    /// Takes the buttons, rows and control bits of the map (LVGL
-    /// `allocate_button_areas_and_controls` + `set_ctrl_map`).
-    fn parse_map(&mut self) {
-        self.row_cnt = u16::try_from(self.map.row_count()).unwrap_or(u16::MAX);
+    /// Takes the buttons, rows and control bits of a new map (LVGL
+    /// `allocate_button_areas_and_controls` + `set_ctrl_map`); growth of the tables is noted in
+    /// partition `part`'s seal domain (the widget's engine).
+    fn parse_map(&mut self, part: twine_core::Partition) {
         let n = self.map.btn_count().min(usize::from(u16::MAX));
         // Kept between maps: a map with more buttons than any before grows them.
         if self.ctrl.capacity() < n || self.areas.capacity() < n {
-            twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::WidgetBuffer);
+            twine_core::alloc_guard::grew(part, twine_core::alloc_guard::AllocSite::WidgetBuffer);
         }
+        self.fill_from_map();
+    }
+
+    /// Fills the rows, control bits and areas from the map.
+    fn fill_from_map(&mut self) {
+        self.row_cnt = u16::try_from(self.map.row_count()).unwrap_or(u16::MAX);
+        let n = self.map.btn_count().min(usize::from(u16::MAX));
         self.ctrl.clear();
         self.ctrl
             .extend((0..n).map(|i| self.map.initial_ctrl(i).unwrap_or_default()));
@@ -509,53 +535,78 @@ impl ButtonMatrix {
         let rtl = m.style(Part::Main, PropId::BaseDir).get::<BaseDir>() == Some(BaseDir::Rtl);
         let border = m.style_i32(Part::Main, PropId::BorderWidth);
         let pad = m.padding(Part::Main);
-        let sleft = pad.left + border;
-        let stop = pad.top + border;
+        let sleft = pad.left.saturating_add(border);
+        let stop = pad.top.saturating_add(border);
         let prow = m.style_i32(Part::Main, PropId::RowGap);
         let pcol = m.style_i32(Part::Main, PropId::ColumnGap);
         let content = m.content_area();
         let max_w = content.width();
         let max_h = content.height();
-        let row_cnt = i32::from(self.row_cnt);
-        if row_cnt == 0 {
+        let Some(row_cnt) = NonZeroU16::new(self.row_cnt) else {
             return;
-        }
-        let max_h_no_gap = max_h - prow * (row_cnt - 1);
-        let mut btn_tot = 0usize;
-        let n_btns = self.ctrl.len();
-        for (row, btn_cnt) in (0..row_cnt).zip(self.map.row_lens()) {
-            // The units of this row.
-            let btn_cnt = btn_cnt.min(n_btns - btn_tot);
-            let units: u32 = self.ctrl[btn_tot..btn_tot + btn_cnt]
-                .iter()
-                .map(|c| c.width_units())
-                .sum();
-            if btn_cnt == 0 {
+        };
+        let rows = i64::from(row_cnt.get());
+        // Style gaps are arbitrary `i32`s: the row geometry is computed in `i64` (products of
+        // an `i32` and a row index below 2^16) and saturated back.
+        // SAFE-ARITH: `|prow| ≤ 2^31` and `rows − 1 < 2^16`, so the product is below 2^47.
+        let max_h_no_gap =
+            i64::from(max_h).saturating_sub(i64::from(prow).wrapping_mul(rows.wrapping_sub(1)));
+        // The share of rows `0 .. row` of the gap-less height (`row ≤ rows < 2^16`).
+        let row_edge = |row: i64| {
+            // SAFE-ARITH: `|max_h_no_gap| < 2^33` and `row < 2^17`, so the product is below 2^50.
+            max_h_no_gap.wrapping_mul(row).checked_div(rows).unwrap_or(0)
+        };
+        // The control bits and areas not yet assigned to a row: both tables hold one entry
+        // per button (`fill_from_map`), each row takes its buttons from the front.
+        let mut ctrl_rest = self.ctrl.as_slice();
+        let mut areas_rest = self.areas.as_mut_slice();
+        for (row, btn_cnt) in (0..rows).zip(self.map.row_lens()) {
+            let btn_cnt = btn_cnt.min(ctrl_rest.len()).min(areas_rest.len());
+            let (ctrl_row, c_rest) = ctrl_rest.split_at(btn_cnt);
+            let (areas_row, a_rest) = core::mem::take(&mut areas_rest).split_at_mut(btn_cnt);
+            (ctrl_rest, areas_rest) = (c_rest, a_rest);
+            // The units of this row (each button `1 ..= 15`, at most `u16::MAX` buttons).
+            let units: u32 = ctrl_row.iter().fold(0, |s, c| s.saturating_add(c.width_units()));
+            let Some(units) = NonZeroU64::new(u64::from(units)) else {
+                // An empty row.
                 continue;
-            }
-            let row_y1 = stop + (max_h_no_gap * row) / row_cnt + row * prow;
-            let row_y2 = stop + (max_h_no_gap * (row + 1)) / row_cnt + row * prow - 1;
-            let n = i32::try_from(btn_cnt).unwrap_or(i32::MAX);
-            let max_w_no_gap = (max_w - pcol * (n - 1)).max(0);
-            let units = i64::from(units);
-            let mut row_unit = 0i64;
-            for b in 0..n {
-                let u = i64::from(self.ctrl[btn_tot].width_units());
-                let mut x1 = (i64::from(max_w_no_gap) * row_unit / units) as i32 + b * pcol;
-                let mut x2 = (i64::from(max_w_no_gap) * (row_unit + u) / units) as i32 + b * pcol - 1;
+            };
+            // SAFE-ARITH: `|prow| ≤ 2^31` and `row < 2^16`: the product is below 2^47.
+            let gaps = i64::from(prow).wrapping_mul(row);
+            let y = |edge: i64| i64::from(stop).saturating_add(edge).saturating_add(gaps);
+            let row_y1 = util::sat_i32(y(row_edge(row)));
+            // SAFE-ARITH: `row < 2^16`.
+            let row_y2 = util::sat_i32(y(row_edge(row.wrapping_add(1))).saturating_sub(1));
+            let n = i64::try_from(btn_cnt).unwrap_or(i64::MAX);
+            // SAFE-ARITH: `|pcol| ≤ 2^31` and `n − 1 < 2^16` (buttons per row of a map).
+            let col_gaps = i64::from(pcol).wrapping_mul(n.saturating_sub(1));
+            let max_w_no_gap = i64::from(max_w).saturating_sub(col_gaps).max(0).unsigned_abs();
+            let mut row_unit = 0u64;
+            for (b, (c, area)) in (0i64..).zip(ctrl_row.iter().zip(areas_row.iter_mut())) {
+                let u = u64::from(c.width_units());
+                // The share of the units before the button's ends: `max_w_no_gap < 2^34` and
+                // `row_unit + u ≤ units < 2^20`, so the products stay below 2^54.
+                // SAFE-ARITH: see above.
+                let share =
+                    |unit: u64| i64::try_from(max_w_no_gap.wrapping_mul(unit) / units).unwrap_or(i64::MAX);
+                // SAFE-ARITH: `|pcol| ≤ 2^31` and `b < 2^16`.
+                let ofs = i64::from(pcol).wrapping_mul(b);
+                let mut x1 = util::sat_i32(share(row_unit).saturating_add(ofs));
+                // SAFE-ARITH: `row_unit + u ≤ units < 2^20`.
+                let next = row_unit.wrapping_add(u);
+                let mut x2 = util::sat_i32(share(next).saturating_add(ofs).saturating_sub(1));
                 if rtl {
                     core::mem::swap(&mut x1, &mut x2);
-                    x1 = max_w - x1;
-                    x2 = max_w - x2;
+                    x1 = max_w.saturating_sub(x1);
+                    x2 = max_w.saturating_sub(x2);
                 }
-                self.areas[btn_tot] = Area {
-                    x1: x1 + sleft,
+                *area = Area {
+                    x1: x1.saturating_add(sleft),
                     y1: row_y1,
-                    x2: x2 + sleft,
+                    x2: x2.saturating_add(sleft),
                     y2: row_y2,
                 };
-                row_unit += u;
-                btn_tot += 1;
+                row_unit = next;
             }
         }
     }
@@ -569,33 +620,62 @@ impl ButtonMatrix {
         let pleft = pad.left;
         let prow = m.style_i32(Part::Main, PropId::RowGap);
         let pcol = m.style_i32(Part::Main, PropId::ColumnGap);
-        let prow = ((prow / 2) + 1 + (prow & 1)).min(BTN_EXTRA_CLICK_AREA_MAX);
-        let pcol = ((pcol / 2) + 1 + (pcol & 1)).min(BTN_EXTRA_CLICK_AREA_MAX);
+        // Half a gap, rounded up, plus one (at most `BTN_EXTRA_CLICK_AREA_MAX`).
+        let half_gap = |g: i32| {
+            (g / 2)
+                .saturating_add(1)
+                .saturating_add(g & 1)
+                .min(BTN_EXTRA_CLICK_AREA_MAX)
+        };
+        let (prow, pcol) = (half_gap(prow), half_gap(pcol));
         let pright = pad.right.min(BTN_EXTRA_CLICK_AREA_MAX);
         let ptop = pad.top.min(BTN_EXTRA_CLICK_AREA_MAX);
         let pbottom = pad.bottom.min(BTN_EXTRA_CLICK_AREA_MAX);
+        // The last pixels next to the right and bottom paddings.
+        let (x_end, y_end) = (
+            w.saturating_sub(pright).saturating_sub(2),
+            h.saturating_sub(pbottom).saturating_sub(2),
+        );
+        let lo = |v: i32, o: i32, d: i32| v.saturating_add(o).saturating_sub(d);
+        let hi = |v: i32, o: i32, d: i32| v.saturating_add(o).saturating_add(d);
         for (i, a) in self.areas.iter().enumerate() {
             let mut b = *a;
-            if b.x1 <= pleft {
-                b.x1 += c.x0 - pleft.min(BTN_EXTRA_CLICK_AREA_MAX);
-            } else {
-                b.x1 += c.x0 - pcol;
-            }
-            if b.y1 <= ptop {
-                b.y1 += c.y0 - ptop.min(BTN_EXTRA_CLICK_AREA_MAX);
-            } else {
-                b.y1 += c.y0 - prow;
-            }
-            if b.x2 >= w - pright - 2 {
-                b.x2 += c.x0 + pright.min(BTN_EXTRA_CLICK_AREA_MAX);
-            } else {
-                b.x2 += c.x0 + pcol;
-            }
-            if b.y2 >= h - pbottom - 2 {
-                b.y2 += c.y0 + pbottom.min(BTN_EXTRA_CLICK_AREA_MAX);
-            } else {
-                b.y2 += c.y0 + prow;
-            }
+            b.x1 = lo(
+                b.x1,
+                c.x0,
+                if b.x1 <= pleft {
+                    pleft.min(BTN_EXTRA_CLICK_AREA_MAX)
+                } else {
+                    pcol
+                },
+            );
+            b.y1 = lo(
+                b.y1,
+                c.y0,
+                if b.y1 <= ptop {
+                    ptop.min(BTN_EXTRA_CLICK_AREA_MAX)
+                } else {
+                    prow
+                },
+            );
+            b.x2 = hi(
+                b.x2,
+                c.x0,
+                if b.x2 >= x_end {
+                    pright.min(BTN_EXTRA_CLICK_AREA_MAX)
+                } else {
+                    pcol
+                },
+            );
+            b.y2 = hi(
+                b.y2,
+                c.y0,
+                if b.y2 >= y_end {
+                    pbottom.min(BTN_EXTRA_CLICK_AREA_MAX)
+                } else {
+                    prow
+                },
+            );
             if p.x >= b.x1 && p.x <= b.x2 && p.y >= b.y1 && p.y <= b.y2 {
                 return u16::try_from(i).ok();
             }
@@ -623,11 +703,13 @@ impl ButtonMatrix {
         let row_gap = m.style_i32(Part::Main, PropId::RowGap).max(dpi / 10);
         let col_gap = m.style_i32(Part::Main, PropId::ColumnGap).max(dpi / 10);
         // LVGL grows x by the row gap and y by the column gap.
+        let lo = |v: i32, o: i32, d: i32| v.saturating_add(o).saturating_sub(d);
+        let hi = |v: i32, o: i32, d: i32| v.saturating_add(o).saturating_add(d);
         let b = Area {
-            x1: a.x1 + c.x0 - row_gap,
-            y1: a.y1 + c.y0 - col_gap,
-            x2: a.x2 + c.x0 + row_gap,
-            y2: a.y2 + c.y0 + col_gap,
+            x1: lo(a.x1, c.x0, row_gap),
+            y1: lo(a.y1, c.y0, col_gap),
+            x2: hi(a.x2, c.x0, row_gap),
+            y2: hi(a.y2, c.y0, col_gap),
         };
         Some(b.to_rect())
     }
@@ -636,13 +718,14 @@ impl ButtonMatrix {
     fn make_one_checked(&mut self, cx: &mut WidgetCx<'_>, idx: u16) {
         let was = self.has_btn_ctrl(idx, BtnCtrl::CHECKED);
         for i in 0..self.ctrl.len() {
-            if self.ctrl[i].contains(BtnCtrl::CHECKED) {
-                self.ctrl[i].remove(BtnCtrl::CHECKED);
+            if self.uncheck(i) {
                 self.invalidate_btn(cx, u16::try_from(i).ok());
             }
         }
         if was {
-            self.ctrl[usize::from(idx)].insert(BtnCtrl::CHECKED);
+            if let Some(c) = self.ctrl.get_mut(usize::from(idx)) {
+                c.insert(BtnCtrl::CHECKED);
+            }
             self.invalidate_btn(cx, Some(idx));
         }
     }
@@ -688,12 +771,12 @@ impl ButtonMatrix {
                 if matches!(kind, Some(InputKind::Pointer | InputKind::Button)) {
                     let p = cx.point().unwrap_or(Point::new(-1, -1));
                     let hit = self.button_from_point(&MeasureCx::new(cx.engine(), node), p);
-                    self.selected = hit.filter(|&b| !self.ctrl[usize::from(b)].is_inactive());
+                    self.selected = hit.filter(|&b| self.btn_ctrl(b).is_some_and(|c| !c.is_inactive()));
                     let mut wcx = cx.widget_cx();
                     self.invalidate_btn(&mut wcx, self.selected);
                 }
                 let sel = self.selected?;
-                let c = self.ctrl[usize::from(sel)];
+                let c = self.btn_ctrl(sel)?;
                 if c.contains(BtnCtrl::POPOVER) {
                     self.show_popover(cx.engine_mut(), node, sel);
                 }
@@ -723,14 +806,13 @@ impl ButtonMatrix {
             EventCode::Released => {
                 self.hide_popover(cx.engine_mut());
                 let sel = self.selected?;
-                let i = usize::from(sel);
                 let mut wcx = cx.widget_cx();
-                let c = self.ctrl[i];
+                let c = self.btn_ctrl(sel)?;
                 if c.contains(BtnCtrl::CHECKABLE) && !c.contains(BtnCtrl::DISABLED) {
-                    if c.contains(BtnCtrl::CHECKED) && !self.one_checked {
-                        self.ctrl[i].remove(BtnCtrl::CHECKED);
-                    } else {
-                        self.ctrl[i].insert(BtnCtrl::CHECKED);
+                    let one_checked = self.one_checked;
+                    if let Some(bits) = self.ctrl.get_mut(usize::from(sel)) {
+                        // Unchecked when checked, unless one stays checked.
+                        bits.set(BtnCtrl::CHECKED, !c.contains(BtnCtrl::CHECKED) || one_checked);
                     }
                     if self.one_checked {
                         self.make_one_checked(&mut wcx, sel);
@@ -741,7 +823,7 @@ impl ButtonMatrix {
             }
             EventCode::LongPressedRepeat => {
                 let sel = self.selected?;
-                let c = self.ctrl[usize::from(sel)];
+                let c = self.btn_ctrl(sel)?;
                 (!c.contains(BtnCtrl::NO_REPEAT) && !c.is_inactive()).then_some(sel)
             }
             EventCode::PressLost => {
@@ -791,17 +873,30 @@ impl ButtonMatrix {
         if n == 0 {
             return;
         }
-        let inactive = |i: usize| self.ctrl[i].is_inactive();
+        // A button index out of the table counts as inactive (never selected).
+        let inactive = |i: usize| self.ctrl.get(i).is_none_or(|c| c.is_inactive());
+        // The next / previous index, cycling through `0 .. n` (`n ≥ 1`).
+        let next = |s: usize| {
+            let t = s.saturating_add(1);
+            if t >= n { 0 } else { t }
+        };
+        let prev = |s: usize| {
+            if s == 0 {
+                n.saturating_sub(1)
+            } else {
+                s.saturating_sub(1)
+            }
+        };
         match key {
             Key::Right => {
-                let mut s = self.selected.map_or(0, |s| usize::from(s) + 1);
+                let mut s = self.selected.map_or(0, |s| usize::from(s).saturating_add(1));
                 if s >= n {
                     s = 0;
                 }
                 let start = s;
                 let mut found = Some(s);
                 while inactive(s) {
-                    s = if s + 1 >= n { 0 } else { s + 1 };
+                    s = next(s);
                     if s == start {
                         found = None;
                         break;
@@ -811,12 +906,11 @@ impl ButtonMatrix {
                 self.selected = found.and_then(|s| u16::try_from(s).ok());
             }
             Key::Left => {
-                let mut s = self.selected.map_or(0, usize::from);
-                s = if s == 0 { n - 1 } else { s - 1 };
+                let mut s = prev(self.selected.map_or(0, usize::from));
                 let start = s;
                 let mut found = Some(s);
                 while inactive(s) {
-                    s = if s > 0 { s - 1 } else { n - 1 };
+                    s = prev(s);
                     if s == start {
                         found = None;
                         break;
@@ -831,18 +925,20 @@ impl ButtonMatrix {
                     self.selected = (0..n).find(|&i| !inactive(i)).and_then(|i| u16::try_from(i).ok());
                     return;
                 };
-                let a = self.areas[cur];
-                let center = a.x1 + (a.width() >> 1);
+                let Some(&a) = self.areas.get(cur) else {
+                    return;
+                };
+                let center = a.x1.saturating_add(a.width() >> 1);
+                let below =
+                    |b: &Area| b.y1 > a.y1 && center >= b.x1 && center <= b.x2.saturating_add(col_gap);
+                let above =
+                    |b: &Area| b.y1 < a.y1 && center >= b.x1.saturating_sub(col_gap) && center <= b.x2;
                 let target = if key == Key::Down {
-                    (cur..n).find(|&i| {
-                        let b = self.areas[i];
-                        b.y1 > a.y1 && center >= b.x1 && center <= b.x2 + col_gap && !inactive(i)
-                    })
+                    (cur..n).find(|&i| self.areas.get(i).is_some_and(below) && !inactive(i))
                 } else {
-                    (0..=cur).rev().find(|&i| {
-                        let b = self.areas[i];
-                        b.y1 < a.y1 && center >= b.x1 - col_gap && center <= b.x2 && !inactive(i)
-                    })
+                    (0..=cur)
+                        .rev()
+                        .find(|&i| self.areas.get(i).is_some_and(above) && !inactive(i))
                 };
                 if let Some(t) = target {
                     self.selected = u16::try_from(t).ok();
@@ -852,9 +948,8 @@ impl ButtonMatrix {
         }
     }
 
-    /// The `Items` state of button `i` (LVGL `draw_main`).
-    fn btn_state(&self, i: usize, node_state: State) -> State {
-        let c = self.ctrl[i];
+    /// The `Items` state of button `i` with control bits `c` (LVGL `draw_main`).
+    fn btn_state(&self, i: usize, c: BtnCtrl, node_state: State) -> State {
         let mut s = State::DEFAULT;
         if c.contains(BtnCtrl::CHECKED) {
             s |= State::CHECKED;
@@ -887,22 +982,26 @@ impl ButtonMatrix {
             .max(m.style_i32(Part::Main, PropId::ColumnGap).max(dpi_margin));
         let def_rect = e.rect_dsc_for_state(node, Part::Items, State::DEFAULT, opa);
         let def_text = e.text_dsc_for_state(node, Part::Items, State::DEFAULT, opa);
-        for (i, (a, txt)) in self.areas.iter().zip(self.map.texts()).enumerate() {
-            let c = self.ctrl[i];
+        // The edges of the content box: a button touching one draws no internal border there.
+        let (left, top) = (obj.x0.saturating_add(pad.left), obj.y0.saturating_add(pad.top));
+        let right = obj.x1.saturating_sub(1).saturating_sub(pad.right);
+        let bottom = obj.y1.saturating_sub(1).saturating_sub(pad.bottom);
+        let buttons = self.areas.iter().zip(&self.ctrl).zip(self.map.texts());
+        for (i, ((a, &c), txt)) in buttons.enumerate() {
             if c.contains(BtnCtrl::HIDDEN) {
                 continue;
             }
             let btn = Area {
-                x1: a.x1 + obj.x0,
-                y1: a.y1 + obj.y0,
-                x2: a.x2 + obj.x0,
-                y2: a.y2 + obj.y0,
+                x1: a.x1.saturating_add(obj.x0),
+                y1: a.y1.saturating_add(obj.y0),
+                x2: a.x2.saturating_add(obj.x0),
+                y2: a.y2.saturating_add(obj.y0),
             };
             let test = btn.to_rect().expand(clip_margin);
             if test.intersection(&clip).is_none() {
                 continue;
             }
-            let st = self.btn_state(i, node_state);
+            let st = self.btn_state(i, c, node_state);
             let (rect, mut text) = if st == State::DEFAULT {
                 (def_rect, def_text)
             } else {
@@ -916,16 +1015,16 @@ impl ButtonMatrix {
             dsc.border_post = false;
             if dsc.border_side.0 & BorderSide::INTERNAL.0 != 0 {
                 let mut side = BorderSide::FULL.0;
-                if btn.x1 == obj.x0 + pad.left {
+                if btn.x1 == left {
                     side &= !BorderSide::LEFT.0;
                 }
-                if btn.x2 == obj.x1 - 1 - pad.right {
+                if btn.x2 == right {
                     side &= !BorderSide::RIGHT.0;
                 }
-                if btn.y1 == obj.y0 + pad.top {
+                if btn.y1 == top {
                     side &= !BorderSide::TOP.0;
                 }
-                if btn.y2 == obj.y1 - 1 - pad.bottom {
+                if btn.y2 == bottom {
                     side &= !BorderSide::BOTTOM.0;
                 }
                 dsc.border_side = BorderSide(side);
@@ -936,11 +1035,12 @@ impl ButtonMatrix {
             l.line_space = text.line_space;
             l.max_width = obj.width();
             let size: Size = l.measure();
-            let x1 = btn.x1 + (btn.width() - size.w) / 2;
-            let y1 = btn.y1 + (btn.height() - size.h) / 2;
+            let x1 = btn.x1.saturating_add(btn.width().saturating_sub(size.w) / 2);
+            let y1 = btn.y1.saturating_add(btn.height().saturating_sub(size.h) / 2);
             // The text is centered by position; its lines are centered within it.
             text.align = TextAlign::Center;
-            cx.draw_text(Rect::new(x1, y1, x1 + size.w + 1, y1 + size.h + 1), txt, &text);
+            let end = |o: i32, len: i32| o.saturating_add(len).saturating_add(1);
+            cx.draw_text(Rect::new(x1, y1, end(x1, size.w), end(y1, size.h)), txt, &text);
         }
     }
 
@@ -952,7 +1052,11 @@ impl ButtonMatrix {
             .tree()
             .node(node)
             .map_or(State::DEFAULT, twine_engine::Node::state);
-        let state = self.btn_state(usize::from(btn), node_state);
+        let state = self.btn_state(
+            usize::from(btn),
+            self.btn_ctrl(btn).unwrap_or_default(),
+            node_state,
+        );
         let text = self.btn_text(btn).unwrap_or("");
         let p = popover::show(e, node, self.popover, area, text, state);
         self.popover = p;

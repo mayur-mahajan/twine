@@ -53,6 +53,9 @@ impl<P> PacRegs<P> {
     /// embassy-stm32's `p.DMA2D`). Returns `Err(peripheral)` while another `PacRegs` exists
     /// (the chip has one DMA2D). Touches no register. Never panics.
     ///
+    /// # Errors
+    /// The unchanged `peripheral` while another `PacRegs` exists.
+    ///
     /// ```
     /// use twine_accel_stm32::PacRegs;
     ///

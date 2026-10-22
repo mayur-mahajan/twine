@@ -8,6 +8,7 @@ use twine_core::{Color, ColorFormat, Opa, Rect};
 use crate::blend::{BlendMode, Source, blend_row};
 use crate::gradient::GradSampler;
 use crate::mask::{Mask, MaskId, MaskResult, MaskStack};
+use crate::num::{advance, span};
 use crate::{AccelResult, DrawAccel, DrawBuf, RenderCaches};
 
 /// Draws into a [`DrawBuf`] with a clip rectangle, a mask stack and an optional accelerator.
@@ -72,7 +73,7 @@ pub(crate) enum Paint<'p> {
     /// A gradient sampled per pixel.
     Grad {
         s: &'p GradSampler,
-        map: &'p [u32],
+        map: &'p crate::gradient::ColorMap,
         dither: bool,
     },
 }
@@ -280,7 +281,7 @@ impl<'a> Painter<'a> {
         mode: BlendMode,
     ) {
         self.sync_accel();
-        let r = Rect::new(x0, y, x1, y + 1);
+        let r = Rect::new(x0, y, x1, y.saturating_add(1));
         self.touched = Some(self.touched.map_or(r, |t| t.union(&r)));
         blend_row(&mut self.buf, y, x0, x1, src, cov, opa, mode);
     }
@@ -307,16 +308,17 @@ impl<'a> Painter<'a> {
         if cx0 >= cx1 {
             return;
         }
-        let off = (cx0 - x0) as usize;
+        let off = span(x0, cx0);
         let src = src.offset(off);
         match cov {
             Some(c) => {
-                let end = (off + (cx1 - cx0) as usize).min(c.len());
-                if end <= off {
+                // The visible part of the coverage (empty when the coverage ends before it).
+                let end = off.saturating_add(span(cx0, cx1)).min(c.len());
+                let Some(c) = c.get_mut(off..end).filter(|c| !c.is_empty()) else {
                     return;
-                }
-                let c = &mut c[off..end];
-                let cx1 = cx0 + c.len() as i32;
+                };
+                // `c.len() ≤ cx1 − cx0`: the end stays at or before `cx1`.
+                let cx1 = advance(cx0, c.len(), cx1);
                 if !self.masks.is_empty() && self.masks.apply(y, cx0, c) == MaskResult::Transparent {
                     return;
                 }
@@ -325,13 +327,17 @@ impl<'a> Painter<'a> {
             None if self.masks.is_empty() => self.raw_blend(y, cx0, cx1, src, None, opa, mode),
             None => {
                 let mut m = take(&mut self.caches.mask);
-                let chunk = m.len().max(1) as i32;
+                let chunk = m.len().max(1);
                 let mut x = cx0;
                 while x < cx1 {
-                    let e = (x + chunk).min(cx1);
-                    let buf = &mut m[..(e - x) as usize];
+                    let e = advance(x, chunk, cx1);
+                    // SAFE-INDEX: `e − x ≤ chunk ≤ m.len()` (`advance`); the fallback is never
+                    // taken.
+                    let Some(buf) = m.get_mut(..span(x, e)) else {
+                        break;
+                    };
                     buf.fill(255);
-                    let s = src.offset((x - cx0) as usize);
+                    let s = src.offset(span(cx0, x));
                     match self.masks.apply(y, x, buf) {
                         MaskResult::Transparent => {}
                         MaskResult::FullCover => self.raw_blend(y, x, e, s, None, opa, mode),
@@ -380,11 +386,11 @@ impl<'a> Painter<'a> {
                 return self.span(sc, y, a0, a1, &Paint::Solid(c), o, mode, cov);
             }
         }
-        let chunk = sc.cov.len().max(1) as i32;
+        let chunk = sc.cov.len().max(1);
         let mut a = a0;
         while a < a1 {
-            let b = (a + chunk).min(a1);
-            let k = (b - a) as usize;
+            let b = advance(a, chunk, a1);
+            let k = span(a, b);
             let src = match *paint {
                 Paint::Solid(c) => Source::Solid(c),
                 Paint::Src { src, x0 } => {
@@ -392,16 +398,25 @@ impl<'a> Painter<'a> {
                         a = b;
                         continue;
                     }
-                    src.offset((a - x0) as usize)
+                    src.offset(span(x0, a))
                 }
                 Paint::Grad { s, map, dither } => {
-                    s.fill_row(map, y, a, k, dither, &mut sc.span);
-                    Source::Argb(&sc.span[..k * 4])
+                    // SAFE-ARITH: `k ≤ chunk ≤ max_span ≤ 65_535`, so `4k` fits.
+                    // SAFE-INDEX: the span scratch holds `4 · max_span` bytes; the fallback is
+                    // never taken.
+                    let Some(out) = sc.span.get_mut(..k.wrapping_mul(4)) else {
+                        break;
+                    };
+                    s.fill_row(map, y, a, dither, out);
+                    Source::Argb(out)
                 }
             };
             let c = match cov.as_deref_mut() {
                 Some(f) => {
-                    let buf = &mut sc.cov[..k];
+                    // SAFE-INDEX: `k ≤ chunk = cov.len()`; the fallback is never taken.
+                    let Some(buf) = sc.cov.get_mut(..k) else {
+                        break;
+                    };
                     f(a, buf);
                     Some(buf)
                 }

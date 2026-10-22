@@ -92,6 +92,10 @@ impl core::fmt::Debug for TtfProvider {
 impl TtfProvider {
     /// Parses `data` (the font is parsed completely; `data` is not kept) for rendering at
     /// `px` pixels per em.
+    ///
+    /// # Errors
+    /// [`TtfError::InvalidSize`] for `px` of 0 or above [`TTF_MAX_PX`]; [`TtfError::Parse`] for
+    /// data that is not a TrueType/OpenType font.
     pub fn new(data: &[u8], px: u16) -> Result<Self, TtfError> {
         if px == 0 || px > TTF_MAX_PX {
             return Err(TtfError::InvalidSize(px));
@@ -264,6 +268,9 @@ impl GlyphProvider for TtfProvider {
 pub trait FontFileSource {
     /// Replaces the contents of `out` with the file at `path`; [`TtfError::File`] if it cannot
     /// be read.
+    ///
+    /// # Errors
+    /// [`TtfError::File`] when the file cannot be read.
     fn read_all(&mut self, path: &str, out: &mut Vec<u8>) -> Result<(), TtfError>;
 }
 
@@ -305,12 +312,18 @@ impl TtfFont {
 
     /// Parses `data` and returns a `'static` font of `px` pixels. The provider and the font
     /// are leaked (`Box::leak`): call this once per font and size at startup.
+    ///
+    /// # Errors
+    /// As [`TtfFont::new`].
     #[allow(clippy::new_ret_no_self)] // the font is the useful result; the slot is leaked
     pub fn new(data: &[u8], px: u16) -> Result<&'static Font, TtfError> {
         Self::new_with_fallback(data, px, None)
     }
 
     /// Like [`new`](Self::new), with a fallback font for characters the TTF lacks.
+    ///
+    /// # Errors
+    /// As [`TtfFont::new`].
     pub fn new_with_fallback(
         data: &[u8],
         px: u16,
@@ -324,6 +337,10 @@ impl TtfFont {
     /// Parses `data` into the caller's `static` cell instead of leaking.
     /// [`TtfError::AlreadyInitialized`] if `cell` was used before (a
     /// [`StaticCell`](static_cell::StaticCell) is initialized once).
+    ///
+    /// # Errors
+    /// [`TtfError::AlreadyInitialized`] when `cell` was used before, and the errors of
+    /// [`TtfFont::new`].
     pub fn new_in(
         cell: &'static static_cell::StaticCell<TtfFont>,
         data: &[u8],
@@ -338,6 +355,9 @@ impl TtfFont {
 
     /// Reads the font file `path` (e.g. `"A:/fonts/heading.ttf"`) from `files` and returns a
     /// leaked font of `px` pixels (the file data is freed after parsing).
+    ///
+    /// # Errors
+    /// [`TtfError::File`] when the file cannot be read, and the errors of [`TtfFont::new`].
     pub fn from_file(files: &mut dyn FontFileSource, path: &str, px: u16) -> Result<&'static Font, TtfError> {
         let mut data = Vec::new();
         files.read_all(path, &mut data)?;

@@ -60,6 +60,10 @@ impl<'a> ImagePixels<'a> {
     /// [`palette_len`](ColorFormat::palette_len) entries, and `Rgb565A8` needs `w · h` alpha
     /// bytes (in `alpha`, or after the main plane in `data`).
     ///
+    /// # Errors
+    /// [`RenderError::InvalidArea`] when `stride` is shorter than a row;
+    /// [`RenderError::BufferTooSmall`] when `data`, the palette or the alpha plane is too short.
+    ///
     /// ```
     /// use twine_core::ColorFormat;
     /// use twine_render::{ImagePixels, RenderError};
@@ -84,10 +88,10 @@ impl<'a> ImagePixels<'a> {
         if stride < format.min_stride(w) {
             return Err(RenderError::InvalidArea);
         }
-        let plane = usize::from(stride) * usize::from(h);
-        let alpha_len = usize::from(w) * usize::from(h);
+        let plane = usize::from(stride).saturating_mul(usize::from(h));
+        let alpha_len = usize::from(w).saturating_mul(usize::from(h));
         let needed = if format == ColorFormat::Rgb565A8 && alpha.is_none() {
-            plane + alpha_len
+            plane.saturating_add(alpha_len)
         } else {
             plane
         };
@@ -98,7 +102,7 @@ impl<'a> ImagePixels<'a> {
             });
         }
         if format.is_indexed() {
-            let needed = format.palette_len() * 4;
+            let needed = format.palette_len().saturating_mul(4);
             let got = palette.map_or(0, <[u8]>::len);
             if got < needed {
                 return Err(RenderError::BufferTooSmall { needed, got });
@@ -130,8 +134,9 @@ impl<'a> ImagePixels<'a> {
         if y >= self.h {
             return &[];
         }
-        let s = usize::from(y) * usize::from(self.stride);
-        let e = (s + usize::from(self.stride)).min(self.data.len());
+        // Saturating: exact (two `u16` factors), and cheap once per row.
+        let s = usize::from(y).saturating_mul(usize::from(self.stride));
+        let e = s.saturating_add(usize::from(self.stride)).min(self.data.len());
         self.data.get(s..e).unwrap_or(&[])
     }
 
@@ -145,10 +150,13 @@ impl<'a> ImagePixels<'a> {
         let w = usize::from(self.w);
         let (plane, base) = match self.alpha {
             Some(a) => (a, 0),
-            None => (self.data, usize::from(self.stride) * usize::from(self.h)),
+            None => (
+                self.data,
+                usize::from(self.stride).saturating_mul(usize::from(self.h)),
+            ),
         };
-        let s = base + usize::from(y) * w;
-        plane.get(s..s + w).unwrap_or(&[])
+        let s = base.saturating_add(usize::from(y).saturating_mul(w));
+        plane.get(s..s.saturating_add(w)).unwrap_or(&[])
     }
 
     /// The image rectangle when its top-left corner is at `(x, y)`.

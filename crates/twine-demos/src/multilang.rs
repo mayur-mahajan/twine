@@ -384,6 +384,7 @@ pub fn app(cx: Scope) -> impl View {
     let lang = cx.signal(0usize);
     let list = cx.node_ref::<twine::engine::Obj>();
     cx.effect(move || {
+        // DIV: `CODES` is a non-empty constant table.
         let i = lang.get() % CODES.len();
         i18n.set_language(CODES[i]);
         // Show the card of the chosen language (a no-op while the list is being built).
@@ -396,6 +397,7 @@ pub fn app(cx: Scope) -> impl View {
             wcx.engine_mut().scroll_to_y(node, y, false);
         });
     });
+    // DIV: `DIRS` is a non-empty constant table.
     let dir = move || DIRS[lang.get() % DIRS.len()];
     column((
         row((
@@ -405,6 +407,7 @@ pub fn app(cx: Scope) -> impl View {
                 .test_id("title"),
             dropdown(&LANGUAGE_NAMES, lang).width(130).test_id("language"),
             button(label(Symbol::Right))
+                // DIV: `CODES` is a non-empty constant table.
                 .on_click(move || lang.update(|l| *l = (*l + 1) % CODES.len()))
                 .test_id("next"),
         ))

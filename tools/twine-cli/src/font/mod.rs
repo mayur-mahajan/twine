@@ -173,6 +173,9 @@ pub struct FontOptions {
 
 impl FontOptions {
     /// Options from parsed CLI arguments (not for `--dump`).
+    ///
+    /// # Errors
+    /// A message naming the missing required option (`--ttf`, `--name`, `--out`).
     pub fn from_args(a: &FontArgs) -> Result<Self> {
         Ok(Self {
             ttf: a.ttf.clone().ok_or("--ttf is required")?,
@@ -300,6 +303,10 @@ fn rasterize(font: &fontdue::Font, cp: char, size: u16, subpx: Subpx, turn: bool
 }
 
 /// Generates the font described by `opts`, reading input files relative to `root`.
+///
+/// # Errors
+/// A message for an invalid option (bit depth, size, a name that is not a Rust identifier, a bad
+/// `--range`), an unreadable or unparsable font file, or no code points.
 pub fn generate(opts: &FontOptions, root: &Path) -> Result<Generated> {
     if !matches!(opts.bpp, 1 | 2 | 4 | 8) {
         return Err(format!("bpp must be 1, 2, 4 or 8 (got {})", opts.bpp).into());
@@ -578,6 +585,9 @@ pub fn build_cmaps(cps: &[char]) -> Vec<CmapData> {
 }
 
 /// Prints glyph metrics of `chars` in `ttf` at `size` px (the `--dump` debug aid).
+///
+/// # Errors
+/// A message when the font file cannot be read or parsed.
 pub fn dump(ttf: &Path, size: u16, chars: &str) -> Result<String> {
     const RAMP: &[u8] = b" .:-=+*#%@";
     let (bytes, font) = load_font(ttf, size)?;
@@ -635,6 +645,10 @@ pub fn dump(ttf: &Path, size: u16, chars: &str) -> Result<String> {
 }
 
 /// Runs `twine font` with parsed arguments (writes the output file or prints the dump).
+///
+/// # Errors
+/// The errors of [`FontOptions::from_args`], [`generate`] and [`dump`], or an I/O error writing the
+/// output.
 pub fn run(args: &FontArgs) -> Result<()> {
     if let Some(ttf) = &args.dump {
         print!("{}", dump(ttf, args.size, &args.chars)?);

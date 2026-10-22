@@ -58,7 +58,8 @@ impl GlyphInfo {
     /// ```
     #[must_use]
     pub const fn advance_px(&self) -> i32 {
-        (self.adv_w as i32 + 8) >> 4
+        // SAFE-ARITH: `adv_w` is a `u16`.
+        (self.adv_w as i32).wrapping_add(8) >> 4
     }
 }
 
@@ -92,7 +93,8 @@ pub trait GlyphProvider: Sync {
     ) -> bool {
         let w = usize::from(info.box_w);
         let h = usize::from(info.box_h);
-        let Some(mut buf) = cache.take_glyph_scratch(w * h) else {
+        // SAFE-ARITH: two `u16`s: the product is below 2^32.
+        let Some(mut buf) = cache.take_glyph_scratch(w.wrapping_mul(h)) else {
             return false;
         };
         let ok = self.render_a8(info, &mut buf, cache);
@@ -228,14 +230,15 @@ impl Font {
         match self.glyph(cp, next) {
             Some((_, g)) => g.advance_px(),
             None if !has_placeholder(cp) => 0,
-            None => self.placeholder_width() + 2,
+            None => self.placeholder_width().saturating_add(2),
         }
     }
 
     /// Distance from the top of a line to the baseline: `line_height - base_line`.
     #[must_use]
     pub const fn ascent(&self) -> i32 {
-        self.line_height as i32 - self.base_line as i32
+        // SAFE-ARITH: the difference of two 16-bit values fits in `i32`.
+        (self.line_height as i32).wrapping_sub(self.base_line as i32)
     }
 
     /// Width of the replacement box drawn for missing characters: `line_height / 2`.

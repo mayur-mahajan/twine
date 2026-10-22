@@ -18,6 +18,10 @@ pub const EXAMPLES_DIR: &str = "crates/twine/examples";
 /// installed).
 pub const FEATURE_EXAMPLES: &[(&str, &str, &str)] = &[("eg_simulator", "twine-embedded-graphics", "eg-sim")];
 
+/// Examples of [`PACKAGE`] that need a facade feature `full` does not include (Cargo
+/// `required-features`): `(example, features)`. `run` and `sim-smoke` enable them.
+pub const FACADE_FEATURE_EXAMPLES: &[(&str, &str)] = &[("partitions", "partitions")];
+
 /// Names of the Cargo examples of [`PACKAGE`] (`examples/<name>.rs` and
 /// `examples/<name>/main.rs`, as Cargo discovers them), sorted.
 #[must_use]
@@ -116,6 +120,9 @@ pub fn run(example: &str, opts: &SimOptions, args: &[String]) -> R {
         add_sdl2_env(&mut cmd, &lib);
     } else {
         cmd.args(["run", "-p", PACKAGE, "--example", example]);
+        if let Some((_, features)) = FACADE_FEATURE_EXAMPLES.iter().find(|(e, _)| *e == example) {
+            cmd.args(["--features", features]);
+        }
     }
     if opts.release {
         cmd.arg("--release");

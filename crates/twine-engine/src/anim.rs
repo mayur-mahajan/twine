@@ -101,8 +101,10 @@ impl AnimProp {
             AnimProp::ScrollX => 10,
             AnimProp::ScrollY => 11,
             AnimProp::Value => 12,
-            AnimProp::Style(p) => KEY_STYLE + p as PropKey,
-            AnimProp::Custom(c) => KEY_CUSTOM + c as PropKey,
+            // The style and custom ranges are disjoint bit fields: `p < 2^8` and `c < 2^16`,
+            // so `|` is the sum without an overflow case.
+            AnimProp::Style(p) => KEY_STYLE | p as PropKey,
+            AnimProp::Custom(c) => KEY_CUSTOM | c as PropKey,
         }
     }
 
@@ -123,10 +125,10 @@ impl AnimProp {
             10 => AnimProp::ScrollX,
             11 => AnimProp::ScrollY,
             12 => AnimProp::Value,
-            k if k >= KEY_CUSTOM && k - KEY_CUSTOM <= u16::MAX as PropKey => {
-                AnimProp::Custom((k - KEY_CUSTOM) as u16)
-            }
-            k if k > KEY_STYLE && k < KEY_STYLE + 256 => match PropId::from_u8((k - KEY_STYLE) as u8) {
+            // `KEY_CUSTOM..=KEY_CUSTOM | 0xFFFF`: the low 16 bits are the id.
+            k if k >> 16 == KEY_CUSTOM >> 16 => AnimProp::Custom(k as u16),
+            // `KEY_STYLE + 1..KEY_STYLE + 256`: the low 8 bits are the property.
+            k if k >> 8 == KEY_STYLE >> 8 && k != KEY_STYLE => match PropId::from_u8(k as u8) {
                 Some(p) => AnimProp::Style(p),
                 None => return None,
             },
@@ -307,6 +309,7 @@ impl AnimState {
         self.added_since_tick = true;
         if self.clock.is_none() {
             twine_core::alloc_guard::push(
+                self.timeline.partition(),
                 &mut self.pending,
                 (id, Pending::Restart),
                 AllocSite::EngineScratch,
@@ -470,6 +473,7 @@ impl Engine {
             self.anim.timeline.resume(id, now)
         } else {
             twine_core::alloc_guard::push(
+                self.partition(),
                 &mut self.anim.pending,
                 (id, Pending::Resume),
                 AllocSite::EngineScratch,
@@ -633,14 +637,24 @@ impl Engine {
         if id == TimerId::DANGLING {
             self.capacity_refused(twine_core::fault::CapacityFault::Timers, None);
         } else if self.anim.clock.is_none() {
-            twine_core::alloc_guard::push(&mut self.anim.pending_timers, id, AllocSite::EngineScratch);
+            twine_core::alloc_guard::push(
+                self.partition(),
+                &mut self.anim.pending_timers,
+                id,
+                AllocSite::EngineScratch,
+            );
         }
         id
     }
 
     fn timer_skip(&mut self, id: TimerId) {
         if self.anim.draining_timers && !self.anim.timer_skip.contains(&id) {
-            twine_core::alloc_guard::push(&mut self.anim.timer_skip, id, AllocSite::EngineScratch);
+            twine_core::alloc_guard::push(
+                self.partition(),
+                &mut self.anim.timer_skip,
+                id,
+                AllocSite::EngineScratch,
+            );
         }
     }
 

@@ -315,7 +315,9 @@ impl<T: InputDevice> InputDevice for RawTouchInput<T> {
             _ if self.sum.2 > 0 => {
                 let n = self.sum.2;
                 let raw = RawTouch {
+                    // DIV: `n = sum.2 > 0` (the match guard).
                     x: (self.sum.0 / n) as i32,
+                    // DIV: `n > 0`, as above.
                     y: (self.sum.1 / n) as i32,
                 };
                 self.sum = (0, 0, 0);

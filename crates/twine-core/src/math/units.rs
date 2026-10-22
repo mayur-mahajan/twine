@@ -51,7 +51,8 @@ impl Fraction {
     #[must_use]
     pub const fn pct(p: u8) -> Fraction {
         let p = if p > 100 { 100 } else { p as u32 };
-        Fraction(((p * 255 + 50) / 100) as u8)
+        // SAFE-ARITH: `p ≤ 100`, so `p · 255 + 50 ≤ 25_550`.
+        Fraction((p.wrapping_mul(255).wrapping_add(50) / 100) as u8)
     }
 
     /// `num / den`, clamped to `0..=1` and rounded. A zero `den` gives [`Fraction::ZERO`]
@@ -64,8 +65,14 @@ impl Fraction {
         if num >= den {
             return Fraction::ONE;
         }
-        // DIV: `den != 0` checked above; `num < den` so the result is < 255.
-        Fraction(((num as u64 * 255 + den as u64 / 2) / den as u64) as u8)
+        // SAFE-ARITH: `num < 2^32`, so `num · 255 + den / 2 < 2^41`.
+        let n = (num as u64).wrapping_mul(255).wrapping_add(den as u64 / 2);
+        // `den != 0` (returned above): the fallback is never taken; `num < den`, so the
+        // quotient is below 255.
+        match n.checked_div(den as u64) {
+            Some(q) => Fraction(q as u8),
+            None => Fraction::ZERO,
+        }
     }
 }
 

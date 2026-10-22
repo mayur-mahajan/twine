@@ -441,6 +441,7 @@ impl<'a> Renderer<'a> {
         };
         let w = region.width() as usize;
         let budget = p.caches().config().layer_buf_bytes as usize;
+        // DIV: `region` is a non-empty intersection, so `w ≥ 1`.
         let rows = (budget / (w * 4)).min(region.height() as usize);
         if rows == 0 || self.depth >= MAX_OFFSCREEN_DEPTH {
             if !self.s.warned_fallback {

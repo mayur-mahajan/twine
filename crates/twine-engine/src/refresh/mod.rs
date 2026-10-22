@@ -28,6 +28,75 @@ pub(crate) use partial::{PartialState, Refit};
 /// Maximum areas of one frame: the dirty areas plus the performance overlay's area.
 const MAX_FRAME_AREAS: usize = 34;
 
+/// One of a display's two buffers: the draw-buffer slots of a partial display or the
+/// framebuffers of a `Full` display. It selects an entry of their `[T; 2]` pairs with a
+/// `match`, so the access has no bounds check and no panic path (the code is that of an
+/// index).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Slot {
+    A,
+    B,
+}
+
+impl Slot {
+    /// Both slots, in order.
+    pub(crate) const BOTH: [Slot; 2] = [Slot::A, Slot::B];
+
+    /// The slot's number (`0` or `1`), as drivers and logs see it.
+    #[inline]
+    pub(crate) const fn number(self) -> u8 {
+        match self {
+            Slot::A => 0,
+            Slot::B => 1,
+        }
+    }
+
+    /// The slot of number `n & 1`.
+    #[inline]
+    pub(crate) const fn of_bit(n: u8) -> Slot {
+        if n & 1 == 0 { Slot::A } else { Slot::B }
+    }
+
+    /// The other slot.
+    #[inline]
+    pub(crate) const fn other(self) -> Slot {
+        match self {
+            Slot::A => Slot::B,
+            Slot::B => Slot::A,
+        }
+    }
+
+    /// This slot's entry of `pair`.
+    #[inline]
+    pub(crate) fn pick<T>(self, pair: &[T; 2]) -> &T {
+        let [a, b] = pair;
+        match self {
+            Slot::A => a,
+            Slot::B => b,
+        }
+    }
+
+    /// This slot's entry of `pair`, mutably.
+    #[inline]
+    pub(crate) fn pick_mut<T>(self, pair: &mut [T; 2]) -> &mut T {
+        let [a, b] = pair;
+        match self {
+            Slot::A => a,
+            Slot::B => b,
+        }
+    }
+
+    /// This slot's and the other slot's entries of `pair`, both mutably.
+    #[inline]
+    pub(crate) fn split_mut<T>(self, pair: &mut [T; 2]) -> (&mut T, &mut T) {
+        let [a, b] = pair;
+        match self {
+            Slot::A => (a, b),
+            Slot::B => (b, a),
+        }
+    }
+}
+
 /// How a display's frames are rendered and flushed.
 // One `Strategy` per display, never moved after creation: its size does not matter, and
 // keeping `PartialState` inline avoids a pointer chase on every chunk.
@@ -135,7 +204,7 @@ impl Refresher {
         fbs: (DrawBufferMem, Option<DrawBufferMem>),
         full: bool,
     ) -> Result<Self, EngineError> {
-        let need = info.bytes_per_row() * usize::from(info.height);
+        let need = info.bytes_per_row().saturating_mul(usize::from(info.height));
         let check = |m: &DrawBufferMem| {
             if m.len() == need {
                 Ok(())
@@ -175,7 +244,10 @@ impl Refresher {
     /// Framebuffer `index` (framebuffer strategies).
     pub(crate) fn framebuffer(&self, index: u8) -> Option<&[u8]> {
         match &self.strategy {
-            Strategy::Full(f) => f.fb[usize::from(index & 1)].as_ref().map(DrawBufferMem::as_slice),
+            Strategy::Full(f) => Slot::of_bit(index)
+                .pick(&f.fb)
+                .as_ref()
+                .map(DrawBufferMem::as_slice),
             Strategy::Direct(d) if index == 0 => d.fb.as_ref().map(DrawBufferMem::as_slice),
             _ => None,
         }
@@ -228,7 +300,9 @@ pub(crate) fn render_into(
 /// The refresh-debug tint of `frame`: hue `frame × 37 mod 360` at full saturation.
 fn debug_color(frame: u32) -> Color {
     let h = (frame.wrapping_mul(37) % 360) as i32;
-    let x = (255 * (60 - (h % 120 - 60).abs()) / 60) as u8;
+    // SAFE-ARITH: `h < 360`, so `|h mod 120 − 60| ≤ 60` and the product is at most 15 300.
+    let x = 255i32.wrapping_mul(60i32.wrapping_sub((h % 120).wrapping_sub(60).abs())) / 60;
+    let x = x as u8;
     match h / 60 {
         0 => Color::new(255, x, 0),
         1 => Color::new(x, 255, 0),
@@ -448,10 +522,12 @@ impl Engine {
     }
 
     fn refresh_display(&mut self, d: usize, now: Instant, allow: &mut Allowance) -> DisplayOutcome {
-        if matches!(self.displays[d].backend, Backend::External(())) {
+        let Some(disp) = self.displays.get(d) else {
+            return DisplayOutcome::Idle;
+        };
+        if matches!(disp.backend, Backend::External(())) {
             // Rendered by the caller through `refresh_begin` / `render_chunk`: only report when
             // the next frame is due (a frame due now is rendered right after this update).
-            let disp = &self.displays[d];
             let r = &disp.refresher;
             let dirty = !r.dirty.is_empty() || r.overlay_dirty.is_some();
             let c = &disp.control;
@@ -482,19 +558,22 @@ impl Engine {
             // `FlushPolicy::Halt`: nothing is rendered until `recover_display`.
             return DisplayOutcome::Idle;
         }
-        if self.displays[d].control.needs_attention() {
+        if self.displays.get(d).is_some_and(|x| x.control.needs_attention()) {
             // Brightness / sleep / rotation requests, asleep or settling (cold).
             if let Some(out) = self.display_control_outcome(d, now) {
                 return out;
             }
         }
-        if self.displays[d].refresher.job.is_none() {
-            let r = &mut self.displays[d].refresher;
+        let Some(disp) = self.displays.get_mut(d) else {
+            return DisplayOutcome::Idle;
+        };
+        if disp.refresher.job.is_none() {
+            let r = &mut disp.refresher;
             if r.dirty.is_empty() && r.overlay_dirty.is_none() {
                 if r.busy && !r.flush_pending() {
                     r.busy = false;
-                    twine_core::debug!(target: "twine::refresh", "display {} idle", self.displays[d].id);
-                    if let Backend::Flush(b) = &mut self.displays[d].backend {
+                    twine_core::debug!(target: "twine::refresh", "display {} idle", disp.id);
+                    if let Backend::Flush(b) = &mut disp.backend {
                         b.idle();
                     }
                 }
@@ -526,15 +605,15 @@ impl Engine {
         }
         match self.run_job(d, allow) {
             JobStep::Done => {
-                let r = &self.displays[d].refresher;
-                let again = !self.display_halted(d) && (!r.dirty.is_empty() || r.overlay_dirty.is_some());
+                let halted = self.display_halted(d);
+                let Some(disp) = self.displays.get(d) else {
+                    return DisplayOutcome::Rendered(None);
+                };
+                let r = &disp.refresher;
+                let again = !halted && (!r.dirty.is_empty() || r.overlay_dirty.is_some());
                 let due = again.then(|| r.last_refresh.map_or(now, |last| last + self.config.refr_period));
                 // Requests wait for the end of the frame: take them in the next step.
-                let due = if self.displays[d].control.pending() {
-                    Some(now)
-                } else {
-                    due
-                };
+                let due = if disp.control.pending() { Some(now) } else { due };
                 DisplayOutcome::Rendered(due)
             }
             JobStep::Waiting => DisplayOutcome::InProgress,
@@ -571,27 +650,28 @@ impl Engine {
     fn requeue_job_rest(&mut self, d: usize, from: usize, first_y: Option<i32>) {
         let mut i = from;
         loop {
-            let Some(job) = self.displays[d].refresher.job.as_ref() else {
+            let Some(job) = self.displays.get(d).and_then(|x| x.refresher.job.as_ref()) else {
                 return;
             };
             let Some(&a) = job.areas.get(i) else {
                 return;
             };
+            let counted = i < job.counted;
             let a = match first_y {
                 Some(y) if i == from => Rect::new(a.x0, y.clamp(a.y0, a.y1), a.x1, a.y1),
                 _ => a,
             };
+            // SAFE-ARITH: `i` indexes `job.areas` (at most `MAX_FRAME_AREAS` entries).
+            i = i.wrapping_add(1);
             if a.is_empty() {
-                i += 1;
                 continue;
             }
-            if i < job.counted {
+            if counted {
                 self.add_dirty(d, a, crate::InvalidateReason::FlushRetry);
-            } else {
-                let r = &mut self.displays[d].refresher;
+            } else if let Some(disp) = self.displays.get_mut(d) {
+                let r = &mut disp.refresher;
                 r.overlay_dirty = Some(r.overlay_dirty.map_or(a, |o| o.union(&a)));
             }
-            i += 1;
         }
     }
 
@@ -602,16 +682,19 @@ impl Engine {
     /// starts no earlier than `refr_period` after the timeout (`waited` after the frame
     /// started), as on the blocking path.
     pub(crate) fn abandon_chunked_frame(&mut self, d: usize, waited: Duration) {
-        let r = &mut self.displays[d].refresher;
+        let Some(disp) = self.displays.get_mut(d) else {
+            return;
+        };
+        let r = &mut disp.refresher;
         r.last_refresh = r.last_refresh.map(|t| t + waited);
         if self.chunk_display != Some(d) {
             return;
         }
-        let Some((idx, y)) = self.displays[d].refresher.job.as_ref().map(|j| (j.idx, j.next_y)) else {
+        let Some((idx, y)) = r.job.as_ref().map(|j| (j.idx, j.next_y)) else {
             return;
         };
         self.requeue_job_rest(d, idx, Some(y));
-        if let Some(job) = self.displays[d].refresher.job.as_mut() {
+        if let Some(job) = self.job_mut(d) {
             job.idx = job.areas.len();
         }
         twine_core::warn!(target: "twine::refresh", "display {}: frame abandoned (flush timeout)", d);
@@ -620,17 +703,21 @@ impl Engine {
     /// Abandons the frame of display `d` (halted by the flush policy, or its driver hung):
     /// its unrendered areas stay dirty for a later frame.
     fn abort_job(&mut self, d: usize, why: &str) {
-        if let Some((idx, y)) = self.displays[d].refresher.job.as_ref().map(|j| (j.idx, j.next_y)) {
+        if let Some((idx, y)) = self.job_mut(d).map(|j| (j.idx, j.next_y)) {
             // Chunks already flushed are handled by the flush policy.
             self.requeue_job_rest(d, idx, Some(y));
         }
-        self.displays[d].refresher.job = None;
+        if let Some(disp) = self.displays.get_mut(d) {
+            disp.refresher.job = None;
+        }
         twine_core::warn!(target: "twine::refresh", "display {}: frame abandoned ({})", d, why);
     }
 
     /// Takes back finished buffers without blocking.
     pub(crate) fn reclaim_buffers(&mut self, d: usize) {
-        let disp = &mut self.displays[d];
+        let Some(disp) = self.displays.get_mut(d) else {
+            return;
+        };
         if let (Strategy::Partial(p), Backend::Flush(b)) = (&mut disp.refresher.strategy, &mut disp.backend) {
             while !p.in_flight.is_empty() {
                 match b.poll_flush() {
@@ -644,7 +731,9 @@ impl Engine {
     /// Whether a framebuffer swap requested by the previous frame has happened (always true for
     /// other strategies).
     pub(crate) fn present_done(&mut self, d: usize) -> bool {
-        let disp = &mut self.displays[d];
+        let Some(disp) = self.displays.get_mut(d) else {
+            return true;
+        };
         match (&mut disp.refresher.strategy, &mut disp.backend) {
             (Strategy::Full(f), Backend::Framebuffer(b)) => {
                 if f.present.is_some() && b.present_done() {
@@ -661,15 +750,18 @@ impl Engine {
 
     fn start_job(&mut self, d: usize, now: Instant) {
         let started_us = self.hires_us();
-        let bounds = self.displays[d].area();
-        let r = &mut self.displays[d].refresher;
+        let Some(disp) = self.displays.get_mut(d) else {
+            return;
+        };
+        let bounds = disp.area();
+        let r = &mut disp.refresher;
         r.dirty.merge();
         let mut areas: heapless::Vec<Rect, MAX_FRAME_AREAS> = heapless::Vec::new();
         let mut px = 0u64;
         for a in r.dirty.iter() {
             let a = areas::round_area(*a, r.align, bounds);
             if !a.is_empty() && areas.push(a).is_ok() {
-                px += a.area();
+                px = px.saturating_add(a.area());
             }
         }
         let counted = areas.len();
@@ -691,6 +783,7 @@ impl Engine {
         };
         let first_y = areas.first().map_or(0, |a| a.y0);
         let vsync = r.vsync;
+        let full = matches!(r.strategy, Strategy::Full(_));
         r.job = Some(FrameJob {
             areas,
             counted,
@@ -708,7 +801,7 @@ impl Engine {
             self.invalidations.clear();
         }
         self.nodes_drawn.set(0);
-        if matches!(self.displays[d].refresher.strategy, Strategy::Full(_)) {
+        if full {
             self.sync_areas(d);
         }
     }
@@ -722,21 +815,25 @@ impl Engine {
                 return JobStep::Waiting;
             }
             let t0 = self.hires_us();
-            let next_y = match self.displays[d].refresher.strategy {
-                Strategy::Partial(_) => match self.partial_chunk(d, area, y) {
+            let partial = self
+                .displays
+                .get(d)
+                .is_some_and(|x| matches!(x.refresher.strategy, Strategy::Partial(_)));
+            let next_y = if partial {
+                match self.partial_chunk(d, area, y) {
                     ChunkStep::Next(next_y) => next_y,
                     ChunkStep::Wait => return JobStep::Waiting,
                     ChunkStep::TimedOut => {
                         self.abort_job(d, "flush timeout");
                         return JobStep::TimedOut;
                     }
-                },
-                Strategy::Full(_) | Strategy::Direct(_) => {
-                    self.framebuffer_area(d, area);
-                    area.y1
                 }
+            } else {
+                self.framebuffer_area(d, area);
+                area.y1
             };
-            allow.chunks -= 1;
+            // `allow.chunks > 0` (returned above).
+            allow.chunks = allow.chunks.saturating_sub(1);
             if let Some(f) = self.config.on_chunk {
                 f();
             }
@@ -745,7 +842,7 @@ impl Engine {
             }
             if !counted {
                 if let (Some(a), Some(b), Some(job)) = (t0, self.hires_us(), self.job_mut(d)) {
-                    job.excluded_us += b.saturating_sub(a);
+                    job.excluded_us = job.excluded_us.saturating_add(b.saturating_sub(a));
                 }
             }
             self.job_advance(d, next_y);
@@ -806,7 +903,7 @@ impl Engine {
     /// The next piece of the frame of display `d`: `(area, first row, counted in the
     /// statistics)`, or `None` when the frame is complete (or no frame runs).
     fn job_next(&self, d: usize) -> Option<(Rect, i32, bool)> {
-        let job = self.displays[d].refresher.job.as_ref()?;
+        let job = self.displays.get(d)?.refresher.job.as_ref()?;
         job.areas
             .get(job.idx)
             .map(|a| (*a, job.next_y, job.idx < job.counted))
@@ -823,7 +920,8 @@ impl Engine {
         };
         job.next_y = next_y;
         if next_y >= area.y1 {
-            job.idx += 1;
+            // SAFE-ARITH: `idx` indexes `job.areas` (checked above).
+            job.idx = job.idx.wrapping_add(1);
             if let Some(next) = job.areas.get(job.idx) {
                 job.next_y = next.y0;
             }
@@ -844,8 +942,7 @@ impl Engine {
             twine_core::warn!(target: "twine::refresh", "refresh_begin: frame of display {} still open", d);
             return None;
         }
-        let d = (0..self.displays.len()).find(|&d| {
-            let disp = &self.displays[d];
+        let d = self.displays.iter().position(|disp| {
             let r = &disp.refresher;
             matches!(disp.backend, Backend::External(()))
                 && !disp.health.halted
@@ -857,9 +954,10 @@ impl Engine {
         })?;
         self.start_job(d, now);
         self.chunk_display = Some(d);
-        let job = self.displays[d].refresher.job.as_ref()?;
+        let disp = self.displays.get(d)?;
+        let job = disp.refresher.job.as_ref()?;
         let info = FrameInfo {
-            display: self.displays[d].id,
+            display: disp.id,
             frame: job.stats.frame,
             areas: job.stats.dirty_areas,
             px: job.stats.dirty_px,
@@ -882,8 +980,8 @@ impl Engine {
             return None;
         }
         let (area, y, counted) = self.job_next(d)?;
-        let rows = match &self.displays[d].refresher.strategy {
-            Strategy::Partial(p) => p.rows,
+        let rows = match self.displays.get(d).map(|x| &x.refresher.strategy) {
+            Some(Strategy::Partial(p)) => p.rows,
             _ => return None,
         };
         let chunk = areas::chunk_at(area, y, rows, 1);
@@ -892,13 +990,13 @@ impl Engine {
             h(0);
         }
         let t0 = self.hires_us();
-        let mut src = match &mut self.displays[d].refresher.strategy {
-            Strategy::Partial(p) => p.ext_src.take(),
+        let mut src = match self.displays.get_mut(d).map(|x| &mut x.refresher.strategy) {
+            Some(Strategy::Partial(p)) => p.ext_src.take(),
             _ => None,
         };
         let (flush_area, render_us) =
             self.render_chunk_into(d, chunk, buf, src.as_mut().map(DrawBufferMem::as_mut_slice));
-        if let Strategy::Partial(p) = &mut self.displays[d].refresher.strategy {
+        if let Some(Strategy::Partial(p)) = self.displays.get_mut(d).map(|x| &mut x.refresher.strategy) {
             p.ext_src = src;
         }
         #[cfg(feature = "display-integrity")]
@@ -912,7 +1010,7 @@ impl Engine {
                 .saturating_add(render_us.min(u64::from(u32::MAX)) as u32);
             if !counted {
                 if let (Some(a), Some(b)) = (t0, t1) {
-                    job.excluded_us += b.saturating_sub(a);
+                    job.excluded_us = job.excluded_us.saturating_add(b.saturating_sub(a));
                 }
             }
         }
@@ -932,7 +1030,7 @@ impl Engine {
         let Some(d) = self.chunk_display else {
             return;
         };
-        if let Some(job) = self.displays[d].refresher.job.as_mut() {
+        if let Some(job) = self.job_mut(d) {
             job.stats.flush_us = job.stats.flush_us.saturating_add(flush_us);
             job.stats.flush_wait_us = job.stats.flush_wait_us.saturating_add(wait_us);
         }
@@ -946,10 +1044,8 @@ impl Engine {
         let Some(d) = self.chunk_display.take() else {
             return;
         };
-        if let Some(idx) = self.displays[d]
-            .refresher
-            .job
-            .as_ref()
+        if let Some(idx) = self
+            .job_mut(d)
             .and_then(|job| (job.idx < job.areas.len()).then_some(job.idx))
         {
             if !self.display_halted(d) {
@@ -958,32 +1054,34 @@ impl Engine {
             self.requeue_job_areas(d, idx);
         }
         self.finish_job(d);
-        self.displays[d].refresher.busy = false;
+        if let Some(disp) = self.displays.get_mut(d) {
+            disp.refresher.busy = false;
+        }
     }
 
     /// The frame job in progress on display `d`; `None` when no frame runs (the callers run
     /// only inside a frame, so `None` means there is nothing to account the work to).
     fn job_mut(&mut self, d: usize) -> Option<&mut FrameJob> {
-        self.displays[d].refresher.job.as_mut()
+        self.displays.get_mut(d)?.refresher.job.as_mut()
     }
 
     fn finish_job(&mut self, d: usize) {
         let t_present = self.hires_us();
         // `(presented, framebuffer display)`.
-        let (presented, framebuffer) = match self.displays[d].refresher.strategy {
-            Strategy::Full(_) => (self.present_full(d), true),
-            Strategy::Direct(_) => {
+        let (presented, framebuffer) = match self.displays.get(d).map(|x| &x.refresher.strategy) {
+            Some(Strategy::Full(_)) => (self.present_full(d), true),
+            Some(Strategy::Direct(_)) => {
                 self.present_direct(d);
                 (true, true)
             }
-            Strategy::Partial(_) => (true, false),
+            Some(Strategy::Partial(_)) | None => (true, false),
         };
         let end = self.hires_us();
         if let (true, Some(a), Some(b)) = (framebuffer, t_present, end) {
             // A framebuffer display's flush is its present.
             TimingReport::raise(&mut self.timing.worst_flush_us, b.saturating_sub(a));
         }
-        let Some(job) = self.displays[d].refresher.job.take() else {
+        let Some(job) = self.displays.get_mut(d).and_then(|x| x.refresher.job.take()) else {
             return;
         };
         let mut s = job.stats;
@@ -999,7 +1097,10 @@ impl Engine {
             s.mem_used = m.used;
             s.mem_peak = m.peak;
         }
-        let r = &mut self.displays[d].refresher;
+        let Some(disp) = self.displays.get_mut(d) else {
+            return;
+        };
+        let r = &mut disp.refresher;
         if let Strategy::Full(f) = &mut r.strategy {
             // After a failed present the back buffer (not swapped) already holds everything:
             // nothing needs syncing from the front buffer.
@@ -1027,7 +1128,8 @@ impl Engine {
             s.flush_us,
             s.flush_wait_us
         );
-        let busy = u64::from(s.render_us) + u64::from(s.flush_wait_us);
+        // SAFE-ARITH: the sum of two `u32`s fits in `u64`.
+        let busy = u64::from(s.render_us).wrapping_add(u64::from(s.flush_wait_us));
         self.perf.frame(job.now, busy);
     }
 
@@ -1042,12 +1144,14 @@ impl Engine {
         buf_area: Rect,
         clip: Rect,
     ) -> u64 {
+        let Some(frame) = self.displays.get(d).map(|x| x.refresher.frame) else {
+            return 0;
+        };
         let Some(mut res) = self.res.take() else {
             twine_core::error!(target: "twine::refresh", "render resources missing (re-entrant refresh?)");
             return 0;
         };
         let t0 = self.hires_us();
-        let frame = self.displays[d].refresher.frame;
         render_into(self, &mut res, d, buf, format, stride, buf_area, clip, frame);
         // One virtual call per chunk; nothing else on the path where the accelerator works.
         let accel_timeouts = res.accel.0.as_deref_mut().map_or(0, DrawAccel::take_timeouts);

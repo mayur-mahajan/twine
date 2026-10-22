@@ -113,7 +113,8 @@ impl Part {
     pub const fn custom_index(self) -> Option<usize> {
         let v = self as u8;
         if v >= Part::Custom0 as u8 && v <= Part::Custom6 as u8 {
-            Some((v - Part::Custom0 as u8) as usize)
+            // SAFE-ARITH: `v ≥ Custom0` (the condition).
+            Some(v.wrapping_sub(Part::Custom0 as u8) as usize)
         } else {
             None
         }
@@ -318,7 +319,10 @@ impl State {
                 "State::custom::<N>: N must be below State::CUSTOM_COUNT (4)"
             );
         }
-        State::from_bits_retain(1 << (CUSTOM_SHIFT + N as u32))
+        // SHIFT: `N < CUSTOM_COUNT = 4` (the inline const assertion), so `CUSTOM_SHIFT + N ≤ 15`,
+        // on a `u16`.
+        // SAFE-ARITH: as above.
+        State::from_bits_retain(1 << CUSTOM_SHIFT.wrapping_add(N as u32))
     }
 
     /// Gives the custom state `state` (one [`State::custom`] state) a name shown by `Debug`,
@@ -347,14 +351,17 @@ impl State {
         };
         let mut len = name.len().min(NAME_MAX);
         while !name.is_char_boundary(len) {
-            len -= 1;
+            // SAFE-ARITH: `is_char_boundary(0)` is `true`, so `len ≥ 1` here.
+            len = len.wrapping_sub(1);
         }
         if len < name.len() {
             twine_core::warn!(target: "twine::style", "State::set_custom_name: name longer than 16 bytes, cut");
         }
-        let slot = &CUSTOM_NAMES[i];
+        // SAFE-INDEX: `custom_index() < CUSTOM_COUNT`, the table's length; the fallback is
+        // never taken.
+        let Some(slot) = CUSTOM_NAMES.get(i) else { return };
         slot.len.store(0, Ordering::Release);
-        for (dst, b) in slot.bytes.iter().zip(name.as_bytes()[..len].iter()) {
+        for (dst, b) in slot.bytes.iter().zip(name.as_bytes().iter().take(len)) {
             dst.store(*b, Ordering::Relaxed);
         }
         #[allow(clippy::cast_possible_truncation)] // len <= NAME_MAX = 16
@@ -365,7 +372,8 @@ impl State {
     const fn custom_index(self) -> Option<usize> {
         let b = self.bits();
         if b.is_power_of_two() && b & State::CUSTOM_ALL.bits() != 0 {
-            Some((b.trailing_zeros() - CUSTOM_SHIFT) as usize)
+            // SAFE-ARITH: the single bit is a custom state's, at `CUSTOM_SHIFT` or above.
+            Some(b.trailing_zeros().wrapping_sub(CUSTOM_SHIFT) as usize)
         } else {
             None
         }
@@ -381,7 +389,9 @@ impl State {
             }
         }
         for i in 0..State::CUSTOM_COUNT {
-            if self.bits() & (1 << (CUSTOM_SHIFT + i as u32)) != 0 {
+            // SHIFT: `i < CUSTOM_COUNT = 4`, so `CUSTOM_SHIFT + i ≤ 15`, on a `u16`.
+            // SAFE-ARITH: as above.
+            if self.bits() & (1 << CUSTOM_SHIFT.wrapping_add(i as u32)) != 0 {
                 let name = CustomName::load(i);
                 f(name.as_str())?;
             }
@@ -398,10 +408,13 @@ impl State {
 /// `0x…` of `v` in `buf`.
 fn hex(v: u16, buf: &mut [u8; 6]) -> &str {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    buf[0] = b'0';
-    buf[1] = b'x';
-    for i in 0..4 {
-        buf[2 + i] = DIGITS[usize::from((v >> (12 - 4 * i)) & 0xF)];
+    let [p0, p1, digits @ ..] = buf;
+    (*p0, *p1) = (b'0', b'x');
+    for (d, shift) in digits.iter_mut().zip([12u32, 8, 4, 0]) {
+        // SHIFT: the amount is 12, 8, 4 or 0, on a `u16`.
+        let nibble = usize::from((v >> shift) & 0xF);
+        // SAFE-INDEX: a nibble is below 16, the table's length; the fallback is never taken.
+        *d = DIGITS.get(nibble).copied().unwrap_or(b'?');
     }
     core::str::from_utf8(buf).unwrap_or("0x?")
 }
@@ -428,25 +441,34 @@ struct CustomName {
 impl CustomName {
     fn load(i: usize) -> Self {
         let mut buf = [0u8; NAME_MAX];
-        let slot = &CUSTOM_NAMES[i];
-        let len = usize::from(slot.len.load(Ordering::Acquire)).min(NAME_MAX);
-        for (d, s) in buf.iter_mut().zip(slot.bytes.iter()).take(len) {
-            *d = s.load(Ordering::Relaxed);
+        // `i < CUSTOM_COUNT` (the callers): a missing slot reads as unnamed.
+        let slot = CUSTOM_NAMES.get(i);
+        let len = slot.map_or(0, |s| usize::from(s.len.load(Ordering::Acquire)).min(NAME_MAX));
+        if let Some(slot) = slot {
+            for (d, s) in buf.iter_mut().zip(slot.bytes.iter()).take(len) {
+                *d = s.load(Ordering::Relaxed);
+            }
         }
         let mut name = Self { buf, len };
-        if len == 0 || core::str::from_utf8(&name.buf[..len]).is_err() {
-            name.buf[..7].copy_from_slice(b"CUSTOM_");
+        if len == 0 || name.valid().is_none() {
             #[allow(clippy::cast_possible_truncation)] // i < CUSTOM_COUNT = 4
-            {
-                name.buf[7] = b'0' + i as u8;
+            // SAFE-ARITH: `i < CUSTOM_COUNT = 4`, so the digit is `'0'..='3'`.
+            let digit = b'0'.wrapping_add(i as u8);
+            for (d, s) in name.buf.iter_mut().zip(b"CUSTOM_".iter().copied().chain([digit])) {
+                *d = s;
             }
             name.len = 8;
         }
         name
     }
 
+    /// The stored bytes, if they are UTF-8 (`len ≤ NAME_MAX` by construction).
+    fn valid(&self) -> Option<&str> {
+        core::str::from_utf8(self.buf.get(..self.len)?).ok()
+    }
+
     fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("CUSTOM")
+        self.valid().unwrap_or("CUSTOM")
     }
 }
 
@@ -454,17 +476,15 @@ impl CustomName {
 // precedence mask (bit `i` = the state of rank `i`, compared as an integer) is the state bits
 // themselves. Reordering `PRECEDENCE` without reassigning the bits fails to compile.
 const _: () = {
-    let p = State::PRECEDENCE;
+    let mut rest: &[State] = &State::PRECEDENCE;
     let mut union = 0u16;
-    let mut i = 0;
-    while i < p.len() {
-        assert!(p[i].bits().is_power_of_two(), "one state per rank");
-        assert!(
-            i == 0 || p[i - 1].bits() < p[i].bits(),
-            "bits in precedence order"
-        );
-        union |= p[i].bits();
-        i += 1;
+    let mut prev = 0u16;
+    while let [s, tail @ ..] = rest {
+        assert!(s.bits().is_power_of_two(), "one state per rank");
+        assert!(prev < s.bits(), "bits in precedence order");
+        union |= s.bits();
+        prev = s.bits();
+        rest = tail;
     }
     assert!(union == State::ANY.bits(), "every state is ranked");
 };

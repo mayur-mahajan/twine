@@ -39,6 +39,15 @@ display-integrity = [
     "twine-render/display-integrity",
     "twine-text/display-integrity",
 ]
+## Partitioned runtimes (ADR-001): up to four independent UIs, each on its own runtime token
+## (`Runtime::take_partition`), sharing no state; `Ui::partition`. Not implied by `safety`.
+partitions = [
+    "twine-anim/partitions",
+    "twine-core/partitions",
+    "twine-engine/partitions",
+    "twine-reactive/partitions",
+    "twine-widgets/partitions",
+]
 ## std-only conveniences (thread-local reactive runtime: no binding needed).
 std = [
     "twine-core/std",

@@ -68,8 +68,9 @@ impl Widget for Tile {
         e.set_size(id, Length::pct(100), Length::pct(100));
         e.set_pos(
             id,
-            Length::pct(i16::from(self.col) * 100),
-            Length::pct(i16::from(self.row) * 100),
+            // `u8` columns and rows: at most 25 500 %, within `i16`.
+            Length::pct(i16::from(self.col).saturating_mul(100)),
+            Length::pct(i16::from(self.row).saturating_mul(100)),
         );
     }
 }
@@ -158,8 +159,15 @@ impl Tileview {
         let ca = e.content_area(tv);
         let (w, h) = (ca.width().max(1), ca.height().max(1));
         let p = e.scroll_end(tv);
-        let tx = ((p.x + w / 2) / w) * w;
-        let ty = ((p.y + h / 2) / h) * h;
+        // The tile grid line nearest to the scroll end (`size ≥ 1`: the fallback is never
+        // taken).
+        let snap = |pos: i32, size: i32| {
+            pos.saturating_add(size / 2)
+                .checked_div(size)
+                .unwrap_or(0)
+                .saturating_mul(size)
+        };
+        let (tx, ty) = (snap(p.x, w), snap(p.y, h));
         let mut dir = Sides::ALL;
         let hit = e.tree().children(tv).find_map(|c| {
             let t = e.widget::<Tile>(c)?;
@@ -181,7 +189,10 @@ impl Tileview {
 /// The scroll offset of tile `t`: its column and row times the view's content size.
 fn tile_origin(e: &Engine, tv: NodeId, t: Tile) -> (i32, i32) {
     let ca = e.content_area(tv);
-    (i32::from(t.col) * ca.width(), i32::from(t.row) * ca.height())
+    (
+        i32::from(t.col).saturating_mul(ca.width()),
+        i32::from(t.row).saturating_mul(ca.height()),
+    )
 }
 
 /// Creates a tileview, 100 % × 100 % of its parent, as the last child of `parent` (LVGL

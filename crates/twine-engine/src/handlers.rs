@@ -88,14 +88,17 @@ impl Handlers {
     /// Heap bytes of this box, its list and the boxed handler closures (for
     /// [`Engine::memory_report`](crate::Engine::memory_report)).
     pub(crate) fn heap_bytes(&self) -> usize {
-        core::mem::size_of::<Self>()
-            + self.list.capacity() * core::mem::size_of::<(HandlerId, EventFilter, Option<Handler>)>()
-            + self
-                .list
-                .iter()
-                .filter_map(|(_, _, h)| h.as_ref())
-                .map(|h| core::mem::size_of_val(&**h))
-                .sum::<usize>()
+        let list = self.list.capacity().saturating_mul(core::mem::size_of::<(
+            HandlerId,
+            EventFilter,
+            Option<Handler>,
+        )>());
+        self.list
+            .iter()
+            .filter_map(|(_, _, h)| h.as_ref())
+            .fold(core::mem::size_of::<Self>().saturating_add(list), |sum, h| {
+                sum.saturating_add(core::mem::size_of_val(&**h))
+            })
     }
 
     /// Takes the first handler after `after` (exclusive) and before `limit` (exclusive) that
@@ -175,10 +178,11 @@ impl Engine {
             self.capacity_refused(twine_core::fault::CapacityFault::Handlers, Some(id));
             return hid;
         }
+        let part = self.partition();
         match self.tree.node_mut(id) {
             Some(n) => {
                 // The boxed closure (and the node's list, on its first handler) allocate.
-                twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::Handler);
+                twine_core::alloc_guard::note(part, twine_core::alloc_guard::AllocSite::Handler);
                 n.handlers
                     .get_or_insert_with(Box::default)
                     .list
@@ -280,6 +284,7 @@ impl Engine {
         }
         twine_core::trace!(target: "twine::event", "{:?} -> {} posted (widget busy)", code, fmt_node_id(target));
         twine_core::alloc_guard::push(
+            self.partition(),
             &mut self.events.posted,
             (target, code, param),
             twine_core::alloc_guard::AllocSite::EngineScratch,
@@ -344,6 +349,7 @@ impl Engine {
     /// assert_eq!(*seen.borrow(), "héllo");
     /// ```
     pub fn send_event_text(&mut self, target: NodeId, code: EventCode, text: &str) -> EventResult {
+        let part = self.partition();
         let q = &mut self.events;
         let start = q.text.len();
         q.text.push_str(text);
@@ -354,6 +360,7 @@ impl Engine {
         };
         q.next_text_serial = q.next_text_serial.wrapping_add(1);
         twine_core::alloc_guard::push(
+            part,
             &mut q.text_frames,
             h,
             twine_core::alloc_guard::AllocSite::EngineScratch,
@@ -376,7 +383,7 @@ impl Engine {
             return None;
         }
         let start = h.start as usize;
-        self.events.text.get(start..start + h.len as usize)
+        self.events.text.get(start..start.checked_add(h.len as usize)?)
     }
 
     /// Sends an event to `target` and returns the most decisive result of its handlers.

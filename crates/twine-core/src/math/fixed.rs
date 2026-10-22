@@ -1,25 +1,37 @@
 //! 16.16 fixed point ([`Fx`]) and scale factors ([`Scale`]).
 
 use core::fmt;
+use core::num::{NonZeroI64, NonZeroU64};
 use core::ops::{Add, Div, Mul, Neg, Sub};
 
 use crate::geometry::sat_i32;
 
-/// Divides `num` by `den` (`den != 0`), rounding half away from zero.
+/// Divides `num` by `den`, rounding half away from zero (`den` is non-zero by its type, so
+/// the division cannot panic).
 #[inline]
-pub(crate) const fn div_round(num: i64, den: i64) -> i64 {
-    let (n, d) = (num.unsigned_abs(), den.unsigned_abs());
-    let q = ((n + d / 2) / d) as i64;
-    if (num < 0) == (den < 0) { q } else { -q }
+pub(crate) fn div_round(num: i64, den: NonZeroI64) -> i64 {
+    let n = num.unsigned_abs();
+    let d: NonZeroU64 = den.unsigned_abs();
+    // SAFE-ARITH: `n ≤ 2^63` and `d / 2 < 2^63`, so the sum is below 2^64.
+    let q = (n.wrapping_add(d.get() / 2) / d) as i64;
+    // SAFE-ARITH: `q` is `i64::MIN` (as `2^63` cast) only for `num = i64::MIN`, `|den| = 1`;
+    // its wrapping negation is then `i64::MIN`, the exact quotient for `den = 1`.
+    if (num < 0) == (den.get() < 0) {
+        q
+    } else {
+        q.wrapping_neg()
+    }
 }
 
-/// Shifts `v` right by 16, rounding half away from zero.
+/// Shifts `v` right by 16, rounding half away from zero. `|v| ≤ 2^62` (an `i32` or a product
+/// of two `i32`s: the only callers).
 #[inline]
 const fn shr16_round(v: i64) -> i64 {
+    // SAFE-ARITH: `|v| ≤ 2^62`, so `±v + 0x8000` and the negations stay inside `i64`.
     if v >= 0 {
-        (v + 0x8000) >> 16
+        v.wrapping_add(0x8000) >> 16
     } else {
-        -((-v + 0x8000) >> 16)
+        (v.wrapping_neg().wrapping_add(0x8000) >> 16).wrapping_neg()
     }
 }
 
@@ -81,11 +93,11 @@ impl Fx {
     /// `num / den`, rounded. `den == 0` returns [`Fx::ZERO`] and logs a warning.
     #[must_use]
     pub fn from_ratio(num: i32, den: i32) -> Fx {
-        if den == 0 {
+        let Some(den) = NonZeroI64::new(i64::from(den)) else {
             crate::warn!(target: "twine::core", "Fx::from_ratio: division by zero ({}/0)", num);
             return Fx::ZERO;
-        }
-        Fx(sat_i32(div_round(i64::from(num) << 16, i64::from(den))))
+        };
+        Fx(sat_i32(div_round(i64::from(num) << 16, den)))
     }
 
     /// Largest integer `<= self`.
@@ -103,7 +115,8 @@ impl Fx {
     /// Smallest integer `>= self`.
     #[must_use]
     pub const fn to_int_ceil(self) -> i32 {
-        ((self.0 as i64 + 0xFFFF) >> 16) as i32
+        // SAFE-ARITH: an `i32` plus `0xFFFF` fits in `i64`.
+        ((self.0 as i64).wrapping_add(0xFFFF) >> 16) as i32
     }
 
     /// Fractional part above the floor, in 1/65536 (always non-negative: `-0.25` → `0.75`).
@@ -121,22 +134,23 @@ impl Fx {
     /// Product, rounded half away from zero, saturating.
     #[must_use]
     pub const fn mul(self, o: Fx) -> Fx {
-        Fx(sat_i32(shr16_round(self.0 as i64 * o.0 as i64)))
+        // SAFE-ARITH: a product of two `i32`s is at most 2^62 in magnitude.
+        Fx(sat_i32(shr16_round((self.0 as i64).wrapping_mul(o.0 as i64))))
     }
 
     /// Quotient, rounded half away from zero, saturating. Division by zero saturates to
     /// [`Fx::MAX`] / [`Fx::MIN`] by the sign of `self` (zero stays zero) and logs a warning.
     #[must_use]
     pub fn div(self, o: Fx) -> Fx {
-        if o.0 == 0 {
+        let Some(den) = NonZeroI64::new(i64::from(o.0)) else {
             crate::warn!(target: "twine::core", "Fx::div: division by zero");
             return match self.0 {
                 0 => Fx::ZERO,
                 v if v > 0 => Fx::MAX,
                 _ => Fx::MIN,
             };
-        }
-        Fx(sat_i32(div_round(i64::from(self.0) << 16, i64::from(o.0))))
+        };
+        Fx(sat_i32(div_round(i64::from(self.0) << 16, den)))
     }
 
     /// Saturating addition.
@@ -204,10 +218,12 @@ impl fmt::Display for Fx {
         let v = i64::from(self.0);
         let a = v.unsigned_abs();
         let mut int = a >> 16;
-        let mut dec = ((a & 0xFFFF) * 10_000 + 0x8000) >> 16;
+        // SAFE-ARITH: `a & 0xFFFF < 2^16`, so the sum is below 2^30.
+        let mut dec = (a & 0xFFFF).wrapping_mul(10_000).wrapping_add(0x8000) >> 16;
         if dec >= 10_000 {
-            int += 1;
-            dec -= 10_000;
+            // SAFE-ARITH: `int = |v| >> 16 < 2^16`, and `dec ≥ 10_000`.
+            int = int.wrapping_add(1);
+            dec = dec.wrapping_sub(10_000);
         }
         let sign = if v < 0 { "-" } else { "" };
         write!(f, "{sign}{int}.{dec:04}")
@@ -248,7 +264,8 @@ impl Scale {
     #[inline]
     #[must_use]
     pub const fn pct(p: u16) -> Scale {
-        let v = p as u32 * 256 / 100;
+        // SAFE-ARITH: `p < 2^16`, so `p · 256 < 2^24`.
+        let v = (p as u32).wrapping_mul(256) / 100;
         Scale(if v > u16::MAX as u32 { u16::MAX } else { v as u16 })
     }
 
@@ -271,21 +288,25 @@ impl Scale {
     pub const fn apply(self, v: i32) -> i32 {
         let s = self.0 as i64;
         let v = v as i64;
+        // SAFE-ARITH: `|v| ≤ 2^31` and `s < 2^16`, so every step is below 2^48 in magnitude.
         sat_i32(if v >= 0 {
-            (v * s + 128) >> 8
+            v.wrapping_mul(s).wrapping_add(128) >> 8
         } else {
-            -((-v * s + 128) >> 8)
+            (v.wrapping_neg().wrapping_mul(s).wrapping_add(128) >> 8).wrapping_neg()
         })
     }
 
     /// `v · 256 / s` (truncated towards zero). A zero scale returns `v` and logs a warning.
     #[must_use]
     pub fn inverse_apply(self, v: i32) -> i32 {
-        if self.0 == 0 {
+        let Some(s) = NonZeroI64::new(i64::from(self.0)) else {
             crate::warn!(target: "twine::core", "Scale::inverse_apply: zero scale");
             return v;
-        }
-        sat_i32(i64::from(v) * 256 / i64::from(self.0))
+        };
+        // SAFE-ARITH: `|v · 256| < 2^39`.
+        let num = i64::from(v).wrapping_mul(256);
+        // `s > 0` (a non-zero `u16`): the quotient exists; the fallback is never taken.
+        sat_i32(num.checked_div(s.get()).unwrap_or(num))
     }
 
     /// The scale as a fixed-point number (`ONE` → `Fx::ONE`).

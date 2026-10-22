@@ -123,13 +123,16 @@ impl fmt::Display for Angle {
 const fn sin_q1(a: i32) -> i32 {
     let d = (a / 10) as usize;
     let r = a % 10;
-    let lo = SIN_TABLE[d] as i32;
-    if r == 0 {
-        lo
-    } else {
-        let hi = SIN_TABLE[d + 1] as i32;
-        lo + ((hi - lo) * r + 5) / 10
-    }
+    // SAFE-INDEX: `a ∈ 0..=900`, so `d ≤ 90`, the table's last index; the fallback is never
+    // taken. `hi` is only read when `r ≠ 0`, i.e. `a < 900` and `d + 1 ≤ 90`.
+    let (lo, hi) = match SIN_TABLE.split_at_checked(d) {
+        Some((_, [lo, hi, ..])) => (*lo as i32, *hi as i32),
+        Some((_, [lo])) => (*lo as i32, *lo as i32),
+        _ => (0, 0),
+    };
+    // SAFE-ARITH: the table rises by at most 572 per degree and `r ≤ 9`, so the step is
+    // below 2^13 and `lo + step ≤ 32_767`.
+    lo.wrapping_add(hi.wrapping_sub(lo).wrapping_mul(r).wrapping_add(5) / 10)
 }
 
 /// Sine scaled to `−32767..=32767` (`>> TRIG_SHIFT` normalizes).
@@ -142,27 +145,31 @@ const fn sin_q1(a: i32) -> i32 {
 #[must_use]
 pub const fn sin(a: Angle) -> i32 {
     let a = a.normalized().0;
+    // SAFE-ARITH: `a ∈ 0..3600` (normalized); each branch maps it into `0..=900`, and
+    // `sin_q1` returns `0..=32_767`, whose negation fits.
     if a <= 900 {
         sin_q1(a)
     } else if a <= 1800 {
-        sin_q1(1800 - a)
+        sin_q1(1800i32.wrapping_sub(a))
     } else if a <= 2700 {
-        -sin_q1(a - 1800)
+        sin_q1(a.wrapping_sub(1800)).wrapping_neg()
     } else {
-        -sin_q1(3600 - a)
+        sin_q1(3600i32.wrapping_sub(a)).wrapping_neg()
     }
 }
 
 /// Cosine scaled to `−32767..=32767` (`cos(a) = sin(a + 90°)`).
 #[must_use]
 pub const fn cos(a: Angle) -> i32 {
-    sin(Angle(a.normalized().0 + 900))
+    // SAFE-ARITH: a normalized angle is below 3600.
+    sin(Angle(a.normalized().0.wrapping_add(900)))
 }
 
 /// Converts a `−32767..=32767` trig value to 16.16 fixed point (rounded, `32767` → `1.0`).
 const fn trig_to_fx(s: i32) -> Fx {
-    let sign = if s < 0 { -1 } else { 1 };
-    Fx((s * 65_536 + sign * 16_383) / 32_767)
+    let half = if s < 0 { -16_383 } else { 16_383 };
+    // SAFE-ARITH: `|s| ≤ 32_767`, so `|s · 65_536 ± 16_383| ≤ 2_147_434_495 < 2^31`.
+    Fx(s.wrapping_mul(65_536).wrapping_add(half) / 32_767)
 }
 
 /// Sine as fixed point (`sin_fx(90°) == Fx::ONE`).
@@ -194,8 +201,9 @@ pub const fn atan2(y: i32, x: i32) -> Angle {
     let (mut x, mut y) = (x as i64, y as i64);
     let mut z: i64 = 0;
     if x < 0 {
-        x = -x;
-        y = -y;
+        // SAFE-ARITH: `x`, `y` are `i32`s widened to `i64`.
+        x = x.wrapping_neg();
+        y = y.wrapping_neg();
         z = 180 * 4096;
     }
     // Pre-scale so that max(|x|, |y|) is in [2^29, 2^30): precision for small inputs,
@@ -211,23 +219,30 @@ pub const fn atan2(y: i32, x: i32) -> Angle {
         x >>= 1;
         y >>= 1;
     }
-    let mut i = 0;
-    while i < 16 {
+    let mut i = 0u32;
+    let mut steps: &[i64] = &ATAN_TABLE;
+    // SAFE-ARITH: `|x|, |y| < 2^30` after the pre-scaling and the CORDIC gain is below 1.65,
+    // so `x`, `y` stay below 2^31 in magnitude; `|z| < 2^21` (start ≤ 180 · 4096 plus the
+    // table's sum); `i < 16`.
+    while let [step, rest @ ..] = steps {
+        // SHIFT: `i < 16` (one step per table entry), on `i64`.
         let (dx, dy) = (x >> i, y >> i);
         if y > 0 {
-            x += dy;
-            y -= dx;
-            z += ATAN_TABLE[i];
+            x = x.wrapping_add(dy);
+            y = y.wrapping_sub(dx);
+            z = z.wrapping_add(*step);
         } else {
-            x -= dy;
-            y += dx;
-            z -= ATAN_TABLE[i];
+            x = x.wrapping_sub(dy);
+            y = y.wrapping_add(dx);
+            z = z.wrapping_sub(*step);
         }
-        i += 1;
+        i = i.wrapping_add(1);
+        steps = rest;
     }
     let z = z.rem_euclid(FULL);
-    let d = ((z * 10 + 2048) / 4096) as i32;
-    Angle(if d >= 3600 { d - 3600 } else { d })
+    // SAFE-ARITH: `z ∈ 0..FULL` (`< 2^21`), so `z · 10 + 2048 < 2^25`, and `d ≤ 3600`.
+    let d = (z.wrapping_mul(10).wrapping_add(2048) / 4096) as i32;
+    Angle(if d >= 3600 { d.wrapping_sub(3600) } else { d })
 }
 
 #[cfg(test)]

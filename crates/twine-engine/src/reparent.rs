@@ -70,6 +70,7 @@ impl Engine {
         if let Some(op) = old_parent.filter(|p| *p != parent && self.tree.contains(*p)) {
             self.mark_layout(op, LayoutDirty::CHILDREN);
             twine_core::alloc_guard::push(
+                self.partition(),
                 &mut self.layout.readjust,
                 op,
                 twine_core::alloc_guard::AllocSite::EngineScratch,

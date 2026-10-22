@@ -311,7 +311,9 @@ impl Engine {
     /// Marks a flushed chunk of display `d` (`area` as returned by `render_chunk`: physical
     /// coordinates under software rotation) dirty again.
     fn redraw_flushed_area(&mut self, d: usize, area: Rect) {
-        let disp = &self.displays[d];
+        let Some(disp) = self.displays.get(d) else {
+            return;
+        };
         let rotation = match &disp.refresher.strategy {
             Strategy::Partial(p) => p.rotation,
             _ => Rotation::Deg0,
@@ -326,7 +328,9 @@ impl Engine {
     /// Records a successful flush / present of display `d`.
     pub(crate) fn flush_ok(&mut self, d: usize) {
         let now = self.anim_now();
-        let h = &mut self.displays[d].health;
+        let Some(h) = self.displays.get_mut(d).map(|x| &mut x.health) else {
+            return;
+        };
         if h.consecutive > 0 {
             twine_core::info!(
                 target: "twine::refresh",
@@ -345,7 +349,9 @@ impl Engine {
     pub(crate) fn flush_failed(&mut self, d: usize, code: DriverErrorCode) -> bool {
         let policy = self.config.flush_policy;
         let max = u32::from(self.config.max_consecutive_flush_errors.max(1));
-        let h = &mut self.displays[d].health;
+        let Some(h) = self.displays.get_mut(d).map(|x| &mut x.health) else {
+            return false;
+        };
         h.consecutive = h.consecutive.saturating_add(1);
         h.last_error = Some(code);
         let n = h.consecutive;
@@ -377,7 +383,9 @@ impl Engine {
     pub(crate) fn flush_timed_out(&mut self, d: usize, waited: Duration) -> bool {
         let policy = self.config.flush_policy;
         let max = u32::from(self.config.max_consecutive_flush_errors.max(1));
-        let h = &mut self.displays[d].health;
+        let Some(h) = self.displays.get_mut(d).map(|x| &mut x.health) else {
+            return false;
+        };
         h.consecutive = h.consecutive.saturating_add(1).max(max);
         twine_core::error!(
             target: "twine::refresh",
@@ -397,9 +405,10 @@ impl Engine {
         policy != FlushPolicy::Ignore
     }
 
-    /// Whether display `d` is halted by [`FlushPolicy::Halt`].
+    /// Whether display `d` is halted by [`FlushPolicy::Halt`] (an unknown display draws
+    /// nothing either: `true`).
     pub(crate) fn display_halted(&self, d: usize) -> bool {
-        self.displays[d].health.halted
+        self.displays.get(d).is_none_or(|x| x.health.halted)
     }
 }
 

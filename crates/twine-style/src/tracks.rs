@@ -364,7 +364,10 @@ impl OwnedSlots {
     pub(crate) fn set(&mut self, prop: crate::PropId, t: SharedTracks) {
         let Some(i) = slot_index(prop) else { return };
         let mut held = self.take_held();
-        held.tracks[i] = Some(t);
+        // SAFE-INDEX: `slot_index` returns an index of `tracks`; the fallback is never taken.
+        if let Some(slot) = held.tracks.get_mut(i) {
+            *slot = Some(t);
+        }
         self.0 = Some(Box::new(Box::new(held)));
     }
 

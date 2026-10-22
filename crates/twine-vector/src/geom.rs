@@ -1,5 +1,6 @@
 //! Fixed-point geometry of the vector crate: [`FxPoint`], [`FxSize`], [`FxRect`].
 
+use core::num::NonZeroI128;
 use core::ops::{Add, Neg, Sub};
 
 use twine_core::{Fx, Point, Rect, Transform};
@@ -244,12 +245,26 @@ pub(crate) fn hypot(dx: i64, dy: i64) -> i64 {
     let (ax, ay) = (dx.unsigned_abs(), dy.unsigned_abs());
     // Scale down so the squares fit in u64 (keep ≤ 2^31 per component).
     let m = ax.max(ay);
-    let mut shift = 0;
+    let mut shift = 0u32;
+    // SHIFT: the loop stops by `shift = 33` (`u64::MAX >> 33 < 2^31`), so every amount here and
+    // below is `≤ 33`, on a `u64`.
     while (m >> shift) > (1 << 31) {
-        shift += 1;
+        // SAFE-ARITH: `shift ≤ 33` (above).
+        shift = shift.wrapping_add(1);
     }
+    // SHIFT: `shift ≤ 33`, as above.
     let (sx, sy) = (ax >> shift, ay >> shift);
-    (u64::from(twine_core::math::isqrt64(sx * sx + sy * sy)) << shift) as i64
+    // SAFE-ARITH: `sx, sy ≤ 2^31`, so each square is at most 2^62 and their sum fits.
+    let sum = sx.wrapping_mul(sx).wrapping_add(sy.wrapping_mul(sy));
+    // SHIFT: `shift ≤ 33`, as above.
+    (u64::from(twine_core::math::isqrt64(sum)) << shift) as i64
+}
+
+/// Number of pixels in `[a, b)`: `b − a`, or 0 when `b ≤ a` (exact for every pair of
+/// `i32`s).
+#[inline]
+pub(crate) const fn span(a: i32, b: i32) -> usize {
+    if b <= a { 0 } else { b.abs_diff(a) as usize }
 }
 
 /// Saturates an `i64` into the `i32` range.
@@ -273,13 +288,19 @@ pub(crate) const fn fxp(x: i64, y: i64) -> FxPoint {
 /// `a · b / c` in `i128`, rounded half away from zero, saturated (`c == 0` → 0).
 #[inline]
 pub(crate) fn muldiv(a: i64, b: i64, c: i64) -> i64 {
-    if c == 0 {
+    let Some(d) = NonZeroI128::new(i128::from(c)) else {
         return 0;
-    }
-    let n = i128::from(a) * i128::from(b);
-    let d = i128::from(c);
-    let q = (n.abs() + d.abs() / 2) / d.abs();
-    let q = if (n < 0) == (d < 0) { q } else { -q };
+    };
+    // SAFE-ARITH: `|a·b| < 2^126` and `|d| < 2^63`: the rounded quotient is below 2^127.
+    // `d != 0` (its type): the division's fallback is never taken.
+    let n = i128::from(a).wrapping_mul(i128::from(b));
+    let ad = d.get().wrapping_abs();
+    let q = n.wrapping_abs().wrapping_add(ad / 2).checked_div(ad).unwrap_or(0);
+    let q = if (n < 0) == (d.get() < 0) {
+        q
+    } else {
+        q.wrapping_neg()
+    };
     q.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 

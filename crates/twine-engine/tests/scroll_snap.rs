@@ -164,3 +164,20 @@ fn carousel_center_snapped() {
     assert_eq!(h.engine().scroll_offset(cont).x, centered(2));
     h.assert_snapshot("carousel_center_snapped");
 }
+
+#[test]
+fn regression_snapped_throw_with_slowest_decay_ends() {
+    // `scroll_throw` was a `u8`: 0 kept 100 % of the throw per read, so the snapped throw's
+    // prediction (`v, v·keep, …` until 0) never ended. It is a `NonZeroU8` now; the slowest
+    // decay, 1 % per read, still ends and snaps to a card.
+    let (mut h, cont, _) = scene();
+    h.engine_mut().config_mut().scroll_throw = core::num::NonZeroU8::MIN;
+    swipe(&mut h, -20, 3);
+    h.run_until_idle();
+    let off = h.engine().scroll_offset(cont).x;
+    assert!(
+        (0..8).map(centered).any(|c| c == off),
+        "offset {off} is not a card position"
+    );
+    assert!(!h.engine().is_scrolling(cont));
+}

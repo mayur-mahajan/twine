@@ -208,6 +208,9 @@ impl<I> core::fmt::Debug for Ssd1306<I> {
 
 impl<I: DcsInterface> Ssd1306<I> {
     /// Initializes the controller (see the module docs).
+    ///
+    /// # Errors
+    /// .
     pub fn new(iface: I, size: Ssd1306Size, rotation: Rotation) -> Result<Self, OledError<I::Error>> {
         let mut this = Self {
             iface,
@@ -229,16 +232,25 @@ impl<I: DcsInterface> Ssd1306<I> {
     }
 
     /// Sets the contrast (`0x81`), 0…255.
+    ///
+    /// # Errors
+    /// .
     pub fn set_contrast(&mut self, contrast: u8) -> Result<(), OledError<I::Error>> {
         self.commands(&[0x81, contrast])
     }
 
     /// Turns the panel on or off (`0xAF` / `0xAE`, RAM kept; off saves most of the power).
+    ///
+    /// # Errors
+    /// .
     pub fn display_on(&mut self, on: bool) -> Result<(), OledError<I::Error>> {
         self.commands(&[if on { 0xAF } else { 0xAE }])
     }
 
     /// Inverts all pixels in hardware (`0xA7` / `0xA6`).
+    ///
+    /// # Errors
+    /// .
     pub fn invert(&mut self, on: bool) -> Result<(), OledError<I::Error>> {
         self.commands(&[if on { 0xA7 } else { 0xA6 }])
     }
@@ -341,6 +353,9 @@ mod asynch {
 
     impl<I: AsyncDcsInterface> AsyncSsd1306<I> {
         /// Initializes the controller.
+        ///
+        /// # Errors
+        /// .
         pub async fn new(
             iface: I,
             size: Ssd1306Size,
@@ -367,11 +382,17 @@ mod asynch {
         }
 
         /// Sets the contrast (`0x81`).
+        ///
+        /// # Errors
+        /// .
         pub async fn set_contrast(&mut self, contrast: u8) -> Result<(), OledError<I::Error>> {
             self.commands(&[0x81, contrast]).await
         }
 
         /// Turns the panel on or off.
+        ///
+        /// # Errors
+        /// .
         pub async fn display_on(&mut self, on: bool) -> Result<(), OledError<I::Error>> {
             self.commands(&[if on { 0xAF } else { 0xAE }]).await
         }

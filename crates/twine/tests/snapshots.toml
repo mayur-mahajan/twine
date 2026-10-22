@@ -12,10 +12,6 @@ gauge_focused_and_disabled = "272x140 xxh64:7efd3e064259f2ba"
 gauge_high_contrast = "272x140 xxh64:b1d657ffa2b1929b"
 gauge_light = "272x140 xxh64:c3f8a6132311da4d"
 gauge_night = "272x140 xxh64:720df1f591c50167"
-
-[pending]
-# Awaiting review: generated, not yet approved. Compared like approved entries. The images
-# are in target/twine-snapshots/<crate>/new/; `cargo xtask snapshots --accept` approves them.
 golden_arc_default_dark = "200x120 xxh64:f9cd89c2439add84"
 golden_arc_default_hc = "200x120 xxh64:937cd08c7b9f4d43"
 golden_arc_default_light = "200x120 xxh64:c8b7baedf71d6a1a"

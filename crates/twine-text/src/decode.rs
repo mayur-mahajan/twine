@@ -26,6 +26,29 @@
 //!
 //! Reads past the end of the data return 0 and mark the stream corrupt; decoding never panics.
 
+/// A glyph bit depth: 1, 2, 4 or 8 bits per pixel, validated once per glyph by the font
+/// ([`BitmapFont`](crate::BitmapFont)'s `bpp` check) before any bitmap is read, so the bit reads
+/// below shift by amounts proven in range by this type rather than checked per pixel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Bpp(u8);
+
+impl Bpp {
+    /// `bits` if it is 1, 2, 4 or 8, else `None`.
+    #[inline]
+    pub(crate) const fn new(bits: u8) -> Option<Bpp> {
+        match bits {
+            1 | 2 | 4 | 8 => Some(Bpp(bits)),
+            _ => None,
+        }
+    }
+
+    /// The bit count (1, 2, 4 or 8).
+    #[inline]
+    pub(crate) const fn get(self) -> u8 {
+        self.0
+    }
+}
+
 /// Maps a `bpp`-bit coverage value to A8 (LVGL opacity tables).
 #[inline]
 #[must_use]
@@ -38,40 +61,63 @@ pub(crate) const fn to_a8(v: u8, bpp: u8) -> u8 {
                 255
             }
         }
-        2 => (v & 3) * 85,
-        4 => (v & 15) * 17,
+        // SAFE-ARITH: `v & 3 ≤ 3` and `3 · 85 = 255`.
+        2 => (v & 3).wrapping_mul(85),
+        // SAFE-ARITH: `v & 15 ≤ 15` and `15 · 17 = 255`.
+        4 => (v & 15).wrapping_mul(17),
         _ => v,
     }
 }
 
 /// Reads `n` (1..=8) bits MSB-first at bit position `pos`; `None` past the end of `buf`.
+///
+/// Callers pass a [`Bpp`] value, 1 (a repeat flag) or 6 (a repeat count).
 #[inline]
 fn get_bits(buf: &[u8], pos: usize, n: u8) -> Option<u8> {
     let n = u32::from(n);
     let byte = pos >> 3;
     let bit = (pos & 7) as u32;
     let hi = u32::from(*buf.get(byte)?);
-    let v = if bit + n <= 8 {
-        hi >> (8 - bit - n)
+    // SAFE-ARITH: `bit ≤ 7` and `1 ≤ n ≤ 8` (the callers), so `bit + n ≤ 15`, and the
+    // amounts below are the differences proven in the `SHIFT` notes; `byte = pos / 8`, so
+    // `byte + 1` does not overflow.
+    let end = bit.wrapping_add(n);
+    let v = if end <= 8 {
+        // SHIFT: `bit + n ≤ 8` and `n ≥ 1`, so the amount is `0..=7`.
+        hi >> 8u32.wrapping_sub(end)
     } else {
-        let lo = u32::from(*buf.get(byte + 1)?);
-        ((hi << 8) | lo) >> (16 - bit - n)
+        let lo = u32::from(*buf.get(byte.wrapping_add(1))?);
+        // SHIFT: `9 ≤ bit + n ≤ 15` (`bit ≤ 7`, `n ≤ 8`), so the amount is `1..=7`.
+        ((hi << 8) | lo) >> 16u32.wrapping_sub(end)
     };
-    Some((v & ((1 << n) - 1)) as u8)
+    // SHIFT: `n ≤ 8` (see above), on a `u32`.
+    // SAFE-ARITH: `1 << n ≥ 2`.
+    Some((v & (1u32 << n).wrapping_sub(1)) as u8)
 }
 
 /// Expands `w` values of `bpp` bits starting at bit `bit_offset` of `src` into A8 `out[..w]`.
 ///
 /// Returns `false` (the missing values are written as 0) when `src` is too short.
-pub(crate) fn expand_row(src: &[u8], bit_offset: usize, bpp: u8, w: usize, out: &mut [u8]) -> bool {
-    let out = &mut out[..w];
+pub(crate) fn expand_row(src: &[u8], bit_offset: usize, bpp: Bpp, w: usize, out: &mut [u8]) -> bool {
+    let bpp = bpp.get();
+    // A row buffer shorter than `w` is a caller bug: nothing is written and the row reported
+    // as not decoded.
+    let Some(out) = out.get_mut(..w) else {
+        return false;
+    };
     if bpp == 8 {
-        let start = (bit_offset / 8).min(src.len());
-        let n = (src.len() - start).min(w);
-        out[..n].copy_from_slice(&src[start..start + n]);
-        out[n..].fill(0);
+        let src = src.get(bit_offset / 8..).unwrap_or_default();
+        let n = src.len().min(w);
+        // `n ≤ w = out.len()` and `n ≤ src.len()`: both parts exist.
+        if let (Some((head, tail)), Some(src)) = (out.split_at_mut_checked(n), src.get(..n)) {
+            head.copy_from_slice(src);
+            tail.fill(0);
+        }
         return n == w;
     }
+    // The mask of one value (`1 << bpp ≥ 2`).
+    // SHIFT: `bpp` is 1, 2 or 4 here (`Bpp`, 8 returned above), on a `u8`.
+    let mask = (1u8 << bpp).wrapping_sub(1);
     let mut ok = true;
     let mut pos = bit_offset;
     // Fast path per byte for aligned 1/2/4 bpp would be possible; values never straddle a
@@ -79,13 +125,19 @@ pub(crate) fn expand_row(src: &[u8], bit_offset: usize, bpp: u8, w: usize, out: 
     for o in out.iter_mut() {
         let byte = pos >> 3;
         let v = if let Some(&b) = src.get(byte) {
-            (b >> (8 - (pos & 7) - usize::from(bpp))) & ((1 << bpp) - 1)
+            // SHIFT: `bpp` is 1, 2 or 4 here (`Bpp`, 8 returned above) and divides 8; callers start
+            // rows at multiples of `bpp` (`y · w · bpp`), so `pos & 7 ≤ 8 − bpp` and the amount
+            // is `0..=7`; `bpp ≤ 4` for the mask.
+            // SAFE-ARITH: as the shift proof: `(pos & 7) + bpp ≤ 8`.
+            (b >> 8usize.wrapping_sub(pos & 7).wrapping_sub(usize::from(bpp))) & mask
         } else {
             ok = false;
             0
         };
         *o = to_a8(v, bpp);
-        pos += usize::from(bpp);
+        // SAFE-ARITH: `pos` ends at `bit_offset + w · bpp`, a bit position inside a glyph of
+        // at most 255 × 255 values (`y · w · bpp + w · bpp < 2^20`).
+        pos = pos.wrapping_add(usize::from(bpp));
     }
     ok
 }
@@ -102,7 +154,7 @@ enum State {
 #[derive(Debug)]
 pub(crate) struct Rle<'a> {
     data: &'a [u8],
-    bpp: u8,
+    bpp: Bpp,
     rdp: usize,
     prev: u8,
     cnt: u8,
@@ -113,7 +165,7 @@ pub(crate) struct Rle<'a> {
 
 impl<'a> Rle<'a> {
     /// A decoder at the start of `data` (`rdp = 0`, `prev = 0`, `cnt = 0`, state Single).
-    pub(crate) fn new(data: &'a [u8], bpp: u8) -> Self {
+    pub(crate) fn new(data: &'a [u8], bpp: Bpp) -> Self {
         Self {
             data,
             bpp,
@@ -134,9 +186,17 @@ impl<'a> Rle<'a> {
         }
     }
 
+    /// Advances the read position by `n` bits.
+    #[inline]
+    fn skip(&mut self, n: u8) {
+        // SAFE-ARITH: one glyph has at most 255 × 255 values and each advances the position
+        // by at most 15 bits (1 + 6 + 8), so `rdp < 2^20`.
+        self.rdp = self.rdp.wrapping_add(usize::from(n));
+    }
+
     /// The next value (in the `bpp` domain).
     pub(crate) fn next_value(&mut self) -> u8 {
-        let bpp = self.bpp;
+        let bpp = self.bpp.get();
         match self.state {
             State::Single => {
                 let ret = self.bits(bpp);
@@ -145,24 +205,24 @@ impl<'a> Rle<'a> {
                     self.state = State::Repeated;
                 }
                 self.prev = ret;
-                self.rdp += usize::from(bpp);
+                self.skip(bpp);
                 ret
             }
             State::Repeated => {
                 let v = self.bits(1);
                 self.cnt = self.cnt.wrapping_add(1);
-                self.rdp += 1;
+                self.skip(1);
                 if v == 1 {
                     let mut ret = self.prev;
                     if self.cnt == 11 {
                         self.cnt = self.bits(6);
-                        self.rdp += 6;
+                        self.skip(6);
                         if self.cnt != 0 {
                             self.state = State::Counter;
                         } else {
                             ret = self.bits(bpp);
                             self.prev = ret;
-                            self.rdp += usize::from(bpp);
+                            self.skip(bpp);
                             self.state = State::Single;
                         }
                     }
@@ -170,18 +230,19 @@ impl<'a> Rle<'a> {
                 } else {
                     let ret = self.bits(bpp);
                     self.prev = ret;
-                    self.rdp += usize::from(bpp);
+                    self.skip(bpp);
                     self.state = State::Single;
                     ret
                 }
             }
             State::Counter => {
                 let mut ret = self.prev;
-                self.cnt -= 1;
+                // SAFE-ARITH: `Counter` is entered with `cnt ≠ 0` and left when it reaches 0.
+                self.cnt = self.cnt.wrapping_sub(1);
                 if self.cnt == 0 {
                     ret = self.bits(bpp);
                     self.prev = ret;
-                    self.rdp += usize::from(bpp);
+                    self.skip(bpp);
                     self.state = State::Single;
                 }
                 ret
@@ -204,7 +265,7 @@ impl<'a> Rle<'a> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn decode_compressed(
     data: &[u8],
-    bpp: u8,
+    bpp: Bpp,
     w: usize,
     h: usize,
     prefilter: bool,
@@ -212,11 +273,9 @@ pub(crate) fn decode_compressed(
     prev: &mut [u8],
     sink: &mut dyn FnMut(usize, &[u8]),
 ) -> bool {
-    if cur.len() < w || prev.len() < w {
+    let (Some(cur), Some(prev)) = (cur.get_mut(..w), prev.get_mut(..w)) else {
         return false;
-    }
-    let cur = &mut cur[..w];
-    let prev = &mut prev[..w];
+    };
     let mut rle = Rle::new(data, bpp);
     for y in 0..h {
         rle.decode_row(cur);
@@ -229,7 +288,7 @@ pub(crate) fn decode_compressed(
             prev.copy_from_slice(cur);
         }
         for c in cur.iter_mut() {
-            *c = to_a8(*c, bpp);
+            *c = to_a8(*c, bpp.get());
         }
         sink(y, cur);
     }
@@ -243,8 +302,34 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
+    // The tests name depths as integers.
+    fn expand_row(src: &[u8], bit_offset: usize, bpp: u8, w: usize, out: &mut [u8]) -> bool {
+        super::expand_row(src, bit_offset, Bpp::new(bpp).unwrap(), w, out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn decode_compressed(
+        data: &[u8],
+        bpp: u8,
+        w: usize,
+        h: usize,
+        prefilter: bool,
+        cur: &mut [u8],
+        prev: &mut [u8],
+        sink: &mut dyn FnMut(usize, &[u8]),
+    ) -> bool {
+        super::decode_compressed(data, Bpp::new(bpp).unwrap(), w, h, prefilter, cur, prev, sink)
+    }
+
+    #[test]
+    fn bpp_accepts_only_glyph_depths() {
+        for bits in 0..=u8::MAX {
+            assert_eq!(Bpp::new(bits).is_some(), matches!(bits, 1 | 2 | 4 | 8), "{bits}");
+        }
+    }
+
     fn decode_all(data: &[u8], bpp: u8, n: usize) -> (Vec<u8>, bool) {
-        let mut r = Rle::new(data, bpp);
+        let mut r = Rle::new(data, Bpp::new(bpp).unwrap());
         let mut out = vec![0; n];
         r.decode_row(&mut out);
         (out, r.corrupt)

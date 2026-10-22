@@ -71,7 +71,7 @@ fn sealed_for_each_removes_moves_and_updates_rows_without_allocating() {
         });
         t.run_until_idle();
     });
-    alloc_guard::unseal();
+    alloc_guard::unseal(twine_core::Partition::MAIN);
     let expected: Vec<String> = items.with(|v| v.iter().map(|(_, x)| x.to_string()).collect());
     assert_eq!(labels(&t), expected);
     assert_eq!(t.engine().fault_counts().get(FaultKind::AllocAfterSeal), 0);
@@ -149,7 +149,7 @@ fn sealed_navigator_pops_back_to_built_pages_without_allocating() {
             t.run_until_idle();
         }
     });
-    alloc_guard::unseal();
+    alloc_guard::unseal(twine_core::Partition::MAIN);
     assert_eq!(nav.depth(), 1);
     assert_eq!(labels(&t), ["page 0"]);
 }
@@ -197,7 +197,7 @@ fn sealed_text_edits_within_limits_allocate_nothing() {
         });
         t.run_until_idle();
     });
-    alloc_guard::unseal();
+    alloc_guard::unseal(twine_core::Partition::MAIN);
     let d = t.find(by_class("dropdown")).id();
     assert_eq!(
         t.engine().widget::<Dropdown>(d).unwrap().options(),

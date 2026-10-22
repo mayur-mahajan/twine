@@ -89,12 +89,8 @@ impl VectorView {
         let origin = cx.coords();
         let clip = origin;
         for r in [old, self.bounds].into_iter().flatten() {
-            let abs = Rect::new(
-                r.x0 + origin.x0,
-                r.y0 + origin.y0,
-                r.x1 + origin.x0,
-                r.y1 + origin.y0,
-            );
+            // `translate` saturates (exact for screen coordinates).
+            let abs = r.translate(origin.x0, origin.y0);
             if let Some(a) = abs.intersection(&clip) {
                 cx.invalidate_area(a);
             }

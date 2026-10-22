@@ -5,6 +5,7 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::fmt::Write as _;
 use std::rc::Rc;
 
+use twine_core::Partition;
 use twine_core::{ColorFormat, Duration, Point, Rect};
 use twine_engine::{
     BufferSpec, Engine, EngineConfig, IntoTheme, InvalidateReason, NodeId, ObjFlags, RefreshStats, State,
@@ -23,9 +24,10 @@ use crate::{EngineHarness, FlushRecord, Query};
 ///
 /// Defaults: LVGL's light default theme with Montserrat 14, two 40-row partial buffers, the
 /// default engine configuration, a waker leased from the pool ([`with_waker`](Self::with_waker)). Builder methods come before [`mount`](Self::mount). The
-/// application runs on the calling thread's reactive runtime
-/// ([`Runtime::current_thread`](twine_reactive::Runtime::current_thread)), so a test may mount
-/// several `TestUi`s and still take the thread's token itself.
+/// application runs on the calling thread's reactive runtime of the main partition
+/// ([`Runtime::current_thread`](twine_reactive::Runtime::current_thread)), or of the
+/// partition chosen with [`in_partition`](Self::in_partition), so a test may mount several
+/// `TestUi`s — in one partition or in several — and still take the thread's token itself.
 ///
 /// Dropping a `TestUi` disposes the mounted application with the engine lent (its scopes'
 /// cleanups run: animations stopped, timers removed, modals closed), then drops the engine —
@@ -64,6 +66,8 @@ pub struct TestUi {
     /// The statistics of the application's last frame, kept while a snapshot re-renders the
     /// whole screen (cleared by the next update).
     pinned_frame: std::cell::Cell<Option<RefreshStats>>,
+    /// The partition the application runs in ([`partition`](Self::partition)).
+    part: Partition,
 }
 
 impl std::fmt::Debug for TestUi {
@@ -84,7 +88,42 @@ impl TestUi {
             waker: None,
             core: None,
             pinned_frame: std::cell::Cell::new(None),
+            part: Partition::MAIN,
         }
+    }
+
+    /// Runs the application in partition `p` (ADR-001): the mount uses this thread's runtime
+    /// of `p` ([`Runtime::current_thread_partition`]) and puts the engine into `p`, so two
+    /// `TestUi`s of two partitions on one thread are independent — the way a product runs a
+    /// critical and a non-critical display. Default [`Partition::MAIN`]. Builder; before
+    /// [`mount`](Self::mount).
+    ///
+    /// ```
+    /// use twine_core::Partition;
+    /// use twine_testing::TestUi;
+    /// use twine_view::prelude::*;
+    ///
+    /// let p = Partition::ALL[Partition::COUNT - 1];
+    /// let t = TestUi::new(64, 32).in_partition(p).mount(|_| label("hi"));
+    /// assert_eq!(t.partition(), p);
+    /// assert_eq!(t.engine().partition(), p);
+    /// assert_eq!(t.root_scope().partition(), p);
+    /// ```
+    #[must_use]
+    pub fn in_partition(mut self, p: Partition) -> Self {
+        self.part = p;
+        self.h.get_mut().engine_mut().set_partition(p);
+        if let Some(app) = &mut self.app {
+            app.partition = p;
+        }
+        self
+    }
+
+    /// The partition the application runs in ([`in_partition`](Self::in_partition); default
+    /// [`Partition::MAIN`]).
+    #[must_use]
+    pub fn partition(&self) -> Partition {
+        self.part
     }
 
     /// A fresh `'static` [`Channel`] for one test: give it to the application through its
@@ -162,13 +201,15 @@ impl TestUi {
     }
 
     fn map_harness(self, f: impl FnOnce(EngineHarness) -> EngineHarness) -> Self {
-        let h = f(self.h.into_inner());
+        let mut h = f(self.h.into_inner());
+        h.engine_mut().set_partition(self.part);
         Self {
             h: RefCell::new(h),
             app: self.app,
             waker: self.waker,
             core: self.core,
             pinned_frame: std::cell::Cell::new(None),
+            part: self.part,
         }
     }
 
@@ -277,6 +318,7 @@ impl TestUi {
             config.limits = crate::HARNESS_LIMITS;
         }
         config.limits = crate::profile_limits(config.limits);
+        config.partition = self.part;
         let (engine, limits, theme, rotation) = (
             config.engine,
             config.limits,
@@ -311,11 +353,11 @@ impl TestUi {
     }
 
     /// Seals the mounted application as `Ui::seal` does ([`UiCore::seal`]: the heap budget is
-    /// checked, then Twine's allocation guard is sealed for this thread) and returns the
-    /// memory report at sealing time. Pair it with
+    /// checked, then Twine's allocation guard is sealed for this thread and the UI's
+    /// partition) and returns the memory report at sealing time. Pair it with
     /// [`assert_no_alloc_after_seal`](crate::alloc::assert_no_alloc_after_seal) around the
-    /// steady-state updates; unseal with `twine_core::alloc_guard::unseal` when the test
-    /// goes on building.
+    /// steady-state updates; unseal with `twine_core::alloc_guard::unseal(partition)` when the
+    /// test goes on building.
     ///
     /// # Panics
     /// Before [`mount`](Self::mount).
@@ -327,9 +369,9 @@ impl TestUi {
     /// let mut t = TestUi::new(64, 32).mount(|_| label("hi"));
     /// t.run_until_idle();
     /// let m = t.seal();
-    /// assert!(twine_core::alloc_guard::is_sealed());
+    /// assert!(twine_core::alloc_guard::is_sealed(t.partition()));
     /// assert_eq!(m.engine.nodes, t.engine().tree().len());
-    /// twine_core::alloc_guard::unseal();
+    /// twine_core::alloc_guard::unseal(t.partition());
     /// ```
     pub fn seal(&mut self) -> MemoryReport {
         let core = self.core.clone().expect("TestUi::mount first");
@@ -398,7 +440,7 @@ impl TestUi {
                 e.set_default_group(Some(g));
             }
         }
-        let rt = Runtime::current_thread();
+        let rt = Runtime::current_thread_partition(self.part);
         let core = match (&self.app, self.waker) {
             (Some(config), None) => UiCore::mount_configured(rt, e, display, config, app)?,
             (Some(config), Some(w)) => UiCore::mount_configured_with_waker(rt, e, display, config, w, app)?,
@@ -517,7 +559,7 @@ impl TestUi {
         let _ = writeln!(
             s,
             "pending effects: {}",
-            Runtime::current_thread().has_pending_effects()
+            Runtime::current_thread_partition(e.partition()).has_pending_effects()
         );
         let _ = writeln!(s, "{}", e.dump());
         s

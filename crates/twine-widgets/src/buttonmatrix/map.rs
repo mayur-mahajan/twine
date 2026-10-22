@@ -94,7 +94,7 @@ impl OwnedMap {
             twine_core::warn!(target: "twine::engine", "buttonmatrix: too many buttons in a row; ignored");
             return;
         }
-        *n += 1;
+        *n = n.saturating_add(1); // `*n < u16::MAX` (checked above)
         self.texts.push(String::from(text));
         self.ctrl.push(ctrl);
     }
@@ -133,7 +133,8 @@ impl From<&BtnMap> for OwnedMap {
             o.new_row();
             for _ in 0..len {
                 o.push(m.text(i).unwrap_or(""), m.initial_ctrl(i).unwrap_or_default());
-                i += 1;
+                // At most `btn_count()` buttons: far below `usize::MAX`.
+                i = i.saturating_add(1);
             }
         }
         o
@@ -287,7 +288,8 @@ impl BtnMap {
             if let Some(b) = r.get(i) {
                 return Some(b);
             }
-            i -= r.len();
+            // `i ≥ r.len()` (no button `i` in this row): exact.
+            i = i.saturating_sub(r.len());
         }
         None
     }
@@ -303,13 +305,19 @@ impl BtnMap {
 
     /// The buffer to write the new text of button `i` into, when `text` differs from its
     /// text (a static map becomes an owned copy first). `None` when unchanged or when `i` is
-    /// out of range.
-    pub(crate) fn text_buf(&mut self, i: usize, text: &str) -> Option<&mut String> {
+    /// out of range. Copying a static map is noted in partition `part`'s seal domain (the
+    /// widget's engine).
+    pub(crate) fn text_buf(
+        &mut self,
+        i: usize,
+        text: &str,
+        part: twine_core::Partition,
+    ) -> Option<&mut String> {
         if i >= self.btn_count() || self.text(i) == Some(text) {
             return None;
         }
         if let BtnMap::Static(_) = self {
-            twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::WidgetBuffer);
+            twine_core::alloc_guard::note(part, twine_core::alloc_guard::AllocSite::WidgetBuffer);
             *self = BtnMap::Owned(OwnedMap::from(&*self));
         }
         let BtnMap::Owned(m) = self else { return None };
@@ -354,7 +362,7 @@ mod tests {
     fn text_buf_copies_a_static_map_once_and_reuses_the_strings() {
         /// Writes `t` into button `i` the way `ButtonMatrix::set_btn_text` does.
         fn set(m: &mut BtnMap, i: usize, t: &str) -> bool {
-            m.text_buf(i, t)
+            m.text_buf(i, t, twine_core::Partition::MAIN)
                 .map(|b| {
                     b.clear();
                     b.push_str(t);

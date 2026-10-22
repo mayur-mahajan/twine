@@ -156,6 +156,9 @@ impl<I2C, IRQ> Ft6x36<I2C, IRQ> {
 
 impl<I2C: I2c, IRQ: InputPin> Ft6x36<I2C, IRQ> {
     /// Reads the first touch point in raw panel coordinates (`None`: not touched).
+    ///
+    /// # Errors
+    /// The I²C bus error.
     pub fn read_raw(&mut self) -> Result<Option<(u16, u16)>, I2C::Error> {
         let mut b = [0u8; 5];
         self.i2c.write_read(self.addr, &[REG_TD_STATUS], &mut b)?;

@@ -343,12 +343,14 @@ impl Geometry {
             self.begin(d.v[n - 1]);
             for s in 0..segs {
                 let i = n - 1 - s;
+                // DIV: `n != 0` (returned above).
                 let j = (i + n - 1) % n;
                 self.cubic(add(d.v[i], d.i[i]), add(d.v[j], d.o[j]), d.v[j]);
             }
         } else {
             self.begin(d.v[0]);
             for i in 0..segs {
+                // DIV: `n != 0` (returned above).
                 let j = (i + 1) % n;
                 self.cubic(add(d.v[i], d.o[i]), add(d.v[j], d.i[j]), d.v[j]);
             }

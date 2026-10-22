@@ -17,6 +17,7 @@ use crate::display::SimDisplay;
 use crate::fb_display::SimFramebufferDisplay;
 use crate::hotkeys::{self, Hotkey, HotkeyRegistry};
 use crate::input::SimDevices;
+use crate::panels::{PanelLayout, PanelsProgram, PointerEvent, SimPanel};
 use crate::script::{self, ScriptAction, ScriptError};
 use crate::{paths, png_out};
 
@@ -277,6 +278,24 @@ enum Program {
     },
     /// Engine apps (`run_engine`).
     Engine(Box<EngineProgram>),
+    /// Multi-panel apps (`run_panels`): several engines, one per panel.
+    Panels(Box<PanelsProgram>),
+}
+
+/// An input event of the window or a headless script, before it is routed to a panel's
+/// devices ([`SimApp::input`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InputEvent {
+    /// A pointer event in window (panel-set) coordinates.
+    Pointer(PointerEvent),
+    /// A key pressed (`true`) or released.
+    Key(twine_hal::Key, bool),
+    /// Encoder rotation (wheel steps).
+    Wheel(i16),
+    /// Encoder button pressed (`true`) or released.
+    EncButton(bool),
+    /// Release everything (the window lost the focus).
+    ReleaseAll,
 }
 
 /// An engine with one simulated display.
@@ -324,15 +343,15 @@ pub type StepFn = Box<dyn FnMut(&mut Engine, Instant) -> Wake>;
 
 /// Input ids of the simulated devices registered with an engine app.
 #[derive(Clone, Copy, Debug, Default)]
-struct EngineInputs {
-    pointer: Option<InputId>,
-    keypad: Option<InputId>,
-    encoder: Option<InputId>,
+pub(crate) struct EngineInputs {
+    pub(crate) pointer: Option<InputId>,
+    pub(crate) keypad: Option<InputId>,
+    pub(crate) encoder: Option<InputId>,
 }
 
 /// Registers the simulated devices selected by `cfg.input` with the engine, plus a default
 /// focus group that the keypad and the encoder send their keys to.
-fn register_inputs(
+pub(crate) fn register_inputs(
     engine: &mut Engine,
     display: DisplayId,
     cfg: &SimConfig,
@@ -359,7 +378,7 @@ fn register_inputs(
 }
 
 /// Microseconds since the first call: the engine's high-resolution timer in the simulator.
-fn sim_hires_timer() -> Instant {
+pub(crate) fn sim_hires_timer() -> Instant {
     static START: std::sync::OnceLock<StdInstant> = std::sync::OnceLock::new();
     let start = START.get_or_init(StdInstant::now);
     Instant::from_micros(u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX))
@@ -512,6 +531,10 @@ impl SimApp {
     /// `EngineConfig::default_font`), F8 tree dump, F12 next theme mode
     /// ([`Hotkey::CycleThemeMode`](crate::hotkeys::Hotkey::CycleThemeMode)). Keys pressed are also passed to
     /// [`SimConfig::on_raw_key`].
+    ///
+    /// # Errors
+    /// [`SimError::Engine`] when the engine, its display or its input devices cannot be created
+    /// (for example a colour format whose renderer is not compiled in).
     pub fn engine(mut cfg: SimConfig, setup: impl FnOnce(&mut Engine)) -> Result<Self, SimError> {
         let mut engine = Engine::new(EngineConfig {
             hires_timer: Some(sim_hires_timer),
@@ -554,12 +577,152 @@ impl SimApp {
         Ok(Self::with_program(cfg, program, devices))
     }
 
+    /// A multi-panel app (see [`crate::panels`]): every [`SimPanel`] gets its own engine
+    /// (default configuration of its `AppConfig` plus the simulator's high-resolution timer),
+    /// its own emulated display in `cfg`'s format and bus speed, its own simulated devices
+    /// (per [`SimConfig::input`]) and its own `Ui`, mounted on the panel's runtime token; the
+    /// window shows the panels placed by `layout`. `cfg.width` and `cfg.height` are replaced by
+    /// the layout's size; the window's title, scale, headless settings and time control are
+    /// `cfg`'s. Input is routed to the panel under the pointer or the focused panel; each
+    /// panel's `Ui` wakes the window through its own waker.
+    ///
+    /// # Errors
+    ///
+    /// [`SimError::Engine`] when a panel's engine or display cannot be created,
+    /// [`SimError::Build`] / [`SimError::Ui`] when a panel's application cannot be mounted.
+    ///
+    /// ```
+    /// use twine_reactive::Runtime;
+    /// use twine_sim::{PanelLayout, SimApp, SimConfig, SimPanel};
+    /// use twine_view::prelude::*;
+    ///
+    /// let panels = vec![
+    ///     SimPanel::new(64, 32, Runtime::current_thread(), |_| label("a")),
+    ///     SimPanel::new(48, 32, Runtime::current_thread(), |_| label("b")),
+    /// ];
+    /// let app = SimApp::panels(SimConfig::new(1, 1), panels, PanelLayout::Row).unwrap();
+    /// assert_eq!(app.panel_count(), 2);
+    /// assert_eq!(app.window_size(), (64 + 48 + 3 * 4, 32 + 2 * 4));
+    /// assert!(app.panel_engine(1).is_some());
+    /// ```
+    pub fn panels(mut cfg: SimConfig, panels: Vec<SimPanel>, layout: PanelLayout) -> Result<Self, SimError> {
+        let program = PanelsProgram::build(&cfg, panels, layout)?;
+        (cfg.width, cfg.height) = program.size;
+        let wakers = program.wakers();
+        let mut app = Self::with_program(cfg, Program::Panels(Box::new(program)), SimDevices::new());
+        app.on_waker(Box::new(move |w| {
+            for ui_waker in wakers {
+                ui_waker.register(&w);
+            }
+        }));
+        Ok(app)
+    }
+
+    /// The number of panels of a multi-panel app (0 for other apps).
+    #[must_use]
+    pub fn panel_count(&self) -> usize {
+        match &self.program {
+            Program::Panels(p) => p.panels.len(),
+            _ => 0,
+        }
+    }
+
+    /// The engine of panel `index` of a multi-panel app (`None` for another app or index).
+    #[must_use]
+    pub fn panel_engine(&self, index: usize) -> Option<&Engine> {
+        match &self.program {
+            Program::Panels(p) => p.panels.get(index).map(|panel| &panel.engine),
+            _ => None,
+        }
+    }
+
+    /// The `UiCore` of panel `index` of a multi-panel app.
+    #[must_use]
+    pub fn panel_ui(&self, index: usize) -> Option<&twine_view::UiCore> {
+        match &self.program {
+            Program::Panels(p) => p.panels.get(index).and_then(crate::panels::Panel::ui),
+            _ => None,
+        }
+    }
+
+    /// The simulated devices of panel `index` of a multi-panel app (each panel has its own;
+    /// [`inputs`](Self::inputs) are those of single-panel apps).
+    #[must_use]
+    pub fn panel_inputs(&self, index: usize) -> Option<SimDevices> {
+        match &self.program {
+            Program::Panels(p) => p.devices(index).cloned(),
+            _ => None,
+        }
+    }
+
+    /// The panel the keyboard and the encoder feed (the last one pressed on; `None` for other
+    /// apps).
+    #[must_use]
+    pub fn focused_panel(&self) -> Option<usize> {
+        match &self.program {
+            Program::Panels(p) => Some(p.router.focused),
+            _ => None,
+        }
+    }
+
+    /// The window's size in panel pixels (for a multi-panel app: the layout's size).
+    #[must_use]
+    pub fn window_size(&self) -> (u16, u16) {
+        self.panel_size()
+    }
+
+    /// Routes an input event to the devices it belongs to: the app's devices, or for a
+    /// multi-panel app the panel under the pointer (captured while pressed) or the focused
+    /// panel (keys, encoder).
+    pub(crate) fn input(&mut self, ev: InputEvent) {
+        let devices = match (&mut self.program, ev) {
+            (Program::Panels(p), InputEvent::Pointer(pe)) => {
+                let rects = p.rects();
+                let Some((i, local)) = p.router.pointer(&rects, pe) else {
+                    return;
+                };
+                if matches!(pe, PointerEvent::Press(_)) {
+                    log::debug!(target: "twine::sim", "panel {} focused", p.title(i));
+                }
+                let Some(d) = p.devices(i) else { return };
+                let mut s = d.state.borrow_mut();
+                match pe {
+                    PointerEvent::Press(_) => s.pointer_press(local),
+                    PointerEvent::Move(_) => s.pointer_move(local),
+                    PointerEvent::Release => s.pointer_release(),
+                }
+                return;
+            }
+            (Program::Panels(p), InputEvent::ReleaseAll) => {
+                for panel in &p.panels {
+                    panel.devices.state.borrow_mut().release_all();
+                }
+                return;
+            }
+            (Program::Panels(p), _) => match p.focused_devices() {
+                Some(d) => d.clone(),
+                None => return,
+            },
+            _ => self.devices.clone(),
+        };
+        let mut s = devices.state.borrow_mut();
+        match ev {
+            InputEvent::Pointer(PointerEvent::Press(pt)) => s.pointer_press(pt),
+            InputEvent::Pointer(PointerEvent::Move(pt)) => s.pointer_move(pt),
+            InputEvent::Pointer(PointerEvent::Release) => s.pointer_release(),
+            InputEvent::Key(k, pressed) => s.key(k, pressed),
+            InputEvent::Wheel(d) => s.encoder_rotate(d),
+            InputEvent::EncButton(pressed) => s.encoder_button(pressed),
+            InputEvent::ReleaseAll => s.release_all(),
+        }
+    }
+
     /// The engine of an engine app.
     #[must_use]
     pub fn engine_ref(&self) -> Option<&Engine> {
         match &self.program {
             Program::Engine(p) => Some(&p.engine),
-            Program::Framebuffer { .. } => None,
+            Program::Framebuffer { .. } | Program::Panels(_) => None,
         }
     }
 
@@ -567,7 +730,7 @@ impl SimApp {
     pub fn engine_mut(&mut self) -> Option<&mut Engine> {
         match &mut self.program {
             Program::Engine(p) => Some(&mut p.engine),
-            Program::Framebuffer { .. } => None,
+            Program::Framebuffer { .. } | Program::Panels(_) => None,
         }
     }
 
@@ -683,6 +846,10 @@ impl SimApp {
     /// frame's time are applied before the frame is drawn; `shot` and `hotkey` actions after.
     /// The run ends after the frame at which the last script action is due (or after
     /// `frames` frames without a script); then `final.png` is written.
+    ///
+    /// # Errors
+    /// [`SimError::Io`] when the script cannot be read or a PNG cannot be written;
+    /// [`SimError::Script`] when the script does not parse.
     pub fn run_headless(mut self) -> Result<HeadlessReport, SimError> {
         let h = self.cfg.headless.clone().unwrap_or_default();
         if !matches!(self.clock.kind, ClockKind::Manual(_)) {
@@ -767,23 +934,36 @@ impl SimApp {
         })
     }
 
-    fn apply_input(&self, action: &ScriptAction) {
-        let mut s = self.devices.state.borrow_mut();
-        match action {
-            ScriptAction::Press(p) => s.pointer_press(*p),
-            ScriptAction::Move(p) => s.pointer_move(*p),
-            ScriptAction::Release => s.pointer_release(),
-            ScriptAction::Key(k, pressed) => s.key(*k, *pressed),
-            ScriptAction::Wheel(d) => s.encoder_rotate(*d),
-            ScriptAction::EncButton(pressed) => s.encoder_button(*pressed),
-            ScriptAction::Shot(_) | ScriptAction::Hotkey(_) => {}
-        }
+    fn apply_input(&mut self, action: &ScriptAction) {
+        let ev = match action {
+            ScriptAction::Press(p) => InputEvent::Pointer(PointerEvent::Press(*p)),
+            ScriptAction::Move(p) => InputEvent::Pointer(PointerEvent::Move(*p)),
+            ScriptAction::Release => InputEvent::Pointer(PointerEvent::Release),
+            ScriptAction::Key(k, pressed) => InputEvent::Key(*k, *pressed),
+            ScriptAction::Wheel(d) => InputEvent::Wheel(*d),
+            ScriptAction::EncButton(pressed) => InputEvent::EncButton(*pressed),
+            ScriptAction::Shot(_) | ScriptAction::Hotkey(_) => return,
+        };
+        self.input(ev);
     }
 
     /// One deterministic headless frame: a framebuffer program draws and flushes a frame; an
     /// engine app steps until its frame is on the panel.
     fn headless_frame(&mut self) {
-        if matches!(self.program, Program::Engine(_)) {
+        if let Program::Panels(_) = &self.program {
+            let now = self.clock.now();
+            for _ in 0..10_000 {
+                let wake = self.engine_step(now);
+                let busy = self.busy_until();
+                if wake != Wake::Now && busy.is_none() {
+                    break;
+                }
+                if let Some(t) = busy {
+                    std::thread::sleep(t.saturating_duration_since(StdInstant::now()));
+                }
+            }
+            self.frame = self.frame.wrapping_add(1);
+        } else if matches!(self.program, Program::Engine(_)) {
             let now = self.clock.now();
             for _ in 0..10_000 {
                 let wake = self.engine_step(now);
@@ -810,6 +990,14 @@ impl SimApp {
             let mut s = self.devices.state.borrow_mut();
             (s.take_raw_keys(), s.take_changes())
         };
+        if let Program::Panels(p) = &mut self.program {
+            let wake = p.step(now);
+            // Hooks run at the frame rate (host-side simulation code, e.g. a sensor).
+            if p.has_hooks() && !p.any_busy() {
+                return wake.min(Wake::At(now + HEADLESS_FRAME));
+            }
+            return wake;
+        }
         let Program::Engine(p) = &mut self.program else {
             return Wake::Idle;
         };
@@ -838,7 +1026,7 @@ impl SimApp {
     /// Advances the app for the window at wall time `now_std`; `next_frame` paces framebuffer
     /// programs. Returns when to run again.
     pub(crate) fn window_tick(&mut self, now_std: StdInstant, next_frame: &mut StdInstant) -> Deadline {
-        if matches!(self.program, Program::Engine(_)) {
+        if matches!(self.program, Program::Engine(_) | Program::Panels(_)) {
             let now = self.clock.now();
             let wake = self.engine_step(now);
             let mut deadline = match wake {
@@ -900,7 +1088,7 @@ impl SimApp {
                 }
                 buf.is_some()
             }
-            Program::Engine(_) => true,
+            Program::Engine(_) | Program::Panels(_) => true,
         }
     }
 
@@ -908,7 +1096,7 @@ impl SimApp {
     pub(crate) fn has_buffer(&self) -> bool {
         match &self.program {
             Program::Framebuffer { buf, .. } => buf.is_some(),
-            Program::Engine(_) => true,
+            Program::Engine(_) | Program::Panels(_) => true,
         }
     }
 
@@ -952,6 +1140,7 @@ impl SimApp {
             Program::Framebuffer { display, .. } => display.busy_until(),
             Program::Engine(p) if !p.framebuffer => p.engine.driver::<SimDisplay>(p.display)?.busy_until(),
             Program::Engine(_) => None,
+            Program::Panels(p) => p.busy_until(),
         }
     }
 
@@ -959,6 +1148,7 @@ impl SimApp {
     pub(crate) fn take_dirty(&mut self) -> bool {
         match &mut self.program {
             Program::Framebuffer { display, .. } => display.take_dirty().is_some(),
+            Program::Panels(p) => p.take_dirty(),
             Program::Engine(p) if p.framebuffer => {
                 let n = p
                     .engine
@@ -979,6 +1169,7 @@ impl SimApp {
     pub(crate) fn panel_size(&self) -> (u16, u16) {
         match &self.program {
             Program::Framebuffer { display, .. } => display.panel_size(),
+            Program::Panels(p) => p.size,
             Program::Engine(p) if p.framebuffer => (self.cfg.width, self.cfg.height),
             Program::Engine(p) => p
                 .engine
@@ -998,6 +1189,7 @@ impl SimApp {
         let (w, h) = self.panel_size();
         match &self.program {
             Program::Framebuffer { display, .. } => display.panel_xrgb_into(out),
+            Program::Panels(p) => p.xrgb_into(out),
             Program::Engine(p) if p.framebuffer => {
                 let f = self.cfg.format;
                 let stride = f.stride(u32::from(w)) as usize;
@@ -1029,6 +1221,7 @@ impl SimApp {
         let (w, h) = self.panel_size();
         match &self.program {
             Program::Framebuffer { display, .. } => display.panel_rgb888(),
+            Program::Panels(p) => p.rgb888(),
             Program::Engine(p) if p.framebuffer => {
                 let f = self.cfg.format;
                 let stride = f.stride(u32::from(w)) as usize;
@@ -1075,10 +1268,14 @@ impl SimApp {
     /// Engine hotkeys (F2 refresh debug, F3 layout bounds, F4 performance overlay, F8 tree
     /// dump, F12 next theme mode). Returns whether `hk` was handled.
     fn engine_hotkey(&mut self, hk: Hotkey) -> bool {
-        let Program::Engine(p) = &mut self.program else {
-            return false;
+        let (e, display, perf_overlay) = match &mut self.program {
+            Program::Engine(p) => (&mut p.engine, p.display, &mut p.perf_overlay),
+            Program::Panels(p) => match p.focused_mut() {
+                Some(panel) => (&mut panel.engine, panel.display, &mut panel.perf_overlay),
+                None => return false,
+            },
+            Program::Framebuffer { .. } => return false,
         };
-        let e = &mut p.engine;
         match hk {
             Hotkey::RefreshDebug => {
                 let on = !e.config().debug_refresh;
@@ -1091,25 +1288,25 @@ impl SimApp {
                 log::info!(target: "twine::sim", "layout bounds overlay {}", if on { "on" } else { "off" });
             }
             Hotkey::PerfMonitor => {
-                p.perf_overlay = !p.perf_overlay;
-                if e.theme(p.display).is_none() && e.config().default_font.is_none() {
+                *perf_overlay = !*perf_overlay;
+                if e.theme(display).is_none() && e.config().default_font.is_none() {
                     log::warn!(target: "twine::sim", "performance overlay needs a theme or EngineConfig::default_font");
                 }
-                if let Err(err) = e.set_perf_overlay(p.display, p.perf_overlay) {
+                if let Err(err) = e.set_perf_overlay(display, *perf_overlay) {
                     log::error!(target: "twine::sim", "performance overlay: {err}");
                 }
-                log::info!(target: "twine::sim", "performance overlay {}", if p.perf_overlay { "on" } else { "off" });
+                log::info!(target: "twine::sim", "performance overlay {}", if *perf_overlay { "on" } else { "off" });
             }
             Hotkey::DumpTree => print!("{}", e.dump()),
             Hotkey::CycleThemeMode => {
-                let modes = e.theme_modes(p.display);
+                let modes = e.theme_modes(display);
                 if modes.len() < 2 {
                     // No theme, or a theme with one mode: nothing to cycle.
                     return false;
                 }
-                let next = e.theme_mode(p.display).next_in(modes);
+                let next = e.theme_mode(display).next_in(modes);
                 log::info!(target: "twine::sim", "theme mode: {next:?}");
-                e.set_theme_mode(p.display, next);
+                e.set_theme_mode(display, next);
             }
             _ => return false,
         }
@@ -1196,10 +1393,5 @@ impl SimApp {
         self.cfg
             .fps_limit
             .map(|fps| StdDuration::from_micros(1_000_000 / u64::from(fps.max(1))))
-    }
-
-    /// The shared input state (for the window's event handling).
-    pub(crate) fn devices(&self) -> &SimDevices {
-        &self.devices
     }
 }

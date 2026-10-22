@@ -7,6 +7,7 @@ use twine_core::{Color, Opa};
 
 use crate::Painter;
 use crate::blend::{BlendMode, Source};
+use crate::num::{advance, span};
 
 /// Fills `out` (straight-alpha `Argb8888` bytes, memory `B, G, R, A`, `out.len() / 4` pixels)
 /// with the colors of row `y` starting at screen x `x0`.
@@ -81,21 +82,29 @@ impl Painter<'_> {
             return;
         }
         let mut sc = self.take_scratch();
-        let chunk = sc.cov.len().max(1) as i32;
+        let chunk = sc.cov.len().max(1);
+        // The visible part of the coverage, walked in chunks of at most `chunk` values.
+        // SAFE-INDEX: `x0 ≤ a0 < a1 ≤ x1 = x0 + coverage.len()`; the fallback is never taken.
+        let visible = coverage.get(span(x0, a0)..span(x0, a1)).unwrap_or_default();
         let mut a = a0;
-        while a < a1 {
-            let b = (a + chunk).min(a1);
-            let k = (b - a) as usize;
-            let off = (a - x0) as usize;
-            let cov = &coverage[off..off + k];
+        for cov in visible.chunks(chunk) {
+            let b = advance(a, cov.len(), a1);
             // Skip chunks with no coverage at all (common at the ends of vector rows).
             if cov.iter().any(|&c| c != 0) {
-                let buf = &mut sc.cov[..k];
+                // SAFE-INDEX: `cov.len() ≤ chunk = sc.cov.len()`; the fallback is never taken.
+                let Some(buf) = sc.cov.get_mut(..cov.len()) else {
+                    break;
+                };
                 buf.copy_from_slice(cov);
                 let s = match *src {
                     SpanSource::Solid(c, _) => Source::Solid(c),
                     SpanSource::Pixels(f, _) => {
-                        let out = &mut sc.span[..k * 4];
+                        // SAFE-ARITH: `cov.len() ≤ max_span ≤ 65_535`.
+                        // SAFE-INDEX: the span scratch holds `4 · max_span` bytes; the fallback
+                        // is never taken.
+                        let Some(out) = sc.span.get_mut(..cov.len().wrapping_mul(4)) else {
+                            break;
+                        };
                         f(y, a, out);
                         Source::Argb(out)
                     }

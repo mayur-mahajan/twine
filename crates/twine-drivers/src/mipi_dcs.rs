@@ -540,6 +540,9 @@ impl<I, RST> core::fmt::Debug for MipiDcs<I, RST> {
 
 impl<I: DcsInterface, RST: OutputPin> MipiDcs<I, RST> {
     /// Resets and initializes the panel (see the module docs) and returns the driver.
+    ///
+    /// # Errors
+    /// ; [`DcsError::ResetPin`] when the reset pin fails.
     pub fn new(
         iface: I,
         rst: Option<RST>,
@@ -609,6 +612,9 @@ impl<I: DcsInterface, RST: OutputPin> MipiDcs<I, RST> {
 
     /// Sets the address window for a logical `area` (`CASET`, `RASET` incl. offsets) and
     /// starts a memory write (`RAMWR`). Pixels follow with the interface's `write_pixels`.
+    ///
+    /// # Errors
+    /// [`DcsError::BadArea`] for an empty area or one outside the display; .
     pub fn set_window(&mut self, area: Rect) -> Result<(), DcsError<I::Error>> {
         let (c, r, _) = check_flush(self.spec, self.rotation, area, usize::MAX)?;
         self.command(cmd::CASET, &c)?;
@@ -617,11 +623,17 @@ impl<I: DcsInterface, RST: OutputPin> MipiDcs<I, RST> {
     }
 
     /// Turns the display output on (`DISPON`) or off (`DISPOFF`, frame memory kept).
+    ///
+    /// # Errors
+    /// .
     pub fn display_on(&mut self, on: bool) -> Result<(), DcsError<I::Error>> {
         self.command(if on { cmd::DISPON } else { cmd::DISPOFF }, &[])
     }
 
     /// Enables the tearing-effect output (`TEON`, V-blank only) or disables it (`TEOFF`).
+    ///
+    /// # Errors
+    /// .
     pub fn tearing_effect(&mut self, on: bool) -> Result<(), DcsError<I::Error>> {
         if on {
             self.command(cmd::TEON, &[0x00])
@@ -814,6 +826,9 @@ mod asynch {
 
     impl<I: AsyncDcsInterface, RST: OutputPin> AsyncMipiDcs<I, RST> {
         /// Resets and initializes the panel; identical sequence to [`MipiDcs::new`](super::MipiDcs::new).
+        ///
+        /// # Errors
+        /// As [`MipiDcs::new`](super::MipiDcs::new).
         pub async fn new(
             iface: I,
             rst: Option<RST>,
@@ -884,6 +899,9 @@ mod asynch {
         }
 
         /// Sets the address window for a logical `area` and starts a memory write (`RAMWR`).
+        ///
+        /// # Errors
+        /// As [`MipiDcs::set_window`](super::MipiDcs::set_window).
         pub async fn set_window(&mut self, area: Rect) -> Result<(), DcsError<I::Error>> {
             let (c, r, _) = check_flush(self.spec, self.rotation, area, usize::MAX)?;
             self.command(cmd::CASET, &c).await?;
@@ -892,12 +910,18 @@ mod asynch {
         }
 
         /// Turns the display output on (`DISPON`) or off (`DISPOFF`).
+        ///
+        /// # Errors
+        /// .
         pub async fn display_on(&mut self, on: bool) -> Result<(), DcsError<I::Error>> {
             self.command(if on { cmd::DISPON } else { cmd::DISPOFF }, &[])
                 .await
         }
 
         /// Enables (`TEON`, V-blank only) or disables (`TEOFF`) the tearing-effect output.
+        ///
+        /// # Errors
+        /// .
         pub async fn tearing_effect(&mut self, on: bool) -> Result<(), DcsError<I::Error>> {
             if on {
                 self.command(cmd::TEON, &[0x00]).await

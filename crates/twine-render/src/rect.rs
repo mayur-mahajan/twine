@@ -4,13 +4,13 @@
 use core::mem::take;
 use core::ops::{BitAnd, BitOr, BitOrAssign};
 
-use twine_core::math::udiv255;
 use twine_core::{Color, Insets, Opa, Rect};
 
 use crate::Painter;
 use crate::blend::BlendMode;
 use crate::circle::Quarter;
 use crate::gradient::{GradSampler, Gradient};
+use crate::num::{mul8, span};
 use crate::painter::{Paint, Scratch};
 use crate::rrect::{RowSpan, eff_radius};
 use crate::shadow::ShadowDsc;
@@ -90,7 +90,9 @@ impl BitAnd for BorderSide {
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RectDsc<'a> {
-    /// Corner radius (clamped to half the shorter side; [`RADIUS_CIRCLE`] for a circle/pill).
+    /// Corner radius (clamped, never panicking, to half the shorter side and to 2^22 px;
+    /// [`RADIUS_CIRCLE`] for
+    /// a circle/pill).
     pub radius: i32,
     /// Background color (ignored when `bg_grad` is set).
     pub bg_color: Color,
@@ -149,8 +151,14 @@ pub(crate) fn border_inner(area: Rect, radius: i32, width: i32, side: BorderSide
     } else {
         side
     };
-    let ext = width + radius;
-    let d = |s: BorderSide| if side.contains(s) { width } else { -ext };
+    let ext = width.saturating_add(radius);
+    let d = |s: BorderSide| {
+        if side.contains(s) {
+            width
+        } else {
+            ext.saturating_neg()
+        }
+    };
     area.inset(Insets::new(
         d(BorderSide::LEFT),
         d(BorderSide::TOP),
@@ -212,12 +220,18 @@ impl Painter<'_> {
         if lo >= hi {
             return;
         }
-        let mut pts = [0i32; 10];
-        let mut n = 0;
+        // The coverage transitions inside `(lo, hi)`, then `lo` and `hi`, sorted: the pieces
+        // between consecutive ones have one coverage class each.
+        let mut pts = [lo; 8];
+        let mut n = 0usize;
         let mut push = |v: i32| {
             if v > lo && v < hi {
-                pts[n] = v;
-                n += 1;
+                // At most six transitions: the slot always exists.
+                if let Some(slot) = pts.get_mut(n) {
+                    *slot = v;
+                    // SAFE-ARITH: `n < 8` (the slot exists).
+                    n = n.wrapping_add(1);
+                }
             }
         };
         push(o.full_l);
@@ -230,12 +244,15 @@ impl Painter<'_> {
                 push(i.aa_r1);
             }
         }
-        pts[n] = lo;
-        pts[n + 1] = hi;
-        let pts = &mut pts[..n + 2];
+        // SAFE-INDEX: `n ≤ 6`, so `lo` and `hi` fit after the transitions; the fallbacks are
+        // never taken.
+        if let Some([a, b]) = pts.get_mut(n..).and_then(<[i32]>::first_chunk_mut::<2>) {
+            (*a, *b) = (lo, hi);
+        }
+        // SAFE-ARITH: `n ≤ 6`.
+        let pts = pts.get_mut(..n.wrapping_add(2)).unwrap_or_default();
         pts.sort_unstable();
-        for w in 0..pts.len() - 1 {
-            let (a, b) = (pts[w], pts[w + 1]);
+        for (&a, &b) in pts.iter().zip(pts.iter().skip(1)) {
             if a >= b {
                 continue;
             }
@@ -248,8 +265,8 @@ impl Painter<'_> {
                 self.span(sc, y, a, b, paint, opa, mode, None);
             } else {
                 let mut f = |x0: i32, buf: &mut [u8]| {
-                    for (k, v) in buf.iter_mut().enumerate() {
-                        let x = x0 + k as i32;
+                    // The chunk ends before `b ≤ i32::MAX`: the bounded range covers it.
+                    for (v, x) in buf.iter_mut().zip(x0..i32::MAX) {
                         *v = o.cov(x).saturating_sub(i.map_or(0, |i| i.cov(x)));
                     }
                 };
@@ -275,9 +292,13 @@ impl Painter<'_> {
             // the anti-aliased inner edge of the border still has background below it).
             let (bg_area, bg_r) =
                 if border && !dsc.border_post && dsc.border_opa.is_cover() && dsc.border_width > 1 {
-                    let w = dsc.border_width - 1;
+                    // SAFE-ARITH: `border_width > 1` (the condition above).
+                    let w = dsc.border_width.wrapping_sub(1);
                     let a = border_inner(area, r, w, dsc.border_side);
-                    (a.intersection(&area).unwrap_or(Rect::ZERO), (r - w).max(0))
+                    (
+                        a.intersection(&area).unwrap_or(Rect::ZERO),
+                        r.saturating_sub(w).max(0),
+                    )
                 } else {
                     (area, r)
                 };
@@ -296,9 +317,9 @@ impl Painter<'_> {
             );
         }
         if dsc.outline_width > 0 && !dsc.outline_opa.is_transparent() {
-            let ext = dsc.outline_pad + dsc.outline_width;
+            let ext = dsc.outline_pad.saturating_add(dsc.outline_width);
             let o = area.expand(ext);
-            let ro = if r > 0 { r + ext } else { 0 };
+            let ro = if r > 0 { r.saturating_add(ext) } else { 0 };
             self.border(
                 o,
                 eff_radius(o, ro),
@@ -360,13 +381,16 @@ impl Painter<'_> {
             Some(g) => {
                 let mut gc = take(&mut self.caches_mut().gradient);
                 let idx = gc.lookup(g);
-                let s = GradSampler::new(g, area);
-                let paint = Paint::Grad {
-                    s: &s,
-                    map: gc.map(idx),
-                    dither: g.dither && self.is_565(),
-                };
-                self.ring(&mut sc, bg_area, r, None, &paint, dsc.bg_opa, BlendMode::Normal);
+                // `lookup` returns a cached index: the map is always there.
+                if let Some(map) = gc.map(idx) {
+                    let s = GradSampler::new(g, area);
+                    let paint = Paint::Grad {
+                        s: &s,
+                        map,
+                        dither: g.dither && self.is_565(),
+                    };
+                    self.ring(&mut sc, bg_area, r, None, &paint, dsc.bg_opa, BlendMode::Normal);
+                }
                 self.caches_mut().gradient = gc;
             }
         }
@@ -383,7 +407,7 @@ impl Painter<'_> {
         opa: Opa,
     ) {
         let inner = border_inner(area, r, width, side);
-        let ri = eff_radius(inner, (r - width).max(0));
+        let ri = eff_radius(inner, r.saturating_sub(width).max(0));
         let mut sc = self.take_scratch();
         self.ring(
             &mut sc,
@@ -424,28 +448,31 @@ impl Painter<'_> {
             } else {
                 Quarter::Square
             };
-            let (b, qw, qh) = (g.bounds, g.qw, g.qh);
-            let (bw, bh) = (b.width(), b.height());
-            let mxf = move |x: i32| -> usize {
-                let xr = x - b.x0;
-                (if xr < qw {
-                    xr
-                } else if xr >= bw - qw {
-                    bw - 1 - xr
+            let b = g.bounds;
+            // Sizes of the bounds and the corner map (non-negative; `1 ≤ qw ≤ (bw + 1) / 2`,
+            // `1 ≤ qh ≤ (bh + 1) / 2` for the non-empty bounds of a blurred shadow).
+            let (bw, bh) = (span(b.x0, b.x1), span(b.y0, b.y1));
+            let (qw, qh) = (span(0, g.qw), span(0, g.qh));
+            // Mirrored map index of an offset `t` into an extent `len` with corner size `q`:
+            // the first `q` values count up, the last `q` count down, the middle repeats the
+            // last map value. SAFE-ARITH: `1 ≤ q ≤ (len + 1) / 2 ≤ len` and `t < len`, so
+            // `len − q ≥ 0`, `len − 1 − t ≥ 0` and `q − 1 ≥ 0`.
+            let mirror = move |t: usize, len: usize, q: usize| -> usize {
+                if t < q {
+                    t
+                } else if t >= len.wrapping_sub(q) {
+                    len.wrapping_sub(1).wrapping_sub(t)
                 } else {
-                    qw - 1
-                }) as usize
+                    q.wrapping_sub(1)
+                }
             };
             for y in rows.y0..rows.y1 {
-                let yr = y - b.y0;
-                let my = if yr < qh {
-                    yr
-                } else if yr >= bh - qh {
-                    bh - 1 - yr
-                } else {
-                    qh - 1
-                } as usize;
-                let row = &map[my * qw as usize..(my + 1) * qw as usize];
+                let my = mirror(span(b.y0, y), bh, qh);
+                // SAFE-INDEX: `my < qh` and the map holds `qw × qh` values; the row is skipped
+                // otherwise (never).
+                let Some(row) = map.chunks_exact(qw.max(1)).nth(my) else {
+                    continue;
+                };
                 let (s0, s1) = if cover {
                     let rs = RowSpan::new(area, &objq, y);
                     if rs.full_l < rs.full_r {
@@ -456,20 +483,22 @@ impl Painter<'_> {
                 } else {
                     (0, 0)
                 };
-                let mid = (b.x0 + qw, b.x1 - qw);
+                let mid = (b.x0.saturating_add(g.qw), b.x1.saturating_sub(g.qw));
                 let pieces = [(b.x0, mid.0.min(b.x1)), (mid.0, mid.1), (mid.1.max(mid.0), b.x1)];
                 for (k, &(a0, a1)) in pieces.iter().enumerate() {
                     for (p0, p1) in minus(a0, a1, s0, s1) {
                         if k == 1 {
-                            let v = row[qw as usize - 1];
+                            let v = row.last().copied().unwrap_or(0);
                             if v != 0 {
-                                let o = Opa::from_raw(udiv255(u32::from(v) * u32::from(sd.opa.raw())) as u8);
+                                let o = Opa::from_raw(mul8(v, sd.opa.raw()));
                                 self.span(&mut sc, y, p0, p1, &paint, o, BlendMode::Normal, None);
                             }
                         } else {
                             let mut f = |x0: i32, buf: &mut [u8]| {
-                                for (i, v) in buf.iter_mut().enumerate() {
-                                    *v = row[mxf(x0 + i as i32)];
+                                // The piece lies inside the bounds (`b.x0 ≤ x < b.x1`); the
+                                // map index is below `qw`, so `get` never falls back.
+                                for (v, x) in buf.iter_mut().zip(x0..i32::MAX) {
+                                    *v = row.get(mirror(span(b.x0, x), bw, qw)).copied().unwrap_or(0);
                                 }
                             };
                             self.span(

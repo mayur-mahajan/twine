@@ -36,13 +36,14 @@ pub const DEFAULT_DPI: u16 = 130;
 #[inline]
 #[must_use]
 pub const fn dpx(dp: i32, dpi: u16) -> i32 {
-    const HALF: i64 = REFERENCE_DPI as i64 / 2;
+    const REFERENCE: i64 = REFERENCE_DPI as i64;
+    const HALF: i64 = REFERENCE / 2;
     let mag = (dp as i64).abs();
     if mag == 0 {
         return 0;
     }
-    // DIV: constant divisor.
-    let v = (dpi as i64 * mag + HALF) / REFERENCE_DPI as i64;
+    // SAFE-ARITH: `dpi < 2^16` and `mag ≤ 2^31`, so the sum is below 2^48.
+    let v = (dpi as i64).wrapping_mul(mag).wrapping_add(HALF) / REFERENCE;
     let v = if v < 1 {
         1
     } else if v > i32::MAX as i64 {
@@ -50,7 +51,12 @@ pub const fn dpx(dp: i32, dpi: u16) -> i32 {
     } else {
         v
     };
-    if dp < 0 { -(v as i32) } else { v as i32 }
+    // SAFE-ARITH: `1 ≤ v ≤ i32::MAX`, whose negation fits.
+    if dp < 0 {
+        (v as i32).wrapping_neg()
+    } else {
+        v as i32
+    }
 }
 
 /// A size, position or spacing that may depend on the display density, the parent or the
@@ -132,7 +138,8 @@ impl Length {
         match self {
             Length::Px(v) | Length::Dp(v) => v,
             Length::Pct(p) => {
-                let v = p as i64 * parent as i64 / 100;
+                // SAFE-ARITH: a product of two 32-bit values fits in `i64`.
+                let v = (p as i64).wrapping_mul(parent as i64) / 100;
                 if v > i32::MAX as i64 {
                     i32::MAX
                 } else if v < i32::MIN as i64 {

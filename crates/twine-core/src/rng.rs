@@ -1,5 +1,7 @@
 //! Deterministic pseudo-random numbers ([`XorShift32`]).
 
+use core::num::NonZeroU64;
+
 use crate::color::Opa;
 
 /// Marsaglia xorshift32 generator: tiny, fast and deterministic on every platform.
@@ -43,9 +45,13 @@ impl XorShift32 {
         if lo >= hi {
             return lo;
         }
-        let span = (i64::from(hi) - i64::from(lo)) as u64;
-        let v = u64::from(self.next_u32()) % span;
-        (i64::from(lo) + v as i64) as i32
+        // SAFE-ARITH: the difference of two `i32`s fits in `i64`; it is positive here.
+        let span = i64::from(hi).wrapping_sub(i64::from(lo)) as u64;
+        // `lo < hi` (returned above), so `span ≥ 1`; the fallback is never taken.
+        // DIV: the closure's `span` is the `NonZeroU64` of `NonZeroU64::new`.
+        let v = NonZeroU64::new(span).map_or(0, |span| u64::from(self.next_u32()) % span);
+        // SAFE-ARITH: `v < span`, so `lo + v < hi`.
+        (i64::from(lo).wrapping_add(v as i64)) as i32
     }
 
     /// A random boolean.

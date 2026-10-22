@@ -18,6 +18,14 @@ fn is_ws(c: u8) -> bool {
 }
 
 impl<'a> Cursor<'a> {
+    /// Moves the position forward by `n` bytes that the caller has just read or found, so
+    /// `pos + n ≤ len`.
+    #[inline]
+    pub(crate) fn bump(&mut self, n: usize) {
+        // SAFE-ARITH: `pos + n ≤ len ≤ isize::MAX` (the caller's contract above).
+        self.pos = self.pos.wrapping_add(n);
+    }
+
     pub(crate) fn new(s: &'a str) -> Self {
         Self {
             b: s.as_bytes(),
@@ -36,7 +44,7 @@ impl<'a> Cursor<'a> {
 
     pub(crate) fn skip_ws(&mut self) {
         while self.peek().is_some_and(is_ws) {
-            self.pos += 1;
+            self.bump(1);
         }
     }
 
@@ -44,7 +52,7 @@ impl<'a> Cursor<'a> {
     pub(crate) fn skip_sep(&mut self) {
         self.skip_ws();
         if self.peek() == Some(b',') {
-            self.pos += 1;
+            self.bump(1);
             self.skip_ws();
         }
     }
@@ -53,7 +61,7 @@ impl<'a> Cursor<'a> {
     pub(crate) fn eat(&mut self, c: u8) -> bool {
         self.skip_ws();
         if self.peek() == Some(c) {
-            self.pos += 1;
+            self.bump(1);
             true
         } else {
             false
@@ -69,7 +77,7 @@ impl<'a> Cursor<'a> {
     pub(crate) fn number(&mut self) -> Option<Fx> {
         self.skip_ws();
         let (v, n) = parse_number(self.rest())?;
-        self.pos += n;
+        self.bump(n);
         Some(v)
     }
 
@@ -88,7 +96,7 @@ impl<'a> Cursor<'a> {
             b'1' => true,
             _ => return None,
         };
-        self.pos += 1;
+        self.bump(1);
         self.skip_sep();
         Some(v)
     }
@@ -97,9 +105,9 @@ impl<'a> Cursor<'a> {
     pub(crate) fn unit(&mut self) -> &'a [u8] {
         let s = self.pos;
         while self.peek().is_some_and(|c| c.is_ascii_alphabetic() || c == b'%') {
-            self.pos += 1;
+            self.bump(1);
         }
-        &self.b[s..self.pos]
+        self.b.get(s..self.pos).unwrap_or_default()
     }
 
     /// An identifier-like word (letters, digits, `-`).
@@ -110,64 +118,76 @@ impl<'a> Cursor<'a> {
             .peek()
             .is_some_and(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'%')
         {
-            self.pos += 1;
+            self.bump(1);
         }
-        &self.b[s..self.pos]
+        self.b.get(s..self.pos).unwrap_or_default()
     }
 }
 
 /// Parses a number at the start of `b`; returns the value and the bytes consumed.
 pub(crate) fn parse_number(b: &[u8]) -> Option<(Fx, usize)> {
-    let mut i = 0;
+    // Positions (`i`, `j`) stay at most `b.len()`: each step reads an existing byte first.
+    // Digit counters saturate (a number longer than 2^31 digits is not a number anyway).
+    let mut i = 0usize;
     let neg = match b.first() {
         Some(b'-') => {
-            i += 1;
+            i = 1;
             true
         }
         Some(b'+') => {
-            i += 1;
+            i = 1;
             false
         }
         _ => false,
     };
     let mut mant: u64 = 0;
     let mut exp10: i32 = 0;
-    let mut digits = 0;
-    let mut sig = 0;
+    let mut digits = 0i32;
+    let mut sig = 0u8;
+    // Appends the digit `c` to the mantissa. SAFE-ARITH: called with at most 18 significant
+    // digits in `mant` (`sig < 19`), so `mant · 10 + 9 < 10^19 < 2^64`; `c` is an ASCII digit.
+    let push = |mant: u64, c: u8| {
+        mant.wrapping_mul(10)
+            .wrapping_add(u64::from(c.wrapping_sub(b'0')))
+    };
     while let Some(&c) = b.get(i) {
         if !c.is_ascii_digit() {
             break;
         }
         if sig < 19 {
             if mant != 0 || c != b'0' {
-                sig += 1;
+                // SAFE-ARITH: `sig < 19`.
+                sig = sig.wrapping_add(1);
             }
-            mant = mant * 10 + u64::from(c - b'0');
+            mant = push(mant, c);
         } else {
-            exp10 += 1;
+            exp10 = exp10.saturating_add(1);
         }
-        digits += 1;
-        i += 1;
+        digits = digits.saturating_add(1);
+        // SAFE-ARITH: `i < b.len()` (the byte exists).
+        i = i.wrapping_add(1);
     }
     if b.get(i) == Some(&b'.') {
-        let mut j = i + 1;
-        let mut frac_digits = 0;
+        // SAFE-ARITH: `i < b.len()` (the `.` exists), and likewise for `j` below.
+        let mut j = i.wrapping_add(1);
+        let mut frac_digits = 0i32;
         while let Some(&c) = b.get(j) {
             if !c.is_ascii_digit() {
                 break;
             }
             if sig < 19 {
                 if mant != 0 || c != b'0' {
-                    sig += 1;
+                    // SAFE-ARITH: `sig < 19`.
+                    sig = sig.wrapping_add(1);
                 }
-                mant = mant * 10 + u64::from(c - b'0');
-                exp10 -= 1;
+                mant = push(mant, c);
+                exp10 = exp10.saturating_sub(1);
             }
-            frac_digits += 1;
-            j += 1;
+            frac_digits = frac_digits.saturating_add(1);
+            j = j.wrapping_add(1);
         }
-        if digits + frac_digits > 0 {
-            digits += frac_digits;
+        if digits.saturating_add(frac_digits) > 0 {
+            digits = digits.saturating_add(frac_digits);
             i = j;
         }
     }
@@ -176,14 +196,15 @@ pub(crate) fn parse_number(b: &[u8]) -> Option<(Fx, usize)> {
     }
     // Exponent only when followed by digits (so "1em" is 1 with unit "em").
     if matches!(b.get(i), Some(b'e' | b'E')) {
-        let mut j = i + 1;
+        // SAFE-ARITH: `i < b.len()` (the `e` exists), and likewise for `j` below.
+        let mut j = i.wrapping_add(1);
         let eneg = match b.get(j) {
             Some(b'-') => {
-                j += 1;
+                j = j.wrapping_add(1);
                 true
             }
             Some(b'+') => {
-                j += 1;
+                j = j.wrapping_add(1);
                 false
             }
             _ => false,
@@ -194,15 +215,20 @@ pub(crate) fn parse_number(b: &[u8]) -> Option<(Fx, usize)> {
                 if !c.is_ascii_digit() {
                     break;
                 }
-                e = (e * 10 + i32::from(c - b'0')).min(10_000);
-                j += 1;
+                // SAFE-ARITH: `e ≤ 10_000` (the `min`), so `e · 10 + 9 < 2^17`.
+                e = e
+                    .wrapping_mul(10)
+                    .wrapping_add(i32::from(c.wrapping_sub(b'0')))
+                    .min(10_000);
+                j = j.wrapping_add(1);
             }
-            exp10 = exp10.saturating_add(if eneg { -e } else { e });
+            exp10 = exp10.saturating_add(if eneg { e.wrapping_neg() } else { e });
             i = j;
         }
     }
     let raw = to_raw(mant, exp10);
-    let v = if neg { -raw } else { raw };
+    // SAFE-ARITH: `|raw| ≤ 2^40` (`to_raw`).
+    let v = if neg { raw.wrapping_neg() } else { raw };
     Some((
         Fx::from_raw(v.clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32),
         i,
@@ -220,14 +246,17 @@ fn to_raw(mant: u64, exp10: i32) -> i128 {
         if exp10 > 12 {
             return CAP;
         }
-        (m * 10i128.pow(exp10 as u32)).min(CAP)
+        // SAFE-ARITH: `m < 2^80` and `10^12 < 2^40`.
+        m.wrapping_mul(10i128.pow(exp10 as u32)).min(CAP)
     } else {
-        let k = -exp10;
+        let k = exp10.unsigned_abs();
         if k > 38 {
             return 0;
         }
-        let d = 10i128.pow(k as u32);
-        ((m + d / 2) / d).min(CAP)
+        // `d = 10^k ≥ 1` (`k ≤ 38`, so no overflow): the fallback is never taken.
+        // SAFE-ARITH: `m < 2^80` and `d / 2 < 2^126`.
+        let d = 10i128.pow(k);
+        m.wrapping_add(d / 2).checked_div(d).unwrap_or(0).min(CAP)
     }
 }
 
@@ -252,7 +281,10 @@ impl Length {
     pub(crate) fn resolve(self, base: Fx) -> Fx {
         match self {
             Length::Px(v) => v,
-            Length::Pct(p) => Fx::from_raw((i64::from(p.raw()) * i64::from(base.raw()) / (100 << 16)) as i32),
+            // SAFE-ARITH: a product of two `i32`s fits in `i64`.
+            Length::Pct(p) => {
+                Fx::from_raw((i64::from(p.raw()).wrapping_mul(i64::from(base.raw())) / (100 << 16)) as i32)
+            }
         }
     }
 }
@@ -266,7 +298,10 @@ pub(crate) fn length(s: &str) -> Option<Length> {
         return None;
     }
     let scale = |num: i64, den: i64| {
-        Fx::from_raw((i64::from(v.raw()) * num / den).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
+        // SAFE-ARITH: `num ≤ 9600 < 2^14` times an `i32`. `den` is one of the literal divisors 3,
+        // 1 and 254 passed below: the fallback is never taken.
+        let v = i64::from(v.raw()).wrapping_mul(num).checked_div(den).unwrap_or(0);
+        Fx::from_raw(v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
     };
     Some(match unit {
         b"" | b"px" => Length::Px(v),
@@ -283,11 +318,12 @@ pub(crate) fn length(s: &str) -> Option<Length> {
 
 /// Degrees (fixed point) to an [`Angle`] (0.1°), rounded.
 pub(crate) fn deg_to_angle(d: Fx) -> Angle {
-    let v = i64::from(d.raw()) * 10;
+    // SAFE-ARITH: an `i32` times 10 is below 2^35.
+    let v = i64::from(d.raw()).wrapping_mul(10);
     let r = if v >= 0 {
-        (v + 32_768) >> 16
+        v.wrapping_add(32_768) >> 16
     } else {
-        -((-v + 32_768) >> 16)
+        (v.wrapping_neg().wrapping_add(32_768) >> 16).wrapping_neg()
     };
     Angle::deci_deg(r as i32)
 }

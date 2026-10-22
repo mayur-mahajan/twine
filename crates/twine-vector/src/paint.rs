@@ -128,27 +128,43 @@ impl From<Color> for Paint {
 /// Maps `t` (16.16) to a color map index after the extend mode (same rounding as
 /// `twine-render`'s gradients).
 #[inline]
-fn lut_index(t: i64, extend: GradExtend) -> usize {
+fn lut_index(t: i64, extend: GradExtend) -> u8 {
     let t = match extend {
         GradExtend::Pad => t.clamp(0, 65_536),
         GradExtend::Repeat => t.rem_euclid(65_536),
         GradExtend::Reflect => {
             let r = t.rem_euclid(131_072);
-            if r > 65_536 { 131_072 - r } else { r }
+            // SAFE-ARITH: `65_536 < r < 131_072` here.
+            if r > 65_536 { 131_072i64.wrapping_sub(r) } else { r }
         }
     };
-    ((t * 255 + 32_768) >> 16) as usize
+    // SAFE-ARITH: `0 ≤ t ≤ 65_536`, so the index is `0..=255`.
+    (t.wrapping_mul(255).wrapping_add(32_768) >> 16) as u8
 }
 
-/// Wraps an image coordinate by the extend mode (`n > 0`).
+/// The color of `lut` at `t` (a `u8` index into 256 entries: no check remains).
+#[inline(always)]
+fn lut_at(lut: &[u32; 256], t: i64, extend: GradExtend) -> u32 {
+    lut.get(usize::from(lut_index(t, extend))).copied().unwrap_or(0)
+}
+
+/// Wraps an image coordinate by the extend mode (`1 ≤ n ≤ u16::MAX`).
 #[inline]
 fn wrap(v: i64, n: i64, extend: GradExtend) -> i64 {
+    // `n` is the image width or height, ≥ 1: `Sampler::Image` is built only for a non-empty
+    // image (`Paint::Image` returns `None` otherwise), so the division fallbacks are never
+    // taken. SAFE-ARITH: `1 ≤ n < 2^16` and `0 ≤ r < 2n`.
     match extend {
-        GradExtend::Pad => v.clamp(0, n - 1),
-        GradExtend::Repeat => v.rem_euclid(n),
+        GradExtend::Pad => v.clamp(0, n.wrapping_sub(1)),
+        GradExtend::Repeat => v.checked_rem_euclid(n).unwrap_or(0),
         GradExtend::Reflect => {
-            let r = v.rem_euclid(2 * n);
-            if r >= n { 2 * n - 1 - r } else { r }
+            let n2 = n.wrapping_mul(2);
+            let r = v.checked_rem_euclid(n2).unwrap_or(0);
+            if r >= n {
+                n2.wrapping_sub(1).wrapping_sub(r)
+            } else {
+                r
+            }
         }
     }
 }
@@ -158,11 +174,14 @@ fn isqrt128(v: u128) -> u64 {
     if let Ok(s) = u64::try_from(v) {
         return u64::from(isqrt64(s));
     }
-    let mut shift = 0;
-    while (v >> (2 * shift)) > u128::from(u64::MAX) {
-        shift += 1;
+    let mut shift = 0u32;
+    // SHIFT: the loop stops by `shift = 32` (`u128::MAX >> 64 = u64::MAX`), so `2·shift ≤ 64` on
+    // the `u128` and `shift ≤ 32` on the `u64` below. SAFE-ARITH: the same bound.
+    while (v >> shift.wrapping_mul(2)) > u128::from(u64::MAX) {
+        shift = shift.wrapping_add(1);
     }
-    u64::from(isqrt64((v >> (2 * shift)) as u64)) << shift
+    // SHIFT: `2·shift ≤ 64` (`u128`) and `shift ≤ 32` (`u64`), as above.
+    u64::from(isqrt64((v >> shift.wrapping_mul(2)) as u64)) << shift
 }
 
 /// Precomputed per-draw evaluation of a non-solid [`Paint`].
@@ -196,20 +215,33 @@ pub(crate) enum Sampler {
     },
 }
 
+/// Largest focal offset (24.8) a radial gradient is evaluated at (`2^40`, i.e. 2^32 px: far
+/// outside every gradient).
+const RADIAL_LIM: i64 = 1 << 40;
+
+/// Largest paint-space position (16.16) a row starts at: `±2^62`, so that the per-pixel steps
+/// (`< 2^31` each, at most `2^16` of them) cannot overflow. Farther positions are far outside
+/// every image (only a repeated pattern's phase could differ, at 2^46 px).
+const POS_MAX: i128 = 1 << 62;
+
 /// The 16.16 paint-space position of the center of device pixel `(x, y)` under `inv`.
 #[inline]
 fn map_center(inv: &Transform, x: i32, y: i32) -> (i64, i64) {
-    let (x2, y2) = (2 * i64::from(x) + 1, 2 * i64::from(y) + 1);
-    let (a, b, c, d) = (
-        i64::from(inv.a.raw()),
-        i64::from(inv.b.raw()),
-        i64::from(inv.c.raw()),
-        i64::from(inv.d.raw()),
+    // SAFE-ARITH: doubled `i32`s fit in `i64`; the products of `i32` coefficients with them
+    // (below 2^65) are formed in `i128`.
+    let (x2, y2) = (
+        i128::from(x).wrapping_mul(2).wrapping_add(1),
+        i128::from(y).wrapping_mul(2).wrapping_add(1),
     );
-    (
-        (a * x2 + c * y2) / 2 + i64::from(inv.tx.raw()),
-        (b * x2 + d * y2) / 2 + i64::from(inv.ty.raw()),
-    )
+    let m = |k1: Fx, k2: Fx, t: Fx| -> i64 {
+        let v = i128::from(k1.raw())
+            .wrapping_mul(x2)
+            .wrapping_add(i128::from(k2.raw()).wrapping_mul(y2))
+            / 2;
+        v.wrapping_add(i128::from(t.raw()))
+            .clamp(POS_MAX.wrapping_neg(), POS_MAX) as i64
+    };
+    (m(inv.a, inv.c, inv.tx), m(inv.b, inv.d, inv.ty))
 }
 
 impl Sampler {
@@ -228,8 +260,11 @@ impl Sampler {
                 let inv = transform.then(*t).invert()?;
                 let (sx, sy) = start.raw();
                 let (ex, ey) = end.raw();
-                let (gx, gy) = (i128::from(ex - sx), i128::from(ey - sy));
-                let len2 = gx * gx + gy * gy;
+                // SAFE-ARITH (the linear set-up): coordinates and coefficients are `i32`s, so
+                // the differences are below 2^32, `len2 < 2^65` and the numerators below 2^66,
+                // shifted below 2^98 in `i128`.
+                let (gx, gy) = (i128::from(ex.wrapping_sub(sx)), i128::from(ey.wrapping_sub(sy)));
+                let len2 = gx.wrapping_mul(gx).wrapping_add(gy.wrapping_mul(gy));
                 if len2 == 0 {
                     // Degenerate: SVG paints the last stop color.
                     return Some(Sampler::Linear {
@@ -247,16 +282,20 @@ impl Sampler {
                 );
                 // t(x, y) = ((u − s)·g) / |g|², u = inv(x, y); coefficients with 32 fraction bits.
                 let k = |num: i128| -> i64 {
-                    let v = (num << 32) / len2;
+                    // `len2 != 0` (returned above): the fallback is never taken.
+                    let v = (num << 32).checked_div(len2).unwrap_or(0);
                     v.clamp(i128::from(i64::MIN / 4), i128::from(i64::MAX / 4)) as i64
                 };
+                let dot = |a: i128, b: i128| a.wrapping_mul(gx).wrapping_add(b.wrapping_mul(gy));
                 // t is linear in the pixel position: t = t0 + x·dx + y·dy (the 2^32 scales of
                 // the 16.16 products cancel against |g|²).
                 Some(Sampler::Linear {
-                    t0: k((i128::from(inv.tx.raw()) - i128::from(sx)) * gx
-                        + (i128::from(inv.ty.raw()) - i128::from(sy)) * gy),
-                    dx: k(ia * gx + ib * gy),
-                    dy: k(ic * gx + id * gy),
+                    t0: k(dot(
+                        i128::from(inv.tx.raw()).wrapping_sub(i128::from(sx)),
+                        i128::from(inv.ty.raw()).wrapping_sub(i128::from(sy)),
+                    )),
+                    dx: k(dot(ia, ib)),
+                    dy: k(dot(ic, id)),
                     extend: *extend,
                 })
             }
@@ -271,26 +310,34 @@ impl Sampler {
                 let inv = transform.then(*t).invert()?;
                 let r_raw = i64::from(radius.raw().max(0));
                 // Scale paint space by 2^sh so the radius is ≈ 2^22 in 16.16 (2^14 in 24.8).
-                let bits = 64 - r_raw.leading_zeros() as i32;
-                let sh = (22 - bits).clamp(-8, 24);
-                let scale = |v: i64| if sh >= 0 { v << sh } else { v >> -sh };
+                // SAFE-ARITH (the radial set-up): `bits ≤ 32` (an `i32` radius), the scaled
+                // values are `i32`s shifted by at most 24 (below 2^55, differences below 2^56);
+                // after scaling `r < 2^16` (24.8) and the focal offset `|e| ≤ r` (moved inside
+                // below), so `a = |e|² − r²` is within `±2^33`.
+                let bits = 64i32.wrapping_sub(r_raw.leading_zeros() as i32);
+                let sh = 22i32.wrapping_sub(bits).clamp(-8, 24);
+                // SHIFT: `sh` is clamped to `-8..=24`: amounts `0..=24` and `1..=8`, on an `i64`.
+                let scale = |v: i64| if sh >= 0 { v << sh } else { v >> sh.wrapping_neg() };
                 let r = scale(r_raw) >> 8;
                 let (cx, cy) = center.raw();
                 let (cx, cy) = (scale(cx), scale(cy));
                 let (fx, fy) = focal.unwrap_or(*center).raw();
                 let (mut fx, mut fy) = (scale(fx), scale(fy));
                 // Keep the focal point strictly inside the circle (≤ 0.99 r).
-                let (mut ex, mut ey) = (cx - fx, cy - fy);
+                let (mut ex, mut ey) = (cx.wrapping_sub(fx), cy.wrapping_sub(fy));
                 let el = hypot(ex, ey) >> 8;
-                let lim = r * 253 / 256;
+                let lim = r.wrapping_mul(253) / 256;
                 if el > lim && el > 0 {
                     ex = muldiv(ex, lim, el);
                     ey = muldiv(ey, lim, el);
-                    fx = cx - ex;
-                    fy = cy - ey;
+                    fx = cx.wrapping_sub(ex);
+                    fy = cy.wrapping_sub(ey);
                 }
                 let (ex, ey) = (ex >> 8, ey >> 8);
-                let a = ex * ex + ey * ey - r * r;
+                let a = ex
+                    .wrapping_mul(ex)
+                    .wrapping_add(ey.wrapping_mul(ey))
+                    .wrapping_sub(r.wrapping_mul(r));
                 let m = [
                     inv.a.raw(),
                     inv.b.raw(),
@@ -335,14 +382,16 @@ impl Sampler {
     pub(crate) fn fill(&self, lut: &[u32; 256], y: i32, x0: i32, out: &mut [u8]) {
         match *self {
             Sampler::Linear { t0, dx, dy, extend } => {
-                let xc = 2 * i64::from(x0) + 1;
-                let yc = 2 * i64::from(y) + 1;
+                // SAFE-ARITH: doubled `i32`s fit in `i64`; their products with `|dx|, |dy| ≤
+                // 2^61` are formed in `i128`.
+                let xc = i128::from(x0).wrapping_mul(2).wrapping_add(1);
+                let yc = i128::from(y).wrapping_mul(2).wrapping_add(1);
                 // Pixel centers: (x + ½) · dx.
                 let mut t = t0
-                    .saturating_add((i128::from(xc) * i128::from(dx) / 2) as i64)
-                    .saturating_add((i128::from(yc) * i128::from(dy) / 2) as i64);
+                    .saturating_add((xc.wrapping_mul(i128::from(dx)) / 2) as i64)
+                    .saturating_add((yc.wrapping_mul(i128::from(dy)) / 2) as i64);
                 for px in out.chunks_exact_mut(4) {
-                    px.copy_from_slice(&lut[lut_index(t >> 16, extend)].to_le_bytes());
+                    px.copy_from_slice(&lut_at(lut, t >> 16, extend).to_le_bytes());
                     t = t.saturating_add(dx);
                 }
             }
@@ -356,19 +405,31 @@ impl Sampler {
                 a,
                 extend,
             } => {
-                let (x2, y2) = (2 * i128::from(x0) + 1, 2 * i128::from(y) + 1);
+                // SAFE-ARITH: doubled `i32`s; the scaled coefficients are below 2^55, so the
+                // products are below 2^89 in `i128`; per pixel `|u >> 8|, |fx| < 2^56`.
+                let (x2, y2) = (
+                    i128::from(x0).wrapping_mul(2).wrapping_add(1),
+                    i128::from(y).wrapping_mul(2).wrapping_add(1),
+                );
                 let row = |a: i64, c: i64, t: i64| -> i64 {
-                    let v = (i128::from(a) * x2 + i128::from(c) * y2) / 2 + i128::from(t);
+                    let v = i128::from(a)
+                        .wrapping_mul(x2)
+                        .wrapping_add(i128::from(c).wrapping_mul(y2))
+                        / 2;
+                    let v = v.wrapping_add(i128::from(t));
                     v.clamp(i128::from(i64::MIN / 4), i128::from(i64::MAX / 4)) as i64
                 };
-                let (mut u, mut v) = (row(inv[0], inv[2], inv[4]), row(inv[1], inv[3], inv[5]));
-                let (du, dv) = (inv[0], inv[1]);
+                let [i0, i1, i2, i3, i4, i5] = inv;
+                let (mut u, mut v) = (row(i0, i2, i4), row(i1, i3, i5));
+                let (du, dv) = (i0, i1);
                 for px in out.chunks_exact_mut(4) {
-                    let lim = 1i64 << 40;
-                    let (qx, qy) = (((u >> 8) - fx).clamp(-lim, lim), ((v >> 8) - fy).clamp(-lim, lim));
+                    let (qx, qy) = (
+                        (u >> 8).wrapping_sub(fx).clamp(-RADIAL_LIM, RADIAL_LIM),
+                        (v >> 8).wrapping_sub(fy).clamp(-RADIAL_LIM, RADIAL_LIM),
+                    );
                     let t = radial_t(qx, qy, ex, ey, r, a);
                     let c = match t {
-                        Some(t) => lut[lut_index(t, extend)],
+                        Some(t) => lut_at(lut, t, extend),
                         None => 0,
                     };
                     px.copy_from_slice(&c.to_le_bytes());
@@ -385,10 +446,14 @@ impl Sampler {
                 let (mut u, mut v) = map_center(&inv, x0, y);
                 let (du, dv) = (i64::from(inv.a.raw()), i64::from(inv.b.raw()));
                 let (w, h) = (i64::from(image.w), i64::from(image.h));
+                // SAFE-ARITH: `|u|, |v| ≤ 2^62` at the row start (`map_center`) and each of at
+                // most `2^16` steps adds less than 2^31: they stay below 2^62 + 2^47, and the
+                // half-texel offsets and neighbour columns fit.
                 for px in out.chunks_exact_mut(4) {
                     let c = if aa {
-                        let (su, sv) = (u - 32_768, v - 32_768);
+                        let (su, sv) = (u.wrapping_sub(32_768), v.wrapping_sub(32_768));
                         let (x, y) = (su >> 16, sv >> 16);
+                        let (x1, y1) = (x.wrapping_add(1), y.wrapping_add(1));
                         let (fx, fy) = (((su >> 8) & 0xFF) as u32, ((sv >> 8) & 0xFF) as u32);
                         let get = |x: i64, y: i64| {
                             image.texel(wrap(x, w, extend) as u16, wrap(y, h, extend) as u16)
@@ -396,18 +461,14 @@ impl Sampler {
                         if fx == 0 && fy == 0 {
                             get(x, y)
                         } else {
-                            bilinear(
-                                [get(x, y), get(x + 1, y), get(x, y + 1), get(x + 1, y + 1)],
-                                fx,
-                                fy,
-                            )
+                            bilinear([get(x, y), get(x1, y), get(x, y1), get(x1, y1)], fx, fy)
                         }
                     } else {
                         image.texel(wrap(u >> 16, w, extend) as u16, wrap(v >> 16, h, extend) as u16)
                     };
                     px.copy_from_slice(&c.to_le_bytes());
-                    u += du;
-                    v += dv;
+                    u = u.wrapping_add(du);
+                    v = v.wrapping_add(dv);
                 }
             }
         }
@@ -418,8 +479,12 @@ impl Sampler {
 /// offset `e` and radius `r` (24.8), `a = |e|² − r²`.
 #[inline]
 fn radial_t(qx: i64, qy: i64, ex: i64, ey: i64, r: i64, a: i64) -> Option<i64> {
-    let b = i128::from(qx) * i128::from(ex) + i128::from(qy) * i128::from(ey);
-    let c = i128::from(qx) * i128::from(qx) + i128::from(qy) * i128::from(qy);
+    // SAFE-ARITH (this function): `|qx|, |qy| ≤ 2^40` (clamped by the caller), `|ex|, |ey| ≤
+    // r < 2^17` and `|a| < 2^34` (`Sampler::new`): `|b| < 2^58`, `c ≤ 2^81`, `b² < 2^116`,
+    // `|a·c| < 2^115`, so the discriminant fits; `(s − b) · 2^16 < 2^82`.
+    let m = |x: i64, y: i64| i128::from(x).wrapping_mul(i128::from(y));
+    let b = m(qx, ex).wrapping_add(m(qy, ey));
+    let c = m(qx, qx).wrapping_add(m(qy, qy));
     let a = i128::from(a);
     if a > 0 {
         return None;
@@ -428,29 +493,47 @@ fn radial_t(qx: i64, qy: i64, ex: i64, ey: i64, r: i64, a: i64) -> Option<i64> {
         // Zero radius and focal = center: everything is past the end.
         return (r == 0).then_some(1 << 17);
     }
-    let disc = b * b - a * c;
+    let disc = b.wrapping_mul(b).wrapping_sub(a.wrapping_mul(c));
     if disc < 0 {
         return None;
     }
     let s = i128::from(isqrt128(disc as u128));
     // a < 0 always (focal inside the circle): the larger root is (s − b) / (−a).
-    let t = ((s - b) << 16) / (-a);
+    // `a != 0` (returned above): the `?` is never taken.
+    let t = (s.wrapping_sub(b) << 16).checked_div(a.wrapping_neg())?;
     Some(t.clamp(i128::from(i64::MIN / 2), i128::from(i64::MAX / 2)) as i64)
 }
 
 /// Bilinear blend of four packed straight-alpha texels, weights `fx`, `fy` in `0..256`.
 fn bilinear(t: [u32; 4], fx: u32, fy: u32) -> u32 {
-    let w = [(256 - fx) * (256 - fy), fx * (256 - fy), (256 - fx) * fy, fx * fy];
-    let a: u32 = (0..4).map(|i| (t[i] >> 24) * w[i]).sum();
+    // SAFE-ARITH: `fx, fy < 256`: the four weights are at most 2^16 and sum to 2^16, so the
+    // alpha sum is below 2^24 and each channel sum below 2^40 (in `u64`).
+    let (ix, iy) = (256u32.wrapping_sub(fx), 256u32.wrapping_sub(fy));
+    let w = [
+        ix.wrapping_mul(iy),
+        fx.wrapping_mul(iy),
+        ix.wrapping_mul(fy),
+        fx.wrapping_mul(fy),
+    ];
+    let a = t
+        .iter()
+        .zip(&w)
+        .fold(0u32, |s, (&v, &wi)| s.wrapping_add((v >> 24).wrapping_mul(wi)));
     if a == 0 {
         return 0;
     }
-    let out_a = ((a + 32_768) >> 16).min(255);
+    let out_a = (a.wrapping_add(32_768) >> 16).min(255);
     let ch = |s: u32| -> u32 {
-        let v: u64 = (0..4)
-            .map(|i| u64::from((t[i] >> s) & 0xFF) * u64::from((t[i] >> 24) * w[i]))
-            .sum();
-        ((v + u64::from(a) / 2) / u64::from(a)).min(255) as u32
+        let v = t.iter().zip(&w).fold(0u64, |sum, (&v, &wi)| {
+            // SHIFT: `s` is one of the literal channel offsets 16, 8, 0 passed to `ch` below.
+            let c = u64::from((v >> s) & 0xFF);
+            sum.wrapping_add(c.wrapping_mul(u64::from((v >> 24).wrapping_mul(wi))))
+        });
+        // `a != 0` (returned above): the division's fallback is never taken.
+        (v.wrapping_add(u64::from(a) / 2)
+            .checked_div(u64::from(a))
+            .unwrap_or(0))
+        .min(255) as u32
     };
     (out_a << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)
 }
@@ -460,7 +543,11 @@ fn bilinear(t: [u32; 4], fx: u32, fy: u32) -> u32 {
 pub(crate) fn load_lut(p: &mut Painter<'_>, stops: &[GradStop], lut: &mut [u32; 256]) {
     if stops.len() <= MAX_STOPS {
         let g = Gradient::new(GradKind::Hor, stops);
-        lut.copy_from_slice(p.caches().gradient_color_map(&g));
+        // The cached map is always 256 entries; any other length is rebuilt here.
+        match <&[u32; 256]>::try_from(p.caches().gradient_color_map(&g)) {
+            Ok(map) => *lut = *map,
+            Err(_) => build_color_map(stops, lut),
+        }
     } else {
         build_color_map(stops, lut);
     }

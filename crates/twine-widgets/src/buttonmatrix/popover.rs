@@ -51,11 +51,15 @@ impl Widget for Popover {
         let size: Size = l.measure();
         // LVGL: centered in the grown area, then moved up by half a button (the upper half).
         let btn_h = area.height() / 2;
-        let x1 = area.x0 + (area.width() - size.w) / 2;
-        let y1 = area.y0 + (area.height() - size.h) / 2 - btn_h / 2;
+        let x1 = area.x0.saturating_add(area.width().saturating_sub(size.w) / 2);
+        let y1 = area
+            .y0
+            .saturating_add(area.height().saturating_sub(size.h) / 2)
+            .saturating_sub(btn_h / 2);
         text.align = TextAlign::Center;
+        let end = |o: i32, len: i32| o.saturating_add(len).saturating_add(1);
         cx.draw_text(
-            Rect::new(x1, y1, x1 + size.w + 1, y1 + size.h + 1),
+            Rect::new(x1, y1, end(x1, size.w), end(y1, size.h)),
             &self.text,
             &text,
         );
@@ -104,7 +108,7 @@ pub(crate) fn show(
         if p.text != text || p.state != state {
             p.text.clear();
             if p.text.capacity() < text.len() {
-                twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
+                twine_core::alloc_guard::grew(cx.partition(), twine_core::alloc_guard::AllocSite::Text);
             }
             p.text.push_str(text);
             p.state = state;
@@ -113,8 +117,8 @@ pub(crate) fn show(
     });
     // The key grown upwards by one key height (LVGL `btn_area.y1 -= btn_height`).
     let h = btn.height();
-    e.set_pos(node, btn.x0, btn.y0 - h);
-    e.set_size(node, btn.width(), 2 * h);
+    e.set_pos(node, btn.x0, btn.y0.saturating_sub(h));
+    e.set_size(node, btn.width(), h.saturating_mul(2));
     e.set_flag(node, ObjFlags::HIDDEN, false);
     Some(node)
 }

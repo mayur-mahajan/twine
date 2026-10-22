@@ -46,6 +46,26 @@ pub(crate) fn cell_of<T: LayoutTree + ?Sized>(t: &T, id: T::Id) -> [i32; 4] {
     ]
 }
 
+/// Position and span of a grid item's cell on `axis` (from [`cell_of`]'s order).
+const fn cell_axis(cell: [i32; 4], axis: Axis) -> (i32, i32) {
+    let [col, col_span, row, row_span] = cell;
+    match axis {
+        Axis::X => (col, col_span),
+        Axis::Y => (row, row_span),
+    }
+}
+
+/// A track count as `i32` (saturating; templates are short lists).
+fn count_i32(n: usize) -> i32 {
+    i32::try_from(n).unwrap_or(i32::MAX)
+}
+
+/// Entry `i` of the track table in the scratch integers (`0` past its end: never, the table
+/// is sized for every index the callers compute).
+fn track_at(v: &[i32], i: usize) -> i32 {
+    v.get(i).copied().unwrap_or(0)
+}
+
 /// Track sizes of one axis (LVGL `calc_cols`/`calc_rows`) into `out`. `auto`: the container
 /// is content-sized on this axis (`Fr` behaves as `Content`, percentage items excluded).
 fn track_sizes<I>(
@@ -57,50 +77,60 @@ fn track_sizes<I>(
     auto: bool,
     out: &mut [i32],
 ) {
-    let a = axis.index();
-    let (pos_i, span_i) = match axis {
-        Axis::X => (0, 1),
-        Axis::Y => (2, 3),
-    };
+    // Sizes saturate (style values are any `i32`).
     let mut fr_total: i64 = 0;
     let mut fixed = 0i32;
     for (i, (track, o)) in templ.iter().zip(out.iter_mut()).enumerate() {
         match *track {
             GridTrack::Px(n) => {
                 *o = n;
-                fixed += n;
+                fixed = fixed.saturating_add(n);
             }
             GridTrack::Fr(k) if !auto => {
                 *o = 0;
-                fr_total += i64::from(k);
+                // SAFE-ARITH: at most `templ.len()` weights below 2^8 each.
+                fr_total = fr_total.wrapping_add(i64::from(k));
             }
             GridTrack::Content | GridTrack::Fr(_) => {
                 let size = items
                     .iter()
-                    .filter(|it| it.in_flow && it.cell[span_i] == 1 && it.cell[pos_i] == i as i32)
-                    .filter(|it| !(auto && it.ignore[a]))
+                    .filter(|it| {
+                        let (pos, span) = cell_axis(it.cell, axis);
+                        it.in_flow && span == 1 && usize::try_from(pos) == Ok(i)
+                    })
+                    .filter(|it| !(auto && axis.pick(it.ignore)))
                     .map(|it| axis.of(it.size))
                     .max()
                     .unwrap_or(i32::MIN);
                 *o = size.max(0);
-                fixed += *o;
+                fixed = fixed.saturating_add(*o);
             }
         }
     }
     if fr_total == 0 {
         return;
     }
-    let mut free = i64::from((avail - gap * (templ.len() as i32 - 1) - fixed).max(0));
+    let gaps = gap.saturating_mul(count_i32(templ.len()).saturating_sub(1));
+    let mut free = i64::from(avail.saturating_sub(gaps).saturating_sub(fixed).max(0));
     for (track, o) in templ.iter().zip(out.iter_mut()) {
         if let GridTrack::Fr(k) = *track {
             let k = i64::from(k);
             if k == 0 {
                 continue;
             }
-            let v = (free * k + fr_total / 2) / fr_total;
+            // `fr_total` is the sum of the weights of the `Fr` tracks not placed yet (all of
+            // them are counted when `!auto`; `auto` leaves it 0 and returned above), which
+            // includes this track's `k ≥ 1`: the division's fallback is never taken.
+            // SAFE-ARITH: `0 ≤ free < 2^31` and `k < 2^8`, so the sum is below 2^40; `v ≤ free`
+            // and `k ≤ fr_total`.
+            let v = free
+                .wrapping_mul(k)
+                .wrapping_add(fr_total / 2)
+                .checked_div(fr_total)
+                .unwrap_or(0);
             *o = v as i32;
-            fr_total -= k;
-            free -= v;
+            fr_total = fr_total.wrapping_sub(k);
+            free = free.wrapping_sub(v);
         }
     }
 }
@@ -116,10 +146,13 @@ fn grid_align(
     pos: &mut [i32],
     reverse: bool,
 ) -> i32 {
-    let n = sizes.len() as i32;
+    let n = count_i32(sizes.len());
     let mut gap = gap;
-    if auto {
-        pos[0] = 0;
+    // Coordinates saturate (style values are any `i32`). `n ≥ 1` (`templates` refuses empty
+    // track lists), so the divisors below are at least 1 and the `checked_div` fallbacks are
+    // never taken.
+    let first = if auto {
+        0
     } else {
         let mut align = align;
         if matches!(
@@ -131,33 +164,43 @@ fn grid_align(
                 align = GridAlign::Center;
             }
         }
-        let grid = sizes.iter().sum::<i32>() + gap * (n - 1);
-        pos[0] = match align {
+        let grid = sizes
+            .iter()
+            .fold(0i32, |acc, s| acc.saturating_add(*s))
+            .saturating_add(gap.saturating_mul(n.saturating_sub(1)));
+        let free = cont.saturating_sub(grid);
+        match align {
             GridAlign::Start | GridAlign::Stretch => 0,
-            GridAlign::Center => (cont - grid) / 2,
-            GridAlign::End => cont - grid,
+            GridAlign::Center => free / 2,
+            GridAlign::End => free,
             GridAlign::SpaceBetween => {
-                gap = (cont - grid) / (n - 1);
+                // `n ≥ 2`: `n == 1` was turned into `Center` above.
+                gap = free.checked_div(n.saturating_sub(1)).unwrap_or(0);
                 0
             }
             GridAlign::SpaceAround => {
-                gap = (cont - grid) / n;
+                gap = free.checked_div(n).unwrap_or(0);
                 gap / 2
             }
             GridAlign::SpaceEvenly => {
-                gap = (cont - grid) / (n + 1);
+                gap = free.checked_div(n.saturating_add(1)).unwrap_or(0);
                 gap
             }
-        };
+        }
+    };
+    // Track `i` starts after track `i − 1` and the gap; the total runs from the first track's
+    // start to the last one's end.
+    let mut next = first;
+    let mut last_end = first;
+    for (p, &size) in pos.iter_mut().zip(sizes) {
+        *p = next;
+        last_end = next.saturating_add(size);
+        next = last_end.saturating_add(gap);
     }
-    for i in 1..sizes.len() {
-        pos[i] = pos[i - 1] + sizes[i - 1] + gap;
-    }
-    let last = sizes.len() - 1;
-    let total = pos[last] + sizes[last] - pos[0];
+    let total = last_end.saturating_sub(first);
     if reverse {
         for (p, s) in pos.iter_mut().zip(sizes) {
-            *p = cont - *p - s;
+            *p = cont.saturating_sub(*p).saturating_sub(*s);
         }
     }
     total
@@ -186,19 +229,19 @@ pub(crate) fn extent<T: LayoutTree + ?Sized>(
         Axis::Y => (rows, t.style_i32(id, PropId::RowGap)),
     };
     let base = s.ints.len();
-    s.ints.resize(base + templ.len(), 0);
-    track_sizes(
-        &s.items[frame..end],
-        templ,
-        axis,
-        0,
-        gap,
-        true,
-        &mut s.ints[base..],
-    );
-    let total = s.ints[base..].iter().sum::<i32>() + gap * (templ.len() as i32 - 1);
+    // SAFE-ARITH: two in-memory lengths (each below `isize::MAX`).
+    s.ints.resize(base.wrapping_add(templ.len()), 0);
+    // SAFE-INDEX: the caller's frame `frame..end` lies inside the scratch items and `base` is
+    // the old length of `ints`; the fallbacks are never taken.
+    let items = s.items.get(frame..end).unwrap_or_default();
+    let sizes = s.ints.get_mut(base..).unwrap_or_default();
+    track_sizes(items, templ, axis, 0, gap, true, sizes);
+    let total = sizes
+        .iter()
+        .fold(0i32, |acc, s| acc.saturating_add(*s))
+        .saturating_add(gap.saturating_mul(count_i32(templ.len()).saturating_sub(1)));
     s.ints.truncate(base);
-    let others = abs_extent_all(t, &s.items[frame..end], axis, avail, sized, rtl);
+    let others = abs_extent_all(t, items, axis, avail, sized, rtl);
     Some(others.map_or(total, |o| o.max(total)))
 }
 
@@ -214,12 +257,15 @@ fn clamp_cell(pos: i32, span: i32, n: i32, what: &str) -> (i32, i32) {
         warn!(target: "twine::layout", "grid {} position was {}, setting it to 0", what, pos);
         pos = 0;
     }
+    // `n ≥ 1` (`templates` refuses empty track lists).
+    let last = n.saturating_sub(1);
     if pos >= n {
-        warn!(target: "twine::layout", "grid {} position was {}, setting it to {}", what, pos, n - 1);
-        pos = n - 1;
+        warn!(target: "twine::layout", "grid {} position was {}, setting it to {}", what, pos, last);
+        pos = last;
     }
-    if pos + span > n {
-        span = n - pos;
+    if pos.saturating_add(span) > n {
+        // SAFE-ARITH: `0 ≤ pos < n` here.
+        span = n.wrapping_sub(pos);
         warn!(target: "twine::layout", "grid {} span is too large, limiting it to {}", what, span);
     }
     (pos, span)
@@ -228,8 +274,10 @@ fn clamp_cell(pos: i32, span: i32, n: i32, what: &str) -> (i32, i32) {
 /// Offset of an item in its cell along one axis and whether it is stretched.
 fn cell_offset(align: GridAlign, cell: i32, size: i32, m_start: i32, m_end: i32) -> i32 {
     match align {
-        GridAlign::Center => (cell - size) / 2 + (m_start - m_end) / 2,
-        GridAlign::End => cell - size - m_end,
+        GridAlign::Center => {
+            (cell.saturating_sub(size) / 2).saturating_add(m_start.saturating_sub(m_end) / 2)
+        }
+        GridAlign::End => cell.saturating_sub(size).saturating_sub(m_end),
         _ => m_start,
     }
 }
@@ -253,17 +301,24 @@ pub(crate) fn arrange<T: LayoutTree + ?Sized>(
         return;
     };
     let csize = raw_size(content);
+    let [sized_x, sized_y] = sized;
+    // SAFE-INDEX: the caller's frame `frame..end` lies inside the scratch items; the `get`
+    // fallbacks are never taken.
     for i in frame..end {
-        if !s.items[i].in_flow {
+        let Some(&Item { in_flow, id: c, .. }) = s.items.get(i) else {
+            break;
+        };
+        if !in_flow {
             continue;
         }
-        let c = s.items[i].id;
         let r = resolve_node(&*t, s, c, csize, [None; 2]);
-        let it = &mut s.items[i];
-        it.set_resolved(r);
-        it.margin = margins(&*t, c);
-        it.cell = cell_of(&*t, c);
-        it.ignore = [sized[0] && r.pct[0], sized[1] && r.pct[1]];
+        if let Some(it) = s.items.get_mut(i) {
+            it.set_resolved(r);
+            it.margin = margins(&*t, c);
+            it.cell = cell_of(&*t, c);
+            let [pct_x, pct_y] = r.pct;
+            it.ignore = [sized_x && pct_x, sized_y && pct_y];
+        }
     }
 
     let (nc, nr) = (cols.len(), rows.len());
@@ -272,39 +327,63 @@ pub(crate) fn arrange<T: LayoutTree + ?Sized>(
         t.style_i32(id, PropId::RowGap),
     );
     let base = s.ints.len();
-    s.ints.resize(base + 2 * (nc + nr), 0);
+    // The track table `[col widths | col x | row heights | row y]` after `base`.
+    // SAFE-ARITH: in-memory lengths (each below `isize::MAX / 4`): the sums cannot overflow.
+    let (cw, cx, rh, ry) = (
+        base,
+        base.wrapping_add(nc),
+        base.wrapping_add(nc).wrapping_add(nc),
+        base.wrapping_add(nc).wrapping_add(nc).wrapping_add(nr),
+    );
+    s.ints.resize(ry.wrapping_add(nr), 0);
     {
-        let (cw, rest) = s.ints[base..].split_at_mut(nc);
-        let (cx, rest) = rest.split_at_mut(nc);
-        let (rh, ry) = rest.split_at_mut(nr);
-        let items = &s.items[frame..end];
-        track_sizes(items, cols, Axis::X, csize.w, col_gap, sized[0], cw);
-        track_sizes(items, rows, Axis::Y, csize.h, row_gap, sized[1], rh);
+        // SAFE-INDEX: the table was sized for the four parts just above; the fallback (no
+        // tracks sized) is never taken.
+        let table = s.ints.get_mut(base..).unwrap_or_default();
+        let (cw, rest) = table.split_at_mut_checked(nc).unwrap_or_default();
+        let (cx, rest) = rest.split_at_mut_checked(nc).unwrap_or_default();
+        let (rh, ry) = rest.split_at_mut_checked(nr).unwrap_or_default();
+        let items = s.items.get(frame..end).unwrap_or_default();
+        track_sizes(items, cols, Axis::X, csize.w, col_gap, sized_x, cw);
+        track_sizes(items, rows, Axis::Y, csize.h, row_gap, sized_y, rh);
         let col_align = style_enum::<T, GridAlign>(&*t, id, PropId::GridColumnAlign);
         let row_align = style_enum::<T, GridAlign>(&*t, id, PropId::GridRowAlign);
-        grid_align(csize.w, sized[0], col_align, col_gap, cw, cx, rtl);
-        grid_align(csize.h, sized[1], row_align, row_gap, rh, ry, false);
+        grid_align(csize.w, sized_x, col_align, col_gap, cw, cx, rtl);
+        grid_align(csize.h, sized_y, row_align, row_gap, rh, ry, false);
     }
-    let (cw, cx, rh, ry) = (base, base + nc, base + 2 * nc, base + 2 * nc + nr);
 
     for j in frame..end {
-        let it = s.items[j];
+        let Some(&it) = s.items.get(j) else { break };
         if !it.in_flow {
             continue;
         }
-        let (cp, cs) = clamp_cell(it.cell[0], it.cell[1], nc as i32, "column");
-        let (rp, rs) = clamp_cell(it.cell[2], it.cell[3], nr as i32, "row");
+        let [col, col_span, row, row_span] = it.cell;
+        let (cp, cs) = clamp_cell(col, col_span, count_i32(nc), "column");
+        let (rp, rs) = clamp_cell(row, row_span, count_i32(nr), "row");
         let (cp, cs, rp, rs) = (cp as usize, cs as usize, rp as usize, rs as usize);
+        // SAFE-ARITH: `clamp_cell` gives `0 ≤ pos < n` and `1 ≤ span ≤ n − pos`, so the last
+        // spanned track `pos + span − 1 < n` and every index below lies inside its part of the
+        // table (SAFE-INDEX: `track_at`'s fallback is never taken).
+        let (c_last, r_last) = (
+            cp.wrapping_add(cs).wrapping_sub(1),
+            rp.wrapping_add(rs).wrapping_sub(1),
+        );
         let v = &s.ints;
+        let at = |part: usize, i: usize| track_at(v, part.wrapping_add(i));
         let (col_x, col_w) = if rtl && cs > 1 {
-            let x1 = v[cx + cp + cs - 1];
-            (x1, v[cx + cp] + v[cw + cp] - x1)
+            let x1 = at(cx, c_last);
+            (x1, at(cx, cp).saturating_add(at(cw, cp)).saturating_sub(x1))
         } else {
-            let x1 = v[cx + cp];
-            (x1, v[cx + cp + cs - 1] + v[cw + cp + cs - 1] - x1)
+            let x1 = at(cx, cp);
+            (
+                x1,
+                at(cx, c_last).saturating_add(at(cw, c_last)).saturating_sub(x1),
+            )
         };
-        let row_y = v[ry + rp];
-        let row_h = v[ry + rp + rs - 1] + v[rh + rp + rs - 1] - row_y;
+        let row_y = at(ry, rp);
+        let row_h = at(ry, r_last)
+            .saturating_add(at(rh, r_last))
+            .saturating_sub(row_y);
 
         let mut x_align = style_enum::<T, GridAlign>(&*t, it.id, PropId::GridCellXAlign);
         let y_align = style_enum::<T, GridAlign>(&*t, it.id, PropId::GridCellYAlign);
@@ -316,41 +395,40 @@ pub(crate) fn arrange<T: LayoutTree + ?Sized>(
             };
         }
         let m = it.margin;
-        let stretch = [x_align == GridAlign::Stretch, y_align == GridAlign::Stretch];
+        let (stretch_x, stretch_y) = (x_align == GridAlign::Stretch, y_align == GridAlign::Stretch);
         let mut size = it.size;
-        if stretch[0] || stretch[1] {
+        if stretch_x || stretch_y {
             let ovr = [
-                stretch[0].then(|| col_w - sum(m, Axis::X)),
-                stretch[1].then(|| row_h - sum(m, Axis::Y)),
+                stretch_x.then(|| col_w.saturating_sub(sum(m, Axis::X))),
+                stretch_y.then(|| row_h.saturating_sub(sum(m, Axis::Y))),
             ];
             size = resolve_node(&*t, s, it.id, csize, ovr).size;
-            s.items[j].size = size;
-            s.items[j].ovr = stretch;
+            if let Some(it) = s.items.get_mut(j) {
+                it.size = size;
+                it.ovr = [stretch_x, stretch_y];
+            }
         }
-        let x = col_x
-            + cell_offset(
-                x_align,
-                col_w,
-                size.w,
-                tree::start(m, Axis::X),
-                tree::end(m, Axis::X),
-            );
-        let y = row_y
-            + cell_offset(
-                y_align,
-                row_h,
-                size.h,
-                tree::start(m, Axis::Y),
-                tree::end(m, Axis::Y),
-            );
+        let x = col_x.saturating_add(cell_offset(
+            x_align,
+            col_w,
+            size.w,
+            tree::start(m, Axis::X),
+            tree::end(m, Axis::X),
+        ));
+        let y = row_y.saturating_add(cell_offset(
+            y_align,
+            row_h,
+            size.h,
+            tree::start(m, Axis::Y),
+            tree::end(m, Axis::Y),
+        ));
         let (tx, ty) = translate(&*t, it.id, size);
-        place(
-            t,
-            s,
-            it.id,
-            Rect::from_xywh(content.x0 + x + tx, content.y0 + y + ty, size.w, size.h),
-        );
-        s.items[j].done = true;
+        let x0 = content.x0.saturating_add(x).saturating_add(tx);
+        let y0 = content.y0.saturating_add(y).saturating_add(ty);
+        place(t, s, it.id, Rect::from_xywh(x0, y0, size.w, size.h));
+        if let Some(it) = s.items.get_mut(j) {
+            it.done = true;
+        }
     }
     s.ints.truncate(base);
 }

@@ -18,7 +18,7 @@ use unicode_bidi::{BidiClass, Level, ParagraphBidiInfo, bidi_class};
 
 use crate::dir::TextDir;
 use crate::hit::TextAlign;
-use crate::layout::{Line, TextLayout, floor_boundary};
+use crate::layout::{Line, TextLayout, floor_boundary, sub};
 
 /// Whether `c` has a strong or numeric right-to-left class (R, AL, AN). Characters below
 /// U+0590 are never right-to-left, so Latin text costs one comparison per character.
@@ -160,10 +160,14 @@ impl BidiLine {
         self.runs.iter().flat_map(move |r| {
             let s = line.get(r.range.clone()).unwrap_or("");
             let start = r.range.start;
-            let fwd = (!r.rtl).then(|| s.char_indices().map(move |(i, c)| (start + i, c)));
-            let back = r
-                .rtl
-                .then(|| s.char_indices().rev().map(move |(i, c)| (start + i, mirror(c))));
+            // SAFE-ARITH: byte offsets inside `line` (below `isize::MAX`).
+            let fwd = (!r.rtl).then(|| s.char_indices().map(move |(i, c)| (start.wrapping_add(i), c)));
+            // SAFE-ARITH: as above.
+            let back = r.rtl.then(|| {
+                s.char_indices()
+                    .rev()
+                    .map(move |(i, c)| (start.wrapping_add(i), mirror(c)))
+            });
             fwd.into_iter().flatten().chain(back.into_iter().flatten())
         })
     }
@@ -189,7 +193,7 @@ impl TextLayout<'_> {
     /// Walks `line` in display order, calling `f` per glyph (stops when `f` returns `true`).
     fn walk_visual(&self, line: &Line, base: TextDir, f: &mut dyn FnMut(&VisualGlyph) -> bool) {
         // Trailing spaces are excluded from the line width and not drawn.
-        let text = self.text[line.range.clone()].trim_end_matches(' ');
+        let text = sub(self.text, line.range.clone()).trim_end_matches(' ');
         let bidi = visual_runs(text, base);
         let mut x = 0;
         let mut it = bidi.visual_chars(text).peekable();
@@ -197,7 +201,8 @@ impl TextLayout<'_> {
             let next = it.peek().map(|&(_, n)| n);
             let adv = self.font.advance_px(c, next);
             let g = VisualGlyph {
-                byte: line.range.start + b,
+                // SAFE-ARITH: a byte offset inside `text`.
+                byte: line.range.start.wrapping_add(b),
                 len: c.len_utf8(),
                 x,
                 adv,
@@ -207,7 +212,7 @@ impl TextLayout<'_> {
                 break;
             }
             if adv > 0 {
-                x += adv + self.letter_space;
+                x = x.saturating_add(adv.saturating_add(self.letter_space));
             }
         }
     }
@@ -230,19 +235,21 @@ impl TextLayout<'_> {
         let i = floor_boundary(self.text, byte_index);
         let k = self.line_of(i);
         let line = self.lines().nth(k).unwrap_or_default();
-        let base = resolve_dir(base, &self.text[line.range.clone()]);
+        let base = resolve_dir(base, sub(self.text, line.range.clone()));
         let line_x = self.line_x(&line, area_w, align.resolve(base));
-        let y = k as i32 * self.line_height();
+        let y = i32::try_from(k)
+            .unwrap_or(i32::MAX)
+            .saturating_mul(self.line_height());
         let mut x = None;
         self.walk_visual(&line, base, &mut |g| {
             if g.byte == i {
-                x = Some(if g.rtl { g.x + g.adv } else { g.x });
+                x = Some(if g.rtl { g.x.saturating_add(g.adv) } else { g.x });
                 return true;
             }
             false
         });
         let x = x.unwrap_or(if base == TextDir::Rtl { 0 } else { line.width });
-        Point::new(line_x + x, y)
+        Point::new(line_x.saturating_add(x), y)
     }
 
     /// Like [`char_at`](Self::char_at) for bidirectional text: the logical byte index of the
@@ -257,7 +264,8 @@ impl TextLayout<'_> {
         let idx = if p.y <= 0 || lh <= 0 {
             0
         } else {
-            (p.y / lh) as usize
+            // `lh > 0` (the `if`): the fallback is never taken.
+            p.y.checked_div(lh).unwrap_or(0) as usize
         };
         let mut last = Line::default();
         let mut line = None;
@@ -269,16 +277,19 @@ impl TextLayout<'_> {
             last = l;
         }
         let line = line.unwrap_or(last);
-        let base = resolve_dir(base, &self.text[line.range.clone()]);
-        let x = p.x - self.line_x(&line, area_w, align.resolve(base));
+        let base = resolve_dir(base, sub(self.text, line.range.clone()));
+        let x =
+            p.x.saturating_sub(self.line_x(&line, area_w, align.resolve(base)));
         let mut hit = None;
         self.walk_visual(&line, base, &mut |g| {
-            if x < g.x + (g.adv.max(0) + 1) / 2 {
-                hit = Some(if g.rtl { g.byte + g.len } else { g.byte });
+            // SAFE-ARITH: `byte + len` is the end of a character inside `text`.
+            let after = g.byte.wrapping_add(g.len);
+            if x < g.x.saturating_add(g.adv.max(0).saturating_add(1) / 2) {
+                hit = Some(if g.rtl { after } else { g.byte });
                 return true;
             }
-            if x < g.x + g.adv.max(1) {
-                hit = Some(if g.rtl { g.byte } else { g.byte + g.len });
+            if x < g.x.saturating_add(g.adv.max(1)) {
+                hit = Some(if g.rtl { g.byte } else { after });
                 return true;
             }
             false

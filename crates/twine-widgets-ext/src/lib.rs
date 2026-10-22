@@ -50,11 +50,9 @@
         clippy::expect_used,
         clippy::panic,
         clippy::unreachable,
+        clippy::arithmetic_side_effects,
     )
 )]
-// NOTE(R5.S14): sites of these lints remain (counts: `docs/safety/profile.md` § Lint status,
-// `cargo xtask safety-lints`); a lint moves to `deny` above when its last site is fixed.
-#![cfg_attr(all(feature = "safety", not(test)), allow(clippy::arithmetic_side_effects,))]
 #![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 
 extern crate alloc;

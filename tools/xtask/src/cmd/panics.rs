@@ -19,6 +19,13 @@
 //! file differs from the generated one (CI stage `clippy-safety`). Indexing and arithmetic sites
 //! are counted per file (their removal is tracked by the lint ratchet). The document carries no
 //! line numbers, so it changes only when sites change.
+//!
+//! **Proven sites** (R5.S11): indexing and arithmetic that the code proves in range instead of
+//! leaving a lint site — `wrapping_*` arithmetic that cannot wrap and checked accesses whose
+//! fallback is unreachable — carry a `// SAFE-INDEX: …` or `// SAFE-ARITH: …` proof comment
+//! ([`PROOF_TAGS`]), on the line or in the comment block directly above the code it proves.
+//! They are listed with their proofs (the source scan, [`scan_proofs`]); `--check` fails on an
+//! empty proof or a proof comment that no code line follows.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -32,6 +39,9 @@ pub const PANICS_DOC: &str = "docs/safety/panics.md";
 
 /// The comment marker that justifies an explicit panic site.
 pub const REASON_TAG: &str = "PANIC:";
+
+/// The proof comments of [`scan_proofs`] and their inventory kinds.
+pub const PROOF_TAGS: &[(&str, &str)] = &[("SAFE-INDEX:", "safe_index"), ("SAFE-ARITH:", "safe_arith")];
 
 /// Clippy lints whose sites are listed one by one (explicit panics).
 const EXPLICIT_LINTS: &[&str] = &[
@@ -131,7 +141,7 @@ pub fn write_or_check(sites: &[Site], check: bool) -> R {
                 .unwrap_or(&file)
                 .to_string_lossy()
                 .replace('\\', "/");
-            for found in scan_source(&src) {
+            for found in scan_source(&src).into_iter().chain(scan_proofs(&src)) {
                 entries.push(Entry {
                     krate: name.clone(),
                     kind: found.kind.to_owned(),
@@ -159,6 +169,24 @@ pub fn write_or_check(sites: &[Site], check: bool) -> R {
             e.file, e.line, e.code
         ));
     }
+    for e in entries.iter().filter(|e| is_proof(&e.kind)) {
+        if e.code.is_empty() {
+            errors.push(format!(
+                "{}:{}: a `// {}` proof comment with no code line directly below it",
+                e.file,
+                e.line,
+                proof_tag(&e.kind)
+            ));
+        } else if e.reason.as_deref().is_none_or(str::is_empty) {
+            errors.push(format!(
+                "{}:{}: `{}` has an empty `// {}` proof",
+                e.file,
+                e.line,
+                e.code,
+                proof_tag(&e.kind)
+            ));
+        }
+    }
     if current != doc {
         if check {
             errors.push(format!(
@@ -170,9 +198,10 @@ pub fn write_or_check(sites: &[Site], check: bool) -> R {
         }
     }
     let explicit = entries.iter().filter(|e| is_explicit(&e.kind)).count();
+    let proven = entries.iter().filter(|e| is_proof(&e.kind)).count();
     if errors.is_empty() {
         println!(
-            "panics: ok ({explicit} explicit sites, {} entries in {} crates)",
+            "panics: ok ({explicit} explicit sites, {proven} proven sites, {} entries in {} crates)",
             entries.len(),
             names.len()
         );
@@ -188,6 +217,80 @@ pub fn write_or_check(sites: &[Site], check: bool) -> R {
 /// Whether entries of `kind` are listed one by one and need a justification.
 fn is_explicit(kind: &str) -> bool {
     kind == "assert" || EXPLICIT_LINTS.contains(&kind)
+}
+
+/// Whether entries of `kind` are proven sites ([`PROOF_TAGS`]).
+fn is_proof(kind: &str) -> bool {
+    PROOF_TAGS.iter().any(|(_, k)| *k == kind)
+}
+
+/// The proof tag of a proven-site kind.
+fn proof_tag(kind: &str) -> &'static str {
+    PROOF_TAGS
+        .iter()
+        .find(|(_, k)| *k == kind)
+        .map_or("SAFE-", |(tag, _)| tag)
+}
+
+/// The proven sites of `src` (library source, outside `#[cfg(test)]` items): every
+/// `// SAFE-INDEX: …` / `// SAFE-ARITH: …` comment ([`PROOF_TAGS`]) with its proof — the text after
+/// the tag, continued by the following lines of its comment block up to the next tagged comment
+/// (`DIV:`, `SHIFT:`, …) — and the code it proves: the code before a trailing comment, or the
+/// first line after the comment block. A comment block followed by a blank line or the end of
+/// the file gives an empty `code` (reported by `--check`).
+#[must_use]
+pub fn scan_proofs(src: &str) -> Vec<Found> {
+    let code = code_only(src);
+    // Test items as line ranges (`code` keeps the line breaks of `src`).
+    let line_at = |pos: usize| code[..pos.min(code.len())].matches('\n').count();
+    let tests: Vec<(usize, usize)> = test_items(&code, src)
+        .into_iter()
+        .map(|(a, b)| (line_at(a), line_at(b)))
+        .collect();
+    let lines: Vec<&str> = src.lines().collect();
+    let mut found = Vec::new();
+    for (idx, l) in lines.iter().enumerate() {
+        if tests.iter().any(|&(a, b)| idx >= a && idx <= b) {
+            continue;
+        }
+        for (tag, kind) in PROOF_TAGS {
+            let marker = format!("// {tag}");
+            let Some(pos) = l.find(&marker) else { continue };
+            let first = l[pos + marker.len()..].trim();
+            let before = l[..pos].trim();
+            let (proof, code_line) = if before.is_empty() {
+                // A comment line: the proof continues on the block's untagged lines; the code
+                // is the first line after the block.
+                let mut proof = vec![first];
+                let mut k = idx + 1;
+                let mut in_proof = true;
+                while let Some(next) = lines.get(k) {
+                    let Some(c) = next.trim_start().strip_prefix("//") else {
+                        break;
+                    };
+                    if next.trim_start().starts_with("///") || next.trim_start().starts_with("//!") {
+                        break;
+                    }
+                    in_proof &= !crate::cmd::audit::is_tag_line(c.trim());
+                    if in_proof {
+                        proof.push(c.trim());
+                    }
+                    k += 1;
+                }
+                let code_line = lines.get(k).map_or("", |c| c.trim());
+                (proof.join(" "), (k, code_line))
+            } else {
+                (first.to_owned(), (idx, before))
+            };
+            found.push(Found {
+                kind,
+                line: code_line.0 as u64 + 1,
+                code: code_line.1.to_owned(),
+                reason: Some(proof.trim().to_owned()),
+            });
+        }
+    }
+    found
 }
 
 /// The `.rs` files under `dir`, sorted.
@@ -268,13 +371,13 @@ pub fn reason_above(src: &str, line: u64) -> Option<String> {
 /// A site found by [`scan_source`].
 #[derive(Debug, PartialEq, Eq)]
 pub struct Found {
-    /// `assert` or `track_caller`.
+    /// `assert`, `track_caller`, `safe_index` or `safe_arith`.
     pub kind: &'static str,
     /// 1-based line.
     pub line: u64,
     /// The source line (for `track_caller`, the signature of the marked function), trimmed.
     pub code: String,
-    /// The justification, for asserts.
+    /// The justification, for asserts; the proof, for proven sites.
     pub reason: Option<String>,
 }
 
@@ -693,7 +796,54 @@ pub fn render(crates: &[String], entries: &[Entry]) -> String {
     for ((krate, file), (i, a)) in per_file {
         let _ = writeln!(s, "| {krate} | `{}` | {i} | {a} |", short(file, krate));
     }
+    render_proofs(&mut s, crates, entries);
     s
+}
+
+/// The "Proven sites" section of the inventory.
+fn render_proofs(s: &mut String, crates: &[String], entries: &[Entry]) {
+    s.push_str(
+        "\n## Proven sites\n\nIndexing and arithmetic that the code proves in range instead of \
+         checking at run time: `wrapping_*` arithmetic that cannot wrap and checked accesses whose \
+         fallback is unreachable. Each carries its proof (the `// SAFE-INDEX:` or `// SAFE-ARITH:` \
+         comment in the source, copied below). They cannot panic and are not lint sites; they are \
+         listed as evidence for review.\n\n| Crate | `SAFE-INDEX` | `SAFE-ARITH` |\n|---|---:|---:|\n",
+    );
+    let count = |krate: &str, kind: &str| {
+        entries
+            .iter()
+            .filter(|e| e.krate == krate && e.kind == kind)
+            .count()
+    };
+    for krate in crates {
+        let (i, a) = (count(krate, "safe_index"), count(krate, "safe_arith"));
+        if i + a > 0 {
+            let _ = writeln!(s, "| {krate} | {i} | {a} |");
+        }
+    }
+    for krate in crates {
+        let list: Vec<&Entry> = entries
+            .iter()
+            .filter(|e| &e.krate == krate && is_proof(&e.kind))
+            .collect();
+        if list.is_empty() {
+            continue;
+        }
+        let _ = write!(
+            s,
+            "\n### {krate}\n\n| Kind | File | Code | Proof |\n|---|---|---|---|\n"
+        );
+        for e in list {
+            let _ = writeln!(
+                s,
+                "| `{}` | `{}` | `{}` | {} |",
+                proof_tag(&e.kind).trim_end_matches(':'),
+                short(&e.file, krate),
+                cell(&e.code),
+                e.reason.as_deref().unwrap_or_default().replace('|', "\\|")
+            );
+        }
+    }
 }
 
 /// The table title of a category.
@@ -735,8 +885,14 @@ changes only when sites change.
 
 **Not covered** (not reported by these tools): `RefCell` borrow conflicts (the runtimes keep no
 borrow across user code, rule R1), allocation failure (the global allocator's handler),
-shifts by an out-of-range amount (R5.S09), panics inside dependencies, and panics in the
-application's own callbacks.
+shifts (proven in range by R5.S09, `shifts.md`), panics inside dependencies, and panics in the
+application's own callbacks. Divisions and remainders are counted under arithmetic (a possible
+overflow); that none divides by zero is proven separately (R5.S10, `divisions.md`).
+
+**Proven sites.** Indexing and arithmetic that the code proves in range (R5.S11: `wrapping_*`
+arithmetic that cannot wrap, checked accesses whose fallback is never taken) carry a
+`// SAFE-INDEX: …` or `// SAFE-ARITH: …` proof comment; the source scan lists each with its proof
+at the end of this file, and CI fails on an empty proof or a proof comment with no code below it.
 ";
 
 #[cfg(test)]
@@ -832,6 +988,63 @@ pub fn build(self) { assert!(false) }
             "{doc}"
         );
         assert!(doc.contains("| twine-x | `src/a.rs` | 2 | 0 |"), "{doc}");
+    }
+
+    #[test]
+    fn scan_proofs_reads_proof_comments_outside_tests() {
+        let src = r"
+fn f(a: u32, v: &[u8]) -> u8 {
+    // SAFE-ARITH: `a < 2^16`, so the sum fits.
+    // Second line of the proof.
+    // DIV: not part of the proof.
+    let b = a.wrapping_add(1) / 2;
+    let c = v.get(0).copied().unwrap_or(0); // SAFE-INDEX: `v` is never empty.
+    // SAFE-ARITH:
+    let d = a.wrapping_sub(1);
+    // SAFE-INDEX: dangling.
+
+    c
+}
+#[cfg(test)]
+mod tests {
+    // SAFE-ARITH: ignored in tests.
+    fn t() {}
+}
+";
+        let found = scan_proofs(src);
+        assert_eq!(found.len(), 4, "{found:?}");
+        assert_eq!(found[0].kind, "safe_arith");
+        assert_eq!(found[0].code, "let b = a.wrapping_add(1) / 2;");
+        assert_eq!(
+            found[0].reason.as_deref(),
+            Some("`a < 2^16`, so the sum fits. Second line of the proof.")
+        );
+        assert_eq!(found[1].kind, "safe_index");
+        assert_eq!(found[1].code, "let c = v.get(0).copied().unwrap_or(0);");
+        assert_eq!(found[1].reason.as_deref(), Some("`v` is never empty."));
+        assert_eq!(found[2].reason.as_deref(), Some(""), "empty proof");
+        assert_eq!(found[3].code, "", "dangling proof");
+    }
+
+    #[test]
+    fn render_lists_proven_sites() {
+        let e = |kind: &str| Entry {
+            krate: "twine-x".into(),
+            kind: kind.into(),
+            file: "crates/twine-x/src/a.rs".into(),
+            code: "x.wrapping_add(1)".into(),
+            reason: Some("`x < 9`".into()),
+            line: 1,
+        };
+        let doc = render(
+            &["twine-x".into()],
+            &[e("safe_arith"), e("safe_arith"), e("safe_index")],
+        );
+        assert!(doc.contains("| twine-x | 1 | 2 |"), "{doc}");
+        assert!(
+            doc.contains("| `SAFE-ARITH` | `src/a.rs` | `x.wrapping_add(1)` | `x < 9` |"),
+            "{doc}"
+        );
     }
 
     #[test]

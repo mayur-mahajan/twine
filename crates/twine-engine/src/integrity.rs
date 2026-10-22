@@ -250,7 +250,7 @@ impl Engine {
     /// start-up: this boxes the observer (the only allocation; noted as an
     /// [`EngineScratch`](AllocSite::EngineScratch) growth after a seal). Never panics.
     pub fn set_frame_observer(&mut self, observer: impl FrameObserver + 'static) {
-        alloc_guard::note(AllocSite::EngineScratch);
+        alloc_guard::note(self.partition(), AllocSite::EngineScratch);
         self.observer = Some(Box::new(observer));
     }
 
@@ -485,7 +485,7 @@ impl Engine {
         match (&mut disp.backend, &disp.refresher.strategy) {
             (Backend::Flush(b), _) => b.read_back(area, out),
             (Backend::Framebuffer(_), Strategy::Full(f)) => {
-                let front = f.fb.get(usize::from(f.back ^ 1)).and_then(Option::as_ref);
+                let front = f.back.other().pick(&f.fb).as_ref();
                 copy_out(front, &disp.info, area, out)
             }
             (Backend::Framebuffer(_), Strategy::Direct(st)) => {
@@ -633,6 +633,7 @@ impl Engine {
         if on {
             if !self.critical.iter().any(|c| c.node == id) {
                 alloc_guard::push(
+                    self.partition(),
                     &mut self.critical,
                     CriticalEntry {
                         node: id,
@@ -895,6 +896,7 @@ fn pack_l8_to_i1(buf: &mut [u8], w: usize, h: usize) -> usize {
                 .enumerate()
             {
                 if *l >= 128 {
+                    // SHIFT: `i & 7 < 8`.
                     byte |= 0x80u8 >> (i & 7);
                 }
             }

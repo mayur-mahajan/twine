@@ -149,7 +149,9 @@ impl Slider {
         self.bar.set_start_value(cx, v, anim);
     }
 
-    /// Sets the range (see [`Bar::set_range`]). Idempotent.
+    /// Sets the range (see [`Bar::set_range`]: any pair of `i32`s, mapped exactly). Dragging
+    /// maps the pointer back in `i64` too (`(rel · (max − min) + len / 2) / len + min`, the
+    /// pointer clamped to the track first). Idempotent. Never panics.
     pub fn set_range(&mut self, cx: &mut WidgetCx<'_>, min: i32, max: i32) {
         self.bar.set_range(cx, min, max);
     }
@@ -187,23 +189,23 @@ impl Slider {
         let (tw, th) = util::transform_wh(m, Part::Knob);
         let place = |pos: i32| {
             let mut k = Area::default();
+            // A knob as long as the slider is thick, centered on `pos` (inclusive span).
+            let along = |size: i32| {
+                let lo = pos.saturating_sub(size >> 1);
+                (lo, lo.saturating_add(size).saturating_sub(1))
+            };
             if g.hor {
-                let size = c.height();
-                k.x1 = pos - (size >> 1);
-                k.x2 = k.x1 + size - 1;
-                k.y1 = c.y1;
-                k.y2 = c.y2;
+                (k.x1, k.x2) = along(c.height());
+                (k.y1, k.y2) = (c.y1, c.y2);
             } else {
-                let size = c.width();
-                k.y1 = pos - (size >> 1);
-                k.y2 = k.y1 + size - 1;
-                k.x1 = c.x1;
-                k.x2 = c.x2;
+                (k.y1, k.y2) = along(c.width());
+                (k.x1, k.x2) = (c.x1, c.x2);
             }
-            k.x1 -= pad.left + tw;
-            k.x2 += pad.right + tw;
-            k.y1 -= pad.top + th;
-            k.y2 += pad.bottom + th;
+            let grow = |p: i32, t: i32| p.saturating_add(t);
+            k.x1 = k.x1.saturating_sub(grow(pad.left, tw));
+            k.x2 = k.x2.saturating_add(grow(pad.right, tw));
+            k.y1 = k.y1.saturating_sub(grow(pad.top, th));
+            k.y2 = k.y2.saturating_add(grow(pad.bottom, th));
             k.to_rect()
         };
         // LV_SLIDER_KNOB_COORD(is_reversed, area): reversed ? x1 : x2;
@@ -242,23 +244,23 @@ impl Slider {
                 (!rev && p.x > r.x2) || (rev && p.x < r.x1),
                 (!rev && p.x < l.x1) || (rev && p.x > l.x2),
                 p.x,
-                r.x1 + (r.x2 - r.x1) / 2,
-                l.x1 + (l.x2 - l.x1) / 2,
+                util::span_mid(r.x1, r.x2),
+                util::span_mid(l.x1, l.x2),
             )
         } else {
             (
                 (!rev && p.y < r.y1) || (rev && p.y > r.y2),
                 (!rev && p.y > l.y2) || (rev && p.y < l.y1),
                 p.y,
-                r.y1 + (r.y2 - r.y1) / 2,
-                l.y1 + (l.y2 - l.y1) / 2,
+                util::span_mid(r.y1, r.y2),
+                util::span_mid(l.y1, l.y2),
             )
         };
         if pr {
             self.value_to_set = Some(Slot::Value);
         } else if pl {
             self.value_to_set = Some(Slot::Start);
-        } else if (rc - pc).abs() < (lc - pc).abs() {
+        } else if rc.abs_diff(pc) < lc.abs_diff(pc) {
             self.value_to_set = Some(Slot::Value);
             self.left_knob_focus = false;
         } else {
@@ -284,11 +286,11 @@ impl Slider {
         let hor = self.bar.is_horizontal(&m);
         if check_drag && !self.dragging {
             let ofs = if hor {
-                p.x - self.pressed_point.x
+                p.x.abs_diff(self.pressed_point.x)
             } else {
-                p.y - self.pressed_point.y
+                p.y.abs_diff(self.pressed_point.y)
             };
-            if ofs.abs() < e.config().scroll_limit {
+            if u32::try_from(e.config().scroll_limit).is_ok_and(|limit| ofs < limit) {
                 return;
             }
         }
@@ -299,31 +301,24 @@ impl Slider {
         let c = Area::from_rect(m.coords());
         let pad = m.padding(Part::Main);
         let (min, max) = (self.bar.min, self.bar.max);
-        let range = i64::from(max - min);
+        // The value range in `i64` (`min ≤ max`: exact for every pair).
+        let range = util::span(min, max);
         let mut v = if hor {
-            let indic_w = c.width() - pad.left - pad.right;
+            let indic_w = c.width().saturating_sub(pad.left).saturating_sub(pad.right);
             let rel = if g.reversed {
-                (c.x2 - pad.right) - p.x
+                c.x2.saturating_sub(pad.right).saturating_sub(p.x)
             } else {
-                p.x - (c.x1 + pad.left)
+                p.x.saturating_sub(c.x1.saturating_add(pad.left))
             };
-            if indic_w == 0 {
-                rel
-            } else {
-                ((i64::from(rel) * range + i64::from(indic_w / 2)) / i64::from(indic_w)) as i32 + min
-            }
+            util::pos_value(rel, indic_w, min, range)
         } else {
-            let indic_h = c.height() - pad.bottom - pad.top;
+            let indic_h = c.height().saturating_sub(pad.bottom).saturating_sub(pad.top);
             let rel = if g.reversed {
-                p.y - (c.y1 + pad.top)
+                p.y.saturating_sub(c.y1.saturating_add(pad.top))
             } else {
-                -(p.y - (c.y2 + pad.bottom))
+                c.y2.saturating_add(pad.bottom).saturating_sub(p.y)
             };
-            if indic_h == 0 {
-                rel
-            } else {
-                ((i64::from(rel) * range + i64::from(indic_h / 2)) / i64::from(indic_h)) as i32 + min
-            }
+            util::pos_value(rel, indic_h, min, range)
         };
         let slot = self.value_to_set.unwrap_or(Slot::Value);
         let (lo, hi) = match slot {
@@ -355,10 +350,10 @@ impl Slider {
         let before = (self.bar.value, self.bar.start_value);
         let mut wcx = cx.widget_cx();
         if self.left_knob_focus && self.bar.mode == BarMode::Range {
-            let v = self.bar.start_value + d;
+            let v = self.bar.start_value.saturating_add(d);
             self.bar.set_start_value(&mut wcx, v, true);
         } else {
-            let v = self.bar.value + d;
+            let v = self.bar.value.saturating_add(d);
             self.bar.set_value(&mut wcx, v, true);
         }
         if (self.bar.value, self.bar.start_value) != before {
@@ -385,10 +380,12 @@ impl Slider {
         let pad = m.padding(Part::Knob);
         let (tw, th) = util::transform_wh(m, Part::Knob);
         let c = m.coords();
-        let mut knob = (c.width() + 2 * tw).min(c.height() + 2 * th) >> 1;
-        knob += pad.left.max(pad.right).max(pad.top.max(pad.bottom));
-        knob += 2; // for rounding errors
-        knob += util::part_ext_draw(m, Part::Knob);
+        let w = c.width().saturating_add(tw.saturating_mul(2));
+        let h = c.height().saturating_add(th.saturating_mul(2));
+        let knob = (w.min(h) >> 1)
+            .saturating_add(pad.left.max(pad.right).max(pad.top.max(pad.bottom)))
+            .saturating_add(2) // for rounding errors
+            .saturating_add(util::part_ext_draw(m, Part::Knob));
         Bar::ext_for(m).max(knob)
     }
 }

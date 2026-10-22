@@ -44,13 +44,20 @@ demo-calibrate = []
 ## The multilang demo without the 165 KB CJK font (the Chinese and Japanese cards say so):
 ## European languages, Hebrew, Arabic and Persian.
 demo-multilang = ["twine-demos/multilang"]
+## The on-screen performance overlay (fps, CPU, render and flush time, heap) over the UI: a
+## debugging aid, off by default (the `twine::perf` log line does not need it). Refused
+## together with `safety`.
+perf-monitor = ["twine/perf-monitor"]
+## Twine's safety profile (`docs/safety/profile.md`: no panicking APIs, bounded resources,
+## fault reporting); excludes `perf-monitor`.
+safety = ["twine/safety"]
 # Internal: set by the features above (do not enable directly).
 spi-panel = []
 touch = []
 i2c-touch = []
 
 [dependencies]
-twine = { path = "../../crates/twine", default-features = false, features = ["defmt", "perf-monitor", "montserrat-20", "drivers-spi-dma"] }
+twine = { path = "../../crates/twine", default-features = false, features = ["defmt", "montserrat-20", "drivers-spi-dma"] }
 twine-demos = { path = "../../crates/twine-demos", features = ["defmt"] }
 
 # `unstable-pac`: the SPI0/DMA registers for the display's DMA transfers (`PicoDmaSpi`).

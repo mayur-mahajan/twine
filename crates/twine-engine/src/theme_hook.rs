@@ -135,9 +135,10 @@ pub trait ThemeHook {
     /// assert_eq!(Plain.modes(), &[ThemeMode::Light]);
     /// ```
     fn modes(&self) -> &'static [ThemeMode] {
+        // Every mode is in `ALL`; the empty fallback is never taken.
+        const ALL: &[ThemeMode] = &ThemeMode::ALL;
         let m = self.mode();
-        let i = ThemeMode::ALL.iter().position(|&x| x == m).unwrap_or(0);
-        &ThemeMode::ALL[i..=i]
+        ALL.iter().find(|&&x| x == m).map_or(&[], core::slice::from_ref)
     }
 
     /// The values of the [design elements](twine_style::design) in `mode` on a display with
@@ -350,14 +351,15 @@ impl ThemedWalk {
             }
             let disp = e.displays.get(self.d)?;
             let k = self.root;
-            self.root += 1;
+            self.root = self.root.saturating_add(1);
             if let Some(&s) = disp.screens.get(k) {
                 self.scope = Some(s);
                 self.cur = Some(s);
                 return Some(s);
             }
+            // `k ≥ screens.len()` here (the screen lookup failed).
             let layer = [disp.bottom_layer, disp.top_layer, disp.sys_layer]
-                .get(k - disp.screens.len())
+                .get(k.saturating_sub(disp.screens.len()))
                 .copied()?;
             // Continue with the layer's first child (the layer itself is skipped).
             self.scope = Some(layer);
@@ -547,7 +549,9 @@ impl Engine {
             );
             return;
         };
-        let disp = &mut self.displays[d];
+        let Some(disp) = self.displays.get_mut(d) else {
+            return;
+        };
         disp.theme_mode = mode;
         disp.design = Some(table);
         disp.design_epoch = disp.design_epoch.wrapping_add(1);
@@ -839,7 +843,7 @@ impl Engine {
                 node.styles.remove_where(|e| e.kind == EntryKind::Theme);
             }
             self.apply_theme_to(n, d);
-            count += 1;
+            count = count.saturating_add(1);
         }
         self.restyle_display(d);
         twine_core::debug!(target: "twine::style", "theme {} applied to {} nodes", name, count);
@@ -859,8 +863,9 @@ impl Engine {
             self.refresh_ext_draw(n);
             self.mark_layout(n, crate::LayoutDirty::SELF);
         }
-        let (display, area) = (self.displays[d].id, self.displays[d].area());
-        self.invalidate_area(display, area, crate::InvalidateReason::StyleChange);
+        if let Some((display, area)) = self.displays.get(d).map(|x| (x.id, x.area())) {
+            self.invalidate_area(display, area, crate::InvalidateReason::StyleChange);
+        }
         let mut walk = ThemedWalk::new(d);
         while let Some(n) = walk.next(self) {
             self.send_event(n, crate::EventCode::StyleChanged, crate::EventParam::None);
@@ -917,7 +922,7 @@ impl Engine {
         let Some(d) = self.displays.iter().position(|d| d.owns_root(root)) else {
             return;
         };
-        if self.displays[d].theme.is_none() {
+        if self.displays.get(d).is_none_or(|x| x.theme.is_none()) {
             return;
         }
         self.apply_theme_to(id, d);

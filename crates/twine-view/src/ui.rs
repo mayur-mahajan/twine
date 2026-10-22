@@ -88,7 +88,14 @@ use twine_core::fault::CapacityFault;
 /// its own channel handlers' messages ([`Scope::drain_channels`]), flushes its own effects,
 /// and an effect of another `UiCore` that runs meanwhile (a signal shared by both changed)
 /// sees no engine — a binding defers itself to its own `UiCore`'s next update and wakes it —
-/// so a binding only ever writes into the engine it was built for.
+/// so a binding only ever writes into the engine it was built for. They still share the
+/// runtime's limits, effect queue, loop cut and fault stream.
+///
+/// **Partitions.** With the `partitions` feature a `UiCore` mounted with the token of another
+/// partition ([`Runtime::take_partition`](twine_reactive::Runtime::take_partition)) shares
+/// nothing with this one: its own runtime, engine partition and seal domain
+/// ([`partition`](Self::partition); [`run`](crate::run) § Partitions). The engine belongs to the
+/// token's partition: the mount sets it ([`Engine::set_partition`]).
 pub struct UiCore {
     rt: Runtime,
     root: Scope,
@@ -434,15 +441,18 @@ impl UiCore {
         queue_capacity: usize,
         app: impl FnOnce(Scope) -> V,
     ) -> Result<UiCore, BuildError> {
+        // One engine belongs to one partition: the token's (ADR-001 § 5.3; also set by
+        // `AppConfig::apply_limits` for configured mounts).
+        engine.set_partition(rt.partition());
         let root = rt.create_root();
-        let queue = EngineQueue::new(queue_capacity);
+        let queue = EngineQueue::new(queue_capacity, rt.partition());
         let motion = root.signal(engine.motion());
         root.activate(|| build_app(root, engine, display, &queue, motion, app))?;
         // The waker is taken only once the build succeeded (a failed mount holds none).
         let (waker, lease) = if let Some(w) = app_waker {
             (w, None)
         } else {
-            let lease = UiWaker::lease();
+            let lease = UiWaker::lease_in(rt.partition());
             if lease.is_shared() {
                 engine.raise_fault(
                     FaultRecord::new(FaultKind::Capacity)
@@ -529,7 +539,7 @@ impl UiCore {
         }
         let root = self.root;
         let scope = root.child();
-        let queue = EngineQueue::new(self.queue_capacity);
+        let queue = EngineQueue::new(self.queue_capacity, self.rt.partition());
         queue.set_waker(self.waker);
         let motion = self.motion;
         root.activate(|| build_app(scope, engine, display, &queue, motion, app))?;
@@ -845,6 +855,27 @@ impl UiCore {
         self.rt
     }
 
+    /// The partition the `UiCore` belongs to: its runtime token's (ADR-001). Its engine, seal
+    /// domain, faults, limits, step budget and heartbeat are that partition's. Never panics.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Partition};
+    /// use twine_engine::{Engine, EngineConfig};
+    /// use twine_hal::DisplayInfo;
+    /// use twine_view::{UiCore, prelude::*};
+    ///
+    /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
+    /// let display = engine.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::Rgb565), 32 * 2 * 4).unwrap();
+    /// let core = UiCore::mount(Runtime::take().unwrap(), &mut engine, display, |_| label("hi")).unwrap();
+    /// assert_eq!(core.partition(), Partition::MAIN);
+    /// assert_eq!(engine.partition(), core.partition());
+    /// # core.dispose(&mut engine);
+    /// ```
+    #[must_use]
+    pub fn partition(&self) -> twine_core::Partition {
+        self.rt.partition()
+    }
+
     /// Heap bytes of the engine command queues of every display of this `UiCore`.
     pub(crate) fn engine_queue_bytes(&self) -> usize {
         self.others.iter().fold(self.queue.heap_bytes(), |sum, d| {
@@ -1093,6 +1124,8 @@ impl Settings {
             Some(buf) => Engine::with_layer_buf(self.app.engine, buf)?,
             None => Engine::new(self.app.engine)?,
         };
+        // The builder's configuration is for the token's partition (its audit names it).
+        self.app.partition = rt.partition();
         self.app.apply_limits(rt, &mut engine)?;
         self.app.configure_engine_wide(&mut engine);
         Ok(engine)
@@ -2177,7 +2210,7 @@ impl Ui {
     /// assert!(report.heap_bytes() > 0);
     /// ui.update(); // steady state: nothing allocated
     /// assert!(ui.last_fault(FaultKind::AllocAfterSeal).is_none());
-    /// alloc_guard::unseal();
+    /// alloc_guard::unseal(twine_core::Partition::MAIN);
     /// ```
     pub fn seal(&mut self) -> crate::MemoryReport {
         self.core.seal(&mut self.engine)
@@ -2460,6 +2493,26 @@ impl Ui {
     #[must_use]
     pub fn runtime(&self) -> Runtime {
         self.core.runtime()
+    }
+
+    /// The partition the `Ui` belongs to: the partition of the token given to
+    /// [`UiBuilder::runtime`] (ADR-001). A partition is one runtime and every `Ui` built on
+    /// it; this `Ui`'s engine, seal domain ([`seal`](Self::seal)), faults, limits, step budget,
+    /// frame observer, fail-safe screen and heartbeat are its own, so a `Ui` of another
+    /// partition cannot interfere with them. Never panics.
+    ///
+    /// ```
+    /// # use twine_core::{ColorFormat, Partition};
+    /// # use twine_hal::DisplayInfo;
+    /// # use twine_testing::{MemoryDisplay, MockClock};
+    /// # use twine_view::prelude::*;
+    /// # let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
+    /// let ui = Ui::builder(panel).runtime(Runtime::take().unwrap()).clock(MockClock::new()).buffers(BufferMode::alloc(BufferSpec::default())).build(|_| label("hi"));
+    /// assert_eq!(ui.partition(), Partition::MAIN);
+    /// ```
+    #[must_use]
+    pub fn partition(&self) -> twine_core::Partition {
+        self.core.partition()
     }
 
     /// The first display (the one given to [`Ui::builder`]; see [`displays`](Self::displays)

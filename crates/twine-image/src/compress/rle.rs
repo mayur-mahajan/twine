@@ -34,6 +34,9 @@ pub const fn rle_block_size(format: ColorFormat) -> usize {
 /// block (padding of the final block, LVGL tolerance) the part that fits is written and
 /// `Ok(output.len())` returned; a larger overflow is an error.
 ///
+/// # Errors
+/// [`Error::Decode`] for truncated input or an overflow of `output` by a block or more.
+///
 /// ```
 /// use twine_image::rle_decompress;
 /// // repeat [1, 2] three times, then two literal blocks [3, 4] [5, 6]
@@ -46,49 +49,73 @@ pub fn rle_decompress(input: &[u8], output: &mut [u8], blk_size: usize) -> Resul
     if blk_size == 0 {
         return Err(Error::Decode("rle block size 0"));
     }
-    let (mut rd, mut wr) = (0usize, 0usize);
     let total = output.len();
-    while rd < input.len() {
-        let c = input[rd];
-        rd += 1;
+    // The unread input and the unwritten output, consumed from the front.
+    let mut inp = input;
+    let mut out: &mut [u8] = output;
+    while let Some((&c, rest)) = inp.split_first() {
+        inp = rest;
         if c & 0x80 != 0 {
-            let bytes = usize::from(c & 0x7F) * blk_size;
-            let src = input.get(rd..rd + bytes).ok_or(Error::Decode("rle truncated"))?;
-            rd += bytes;
-            let room = output.len() - wr;
-            if bytes > room {
-                return overflow(&src[..room], &mut output[wr..], bytes - room, blk_size, total);
-            }
-            output[wr..wr + bytes].copy_from_slice(src);
-            wr += bytes;
-        } else {
-            let blk = input
-                .get(rd..rd + blk_size)
+            // Literal packet: `c & 0x7F` blocks follow (saturating: an impossible length is
+            // truncated input).
+            let bytes = usize::from(c & 0x7F).saturating_mul(blk_size);
+            let (src, rest) = inp
+                .split_at_checked(bytes)
                 .ok_or(Error::Decode("rle truncated"))?;
-            rd += blk_size;
-            // Whole blocks that fit, written in one pass.
-            let fit = usize::from(c).min((output.len() - wr) / blk_size);
-            let span = &mut output[wr..wr + fit * blk_size];
-            if blk_size == 1 {
-                span.fill(blk[0]);
+            inp = rest;
+            let room = out.len();
+            if bytes > room {
+                // SAFE-ARITH: `bytes > room`.
+                return overflow(src, out, bytes.wrapping_sub(room), blk_size, total);
+            }
+            // `bytes ≤ out.len()` (checked above): never `None`.
+            let Some((dst, rest)) = core::mem::take(&mut out).split_at_mut_checked(bytes) else {
+                return Err(Error::Decode("rle overflow"));
+            };
+            dst.copy_from_slice(src);
+            out = rest;
+        } else {
+            let (blk, rest) = inp
+                .split_at_checked(blk_size)
+                .ok_or(Error::Decode("rle truncated"))?;
+            inp = rest;
+            // Whole blocks that fit, written in one pass. `blk_size != 0` (refused at the
+            // top): the division's fallback is never taken.
+            let fit = usize::from(c).min(out.len().checked_div(blk_size).unwrap_or(0));
+            // SAFE-ARITH: `fit ≤ out.len() / blk_size`, so `fit · blk_size ≤ out.len()`.
+            let Some((span, rest)) =
+                core::mem::take(&mut out).split_at_mut_checked(fit.wrapping_mul(blk_size))
+            else {
+                return Err(Error::Decode("rle overflow"));
+            };
+            if let [b] = blk {
+                span.fill(*b);
             } else {
                 span.chunks_exact_mut(blk_size)
                     .for_each(|d| d.copy_from_slice(blk));
             }
-            wr += fit * blk_size;
+            out = rest;
             if fit < usize::from(c) {
-                let room = output.len() - wr;
-                return overflow(&blk[..room], &mut output[wr..], blk_size - room, blk_size, total);
+                // Here `out.len() < blk_size` (no further whole block fits).
+                // SAFE-ARITH: `out.len() < blk_size`.
+                let over = blk_size.wrapping_sub(out.len());
+                return overflow(blk, out, over, blk_size, total);
             }
         }
     }
-    Ok(wr)
+    // SAFE-ARITH: `out` is a tail of `output`.
+    Ok(total.wrapping_sub(out.len()))
 }
 
-/// Handles a packet that does not fit: writes `fits` and accepts an overflow below one block.
-fn overflow(fits: &[u8], out: &mut [u8], over: usize, blk_size: usize, total: usize) -> Result<usize, Error> {
+/// The last packet overflows `out` (the rest of the output) by `over` bytes: below one block,
+/// the part of `src` that fits is written and the whole output counts as written; otherwise
+/// the data is corrupt.
+fn overflow(src: &[u8], out: &mut [u8], over: usize, blk_size: usize, total: usize) -> Result<usize, Error> {
     if over < blk_size {
-        out[..fits.len()].copy_from_slice(fits);
+        // `src` holds more than `out.len()` bytes (it overflows): never `None`.
+        if let Some(fits) = src.get(..out.len()) {
+            out.copy_from_slice(fits);
+        }
         Ok(total)
     } else {
         Err(Error::Decode("rle overflow"))
@@ -111,37 +138,47 @@ fn overflow(fits: &[u8], out: &mut [u8], over: usize, blk_size: usize, total: us
 pub fn rle_compress(input: &[u8], blk_size: usize) -> Vec<u8> {
     let blk_size = blk_size.max(1);
     let mut padded;
-    let data = if input.len() % blk_size == 0 {
+    let data = if input.len().checked_rem(blk_size) == Some(0) {
         input
     } else {
         padded = input.to_vec();
-        padded.resize(input.len().div_ceil(blk_size) * blk_size, 0);
+        padded.resize(input.len().div_ceil(blk_size).saturating_mul(blk_size), 0);
         &padded[..]
     };
     let blocks: Vec<&[u8]> = data.chunks_exact(blk_size).collect();
+    // Length of the run of equal blocks starting at `i` (at most 127).
     let run_at = |i: usize| -> usize {
-        let mut r = 1;
-        while i + r < blocks.len() && r < 127 && blocks[i + r] == blocks[i] {
-            r += 1;
-        }
-        r
+        let Some((first, rest)) = blocks.get(i..).and_then(<[&[u8]]>::split_first) else {
+            return 0;
+        };
+        // SAFE-ARITH: at most 126 more blocks are counted.
+        rest.iter()
+            .take(126)
+            .take_while(|b| *b == first)
+            .count()
+            .wrapping_add(1)
     };
-    let mut out = Vec::with_capacity(data.len() / 2 + 8);
+    let mut out = Vec::with_capacity((data.len() / 2).saturating_add(8));
     let mut i = 0;
     while i < blocks.len() {
         let r = run_at(i);
         if r >= 2 {
+            // `r ≤ 127`: the cast is exact.
             out.push(r as u8);
-            out.extend_from_slice(blocks[i]);
-            i += r;
+            out.extend_from_slice(blocks.get(i).copied().unwrap_or_default());
+            // SAFE-ARITH: the run lies inside `blocks`.
+            i = i.wrapping_add(r);
             continue;
         }
         let start = i;
-        while i < blocks.len() && i - start < 127 && (i == start || run_at(i) < 2) {
-            i += 1;
+        // SAFE-ARITH: `start ≤ i < blocks.len()` in the loop.
+        while i < blocks.len() && i.wrapping_sub(start) < 127 && (i == start || run_at(i) < 2) {
+            i = i.wrapping_add(1);
         }
-        out.push(0x80 | (i - start) as u8);
-        for b in &blocks[start..i] {
+        let literal = blocks.get(start..i).unwrap_or_default();
+        // `literal.len() ≤ 127`: the cast is exact.
+        out.push(0x80 | literal.len() as u8);
+        for b in literal {
             out.extend_from_slice(b);
         }
     }

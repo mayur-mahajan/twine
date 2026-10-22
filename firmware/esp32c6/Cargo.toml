@@ -54,13 +54,20 @@ demo-controls = []
 demo-selection = []
 ## Touch calibration: logs a `Calibration { .. }` to paste into the wiring block.
 demo-calibrate = []
+## The on-screen performance overlay (fps, CPU, render and flush time, heap) over the UI: a
+## debugging aid, off by default (the `twine::perf` log line does not need it). Refused
+## together with `safety`.
+perf-monitor = ["twine/perf-monitor"]
+## Twine's safety profile (`docs/safety/profile.md`: no panicking APIs, bounded resources,
+## fault reporting); excludes `perf-monitor`.
+safety = ["twine/safety"]
 # Internal: set by the features above (do not enable directly).
 spi-panel = []
 touch = []
 i2c-touch = []
 
 [dependencies]
-twine = { path = "../../crates/twine", default-features = false, features = ["log", "perf-monitor", "montserrat-20", "embassy"] }
+twine = { path = "../../crates/twine", default-features = false, features = ["log", "montserrat-20", "embassy"] }
 twine-demos = { path = "../../crates/twine-demos", features = ["async"] }
 
 esp-hal = { version = "~1.2.2", features = ["esp32c6", "log-04", "unstable"] }

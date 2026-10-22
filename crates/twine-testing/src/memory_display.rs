@@ -561,10 +561,16 @@ impl MemoryDisplay {
 
 /// Sets pixel `x` of a packed row of `bpp`-bit pixels (1, 2 or 4, MSB first) to `v`.
 fn set_bits(row: &mut [u8], bpp: usize, x: usize, v: u8) {
+    // DIV: callers pass `bpp` 1, 2 or 4 (a `ColorFormat::bpp` that is not a multiple of 8).
     let per_byte = 8 / bpp;
+    // DIV: `per_byte = 8 / bpp ∈ {8, 4, 2}`.
     let shift = 8 - bpp * (x % per_byte + 1);
+    // SHIFT: callers pass `bpp` 1, 2 or 4 (a `ColorFormat::bpp` that is not a multiple of 8), so
+    // `shift = 8 − bpp·(x % per_byte + 1)` is `0..=7` and `bpp ≤ 4` (`u16`).
     let mask = (((1u16 << bpp) - 1) as u8) << shift;
+    // DIV: `per_byte ∈ {8, 4, 2}`, as above.
     let b = &mut row[x / per_byte];
+    // SHIFT: `shift ≤ 7`, as above.
     *b = (*b & !mask) | ((v << shift) & mask);
 }
 

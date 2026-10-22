@@ -34,3 +34,11 @@ cargo xtask fuzz fuzz_png --time 60     # or: cd fuzz && cargo +nightly fuzz run
 ```
 
 Crashes are written to `fuzz/artifacts/<target>/`; add a regression test for each one.
+
+`corpus/<target>/` holds seed inputs (the default corpus of `cargo fuzz run`); only the hand-written `r5s*` seeds are tracked by git, files the fuzzer adds stay local (`fuzz/.gitignore`). The `r5s09_*`
+seeds of `fuzz_bmp`, `fuzz_png` and `fuzz_gif` are headers with out-of-range bit depths, masks
+and LZW code sizes (R5.S09); `crates/twine-image/tests/shift_amounts.rs` builds them, checks that
+they are rejected and that the files match (`TWINE_UPDATE_FUZZ_SEEDS=1` rewrites them).
+The `r5s10_*` seeds of `fuzz_bmp`, `fuzz_png`, `fuzz_gif` and `fuzz_qoi` are images of zero
+width or height (and GIF frames of zero size) that must never reach a division (R5.S10);
+`crates/twine-image/tests/zero_size.rs` builds and checks them the same way.

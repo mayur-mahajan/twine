@@ -7,7 +7,7 @@ use core::any::Any;
 use core::fmt;
 
 use twine_core::arena::next_generation;
-use twine_core::{Duration, Generation, Id, Instant};
+use twine_core::{Duration, Generation, Id, Instant, Partition};
 
 /// Handle of a timer in [`Timers`]. Generational: stale ids are rejected after the timer is
 /// removed, even if its slot is reused. The handle is a [`twine_core::Id`] (4 bytes; 8 with a
@@ -140,6 +140,8 @@ pub struct Timers {
     limit: u16,
     running: bool,
     epoch: u32,
+    /// The partition whose seal domain the table's growth is noted in.
+    part: Partition,
 }
 
 impl fmt::Debug for Timers {
@@ -171,12 +173,34 @@ impl Timers {
             limit: Self::MAX_TIMERS,
             running: false,
             epoch: 0,
+            part: Partition::MAIN,
         }
     }
 
     /// The largest number of timers a table can hold (65 534: slot indices are `u16`, one
     /// value is reserved).
     pub const MAX_TIMERS: u16 = u16::MAX - 1;
+
+    /// Moves the table to partition `p`'s seal domain: growth of its storage after `p` was
+    /// sealed is noted there ([`twine_core::alloc_guard`]). The engine calls it from
+    /// `Engine::set_partition`; a table starts in [`Partition::MAIN`]. Never panics.
+    ///
+    /// ```
+    /// use twine_anim::Timers;
+    /// use twine_core::Partition;
+    /// let mut t = Timers::new();
+    /// t.set_partition(Partition::MAIN);
+    /// assert_eq!(t.partition(), Partition::MAIN);
+    /// ```
+    pub fn set_partition(&mut self, p: Partition) {
+        self.part = p;
+    }
+
+    /// The partition set with [`set_partition`](Self::set_partition).
+    #[must_use]
+    pub fn partition(&self) -> Partition {
+        self.part
+    }
 
     /// Sets how many timers the table may hold at once (capped at
     /// [`MAX_TIMERS`](Self::MAX_TIMERS); at least 1). Adding one more returns
@@ -261,13 +285,23 @@ impl Timers {
         } else if let Ok(i) = u16::try_from(self.slots.len())
             && i < u16::MAX
         {
-            twine_core::alloc_guard::push(&mut self.slots, slot, twine_core::alloc_guard::AllocSite::Timer);
+            twine_core::alloc_guard::push(
+                self.part,
+                &mut self.slots,
+                slot,
+                twine_core::alloc_guard::AllocSite::Timer,
+            );
             (i, 0)
         } else {
             twine_core::warn!(target: "twine::anim", "timer table full, timer dropped");
             return TimerId::DANGLING;
         };
-        twine_core::alloc_guard::push(&mut self.order, index, twine_core::alloc_guard::AllocSite::Timer);
+        twine_core::alloc_guard::push(
+            self.part,
+            &mut self.order,
+            index,
+            twine_core::alloc_guard::AllocSite::Timer,
+        );
         let id = TimerId::new(index, generation);
         twine_core::debug!(target: "twine::anim", "timer {:?} added, period {}", id, period);
         id
@@ -306,6 +340,7 @@ impl Timers {
             self.order_dirty = true;
             if reuse {
                 twine_core::alloc_guard::push(
+                    self.part,
                     &mut self.pending_free,
                     id.index(),
                     twine_core::alloc_guard::AllocSite::Timer,
@@ -315,6 +350,7 @@ impl Timers {
             self.order.retain(|&i| i != id.index());
             if reuse {
                 twine_core::alloc_guard::push(
+                    self.part,
                     &mut self.free,
                     id.index(),
                     twine_core::alloc_guard::AllocSite::Timer,

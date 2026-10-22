@@ -1,5 +1,7 @@
 //! [`EngineConfig`]: every tunable of the engine, with LVGL-like defaults.
 
+use core::num::NonZeroU8;
+
 use twine_core::{Duration, Instant};
 use twine_render::RenderConfig;
 use twine_text::Font;
@@ -162,8 +164,21 @@ pub struct EngineConfig {
     pub long_press_repeat: Duration,
     /// Pointer movement in pixels that starts scrolling (default 10).
     pub scroll_limit: i32,
-    /// Momentum decay of a scroll throw in percent per frame (default 10).
-    pub scroll_throw: u8,
+    /// Momentum decay of a scroll throw in percent per input read (default 10): each read
+    /// keeps `100 − scroll_throw` percent of the throw vector; 100 or more stops a throw at
+    /// once. Non-zero by its type: a throw always decays, so it always ends (a snapped throw's
+    /// predicted distance is finite). Never panics.
+    ///
+    /// ```
+    /// use core::num::NonZeroU8;
+    /// use twine_engine::EngineConfig;
+    ///
+    /// assert_eq!(EngineConfig::default().scroll_throw.get(), 10);
+    /// // The slowest decay: 1 % per read.
+    /// let cfg = EngineConfig { scroll_throw: NonZeroU8::MIN, ..EngineConfig::default() };
+    /// assert_eq!(cfg.scroll_throw.get(), 1);
+    /// ```
+    pub scroll_throw: NonZeroU8,
     /// Movement in pixels that makes a gesture (default 50).
     pub gesture_limit: i32,
     /// Minimum velocity of a gesture in pixels per read period (default 3).
@@ -208,7 +223,8 @@ impl Default for EngineConfig {
             long_press_time: Duration::ms(400),
             long_press_repeat: Duration::ms(100),
             scroll_limit: 10,
-            scroll_throw: 10,
+            // `1 + 9`: a non-zero constant without a fallible conversion.
+            scroll_throw: NonZeroU8::MIN.saturating_add(9),
             gesture_limit: 50,
             gesture_min_velocity: 3,
             multi_click_time: Duration::ms(300),
@@ -361,7 +377,7 @@ impl twine_core::audit::Audit for EngineConfig {
         out.entry(e, "long_press_time_us", us(self.long_press_time));
         out.entry(e, "long_press_repeat_us", us(self.long_press_repeat));
         out.entry(e, "scroll_limit", int(self.scroll_limit));
-        out.entry(e, "scroll_throw", V::Uint(u64::from(self.scroll_throw)));
+        out.entry(e, "scroll_throw", V::Uint(u64::from(self.scroll_throw.get())));
         out.entry(e, "gesture_limit", int(self.gesture_limit));
         out.entry(e, "gesture_min_velocity", int(self.gesture_min_velocity));
         out.entry(e, "multi_click_time_us", us(self.multi_click_time));

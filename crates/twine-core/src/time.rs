@@ -3,6 +3,7 @@
 //! There is no clock here; the `Clock` trait lives in `twine-hal`.
 
 use core::fmt;
+use core::num::NonZeroU64;
 use core::ops::{Add, AddAssign, Sub, SubAssign};
 
 /// A span of time in microseconds. Arithmetic saturates.
@@ -113,11 +114,11 @@ impl Duration {
     /// Divides by `n`; dividing by zero returns [`Duration::MAX`] and logs a warning.
     #[must_use]
     pub fn div(self, n: u32) -> Duration {
-        if n == 0 {
+        let Some(n) = NonZeroU64::new(u64::from(n)) else {
             crate::warn!(target: "twine::core", "Duration::div: division by zero");
             return Duration::MAX;
-        }
-        Duration(self.0 / u64::from(n))
+        };
+        Duration(self.0 / n)
     }
 
     /// Progress `elapsed / total` scaled to `0..=1024` (clamped). A zero `total` returns 1024.
@@ -126,7 +127,15 @@ impl Duration {
         if total.0 == 0 || elapsed.0 >= total.0 {
             return 1024;
         }
-        ((elapsed.0 as u128 * 1024) / total.0 as u128) as u16
+        // SAFE-ARITH: a `u64` times 1024 fits in `u128`.
+        // `total.0 != 0` (returned above): the fallback is never taken.
+        match (elapsed.0 as u128)
+            .wrapping_mul(1024)
+            .checked_div(total.0 as u128)
+        {
+            Some(q) => q as u16,
+            None => 1024,
+        }
     }
 }
 
@@ -149,14 +158,14 @@ impl Sub for Duration {
 impl AddAssign for Duration {
     #[inline]
     fn add_assign(&mut self, o: Duration) {
-        *self = *self + o;
+        *self = Add::add(*self, o);
     }
 }
 
 impl SubAssign for Duration {
     #[inline]
     fn sub_assign(&mut self, o: Duration) {
-        *self = *self - o;
+        *self = Sub::sub(*self, o);
     }
 }
 
@@ -254,14 +263,14 @@ impl Sub for Instant {
 impl AddAssign<Duration> for Instant {
     #[inline]
     fn add_assign(&mut self, d: Duration) {
-        *self = *self + d;
+        *self = Add::add(*self, d);
     }
 }
 
 impl SubAssign<Duration> for Instant {
     #[inline]
     fn sub_assign(&mut self, d: Duration) {
-        *self = *self - d;
+        *self = Sub::sub(*self, d);
     }
 }
 

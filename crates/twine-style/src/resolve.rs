@@ -346,7 +346,8 @@ pub fn resolve_grid_tracks<S: StyleSource>(
     let state = opts.state.unwrap_or_else(|| src.state(id));
     let entries = src.entries(id);
     let (i, _) = own_value(entries, state, part, prop, opts.skip_transitions)?;
-    entries[i].style.grid_tracks(prop)
+    // SAFE-INDEX: `own_value` returns an index of `entries`; the fallback is never taken.
+    entries.get(i)?.style.grid_tracks(prop)
 }
 
 /// `v` with a design element replaced by the source's value and a [`Length::Dp`] converted
@@ -434,10 +435,11 @@ static MISSING_ELEMENT: [AtomicBool; ElementKind::COUNT] =
 #[cold]
 #[inline(never)]
 fn missing_element(prop: PropId, e: ElementRef, defaults: StyleDefaults) -> StyleValue {
-    let flag = &MISSING_ELEMENT[e.kind() as usize];
+    // `kind() < COUNT` (a dense enum): the `true` fallback (no warning) is never taken.
+    let flag = MISSING_ELEMENT.get(e.kind() as usize);
     // Load + store instead of a swap: thumbv6m has no atomic read-modify-write; a rare
     // duplicate warning is harmless.
-    if !flag.load(Ordering::Relaxed) {
+    if let Some(flag) = flag.filter(|f| !f.load(Ordering::Relaxed)) {
         flag.store(true, Ordering::Relaxed);
         twine_core::warn!(
             target: "twine::style",
@@ -593,8 +595,10 @@ fn typed<T: PropValue>(prop: PropId, v: StyleValue, defaults: StyleDefaults) -> 
     );
     // Load + store instead of a swap: thumbv6m has no atomic read-modify-write; a rare duplicate
     // warning is harmless.
-    if !WARNED[prop as usize].load(Ordering::Relaxed) {
-        WARNED[prop as usize].store(true, Ordering::Relaxed);
+    // Ids are `1..=PROP_COUNT`, below the table's length: the fallback (no warning) is never
+    // taken.
+    if let Some(flag) = WARNED.get(prop as usize).filter(|f| !f.load(Ordering::Relaxed)) {
+        flag.store(true, Ordering::Relaxed);
         twine_core::warn!(target: "twine::style", "value of {} has the wrong type; using the default", prop);
     }
     T::from_value(default_value(prop, defaults))

@@ -5,6 +5,8 @@
 //! A scrollbar is drawn only when the `Scrollbar` part has a pixel `Width` (its thickness) and
 //! a visible background or border; themes provide these styles.
 
+use core::num::{NonZeroI32, Saturating};
+
 use twine_core::{Opa, Rect};
 use twine_render::Painter;
 use twine_style::{Part, PropId, ScrollbarMode, Sides};
@@ -15,14 +17,28 @@ use crate::{DrawCx, Engine, InvalidateReason, NodeId, ObjFlags};
 /// LVGL `LV_OPA_MIN`: parts at or below this opacity are not drawn.
 const OPA_MIN: u8 = 2;
 
-/// `v · factor / divisor` in 64 bits (LVGL `mul_div`).
-fn mul_div(v: i32, factor: i32, divisor: i32) -> i32 {
-    (i64::from(v) * i64::from(factor) / i64::from(divisor)) as i32
+/// A coordinate whose arithmetic saturates: scrollbar geometry adds style paddings and scroll
+/// extents (any `i32`) to coordinates; a sum past `i32` clips instead of overflowing.
+type Coord = Saturating<i32>;
+
+/// One pixel.
+const ONE: Coord = Saturating(1);
+
+/// `v · factor / divisor` in 64 bits (LVGL `mul_div`), clamped to `i32`; the divisor is
+/// non-zero by its type.
+fn mul_div(v: Coord, factor: Coord, divisor: NonZeroI32) -> Coord {
+    // SAFE-ARITH: the product of two `i32`s fits in `i64` (at most 2^62 in magnitude), so the
+    // division by a non-zero divisor cannot overflow: the fallback is never taken.
+    let q = i64::from(v.0)
+        .wrapping_mul(i64::from(factor.0))
+        .checked_div(i64::from(divisor.get()))
+        .unwrap_or(0);
+    Saturating(i32::try_from(q).unwrap_or(if q < 0 { i32::MIN } else { i32::MAX }))
 }
 
 /// An inclusive LVGL area as a [`Rect`] (`None` when empty).
-fn from_incl(x1: i32, y1: i32, x2: i32, y2: i32) -> Option<Rect> {
-    let r = Rect::new(x1, y1, x2 + 1, y2 + 1);
+fn from_incl(x1: Coord, y1: Coord, x2: Coord, y2: Coord) -> Option<Rect> {
+    let r = Rect::new(x1.0, y1.0, (x2 + ONE).0, (y2 + ONE).0);
     (!r.is_empty()).then_some(r)
 }
 
@@ -37,7 +53,7 @@ impl Engine {
     /// the node's edges (vertical bar: `pad_right`, or `pad_left` for right-to-left scrollbars;
     /// horizontal bar: `pad_bottom`) and the insets at the ends (`pad_top`/`pad_bottom`,
     /// `pad_left`/`pad_right`). The bar's length is the visible fraction of the track (or the
-    /// part's `Length`), at least 10 px at 160 dpi.
+    /// part's `Length`), at least 10 px at 160 dpi. Coordinates past the `i32` range saturate.
     #[must_use]
     pub fn scrollbar_areas(&self, id: NodeId) -> (Option<Rect>, Option<Rect>) {
         let Some(n) = self.tree.node(id) else {
@@ -79,38 +95,42 @@ impl Engine {
             return (None, None);
         }
         let rtl = self.is_rtl(id, part);
-        let top_space = self.style_i32(id, part, PropId::PaddingTop);
-        let bottom_space = self.style_i32(id, part, PropId::PaddingBottom);
-        let left_space = self.style_i32(id, part, PropId::PaddingLeft);
-        let right_space = self.style_i32(id, part, PropId::PaddingRight);
-        let length = self.style_i32(id, part, PropId::Length);
-        let min_size = twine_style::dpx(10, self.node_dpi(id));
+        let top_space = Saturating(self.style_i32(id, part, PropId::PaddingTop));
+        let bottom_space = Saturating(self.style_i32(id, part, PropId::PaddingBottom));
+        let left_space = Saturating(self.style_i32(id, part, PropId::PaddingLeft));
+        let right_space = Saturating(self.style_i32(id, part, PropId::PaddingRight));
+        let length = Saturating(self.style_i32(id, part, PropId::Length));
+        let min_size = Saturating(twine_style::dpx(10, self.node_dpi(id)));
+        let thickness = Saturating(thickness);
+        let (st, sb, sl, sr) = (Saturating(st), Saturating(sb), Saturating(sl), Saturating(sr));
         let c = n.coords;
         // Inclusive coordinates as in LVGL.
-        let (x1, y1, x2, y2) = (c.x0, c.y0, c.x1 - 1, c.y1 - 1);
-        let (obj_w, obj_h) = (c.width(), c.height());
-        let ver_req_space = if ver_draw { thickness } else { 0 };
-        let hor_req_space = if hor_draw { thickness } else { 0 };
+        let (x1, y1) = (Saturating(c.x0), Saturating(c.y0));
+        let (x2, y2) = (Saturating(c.x1) - ONE, Saturating(c.y1) - ONE);
+        let (obj_w, obj_h) = (Saturating(c.width()), Saturating(c.height()));
+        let zero = Saturating(0);
+        let ver_req_space = if ver_draw { thickness } else { zero };
+        let hor_req_space = if hor_draw { thickness } else { zero };
 
         let mut ver = None;
         let content_h = obj_h + st + sb;
-        if ver_draw && content_h != 0 {
+        if ver_draw && let Some(content_h) = NonZeroI32::new(content_h.0) {
             let (vx1, vx2) = if rtl {
-                (x1 + left_space, x1 + left_space + thickness - 1)
+                (x1 + left_space, x1 + left_space + thickness - ONE)
             } else {
-                (x2 - right_space - thickness + 1, x2 - right_space)
+                (x2 - right_space - thickness + ONE, x2 - right_space)
             };
             let track = obj_h - top_space - bottom_space - hor_req_space;
             let mut sb_h = mul_div(track, obj_h, content_h);
-            sb_h = (if length > 0 { length } else { sb_h }).max(min_size).min(obj_h);
+            sb_h = (if length > zero { length } else { sb_h })
+                .max(min_size)
+                .min(obj_h);
             let rem = track - sb_h;
-            let scroll_h = content_h - obj_h;
-            let (vy1, vy2) = if scroll_h <= 0 {
-                (y1 + top_space, y2 - bottom_space - hor_req_space - 1)
-            } else {
+            let scroll_h = Saturating(content_h.get()) - obj_h;
+            let (vy1, vy2) = if let Some(scroll_h) = NonZeroI32::new(scroll_h.0.max(0)) {
                 let sb_y = rem - mul_div(rem, sb, scroll_h);
                 let mut a = y1 + sb_y + top_space;
-                let mut b = a + sb_h - 1;
+                let mut b = a + sb_h - ONE;
                 if a < y1 + top_space {
                     a = y1 + top_space;
                     if a + min_size > b {
@@ -124,27 +144,25 @@ impl Engine {
                     }
                 }
                 (a, b)
+            } else {
+                (y1 + top_space, y2 - bottom_space - hor_req_space - ONE)
             };
             ver = from_incl(vx1, vy1, vx2, vy2);
         }
 
         let mut hor = None;
         let content_w = obj_w + sl + sr;
-        if hor_draw && content_w != 0 {
+        if hor_draw && let Some(content_w) = NonZeroI32::new(content_w.0) {
             let hy2 = y2 - bottom_space;
-            let hy1 = hy2 - thickness + 1;
+            let hy1 = hy2 - thickness + ONE;
             let track = obj_w - left_space - right_space - ver_req_space;
             let mut sb_w = mul_div(track, obj_w, content_w);
-            sb_w = (if length > 0 { length } else { sb_w }).max(min_size).min(obj_w);
+            sb_w = (if length > zero { length } else { sb_w })
+                .max(min_size)
+                .min(obj_w);
             let rem = track - sb_w;
-            let scroll_w = content_w - obj_w;
-            let (hx1, hx2) = if scroll_w <= 0 {
-                if rtl {
-                    (x1 + left_space + ver_req_space - 1, x2 - right_space)
-                } else {
-                    (x1 + left_space, x2 - right_space - ver_req_space - 1)
-                }
-            } else {
+            let scroll_w = Saturating(content_w.get()) - obj_w;
+            let (hx1, hx2) = if let Some(scroll_w) = NonZeroI32::new(scroll_w.0.max(0)) {
                 let sb_x = rem - mul_div(rem, sr, scroll_w);
                 let start = if rtl {
                     x1 + left_space + ver_req_space
@@ -156,8 +174,8 @@ impl Engine {
                 } else {
                     x2 - ver_req_space - right_space
                 };
-                let mut a = x1 + sb_x + left_space + if rtl { ver_req_space } else { 0 };
-                let mut b = a + sb_w - 1;
+                let mut a = x1 + sb_x + left_space + if rtl { ver_req_space } else { zero };
+                let mut b = a + sb_w - ONE;
                 if a < start {
                     a = start;
                     if a + min_size > b {
@@ -171,6 +189,10 @@ impl Engine {
                     }
                 }
                 (a, b)
+            } else if rtl {
+                (x1 + left_space + ver_req_space - ONE, x2 - right_space)
+            } else {
+                (x1 + left_space, x2 - right_space - ver_req_space - ONE)
             };
             hor = from_incl(hx1, hy1, hx2, hy2);
         }
@@ -198,11 +220,26 @@ impl Engine {
         let pad_r = self.style_i32(id, part, PropId::PaddingRight).max(0);
         let pad_b = self.style_i32(id, part, PropId::PaddingBottom).max(0);
         let ver = if self.is_rtl(id, part) {
-            Rect::new(c.x0, c.y0, c.x0 + pad_l + thickness, c.y1)
+            Rect::new(
+                c.x0,
+                c.y0,
+                c.x0.saturating_add(pad_l).saturating_add(thickness),
+                c.y1,
+            )
         } else {
-            Rect::new(c.x1 - pad_r - thickness, c.y0, c.x1, c.y1)
+            Rect::new(
+                c.x1.saturating_sub(pad_r).saturating_sub(thickness),
+                c.y0,
+                c.x1,
+                c.y1,
+            )
         };
-        let hor = Rect::new(c.x0, c.y1 - pad_b - thickness, c.x1, c.y1);
+        let hor = Rect::new(
+            c.x0,
+            c.y1.saturating_sub(pad_b).saturating_sub(thickness),
+            c.x1,
+            c.y1,
+        );
         self.invalidate_rect_of(id, ver, InvalidateReason::Scroll);
         self.invalidate_rect_of(id, hor, InvalidateReason::Scroll);
     }

@@ -14,6 +14,8 @@
 //! `scroll_by(id, 0, 10, false)` moves the content **down** by 10 pixels and reduces the offset
 //! by 10.
 
+use core::num::{NonZeroU32, Saturating as S};
+
 use twine_anim::{Anim, AnimTarget, Easing};
 
 use crate::AnimProp;
@@ -71,12 +73,15 @@ pub(crate) enum Axis {
 /// LVGL `lv_anim_speed_clamped(speed, min, max)` resolved for a distance `d` (LVGL
 /// `lv_anim_resolve_speed`): `speed` is in pixels per second, stored with a resolution of 10.
 pub(crate) fn speed_clamped_time(speed: u32, min: Duration, max: Duration, d: u32) -> Duration {
-    let speed = (speed.min(10_230) + 5) / 10;
-    let min_ms = (min.as_millis().min(10_230) as u32 + 5) / 10 * 10;
-    let max_ms = (max.as_millis().min(10_230) as u32 + 5) / 10 * 10;
-    if speed == 0 {
+    // SAFE-ARITH: every operand is clamped to 10 230 first, so the sums and products below
+    // stay under 2^14.
+    let round10 = |v: u32| v.min(10_230).wrapping_add(5) / 10;
+    let speed = round10(speed);
+    let min_ms = round10(min.as_millis().min(10_230) as u32).wrapping_mul(10);
+    let max_ms = round10(max.as_millis().min(10_230) as u32).wrapping_mul(10);
+    let Some(speed) = NonZeroU32::new(speed) else {
         return Duration::ms(u64::from(min_ms));
-    }
+    };
     let t = d.saturating_mul(100) / speed;
     Duration::ms(u64::from(t.clamp(min_ms, max_ms.max(min_ms))))
 }
@@ -208,7 +213,7 @@ impl Engine {
     /// [`ChildrenBox`]).
     pub(crate) fn scroll_children_box(&self, id: NodeId) -> Option<Rect> {
         let n = self.tree.node(id)?;
-        let origin = Point::new(n.coords.x0 - n.scroll.x, n.coords.y0 - n.scroll.y);
+        let origin = n.coords.origin() - n.scroll;
         let rel = if let Some(b) = n.children_bbox.get() {
             b.0
         } else {
@@ -220,14 +225,14 @@ impl Engine {
                 }
                 let m = |p| self.style_i32(c, Part::Main, p);
                 let r = Rect::new(
-                    cn.coords.x0 - m(PropId::MarginLeft),
-                    cn.coords.y0 - m(PropId::MarginTop),
-                    cn.coords.x1 + m(PropId::MarginRight),
-                    cn.coords.y1 + m(PropId::MarginBottom),
+                    cn.coords.x0.saturating_sub(m(PropId::MarginLeft)),
+                    cn.coords.y0.saturating_sub(m(PropId::MarginTop)),
+                    cn.coords.x1.saturating_add(m(PropId::MarginRight)),
+                    cn.coords.y1.saturating_add(m(PropId::MarginBottom)),
                 );
                 bb = Some(bb.map_or(r, |b| b.union(&r)));
             }
-            let rel = bb.map(|b| b.translate(-origin.x, -origin.y));
+            let rel = bb.map(|b| b.offset(-origin));
             n.children_bbox.set(Some(ChildrenBox(rel)));
             rel
         };
@@ -262,9 +267,9 @@ impl Engine {
         let (_, st, _, sb) = self.space_ltrb(id);
         let child = self
             .scroll_children_box(id)
-            .map_or(COORD_MIN, |b| b.y1 - (c.y1 - sb));
-        let self_h = self.self_size(id).h - (c.height() - st - sb) - n.scroll.y;
-        child.max(self_h)
+            .map_or(COORD_MIN, |b| (S(b.y1) - (S(c.y1) - S(sb))).0);
+        let self_h = S(self.self_size(id).h) - (S(c.height()) - S(st) - S(sb)) - S(n.scroll.y);
+        child.max(self_h.0)
     }
 
     /// How much content is left of the content area (LVGL `lv_obj_get_scroll_left`): the
@@ -282,9 +287,9 @@ impl Engine {
         let (sl, _, sr, _) = self.space_ltrb(id);
         let child = self
             .scroll_children_box(id)
-            .map_or(COORD_MIN, |b| (c.x0 + sl) - b.x0);
-        let self_w = self.self_size(id).w - (c.width() - sr - sl) + n.scroll.x;
-        child.max(self_w)
+            .map_or(COORD_MIN, |b| (S(c.x0) + S(sl) - S(b.x0)).0);
+        let self_w = S(self.self_size(id).w) - (S(c.width()) - S(sr) - S(sl)) + S(n.scroll.x);
+        child.max(self_w.0)
     }
 
     /// How much content is right of the content area (LVGL `lv_obj_get_scroll_right`); for
@@ -295,15 +300,15 @@ impl Engine {
             return 0;
         };
         if self.is_rtl(id, Part::Main) {
-            return -n.scroll.x;
+            return n.scroll.x.saturating_neg();
         }
         let c = n.coords;
         let (sl, _, sr, _) = self.space_ltrb(id);
         let child = self
             .scroll_children_box(id)
-            .map_or(COORD_MIN, |b| b.x1 - (c.x1 - sr));
-        let self_w = self.self_size(id).w - (c.width() - sr - sl) - n.scroll.x;
-        child.max(self_w)
+            .map_or(COORD_MIN, |b| (S(b.x1) - (S(c.x1) - S(sr))).0);
+        let self_w = S(self.self_size(id).w) - (S(c.width()) - S(sr) - S(sl)) - S(n.scroll.x);
+        child.max(self_w.0)
     }
 
     // ---- Scrolling ---------------------------------------------------------------------------
@@ -319,7 +324,7 @@ impl Engine {
         let Some(n) = self.tree.node_mut(id) else {
             return false;
         };
-        n.scroll = Point::new(n.scroll.x - dx, n.scroll.y - dy);
+        n.scroll -= Point::new(dx, dy);
         let scroll = n.scroll;
         let overflow = n.flags.contains(ObjFlags::OVERFLOW_VISIBLE);
         if overflow {
@@ -463,10 +468,10 @@ impl Engine {
             fmt_node_id(id),
             axis,
             start,
-            start - delta,
+            start.saturating_sub(delta),
             t
         );
-        let a = Anim::new(start, start - delta)
+        let a = Anim::new(start, start.saturating_sub(delta))
             .duration(t)
             .easing(Easing::EaseOut)
             .on_complete(move |cx| {
@@ -505,29 +510,31 @@ impl Engine {
             twine_core::warn!(target: "twine::scroll", "scroll_by_bounded: node {} not found", fmt_node_id(id));
             return;
         };
-        // In LVGL's raw terms: the content offset is the negated scroll offset.
-        let x_current = -n.scroll.x;
-        let mut x_bounded = x_current + dx;
+        // In LVGL's raw terms: the content offset is the negated scroll offset (saturating
+        // arithmetic: offsets and extents are any `i32`; `zero − v` is the saturating negation).
+        let zero = S(0);
+        let x_current = zero - S(n.scroll.x);
+        let mut x_bounded = x_current + S(dx);
         if self.is_rtl(id, Part::Main) {
-            x_bounded = x_bounded.max(0);
-            if x_bounded > 0 {
-                let max = (self.scroll_left(id) + self.scroll_right(id)).max(0);
+            x_bounded = x_bounded.max(zero);
+            if x_bounded > zero {
+                let max = (S(self.scroll_left(id)) + S(self.scroll_right(id))).max(zero);
                 x_bounded = x_bounded.min(max);
             }
         } else {
-            x_bounded = x_bounded.min(0);
-            if x_bounded < 0 {
-                let max = (self.scroll_left(id) + self.scroll_right(id)).max(0);
-                x_bounded = x_bounded.max(-max);
+            x_bounded = x_bounded.min(zero);
+            if x_bounded < zero {
+                let max = (S(self.scroll_left(id)) + S(self.scroll_right(id))).max(zero);
+                x_bounded = x_bounded.max(zero - max);
             }
         }
-        let y_current = -self.scroll_offset(id).y;
-        let mut y_bounded = (y_current + dy).min(0);
-        if y_bounded < 0 {
-            let max = (self.scroll_top(id) + self.scroll_bottom(id)).max(0);
-            y_bounded = y_bounded.max(-max);
+        let y_current = zero - S(self.scroll_offset(id).y);
+        let mut y_bounded = (y_current + S(dy)).min(zero);
+        if y_bounded < zero {
+            let max = (S(self.scroll_top(id)) + S(self.scroll_bottom(id))).max(zero);
+            y_bounded = y_bounded.max(zero - max);
         }
-        let (dx, dy) = (x_bounded - x_current, y_bounded - y_current);
+        let (dx, dy) = ((x_bounded - x_current).0, (y_bounded - y_current).0);
         if dx != 0 || dy != 0 {
             self.scroll_by(id, dx, dy, anim);
         }
@@ -544,7 +551,7 @@ impl Engine {
     /// stops first).
     pub fn scroll_to_x(&mut self, id: NodeId, x: i32, anim: bool) {
         self.stop_scroll_anim_axis(id, AnimProp::ScrollX);
-        let diff = -x + self.scroll_offset(id).x;
+        let diff = self.scroll_offset(id).x.saturating_sub(x);
         self.scroll_by_bounded(id, diff, 0, anim);
     }
 
@@ -552,7 +559,7 @@ impl Engine {
     /// first).
     pub fn scroll_to_y(&mut self, id: NodeId, y: i32, anim: bool) {
         self.stop_scroll_anim_axis(id, AnimProp::ScrollY);
-        let diff = -y + self.scroll_offset(id).y;
+        let diff = self.scroll_offset(id).y.saturating_sub(y);
         self.scroll_by_bounded(id, 0, diff, anim);
     }
 
@@ -615,35 +622,38 @@ impl Engine {
         let pc = self.coords(parent);
         let cc = self.coords(child);
         let (sleft, stop, sright, sbottom) = self.space_ltrb(parent);
+        // Saturating arithmetic: coordinates, paddings and pending scrolls are any `i32`.
+        let (sleft, stop, sright, sbottom) = (S(sleft), S(stop), S(sright), S(sbottom));
+        let zero = S(0);
 
         let a = if attrs.snap_y == ScrollSnap::None {
             area
         } else {
             cc
         };
-        let top_diff = pc.y0 + stop - a.y0 - sv.y;
-        let bottom_diff = -(pc.y1 - sbottom - a.y1 - sv.y);
-        let parent_h = pc.height() - stop - sbottom;
-        let mut y_scroll = 0;
-        if top_diff >= 0 && bottom_diff >= 0 {
-            y_scroll = 0;
-        } else if top_diff > 0 {
+        let top_diff = S(pc.y0) + stop - S(a.y0) - S(sv.y);
+        let bottom_diff = zero - (S(pc.y1) - sbottom - S(a.y1) - S(sv.y));
+        let parent_h = S(pc.height()) - stop - sbottom;
+        let mut y_scroll = zero;
+        if top_diff >= zero && bottom_diff >= zero {
+            y_scroll = zero;
+        } else if top_diff > zero {
             y_scroll = top_diff;
             // Do not scroll in beyond the start.
-            if self.scroll_top(parent) - y_scroll < 0 {
-                y_scroll = 0;
+            if S(self.scroll_top(parent)) - y_scroll < zero {
+                y_scroll = zero;
             }
-        } else if bottom_diff > 0 {
-            y_scroll = -bottom_diff;
-            if self.scroll_bottom(parent) + y_scroll < 0 {
-                y_scroll = 0;
+        } else if bottom_diff > zero {
+            y_scroll = zero - bottom_diff;
+            if S(self.scroll_bottom(parent)) + y_scroll < zero {
+                y_scroll = zero;
             }
         }
         match attrs.snap_y {
-            ScrollSnap::Start => y_scroll += pc.y0 + stop - (a.y0 + y_scroll),
-            ScrollSnap::End => y_scroll += pc.y1 - sbottom - (a.y1 + y_scroll),
+            ScrollSnap::Start => y_scroll += S(pc.y0) + stop - (S(a.y0) + y_scroll),
+            ScrollSnap::End => y_scroll += S(pc.y1) - sbottom - (S(a.y1) + y_scroll),
             ScrollSnap::Center => {
-                y_scroll += pc.y0 + stop + parent_h / 2 - (a.height() / 2 + a.y0 + y_scroll);
+                y_scroll += S(pc.y0) + stop + S(parent_h.0 / 2) - (S(a.height() / 2) + S(a.y0) + y_scroll);
             }
             ScrollSnap::None => {}
         }
@@ -653,31 +663,32 @@ impl Engine {
         } else {
             cc
         };
-        let left_diff = pc.x0 + sleft - a.x0 - sv.x;
-        let right_diff = -(pc.x1 - sright - a.x1 - sv.x);
-        let mut x_scroll = 0;
-        if left_diff >= 0 && right_diff >= 0 {
-            x_scroll = 0;
-        } else if left_diff > 0 {
+        let left_diff = S(pc.x0) + sleft - S(a.x0) - S(sv.x);
+        let right_diff = zero - (S(pc.x1) - sright - S(a.x1) - S(sv.x));
+        let mut x_scroll = zero;
+        if left_diff >= zero && right_diff >= zero {
+            x_scroll = zero;
+        } else if left_diff > zero {
             x_scroll = left_diff;
-            if self.scroll_left(parent) - x_scroll < 0 {
-                x_scroll = 0;
+            if S(self.scroll_left(parent)) - x_scroll < zero {
+                x_scroll = zero;
             }
-        } else if right_diff > 0 {
-            x_scroll = -right_diff;
-            if self.scroll_right(parent) + x_scroll < 0 {
-                x_scroll = 0;
+        } else if right_diff > zero {
+            x_scroll = zero - right_diff;
+            if S(self.scroll_right(parent)) + x_scroll < zero {
+                x_scroll = zero;
             }
         }
-        let parent_w = pc.width() - sleft - sright;
+        let parent_w = S(pc.width()) - sleft - sright;
         match attrs.snap_x {
-            ScrollSnap::Start => x_scroll += pc.x0 + sleft - (a.x0 + x_scroll),
-            ScrollSnap::End => x_scroll += pc.x1 - sright - (a.x1 + x_scroll),
+            ScrollSnap::Start => x_scroll += S(pc.x0) + sleft - (S(a.x0) + x_scroll),
+            ScrollSnap::End => x_scroll += S(pc.x1) - sright - (S(a.x1) + x_scroll),
             ScrollSnap::Center => {
-                x_scroll += pc.x0 + sleft + parent_w / 2 - (a.width() / 2 + a.x0 + x_scroll);
+                x_scroll += S(pc.x0) + sleft + S(parent_w.0 / 2) - (S(a.width() / 2) + S(a.x0) + x_scroll);
             }
             ScrollSnap::None => {}
         }
+        let (mut x_scroll, mut y_scroll) = (x_scroll.0, y_scroll.0);
 
         // Remove any pending scroll animations.
         self.stop_scroll_anim(parent);
@@ -695,8 +706,7 @@ impl Engine {
             y_scroll = 0;
         }
         if anim {
-            sv.x += x_scroll;
-            sv.y += y_scroll;
+            *sv += Point::new(x_scroll, y_scroll);
         }
         self.scroll_by(parent, x_scroll, y_scroll, anim);
     }
@@ -721,8 +731,8 @@ impl Engine {
         let Some(c) = self.tree.node(id).map(crate::Node::coords) else {
             return;
         };
-        let mut x = self.find_snap_point_x(id, c.x0, c.x1 - 1, 0);
-        let mut y = self.find_snap_point_y(id, c.y0, c.y1 - 1, 0);
+        let mut x = self.find_snap_point_x(id, c.x0, c.x1.saturating_sub(1), 0);
+        let mut y = self.find_snap_point_y(id, c.y0, c.y1.saturating_sub(1), 0);
         if x == COORD_MAX || x == COORD_MIN {
             x = 0;
         }
@@ -741,7 +751,7 @@ impl Engine {
             if st > 0 {
                 let sb = self.scroll_bottom(id);
                 if sb < 0 {
-                    self.scroll_by(id, 0, st.min(-sb), anim);
+                    self.scroll_by(id, 0, st.min(sb.saturating_neg()), anim);
                 }
             }
         }
@@ -759,7 +769,7 @@ impl Engine {
                 if sl > 0 {
                     let sr = self.scroll_right(id);
                     if sr < 0 {
-                        self.scroll_by(id, sl.min(-sr), 0, anim);
+                        self.scroll_by(id, sl.min(sr.saturating_neg()), 0, anim);
                     }
                 }
             }
@@ -792,18 +802,7 @@ impl Engine {
         let Some(n) = self.tree.node(id) else {
             return COORD_MAX;
         };
-        let pad = self.cached_main(id).pad;
-        let c = n.coords;
-        // (start, end-inclusive, size, pad start, pad end) of the parent on the axis.
-        let (p0, p1, ps, pad0, pad1) = match axis {
-            Axis::X => (c.x0, c.x1 - 1, c.width(), pad.left, pad.right),
-            Axis::Y => (c.y0, c.y1 - 1, c.height(), pad.top, pad.bottom),
-        };
-        let parent_point = match align {
-            ScrollSnap::Start => p0 + pad0,
-            ScrollSnap::End => p1 - pad1,
-            _ => p0 + pad0 + (ps - pad0 - pad1) / 2,
-        };
+        let parent_point = self.snap_position(id, n.coords, axis, align).0;
         let mut dist = COORD_MAX;
         for ch in self.tree.children(id) {
             let Some(cn) = self.tree.node(ch) else { continue };
@@ -815,22 +814,28 @@ impl Engine {
             }
             let cc = cn.coords;
             let (c0, c1, cs) = match axis {
-                Axis::X => (cc.x0, cc.x1 - 1, cc.width()),
-                Axis::Y => (cc.y0, cc.y1 - 1, cc.height()),
+                Axis::X => (cc.x0, cc.x1.saturating_sub(1), cc.width()),
+                Axis::Y => (cc.y0, cc.y1.saturating_sub(1), cc.height()),
             };
             let child_point = match align {
                 ScrollSnap::Start => c0,
                 ScrollSnap::End => c1,
-                _ => c0 + cs / 2,
-            } + ofs;
+                _ => c0.saturating_add(cs / 2),
+            }
+            .saturating_add(ofs);
             if child_point >= min && child_point <= max {
-                let d = child_point - parent_point;
-                if d.abs() < dist.abs() {
+                let d = child_point.saturating_sub(parent_point);
+                if d.unsigned_abs() < dist.unsigned_abs() {
                     dist = d;
                 }
             }
         }
-        if dist == COORD_MAX { COORD_MAX } else { -dist }
+        // `dist` is `COORD_MAX` or a saturated difference: its negation saturates too.
+        if dist == COORD_MAX {
+            COORD_MAX
+        } else {
+            dist.saturating_neg()
+        }
     }
 
     /// LVGL `has_more_snap_points`: whether there are snap points before (start) and after
@@ -841,21 +846,31 @@ impl Engine {
             Axis::X => attrs.snap_x,
             Axis::Y => attrs.snap_y,
         };
-        let c = self.coords(id);
-        let pad = self.cached_main(id).pad;
-        let (p0, p1, ps, pad0, pad1) = match axis {
-            Axis::X => (c.x0, c.x1 - 1, c.width(), pad.left, pad.right),
-            Axis::Y => (c.y0, c.y1 - 1, c.height(), pad.top, pad.bottom),
+        let v = if snap == ScrollSnap::None {
+            S(0)
+        } else {
+            self.snap_position(id, self.coords(id), axis, snap)
         };
-        let v = match snap {
-            ScrollSnap::Center => p0 + (ps - pad0 - pad1) / 2 + pad0,
+        let end = self.find_snap_point(id, axis, (v + S(1)).0, COORD_MAX, 0) != COORD_MAX;
+        let start = self.find_snap_point(id, axis, COORD_MIN, (v - S(1)).0, 0) != COORD_MAX;
+        (start, end)
+    }
+
+    /// The snap position of `id` (at `c`) on `axis` for `align` (`Center` for `None`): the
+    /// padded start, the padded end (inclusive) or the middle of the padded content area.
+    fn snap_position(&self, id: NodeId, c: Rect, axis: Axis, align: ScrollSnap) -> S<i32> {
+        let pad = self.cached_main(id).pad;
+        // (start, end-inclusive, size, pad start, pad end) of the node on the axis.
+        let (p0, p1, ps, pad0, pad1) = match axis {
+            Axis::X => (c.x0, c.x1, c.width(), pad.left, pad.right),
+            Axis::Y => (c.y0, c.y1, c.height(), pad.top, pad.bottom),
+        };
+        let (p0, p1, pad0, pad1) = (S(p0), S(p1) - S(1), S(pad0), S(pad1));
+        match align {
             ScrollSnap::Start => p0 + pad0,
             ScrollSnap::End => p1 - pad1,
-            ScrollSnap::None => 0,
-        };
-        let end = self.find_snap_point(id, axis, v + 1, COORD_MAX, 0) != COORD_MAX;
-        let start = self.find_snap_point(id, axis, COORD_MIN, v - 1, 0) != COORD_MAX;
-        (start, end)
+            _ => p0 + pad0 + S((S(ps) - pad0 - pad1).0 / 2),
+        }
     }
 
     /// The snapping of `id` on `axis`.
@@ -872,10 +887,10 @@ impl Engine {
         let cur = self.scroll_offset(id);
         match axis {
             Axis::X => {
-                self.scroll_by_raw(id, cur.x - v, 0);
+                self.scroll_by_raw(id, cur.x.saturating_sub(v), 0);
             }
             Axis::Y => {
-                self.scroll_by_raw(id, 0, cur.y - v);
+                self.scroll_by_raw(id, 0, cur.y.saturating_sub(v));
             }
         }
     }

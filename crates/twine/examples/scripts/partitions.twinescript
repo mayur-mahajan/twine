@@ -1,0 +1,23 @@
+# Headless tour of partitions (cargo xtask sim-smoke): the critical panel (left, partition 0)
+# and the media panel (right, partition 1). A tap focuses the right panel; every fault key then
+# goes to it, and the left panel keeps updating with no fault.
+wait 100
+shot start
+wait 16
+tap 250 60
+wait 50
+key 1
+wait 200
+shot effect_loop
+key 2
+wait 200
+shot flood
+key 3
+wait 300
+shot slow
+key 4
+wait 200
+shot fail_safe
+key 5
+wait 300
+shot stalled

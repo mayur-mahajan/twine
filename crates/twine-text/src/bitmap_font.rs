@@ -4,7 +4,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::cache::GlyphCache;
-use crate::decode::{decode_compressed, expand_row};
+use crate::decode::{Bpp, decode_compressed, expand_row};
 use crate::font::{GlyphInfo, GlyphProvider, provider_key};
 
 /// Metrics and bitmap location of one glyph (LVGL `lv_font_fmt_txt_glyph_dsc_t`).
@@ -144,6 +144,19 @@ pub struct BitmapFont {
 
 static BAD_BPP_WARNED: AtomicBool = AtomicBool::new(false);
 
+/// Copies `src` into row `y` of `w`-byte rows of `dst` (nothing when the row is outside
+/// `dst`; the callers size `dst` for every row). At most `w` bytes are copied.
+#[inline]
+fn copy_row(dst: &mut [u8], y: usize, w: usize, src: &[u8]) {
+    // SAFE-ARITH: rows of one glyph: `y < h ≤ 255` and `w ≤ 255`, so `y · w + w < 2^17`.
+    let start = y.wrapping_mul(w);
+    if let Some(row) = dst.get_mut(start..start.wrapping_add(w)) {
+        for (d, s) in row.iter_mut().zip(src) {
+            *d = *s;
+        }
+    }
+}
+
 impl BitmapFont {
     /// The glyph id of `cp` (`None` when missing).
     #[must_use]
@@ -157,7 +170,8 @@ impl BitmapFont {
                 continue;
             }
             let id = match c.kind {
-                CmapKind::Format0Tiny => u32::from(c.glyph_id_start) + rcp,
+                // SAFE-ARITH: `rcp < range_length`, a `u16`, so the sum is below 2^17.
+                CmapKind::Format0Tiny => u32::from(c.glyph_id_start).wrapping_add(rcp),
                 CmapKind::Format0Full => {
                     let GlyphIdOfs::U8(ofs) = c.glyph_id_ofs_list else {
                         continue;
@@ -168,13 +182,15 @@ impl BitmapFont {
                     if o == 0 && rcp != 0 {
                         continue;
                     }
-                    u32::from(c.glyph_id_start) + u32::from(o)
+                    // SAFE-ARITH: two `u16`s.
+                    u32::from(c.glyph_id_start).wrapping_add(u32::from(o))
                 }
                 CmapKind::SparseTiny => {
                     let Ok(i) = c.unicode_list.binary_search(&(rcp as u16)) else {
                         continue;
                     };
-                    u32::from(c.glyph_id_start) + i as u32
+                    // An index past `u16` ids is no glyph (`try_from` below).
+                    u32::from(c.glyph_id_start).saturating_add(u32::try_from(i).unwrap_or(u32::MAX))
                 }
                 CmapKind::SparseFull => {
                     let Ok(i) = c.unicode_list.binary_search(&(rcp as u16)) else {
@@ -186,7 +202,8 @@ impl BitmapFont {
                     let Some(&o) = ofs.get(i) else {
                         continue;
                     };
-                    u32::from(c.glyph_id_start) + u32::from(o)
+                    // SAFE-ARITH: two `u16`s.
+                    u32::from(c.glyph_id_start).wrapping_add(u32::from(o))
                 }
             };
             return match u16::try_from(id) {
@@ -223,26 +240,33 @@ impl BitmapFont {
                 let l = left_class_map.get(usize::from(left)).copied().unwrap_or(0);
                 let r = right_class_map.get(usize::from(right)).copied().unwrap_or(0);
                 if l > 0 && r > 0 {
-                    let i = usize::from(l - 1) * usize::from(right_class_cnt) + usize::from(r - 1);
+                    // SAFE-ARITH: `l, r ≥ 1` (checked) and every factor is a `u8`, so the index
+                    // is below 2^16.
+                    let i = usize::from(l.wrapping_sub(1))
+                        .wrapping_mul(usize::from(right_class_cnt))
+                        .wrapping_add(usize::from(r.wrapping_sub(1)));
                     class_pair_values.get(i).copied().unwrap_or(0)
                 } else {
                     0
                 }
             }
         };
-        (i32::from(v) * i32::from(self.kern_scale)) >> 4
+        // SAFE-ARITH: an `i8` times a `u16` is below 2^23 in magnitude.
+        i32::from(v).wrapping_mul(i32::from(self.kern_scale)) >> 4
     }
 
-    fn valid_bpp(&self) -> bool {
-        if matches!(self.bpp, 1 | 2 | 4 | 8) {
-            return true;
+    /// The validated bit depth (checked once per glyph, before any bitmap is read), or `None`
+    /// with a warning (once) for an invalid one.
+    fn checked_bpp(&self) -> Option<Bpp> {
+        if let Some(bpp) = Bpp::new(self.bpp) {
+            return Some(bpp);
         }
         debug_assert!(false, "invalid bitmap font bpp {}", self.bpp);
         if !BAD_BPP_WARNED.load(Ordering::Relaxed) {
             BAD_BPP_WARNED.store(true, Ordering::Relaxed);
             twine_core::warn!(target: "twine::text", "bitmap font with invalid bpp {}; glyphs treated as missing", self.bpp);
         }
-        false
+        None
     }
 
     fn dsc(&self, info: &GlyphInfo) -> Option<&GlyphDsc> {
@@ -259,9 +283,9 @@ impl BitmapFont {
 
     /// Streams rows of the glyph (`sink(y, a8_row)`); the shared core of both render paths.
     fn rows(&self, info: &GlyphInfo, cache: &mut GlyphCache, sink: &mut dyn FnMut(usize, &[u8])) -> bool {
-        if !self.valid_bpp() {
+        let Some(depth) = self.checked_bpp() else {
             return false;
-        }
+        };
         let Some(d) = self.dsc(info) else {
             return false;
         };
@@ -274,10 +298,11 @@ impl BitmapFont {
             self.warn_corrupt(cache);
             return false;
         };
-        let bpp = self.bpp;
+        let bpp = depth.get();
         match self.format {
             BitmapFormat::Plain if bpp == 8 => {
-                if data.len() < w * h {
+                // SAFE-ARITH: `w, h ≤ 255` (`u8` box sizes).
+                if data.len() < w.wrapping_mul(h) {
                     self.warn_corrupt(cache);
                     return false;
                 }
@@ -290,8 +315,11 @@ impl BitmapFont {
                 let mut row = core::mem::take(&mut cache.row_a);
                 let mut ok = true;
                 for y in 0..h {
-                    ok &= expand_row(data, y * w * usize::from(bpp), bpp, w, &mut row);
-                    sink(y, &row[..w]);
+                    // SAFE-ARITH: `y < h ≤ 255`, `w ≤ 255`, `bpp ≤ 8`.
+                    let bit = y.wrapping_mul(w).wrapping_mul(usize::from(bpp));
+                    ok &= expand_row(data, bit, depth, w, &mut row);
+                    // The row buffer holds `MAX_ROW ≥ 255 ≥ w` bytes.
+                    sink(y, row.get(..w).unwrap_or_default());
                 }
                 cache.row_a = row;
                 if !ok {
@@ -312,8 +340,8 @@ impl BitmapFont {
                 let mut a = core::mem::take(&mut cache.row_a);
                 let mut b = core::mem::take(&mut cache.row_b);
                 let ok = if let Some(slot) = cache.insert(key, w, h) {
-                    let ok = decode_compressed(data, bpp, w, h, prefilter, &mut a, &mut b, &mut |y, r| {
-                        slot[y * w..(y + 1) * w].copy_from_slice(r);
+                    let ok = decode_compressed(data, depth, w, h, prefilter, &mut a, &mut b, &mut |y, r| {
+                        copy_row(slot, y, w, r);
                     });
                     if ok {
                         for (y, row) in slot.chunks_exact(w).enumerate() {
@@ -322,7 +350,7 @@ impl BitmapFont {
                     }
                     ok
                 } else {
-                    decode_compressed(data, bpp, w, h, prefilter, &mut a, &mut b, sink)
+                    decode_compressed(data, depth, w, h, prefilter, &mut a, &mut b, sink)
                 };
                 cache.row_a = a;
                 cache.row_b = b;
@@ -338,16 +366,16 @@ impl BitmapFont {
 
 impl GlyphProvider for BitmapFont {
     fn glyph_info(&self, cp: char, next: Option<char>) -> Option<GlyphInfo> {
-        if !self.valid_bpp() {
-            return None;
-        }
+        self.checked_bpp()?;
         let id = self.glyph_id(cp)?;
         let d = self.glyphs.get(usize::from(id))?;
         let kern = match (self.kern, next) {
             (Kern::None, _) | (_, None) => 0,
             (_, Some(n)) => self.glyph_id(n).map_or(0, |nid| self.kern(id, nid)),
         };
-        let adv = (i32::from(d.adv_w) + kern).clamp(0, i32::from(u16::MAX));
+        let adv = i32::from(d.adv_w)
+            .saturating_add(kern)
+            .clamp(0, i32::from(u16::MAX));
         Some(GlyphInfo {
             adv_w: adv as u16,
             box_w: u16::from(d.box_w),
@@ -362,7 +390,8 @@ impl GlyphProvider for BitmapFont {
 
     fn render_a8(&self, info: &GlyphInfo, out: &mut [u8], cache: &mut GlyphCache) -> bool {
         let w = usize::from(info.box_w);
-        let n = w * usize::from(info.box_h);
+        // SAFE-ARITH: two `u16`s: the product is below 2^32.
+        let n = w.wrapping_mul(usize::from(info.box_h));
         if out.len() < n {
             debug_assert!(
                 false,
@@ -372,9 +401,7 @@ impl GlyphProvider for BitmapFont {
             );
             return false;
         }
-        self.rows(info, cache, &mut |y, row| {
-            out[y * w..(y + 1) * w].copy_from_slice(row);
-        })
+        self.rows(info, cache, &mut |y, row| copy_row(out, y, w, row))
     }
 
     fn render_rows(

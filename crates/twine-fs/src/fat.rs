@@ -95,6 +95,10 @@ fn map_err<E: core::fmt::Debug>(e: &embedded_sdmmc::Error<E>) -> Error {
 
 impl<D: BlockDevice, T: TimeSource, const MAX_FILES: usize> FatFs<D, T, MAX_FILES> {
     /// Opens volume 0 of `device` (MBR partition table) and its root directory.
+    ///
+    /// # Errors
+    /// [`Error::Io`] for a device error, [`Error::NotFound`] or [`Error::Unsupported`] when the
+    /// card has no usable FAT volume 0, [`Error::OutOfMemory`].
     pub fn new(device: D, time: T) -> Result<Self, Error> {
         let mgr = VolumeManager::new_with_limits(device, time, 0x7000);
         let volume = mgr.open_raw_volume(VolumeIdx(0)).map_err(|e| {

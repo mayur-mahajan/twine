@@ -1,0 +1,23 @@
+# Visit each side tab (170 px bar, 150 px per tab): open a folder, type a note (not saved),
+# start three jobs on the worker thread. (Headless time runs ahead of the worker's real-time
+# sleeps, so the bars may still be empty here; in the window they fill up.)
+wait 1500
+shot overview
+tap 85 225
+wait 600
+shot files
+tap 85 375
+wait 600
+tap 565 300
+text "Twine runs on the desktop too."
+wait 300
+shot notes
+tap 85 525
+wait 600
+tap 704 64
+wait 300
+tap 704 64
+wait 300
+tap 704 64
+wait 900
+shot jobs

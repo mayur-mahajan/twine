@@ -24,6 +24,7 @@ use twine_core::{Color, ColorFormat, Opa, PixelFormat};
 
 use crate::DrawBuf;
 use crate::dispatch::{dispatch_format, warn_once};
+use crate::num::{inv8, mul8, span};
 
 /// How source colors combine with the destination before alpha mixing (the LVGL set).
 ///
@@ -63,7 +64,7 @@ impl BlendMode {
             BlendMode::Normal => s,
             BlendMode::Additive => s.saturating_add(d),
             BlendMode::Subtractive => d.saturating_sub(s),
-            BlendMode::Multiply => udiv255(u32::from(s) * u32::from(d)) as u8,
+            BlendMode::Multiply => mul8(s, d),
             BlendMode::Difference => s.abs_diff(d),
         }
     }
@@ -107,13 +108,14 @@ impl<'s> Source<'s> {
         match self {
             Source::Solid(c) => Source::Solid(c),
             Source::Pixels { data, format } => {
-                let skip = (px * usize::from(format.bpp()) / 8).min(data.len());
+                // Past the end: no pixels left (the `get` fallback).
+                let skip = px.saturating_mul(usize::from(format.bpp())) / 8;
                 Source::Pixels {
-                    data: &data[skip..],
+                    data: data.get(skip..).unwrap_or(&[]),
                     format,
                 }
             }
-            Source::Argb(d) => Source::Argb(&d[(px * 4).min(d.len())..]),
+            Source::Argb(d) => Source::Argb(d.get(px.saturating_mul(4)..).unwrap_or(&[])),
         }
     }
 
@@ -122,7 +124,9 @@ impl<'s> Source<'s> {
     pub fn len(&self) -> usize {
         match self {
             Source::Solid(_) => usize::MAX,
-            Source::Pixels { data, format } => (data.len() * 8)
+            Source::Pixels { data, format } => data
+                .len()
+                .saturating_mul(8)
                 .checked_div(usize::from(format.bpp()))
                 .unwrap_or(0),
             Source::Argb(d) => d.len() / 4,
@@ -139,40 +143,51 @@ impl<'s> Source<'s> {
 /// Effective alpha of `mask` value `m` at opacity `opa` (`opa == 255` → `m` exactly).
 #[inline(always)]
 fn eff(m: u8, opa: u8) -> u8 {
-    if opa == 255 {
-        m
-    } else {
-        udiv255(u32::from(m) * u32::from(opa)) as u8
-    }
+    if opa == 255 { m } else { mul8(m, opa) }
+}
+
+/// The four bytes of an `Argb8888` pixel (`B, G, R, A`) from a chunk of exactly 4 bytes.
+#[inline(always)]
+fn bgra(s: &[u8]) -> [u8; 4] {
+    // SAFE-INDEX: callers pass `chunks_exact(4)` items; the fallback is never taken.
+    s.first_chunk::<4>().copied().unwrap_or([0; 4])
 }
 
 /// Writes the raw pixel bytes `px` repeatedly over `dst` (doubling copies).
 #[inline]
 fn fill_raw(dst: &mut [u8], px: &[u8]) {
     let bytes = dst.len();
+    let Some((&b0, rest)) = px.split_first() else {
+        return;
+    };
     if bytes == 0 {
         return;
     }
-    if px.iter().all(|&b| b == px[0]) {
-        dst.fill(px[0]);
+    if rest.iter().all(|&b| b == b0) {
+        dst.fill(b0);
         return;
     }
     let first = px.len().min(bytes);
-    dst[..first].copy_from_slice(&px[..first]);
+    // SAFE-INDEX: `first ≤ dst.len()` and `first ≤ px.len()`; the fallback is never taken.
+    if let (Some(d), Some(p)) = (dst.get_mut(..first), px.get(..first)) {
+        d.copy_from_slice(p);
+    }
     let mut filled = first;
     while filled < bytes {
-        let n = filled.min(bytes - filled);
+        // SAFE-ARITH: `filled < bytes` (the loop condition).
+        let n = filled.min(bytes.wrapping_sub(filled));
         dst.copy_within(0..n, filled);
-        filled += n;
+        // SAFE-ARITH: `n ≤ bytes − filled`, so `filled + n ≤ bytes`.
+        filled = filled.wrapping_add(n);
     }
 }
 
 /// Composites `fg` with alpha `a` over the straight-alpha `Argb8888` pixel `px` (LVGL
 /// `lv_color_32_32_mix` rules).
 #[inline(always)]
-fn put_argb(px: &mut [u8], fg: Color, a: u8, mode: BlendMode) {
-    let da = px[3];
-    let dc = Color::new(px[2], px[1], px[0]);
+fn put_argb(px: &mut [u8; 4], fg: Color, a: u8, mode: BlendMode) {
+    let [db, dg, dr, da] = *px;
+    let dc = Color::new(dr, dg, db);
     let fg = if mode == BlendMode::Normal || da == 0 {
         fg
     } else {
@@ -185,27 +200,48 @@ fn put_argb(px: &mut [u8], fg: Color, a: u8, mode: BlendMode) {
     } else if da == 255 {
         (Color::mix(fg, dc, Opa::from_raw(a)), 255)
     } else {
-        let ra = 255 - udiv255(u32::from(255 - a) * u32::from(255 - da)) as u8;
-        let ratio = (u32::from(a) * 255 / u32::from(ra)).min(255) as u8;
+        // Here `a < 255` and `da < 255`, so `(255 − a)(255 − da) / 255 ≤ 254` and `ra ≥ 1`.
+        let ra = inv8(mul8(inv8(a), inv8(da)));
+        // SAFE-ARITH: `a · 255 < 2^16`. `ra ≥ 1` (above): the division's fallback is never
+        // taken (it replaces the divide-by-zero check, at no cost).
+        let ratio = u32::from(a)
+            .wrapping_mul(255)
+            .checked_div(u32::from(ra))
+            .unwrap_or(255)
+            .min(255) as u8;
         (Color::mix(fg, dc, Opa::from_raw(ratio)), ra)
     };
-    px[0] = c.b;
-    px[1] = c.g;
-    px[2] = c.r;
-    px[3] = out_a;
+    *px = [c.b, c.g, c.r, out_a];
 }
 
 /// Mixes `fg` with alpha `a` into the pixel `px` of an alpha-less format `F`.
 #[inline(always)]
 fn put<F: PixelFormat>(px: &mut [u8], fg: Color, a: u8, mode: BlendMode) {
     if F::FORMAT == ColorFormat::Argb8888 {
-        put_argb(px, fg, a, mode);
+        // SAFE-INDEX: `px` is one pixel of `F` (`F::BYTES = 4` here); the fallback is never
+        // taken.
+        if let Some(px) = px.first_chunk_mut::<4>() {
+            put_argb(px, fg, a, mode);
+        }
         return;
     }
-    if mode == BlendMode::Normal && a >= Opa::MAX.raw() {
+    if mode != BlendMode::Normal {
+        put_mode::<F>(px, fg, a, mode);
+        return;
+    }
+    if a >= Opa::MAX.raw() {
         F::write(px, F::from_color(fg));
         return;
     }
+    let bg = F::to_color(F::read(px));
+    F::write(px, F::from_color(Color::mix(fg, bg, Opa::from_raw(a))));
+}
+
+/// [`put`] with a blend mode other than [`BlendMode::Normal`]: out of line, so the pixel
+/// loops of the common `Normal` case stay small and test the mode with one predictable
+/// branch.
+#[inline(never)]
+fn put_mode<F: PixelFormat>(px: &mut [u8], fg: Color, a: u8, mode: BlendMode) {
     let bg = F::to_color(F::read(px));
     let fg = mode.color(fg, bg);
     let out = if a >= Opa::MAX.raw() {
@@ -227,22 +263,24 @@ fn mix565(fr: u32, fg: u32, fb: u32, bg: u16, a: u32) -> u16 {
         (g6 << 2) | (g6 >> 4),
         (b5 << 3) | (b5 >> 2),
     );
-    let ia = 255 - a;
-    let r = udiv255(fr * a + br * ia);
-    let g = udiv255(fg * a + bgc * ia);
-    let b = udiv255(fb * a + bb * ia);
+    // SAFE-ARITH: `a ≤ 255` (an alpha) and every channel is at most 255, so `ia = 255 − a`
+    // and each `f · a + b · ia ≤ 255 · (a + ia) = 65_025`, the range `udiv255` takes.
+    let ia = 255u32.wrapping_sub(a);
+    let r = udiv255(fr.wrapping_mul(a).wrapping_add(br.wrapping_mul(ia)));
+    let g = udiv255(fg.wrapping_mul(a).wrapping_add(bgc.wrapping_mul(ia)));
+    let b = udiv255(fb.wrapping_mul(a).wrapping_add(bb.wrapping_mul(ia)));
     (((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)) as u16
 }
 
 /// Solid color paths.
 #[inline]
-fn solid<F: PixelFormat>(dst: &mut [u8], n: usize, c: Color, mask: Option<&[u8]>, opa: u8, mode: BlendMode) {
+fn solid<F: PixelFormat>(dst: &mut [u8], c: Color, mask: Option<&[u8]>, opa: u8, mode: BlendMode) {
     let raw = F::from_color(c);
-    let dst = &mut dst[..n * F::BYTES];
     if mode == BlendMode::Normal && mask.is_none() && opa >= Opa::MAX.raw() {
         let mut px = [0u8; 4];
         F::write(&mut px, raw);
-        fill_raw(dst, &px[..F::BYTES]);
+        // `F::BYTES ≤ 4` for every pixel format (`get` keeps the whole array otherwise).
+        fill_raw(dst, px.get(..F::BYTES).unwrap_or(&px));
         return;
     }
     // The normative semantics: `F::mix(from_color(c), bg, a)`, i.e. the color quantized to the
@@ -255,18 +293,22 @@ fn solid<F: PixelFormat>(dst: &mut [u8], n: usize, c: Color, mask: Option<&[u8]>
         let fg565 = fgc.to_rgb565();
         let (fr, fgn, fb) = (u32::from(fgc.r), u32::from(fgc.g), u32::from(fgc.b));
         let write = |px: &mut [u8], a: u8| {
+            // SAFE-INDEX: `px` is a `chunks_exact_mut(2)` item; the fallback is never taken.
+            let Some(px) = px.first_chunk_mut::<2>() else {
+                return;
+            };
             if a <= Opa::MIN.raw() {
                 return;
             }
             let v = if a >= Opa::MAX.raw() {
                 fg565
             } else {
-                let bg = u16::from_le_bytes([px[0], px[1]]);
+                let bg = u16::from_le_bytes(*px);
                 let bg = if swapped { bg.swap_bytes() } else { bg };
                 mix565(fr, fgn, fb, bg, u32::from(a))
             };
             let v = if swapped { v.swap_bytes() } else { v };
-            px.copy_from_slice(&v.to_le_bytes());
+            *px = v.to_le_bytes();
         };
         match mask {
             None => dst.chunks_exact_mut(2).for_each(|px| write(px, opa)),
@@ -293,13 +335,12 @@ fn solid<F: PixelFormat>(dst: &mut [u8], n: usize, c: Color, mask: Option<&[u8]>
 
 /// `Argb8888` source pixels.
 #[inline]
-fn argb<F: PixelFormat>(dst: &mut [u8], n: usize, src: &[u8], mask: Option<&[u8]>, opa: u8, mode: BlendMode) {
-    let dst = &mut dst[..n * F::BYTES];
-    let src = &src[..n * 4];
+fn argb<F: PixelFormat>(dst: &mut [u8], src: &[u8], mask: Option<&[u8]>, opa: u8, mode: BlendMode) {
     let each = |px: &mut [u8], s: &[u8], m: u8| {
-        let a = eff(eff(s[3], m), opa);
+        let [sb, sg, sr, sa] = bgra(s);
+        let a = eff(eff(sa, m), opa);
         if a > Opa::MIN.raw() {
-            put::<F>(px, Color::new(s[2], s[1], s[0]), a, mode);
+            put::<F>(px, Color::new(sr, sg, sb), a, mode);
         }
     };
     match mask {
@@ -319,16 +360,16 @@ fn argb<F: PixelFormat>(dst: &mut [u8], n: usize, src: &[u8], mask: Option<&[u8]
 #[inline]
 fn pixels<F: PixelFormat, S: PixelFormat>(
     dst: &mut [u8],
-    n: usize,
     src: &[u8],
     mask: Option<&[u8]>,
     opa: u8,
     mode: BlendMode,
 ) {
-    let dst = &mut dst[..n * F::BYTES];
-    let src = &src[..n * S::BYTES];
     if S::FORMAT == F::FORMAT && mask.is_none() && opa >= Opa::MAX.raw() && mode == BlendMode::Normal {
-        dst.copy_from_slice(src);
+        // Same format: `src` holds at least `dst.len()` bytes (`blend_span`'s `n`).
+        if let Some(src) = src.get(..dst.len()) {
+            dst.copy_from_slice(src);
+        }
         return;
     }
     let each = |px: &mut [u8], s: &[u8], a: u8| {
@@ -391,56 +432,81 @@ pub fn blend_span<F: PixelFormat>(
         return;
     }
     let opa = if opa.is_cover() { 255 } else { opa.raw() };
-    let mut n = n.min(dst.len() / F::BYTES).min(src.len());
+    const { assert!(F::BYTES > 0, "PixelFormat::BYTES must be at least 1") };
+    // `F::BYTES ≥ 1` (asserted at compile time above): the fallback is never taken.
+    let mut n = n.min(dst.len().checked_div(F::BYTES).unwrap_or(0)).min(src.len());
     if let Some(m) = mask {
         n = n.min(m.len());
     }
+    // SAFE-ARITH: `n ≤ dst.len() / F::BYTES`, so `n · F::BYTES ≤ dst.len()`.
+    // SAFE-INDEX: for the same reason the fallback is never taken.
+    let Some(dst) = dst.get_mut(..n.wrapping_mul(F::BYTES)) else {
+        return;
+    };
     if n == 0 {
         return;
     }
+    // From here every pixel loop zips `dst` (exactly `n` pixels) with the source and the
+    // mask, which hold at least `n` each: the iterators bound the loops, no index is checked.
     match src {
-        Source::Solid(c) => solid::<F>(dst, n, c, mask, opa, mode),
-        Source::Argb(s) => argb::<F>(dst, n, s, mask, opa, mode),
+        Source::Solid(c) => solid::<F>(dst, c, mask, opa, mode),
+        Source::Argb(s) => argb::<F>(dst, s, mask, opa, mode),
         Source::Pixels { data, format } => match format {
-            ColorFormat::Rgb565 => pixels::<F, Rgb565>(dst, n, data, mask, opa, mode),
-            ColorFormat::Rgb565Swapped => pixels::<F, Rgb565Swapped>(dst, n, data, mask, opa, mode),
-            ColorFormat::Rgb888 => pixels::<F, Rgb888>(dst, n, data, mask, opa, mode),
-            ColorFormat::Xrgb8888 => pixels::<F, Xrgb8888>(dst, n, data, mask, opa, mode),
-            ColorFormat::L8 => pixels::<F, L8>(dst, n, data, mask, opa, mode),
-            ColorFormat::Argb8888 => argb::<F>(dst, n, data, mask, opa, mode),
+            ColorFormat::Rgb565 => pixels::<F, Rgb565>(dst, data, mask, opa, mode),
+            ColorFormat::Rgb565Swapped => pixels::<F, Rgb565Swapped>(dst, data, mask, opa, mode),
+            ColorFormat::Rgb888 => pixels::<F, Rgb888>(dst, data, mask, opa, mode),
+            ColorFormat::Xrgb8888 => pixels::<F, Xrgb8888>(dst, data, mask, opa, mode),
+            ColorFormat::L8 => pixels::<F, L8>(dst, data, mask, opa, mode),
+            ColorFormat::Argb8888 => argb::<F>(dst, data, mask, opa, mode),
             other => unsupported_source(other),
         },
     }
 }
 
-/// Color and alpha of pixel `i` of `src` (slow, per-pixel dispatch; used for `I1`).
+/// Blends the first `n` source pixels `px` (color and alpha) onto 1-bit pixels starting at
+/// bit `bit0` of `row`, with the per-pixel coverage `mask` (full coverage without one; the
+/// run ends with the mask).
+///
+/// One copy for every source format and mask: the source is a `dyn` iterator (one dynamic
+/// call per pixel, like a per-pixel format dispatch). 1-bit panels are small and slow to
+/// flush, and a loop per format × mask would cost kilobytes of flash on the targets that
+/// drive them.
 #[cfg(feature = "color-i1")]
-fn source_px(src: Source<'_>, i: usize) -> Option<(Color, u8)> {
-    match src {
-        Source::Solid(c) => Some((c, 255)),
-        Source::Argb(d) => d
-            .get(i * 4..i * 4 + 4)
-            .map(|s| (Color::new(s[2], s[1], s[0]), s[3])),
-        Source::Pixels { data, format } => {
-            fn rd<S: PixelFormat>(d: &[u8], i: usize) -> Option<(Color, u8)> {
-                d.get(i * S::BYTES..(i + 1) * S::BYTES)
-                    .map(|b| (S::to_color(S::read(b)), 255))
-            }
-            match format {
-                ColorFormat::Rgb565 => rd::<Rgb565>(data, i),
-                ColorFormat::Rgb565Swapped => rd::<Rgb565Swapped>(data, i),
-                ColorFormat::Rgb888 => rd::<Rgb888>(data, i),
-                ColorFormat::Xrgb8888 => rd::<Xrgb8888>(data, i),
-                ColorFormat::L8 => rd::<L8>(data, i),
-                ColorFormat::Argb8888 => data
-                    .get(i * 4..i * 4 + 4)
-                    .map(|s| (Color::new(s[2], s[1], s[0]), s[3])),
-                other => {
-                    unsupported_source(other);
-                    None
-                }
-            }
+#[inline(never)]
+fn blend_i1_pixels(
+    row: &mut [u8],
+    bit0: usize,
+    n: usize,
+    px: &mut dyn Iterator<Item = (Color, u8)>,
+    mask: Option<&[u8]>,
+    opa: u8,
+    mode: BlendMode,
+) {
+    use twine_core::color::I1;
+    for (i, (x, (fg, sa))) in (bit0..).zip(px.take(n)).enumerate() {
+        let m = match mask {
+            Some(m) => match m.get(i) {
+                Some(&v) => v,
+                None => break,
+            },
+            None => 255,
+        };
+        let a = eff(eff(sa, m), opa);
+        if a <= Opa::MIN.raw() {
+            continue;
         }
+        let bg = if I1::get(row, x) {
+            Color::WHITE
+        } else {
+            Color::BLACK
+        };
+        let fg = mode.color(fg, bg);
+        let out = if a >= Opa::MAX.raw() {
+            fg
+        } else {
+            Color::mix(fg, bg, Opa::from_raw(a))
+        };
+        I1::set(row, x, out.luminance() >= 128);
     }
 }
 
@@ -456,37 +522,39 @@ fn blend_span_i1(
     opa: Opa,
     mode: BlendMode,
 ) {
-    use twine_core::color::I1;
+    fn opaque<S: PixelFormat>(d: &[u8]) -> impl Iterator<Item = (Color, u8)> + '_ {
+        d.chunks_exact(S::BYTES).map(|b| (S::to_color(S::read(b)), 255))
+    }
+    fn straight(d: &[u8]) -> impl Iterator<Item = (Color, u8)> + '_ {
+        d.chunks_exact(4).map(|s| {
+            let [b, g, r, a] = bgra(s);
+            (Color::new(r, g, b), a)
+        })
+    }
     if opa.is_transparent() {
         return;
     }
     let opa = if opa.is_cover() { 255 } else { opa.raw() };
-    for i in 0..n {
-        let m = match mask {
-            Some(m) => match m.get(i) {
-                Some(&v) => v,
-                None => break,
-            },
-            None => 255,
-        };
-        let Some((fg, sa)) = source_px(src, i) else { break };
-        let a = eff(eff(sa, m), opa);
-        if a <= Opa::MIN.raw() {
-            continue;
-        }
-        let x = bit0 + i;
-        let bg = if I1::get(row, x) {
-            Color::WHITE
-        } else {
-            Color::BLACK
-        };
-        let fg = mode.color(fg, bg);
-        let out = if a >= Opa::MAX.raw() {
-            fg
-        } else {
-            Color::mix(fg, bg, Opa::from_raw(a))
-        };
-        I1::set(row, x, out.luminance() >= 128);
+    match src {
+        Source::Solid(c) => blend_i1_pixels(row, bit0, n, &mut core::iter::repeat((c, 255)), mask, opa, mode),
+        Source::Argb(d) => blend_i1_pixels(row, bit0, n, &mut straight(d), mask, opa, mode),
+        Source::Pixels { data, format } => match format {
+            ColorFormat::Rgb565 => {
+                blend_i1_pixels(row, bit0, n, &mut opaque::<Rgb565>(data), mask, opa, mode);
+            }
+            ColorFormat::Rgb565Swapped => {
+                blend_i1_pixels(row, bit0, n, &mut opaque::<Rgb565Swapped>(data), mask, opa, mode);
+            }
+            ColorFormat::Rgb888 => {
+                blend_i1_pixels(row, bit0, n, &mut opaque::<Rgb888>(data), mask, opa, mode);
+            }
+            ColorFormat::Xrgb8888 => {
+                blend_i1_pixels(row, bit0, n, &mut opaque::<Xrgb8888>(data), mask, opa, mode);
+            }
+            ColorFormat::L8 => blend_i1_pixels(row, bit0, n, &mut opaque::<L8>(data), mask, opa, mode),
+            ColorFormat::Argb8888 => blend_i1_pixels(row, bit0, n, &mut straight(data), mask, opa, mode),
+            other => unsupported_source(other),
+        },
     }
 }
 
@@ -506,12 +574,12 @@ pub(crate) fn blend_row(
     if x1 <= x0 {
         return;
     }
-    let n = (x1 - x0) as usize;
+    let n = span(x0, x1);
     let format = buf.format();
     if format == ColorFormat::I1 {
         #[cfg(feature = "color-i1")]
         {
-            let bit0 = (x0 - buf.area().x0) as usize % 8;
+            let bit0 = span(buf.area().x0, x0) % 8;
             let row = buf.row_mut(y, x0, x1);
             blend_span_i1(row, bit0, n, src, mask, opa, mode);
         }

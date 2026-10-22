@@ -115,7 +115,8 @@ impl GlyphCache {
         let blocks = (budget_bytes / BLOCK_BYTES).min(usize::from(u16::MAX));
         let max_entries = blocks.min(MAX_ENTRIES);
         Self {
-            arena: vec![0; blocks * BLOCK_BYTES],
+            // SAFE-ARITH: `blocks ≤ budget_bytes / BLOCK_BYTES`.
+            arena: vec![0; blocks.wrapping_mul(BLOCK_BYTES)],
             used: vec![false; blocks],
             entries: Vec::with_capacity(max_entries),
             max_entries,
@@ -178,13 +179,19 @@ impl GlyphCache {
     /// ```
     #[must_use]
     pub fn bytes_reserved(&self) -> usize {
-        self.arena.capacity()
-            + self.used.capacity()
-            + self.entries.capacity() * core::mem::size_of::<Entry>()
-            + self.row_a.capacity()
-            + self.row_b.capacity()
-            + self.glyph.capacity()
-            + self.lcd_row.capacity()
+        [
+            self.arena.capacity(),
+            self.used.capacity(),
+            self.entries
+                .capacity()
+                .saturating_mul(core::mem::size_of::<Entry>()),
+            self.row_a.capacity(),
+            self.row_b.capacity(),
+            self.glyph.capacity(),
+            self.lcd_row.capacity(),
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add)
     }
 
     /// Whether glyphs can be cached at all.
@@ -197,7 +204,9 @@ impl GlyphCache {
     #[must_use]
     pub fn stats(&self) -> CacheStats {
         let mut s = self.stats;
-        s.bytes_used = self.used.iter().filter(|u| **u).count() * BLOCK_BYTES;
+        // SAFE-ARITH: at most `used.len()` blocks, and the arena of `used.len() · BLOCK_BYTES`
+        // bytes exists.
+        s.bytes_used = self.used.iter().filter(|u| **u).count().wrapping_mul(BLOCK_BYTES);
         s
     }
 
@@ -220,7 +229,8 @@ impl GlyphCache {
 
     /// A new LRU stamp (64-bit: never wraps in practice).
     fn next_stamp(&mut self) -> u64 {
-        self.tick += 1;
+        // SAFE-ARITH: one stamp per cache access: a `u64` does not wrap in a product's life.
+        self.tick = self.tick.wrapping_add(1);
         self.tick
     }
 
@@ -233,15 +243,18 @@ impl GlyphCache {
             return None;
         }
         let Some(i) = self.entries.iter().position(|e| e.key == key) else {
-            self.stats.misses += 1;
+            self.stats.misses = self.stats.misses.saturating_add(1);
             return None;
         };
-        self.stats.hits += 1;
+        self.stats.hits = self.stats.hits.saturating_add(1);
         let stamp = self.next_stamp();
-        let e = &mut self.entries[i];
+        // SAFE-INDEX: `i` comes from `position` over `entries`; an entry's bytes were reserved
+        // inside the arena by `insert`. The fallbacks are never taken.
+        let e = self.entries.get_mut(i)?;
         e.stamp = stamp;
-        let start = usize::from(e.block) * BLOCK_BYTES;
-        Some(&self.arena[start..start + e.len as usize])
+        // SAFE-ARITH: `block < 2^16` and `len ≤ arena.len()`, so `start + len < 2^32`.
+        let start = usize::from(e.block).wrapping_mul(BLOCK_BYTES);
+        self.arena.get(start..start.wrapping_add(e.len as usize))
     }
 
     /// Reserves space for a `w × h` bitmap of `key` (replacing an existing entry), evicting
@@ -265,7 +278,10 @@ impl GlyphCache {
                 return None;
             }
         };
-        self.used[block..block + blocks].fill(true);
+        // SAFE-INDEX: `first_fit` found `blocks` free blocks from `block` inside `used`, and
+        // the arena has `BLOCK_BYTES` bytes per block. SAFE-ARITH: so these sums stay inside
+        // the arena's length. The fallbacks are never taken.
+        self.used.get_mut(block..block.wrapping_add(blocks))?.fill(true);
         let stamp = self.next_stamp();
         self.entries.push(Entry {
             key,
@@ -274,8 +290,8 @@ impl GlyphCache {
             len: len as u32,
             stamp,
         });
-        let start = block * BLOCK_BYTES;
-        Some(&mut self.arena[start..start + len])
+        let start = block.wrapping_mul(BLOCK_BYTES);
+        self.arena.get_mut(start..start.wrapping_add(len))
     }
 
     /// Removes the entry of `key` (if cached).
@@ -292,30 +308,40 @@ impl GlyphCache {
     }
 
     fn release(&mut self, i: usize) {
+        // `i < entries.len()` (the callers find it there).
+        if i >= self.entries.len() {
+            return;
+        }
         let e = self.entries.swap_remove(i);
         let b = usize::from(e.block);
-        self.used[b..b + usize::from(e.blocks)].fill(false);
+        // SAFE-INDEX: the entry's blocks were reserved inside `used` by `insert` (two `u16`s:
+        // the sum cannot overflow); the fallback is never taken.
+        if let Some(blocks) = self.used.get_mut(b..b.wrapping_add(usize::from(e.blocks))) {
+            blocks.fill(false);
+        }
     }
 
     fn evict_lru(&mut self) -> bool {
-        let Some(i) = (0..self.entries.len()).min_by_key(|&i| self.entries[i].stamp) else {
+        let Some((i, e)) = self.entries.iter().enumerate().min_by_key(|(_, e)| e.stamp) else {
             return false;
         };
-        twine_core::trace!(target: "twine::text", "glyph cache evicts id {}", self.entries[i].key.1);
+        twine_core::trace!(target: "twine::text", "glyph cache evicts id {}", e.key.1);
         self.release(i);
-        self.stats.evictions += 1;
+        self.stats.evictions = self.stats.evictions.saturating_add(1);
         true
     }
 
     fn first_fit(&self, blocks: usize) -> Option<usize> {
-        let mut run = 0;
+        let mut run: usize = 0;
         for (i, &u) in self.used.iter().enumerate() {
             if u {
                 run = 0;
             } else {
-                run += 1;
+                // SAFE-ARITH: `run ≤ i + 1`, and `i < used.len()`, so `i + 1 − blocks ≥ 0`
+                // when `run == blocks`.
+                run = run.wrapping_add(1);
                 if run == blocks {
-                    return Some(i + 1 - blocks);
+                    return Some(i.wrapping_add(1).wrapping_sub(blocks));
                 }
             }
         }
@@ -324,7 +350,7 @@ impl GlyphCache {
 
     /// Counts one drawn glyph bitmap (see [`CacheStats::glyph_renders`]).
     pub(crate) fn count_render(&mut self) {
-        self.stats.glyph_renders += 1;
+        self.stats.glyph_renders = self.stats.glyph_renders.saturating_add(1);
     }
 
     /// Takes the glyph scratch buffer out, sized to exactly `len` bytes (grown once if needed).
@@ -357,7 +383,13 @@ impl GlyphCache {
     /// or corrupt font. After [`WARN_CAP`] distinct keys the set is full: one last "further
     /// warnings suppressed" message is logged and every later call returns `false`.
     pub fn first_warning(&mut self, key: GlyphKey) -> bool {
-        if self.warned[..self.warned_len].contains(&key) {
+        // SAFE-INDEX: `warned_len ≤ WARN_CAP`, the array's length; the fallback is never taken.
+        if self
+            .warned
+            .get(..self.warned_len)
+            .unwrap_or_default()
+            .contains(&key)
+        {
             return false;
         }
         if self.warned_len == WARN_CAP {
@@ -371,8 +403,13 @@ impl GlyphCache {
             }
             return false;
         }
-        self.warned[self.warned_len] = key;
-        self.warned_len += 1;
+        // SAFE-INDEX: `warned_len < WARN_CAP` (returned above); the fallback is never taken.
+        let Some(slot) = self.warned.get_mut(self.warned_len) else {
+            return false;
+        };
+        *slot = key;
+        // SAFE-ARITH: `warned_len < WARN_CAP`.
+        self.warned_len = self.warned_len.wrapping_add(1);
         true
     }
 }

@@ -208,6 +208,7 @@ mod tree {
     ];
 
     fn pick(nodes: &[NodeId], i: u8) -> NodeId {
+        // DIV: `nodes` always holds the screen (index 0 is never deleted).
         nodes[usize::from(i) % nodes.len()]
     }
 
@@ -220,6 +221,7 @@ mod tree {
             }
             TreeOp::Delete { node } => {
                 // The screen (index 0) stays: deleting it is legal but ends the interesting part.
+                // DIV: `nodes` always holds the screen (index 0 is never deleted).
                 if usize::from(node) % nodes.len() != 0 {
                     let _ = e.delete(pick(nodes, node));
                 }
@@ -230,9 +232,11 @@ mod tree {
             TreeOp::Pos { node, x, y } => e.set_pos(pick(nodes, node), i32::from(x), i32::from(y)),
             TreeOp::Size { node, w, h } => e.set_size(pick(nodes, node), i32::from(w), i32::from(h)),
             TreeOp::Flag { node, flag, on } => {
+                // DIV: `FLAGS` is a non-empty constant table.
                 e.set_flag(pick(nodes, node), FLAGS[usize::from(flag) % FLAGS.len()], on);
             }
             TreeOp::State { node, state, on } => {
+                // DIV: `STATES` is a non-empty constant table.
                 e.set_state(pick(nodes, node), STATES[usize::from(state) % STATES.len()], on);
             }
             TreeOp::Flex { node, kind } => {
@@ -457,6 +461,7 @@ mod input {
                     let _ = h.release();
                 }
                 InputOp::Key { key } => {
+                    // DIV: `KEYS` is a non-empty constant table.
                     let _ = h.key(KEYS[usize::from(key) % KEYS.len()]);
                 }
                 InputOp::Encoder { diff } => {
@@ -678,12 +683,14 @@ mod reactive {
     }
 
     fn pick(len: usize, i: u8) -> Option<usize> {
+        // DIV: `len > 0` (`then` runs the closure only then).
         (len > 0).then(|| usize::from(i) % len)
     }
 
     fn apply(m: &mut Model, rt: Runtime, op: ReactiveOp) {
         match op {
             ReactiveOp::Scope { parent } => {
+                // DIV: `m.scopes` always holds the root scope (index 0 is never removed).
                 let p = usize::from(parent) % m.scopes.len();
                 match m.scopes[p].scope.try_child() {
                     Ok(scope) => {
@@ -698,6 +705,7 @@ mod reactive {
                 }
             }
             ReactiveOp::Dispose { scope } => {
+                // DIV: `m.scopes` always holds the root scope (index 0 is never removed).
                 let s = usize::from(scope) % m.scopes.len();
                 if s != 0 {
                     m.scopes[s].scope.dispose();
@@ -705,6 +713,7 @@ mod reactive {
                 }
             }
             ReactiveOp::Signal { scope, value } => {
+                // DIV: `m.scopes` always holds the root scope (index 0 is never removed).
                 let s = usize::from(scope) % m.scopes.len();
                 let value = i64::from(value);
                 match m.scopes[s].scope.try_signal(value) {
@@ -720,6 +729,7 @@ mod reactive {
                 }
             }
             ReactiveOp::Memo { scope, a, b } => {
+                // DIV: `m.scopes` always holds the root scope (index 0 is never removed).
                 let s = usize::from(scope) % m.scopes.len();
                 let visible = m.visible_signals(s);
                 let (Some(ia), Some(ib)) = (pick(visible.len(), a), pick(visible.len(), b)) else {
@@ -736,6 +746,7 @@ mod reactive {
                 }
             }
             ReactiveOp::Effect { scope, signal } => {
+                // DIV: `m.scopes` always holds the root scope (index 0 is never removed).
                 let s = usize::from(scope) % m.scopes.len();
                 let visible = m.visible_signals(s);
                 let Some(i) = pick(visible.len(), signal) else {

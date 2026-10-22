@@ -4,6 +4,7 @@ use alloc::boxed::Box;
 use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::cell::RefCell;
+use core::num::{NonZeroI32, NonZeroU32};
 
 use twine_core::Opa;
 use twine_engine::{Engine, EventCode, EventFilter, EventResult, NodeId, Obj, ObjFlags};
@@ -30,7 +31,8 @@ use crate::view::{AnyView, IntoAnyView, View};
 /// updated in place when the item changed — so its bindings run, nothing is rebuilt; rows whose
 /// keys left the viewport are disposed, rows of newly visible keys are built.
 ///
-/// Size the list with modifiers (default: the parent's full content area).
+/// Size the list with modifiers (default: the parent's full content area). A `row_height`
+/// below 1 px is logged (`warn!`) and taken as 1 px: rows are found by dividing by it.
 ///
 /// **Bound.** At most [`Limits::max_list_items`](twine_core::Limits::max_list_items) rows
 /// exist: visible items beyond it get no row, and a
@@ -68,7 +70,7 @@ where
         items: items.into_items(),
         key: Box::new(key),
         view: Box::new(move |s, t| view(s, t).into_any()),
-        row_height: row_height.max(1),
+        row_height: row_height_px(row_height),
         state: RefCell::new(ListState {
             rows: Vec::new(),
             count: 0,
@@ -167,7 +169,8 @@ struct List<T: 'static, K: 'static> {
     items: Items<T>,
     key: Box<dyn Fn(&T) -> K>,
     view: Box<dyn Fn(Scope, ReadSignal<T>) -> AnyView>,
-    row_height: i32,
+    /// The row height, at least 1 px ([`row_height_px`]): the divisor that finds rows.
+    row_height: NonZeroI32,
     state: RefCell<ListState<T, K>>,
 }
 
@@ -237,11 +240,23 @@ fn cut_fault(e: &mut Engine, node: NodeId, n: usize) {
     );
 }
 
-/// The y offset of row `i` (`i · row_height`, saturated); `row_height >= 1`.
-fn y_of(i: usize, row_height: i32) -> i32 {
-    // DIV: `row_height >= 1` (clamped by the constructor); the fallback is never taken.
-    let max_rows = i32::MAX.checked_div(row_height).unwrap_or(i32::MAX);
-    i32::try_from(i).unwrap_or(max_rows).saturating_mul(row_height)
+/// The application's row height as a divisor: below 1 px is logged and taken as 1 px (P7).
+fn row_height_px(h: i32) -> NonZeroI32 {
+    match NonZeroI32::new(h) {
+        Some(h) if h.get() > 0 => h,
+        _ => {
+            twine_core::warn!(target: "twine::view", "virtual_list: row height {} px is below 1 px; using 1 px", h);
+            NonZeroI32::from(core::num::NonZeroU8::MIN)
+        }
+    }
+}
+
+/// The y offset of row `i` (`i · row_height`, saturated).
+fn y_of(i: usize, row_height: NonZeroI32) -> i32 {
+    let h = row_height.get();
+    // SAFE-ARITH: the divisor is ≥ 1 (positive `NonZeroI32`), so the quotient cannot overflow.
+    let max_rows = i32::MAX.wrapping_div(row_height.get());
+    i32::try_from(i).unwrap_or(max_rows).saturating_mul(h)
 }
 
 impl<T: Clone + PartialEq + 'static, K: PartialEq + 'static> List<T, K> {
@@ -253,8 +268,9 @@ impl<T: Clone + PartialEq + 'static, K: PartialEq + 'static> List<T, K> {
         if count == 0 || area.height() <= 0 {
             return (0, 0);
         }
-        // DIV: `row_height >= 1` (clamped by the constructor); the fallbacks are never taken.
-        let row_at = |y: i32| usize::try_from(y.checked_div(rh).unwrap_or(0)).unwrap_or(0);
+        // Rows from a y offset `≥ 0`: an unsigned division by a `NonZeroU32` (cannot panic).
+        let rh_u: NonZeroU32 = rh.unsigned_abs();
+        let row_at = |y: i32| usize::try_from(y.max(0).unsigned_abs() / rh_u).unwrap_or(0);
         let first = row_at(scroll_y);
         let last = row_at(scroll_y.saturating_add(area.height())).saturating_add(1);
         (first.min(count), last.min(count))
@@ -289,6 +305,7 @@ impl<T: Clone + PartialEq + 'static, K: PartialEq + 'static> List<T, K> {
     /// content height (when the number of items changed) and the number of visible items
     /// beyond the bound (not shown).
     fn diff(&self, e: &Engine, node: NodeId, items: &[T]) -> (Option<i32>, usize) {
+        let part = e.partition();
         let (first, visible_last) = self.visible(e, node, items.len());
         let mut st = self.state.borrow_mut();
         let ListState {
@@ -307,7 +324,7 @@ impl<T: Clone + PartialEq + 'static, K: PartialEq + 'static> List<T, K> {
         // Which row shows each visible index (`first <= last <= items.len()`, from `visible`).
         let n = last.saturating_sub(first);
         shown.clear();
-        alloc_guard::reserve(shown, n, AllocSite::Reconcile);
+        alloc_guard::reserve(part, shown, n, AllocSite::Reconcile);
         shown.resize(n, false);
         // Whether visible index `i` has no row yet (`false` outside `first..last`).
         let free = |shown: &[bool], i: usize| i.checked_sub(first).and_then(|o| shown.get(o)) == Some(&false);
@@ -333,12 +350,17 @@ impl<T: Clone + PartialEq + 'static, K: PartialEq + 'static> List<T, K> {
                     }
                     r = r.saturating_add(1);
                 }
-                None => alloc_guard::push(gone, rows.swap_remove(r), AllocSite::Reconcile),
+                None => alloc_guard::push(part, gone, rows.swap_remove(r), AllocSite::Reconcile),
             }
         }
         for i in (first..last).filter(|&i| free(shown, i)) {
             if let Some(item) = items.get(i) {
-                alloc_guard::push(added, (i, (self.key)(item), item.clone()), AllocSite::Reconcile);
+                alloc_guard::push(
+                    part,
+                    added,
+                    (i, (self.key)(item), item.clone()),
+                    AllocSite::Reconcile,
+                );
             }
         }
         (height, cut)
@@ -346,6 +368,7 @@ impl<T: Clone + PartialEq + 'static, K: PartialEq + 'static> List<T, K> {
 
     /// Deletes the rows that left, places the moved ones and builds the new ones.
     fn apply(&self, e: &mut Engine, node: NodeId, scope: Scope, height: Option<i32>) {
+        let part = scope.partition();
         let rt = scope.runtime();
         let rh = self.row_height;
         let y_of = |i: usize| y_of(i, rh);
@@ -382,9 +405,10 @@ impl<T: Clone + PartialEq + 'static, K: PartialEq + 'static> List<T, K> {
                 v.build(&mut bcx)
             };
             e.set_pos(row, 0, y_of(index));
-            e.set_size(row, Length::pct(100), rh);
+            e.set_size(row, Length::pct(100), rh.get());
             let mut s = self.state.borrow_mut();
             alloc_guard::push(
+                part,
                 &mut s.rows,
                 VRow {
                     index,

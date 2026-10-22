@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use twine_core::alloc_guard::{self, AllocSite};
 use twine_core::fault::{CapacityFault, FaultKind};
-use twine_core::{Error, Limits};
+use twine_core::{Error, Limits, Partition};
 use twine_reactive::{HandleKind, ReactiveError, Runtime};
 
 /// The calling thread's reactive runtime.
@@ -146,14 +146,17 @@ fn creations_after_a_seal_are_noted() {
     let rt = rt();
     let cx = rt.create_root();
     let s = cx.signal(0);
-    alloc_guard::seal();
+    alloc_guard::seal(Partition::MAIN);
     s.set(1); // a write allocates nothing
-    assert_eq!(alloc_guard::total(), 0);
+    assert_eq!(alloc_guard::total(Partition::MAIN), 0);
     let _t = cx.signal(1);
-    assert_eq!(alloc_guard::take().map(|r| r.last), Some(AllocSite::ReactiveNode));
+    assert_eq!(
+        alloc_guard::take(Partition::MAIN).map(|r| r.last),
+        Some(AllocSite::ReactiveNode)
+    );
     cx.provide(5u8);
     assert_eq!(
-        alloc_guard::take().map(|r| r.last),
+        alloc_guard::take(Partition::MAIN).map(|r| r.last),
         Some(AllocSite::ReactiveContext)
     );
     let captured = 7u32;
@@ -161,9 +164,9 @@ fn creations_after_a_seal_are_noted() {
         let _ = captured;
     });
     assert_eq!(
-        alloc_guard::take().map(|r| r.last),
+        alloc_guard::take(Partition::MAIN).map(|r| r.last),
         Some(AllocSite::ReactiveCleanup)
     );
-    alloc_guard::unseal();
+    alloc_guard::unseal(Partition::MAIN);
     cx.dispose();
 }

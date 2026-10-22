@@ -138,7 +138,10 @@ jobs:
       - run: cargo xtask coverage --mcdc
 
   # Verification evidence (R5.S08): no golden image awaits approval, and the requirements →
-  # tests matrix is current (skipped with a note when `docs/` is not in the checkout).
+  # tests matrix is current (skipped with a note when `docs/` is not in the checkout); every shift
+  # by a non-literal amount carries a proof (R5.S09), every divisor is proven non-zero (R5.S10)
+  # and the coding-guidelines register's measured block is current (the inventory and register
+  # checks need `docs/`).
   evidence:
     runs-on: ubuntu-latest
     steps:
@@ -146,6 +149,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask snapshots --check
       - run: cargo xtask traceability --check
+      - run: cargo xtask shifts --check
+      - run: cargo xtask divisions --check
+      - run: cargo xtask guidelines --check
 
   miri:
     runs-on: ubuntu-latest

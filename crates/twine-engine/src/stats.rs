@@ -2,6 +2,7 @@
 //! the worst-case timings ([`TimingReport`]) and memory statistics ([`MemInfo`],
 //! [`HeapPeak`]).
 
+use core::num::NonZeroU64;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use twine_core::{Duration, Instant};
@@ -91,11 +92,12 @@ impl MemInfo {
     /// ```
     #[must_use]
     pub fn used_percent(&self) -> u8 {
-        let total = u64::from(self.used) + u64::from(self.free);
-        if total == 0 {
+        // SAFE-ARITH: the sum of two `u32`s fits in `u64`.
+        let Some(total) = NonZeroU64::new(u64::from(self.used).wrapping_add(u64::from(self.free))) else {
             return 0;
-        }
-        (u64::from(self.used) * 100 / total) as u8
+        };
+        // SAFE-ARITH: a `u32` times 100 fits in `u64`.
+        (u64::from(self.used).wrapping_mul(100) / total) as u8
     }
 }
 
@@ -193,8 +195,8 @@ impl PerfMonitor {
         if self.window_start.is_none() {
             self.window_start = Some(now);
         }
-        self.frames += 1;
-        self.busy_us += busy_us;
+        self.frames = self.frames.saturating_add(1);
+        self.busy_us = self.busy_us.saturating_add(busy_us);
     }
 
     /// Closes the window if it is at least one second old at `now`: computes `fps` and
@@ -207,8 +209,13 @@ impl PerfMonitor {
         if wall < Self::WINDOW.as_micros() {
             return false;
         }
-        self.fps = (u64::from(self.frames) * 1_000_000 / wall).min(u64::from(u16::MAX)) as u16;
-        self.cpu = (self.busy_us * 100 / wall).min(100) as u8;
+        // `wall ≥ WINDOW` (one second): never `None`.
+        let Some(wall) = NonZeroU64::new(wall) else {
+            return false;
+        };
+        // SAFE-ARITH: a `u32` times 10^6 fits in `u64`.
+        self.fps = (u64::from(self.frames).wrapping_mul(1_000_000) / wall).min(u64::from(u16::MAX)) as u16;
+        self.cpu = (self.busy_us.saturating_mul(100) / wall).min(100) as u8;
         self.window_start = Some(now);
         self.frames = 0;
         self.busy_us = 0;

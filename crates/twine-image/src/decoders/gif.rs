@@ -22,6 +22,37 @@ pub const GIF_DEFAULT_DELAY: Duration = Duration::from_millis(100);
 
 const MAX_CODES: usize = 4096;
 
+/// Byte length of a colour table from the low three bits of a screen or image descriptor's
+/// flags: `3 · 2^(n + 1)` entries' bytes, 6..=768.
+fn color_table_len(flags: u8) -> usize {
+    // SHIFT: `(flags & 7) + 1` is `1..=8`. SAFE-ARITH: the same sum.
+    3 << (flags & 7).wrapping_add(1)
+}
+
+/// An LZW minimum code size, validated when the image descriptor is parsed: `1..=11`, so the
+/// clear code `2^size` and the first code width `size + 1 ≤ 12` stay in range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CodeSize(u8);
+
+impl CodeSize {
+    /// `bits` if it is a legal minimum code size, else `None` (the image is rejected).
+    fn new(bits: u8) -> Option<CodeSize> {
+        (1..=11).contains(&bits).then_some(CodeSize(bits))
+    }
+
+    /// The clear code, `2^size`.
+    fn clear(self) -> u16 {
+        // SHIFT: `self.0 ≤ 11` (`new`, the only constructor).
+        1u16 << self.0
+    }
+
+    /// The code width after a clear code, `size + 1` (`2..=12`).
+    fn first_width(self) -> u32 {
+        // SAFE-ARITH: `self.0 ≤ 11`.
+        u32::from(self.0).wrapping_add(1)
+    }
+}
+
 /// How a frame is removed before the next one is drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Disposal {
@@ -55,10 +86,16 @@ struct Screen {
 }
 
 fn u16_at(b: &[u8], i: usize) -> Result<u16, Error> {
-    match b.get(i..i + 2) {
-        Some(s) => Ok(u16::from_le_bytes([s[0], s[1]])),
+    match b.get(i..).and_then(<[u8]>::first_chunk) {
+        Some(s) => Ok(u16::from_le_bytes(*s)),
         None => Err(Error::Decode("gif truncated")),
     }
+}
+
+/// `pos + k` for a parse position (saturating: past the end it reads as truncated data).
+#[inline]
+fn at(pos: usize, k: usize) -> usize {
+    pos.saturating_add(k)
 }
 
 fn byte_at(b: &[u8], i: usize) -> Result<u8, Error> {
@@ -77,12 +114,12 @@ fn parse_screen(b: &[u8]) -> Result<Screen, Error> {
     let flags = byte_at(b, 10)?;
     let mut pos = 13;
     let palette = if flags & 0x80 != 0 {
-        let len = 3 << ((flags & 7) + 1);
-        if b.len() < pos + len {
+        let len = color_table_len(flags);
+        if b.len() < at(pos, len) {
             return Err(Error::Decode("gif truncated"));
         }
-        let r = (pos, pos + len);
-        pos += len;
+        let r = (pos, at(pos, len));
+        pos = at(pos, len);
         Some(r)
     } else {
         None
@@ -99,11 +136,11 @@ fn parse_screen(b: &[u8]) -> Result<Screen, Error> {
 fn skip_sub_blocks(b: &[u8], mut pos: usize) -> Result<usize, Error> {
     loop {
         let n = usize::from(byte_at(b, pos)?);
-        pos += 1;
+        pos = at(pos, 1);
         if n == 0 {
             return Ok(pos);
         }
-        pos += n;
+        pos = at(pos, n);
         if pos > b.len() {
             return Err(Error::Decode("gif truncated"));
         }
@@ -119,7 +156,7 @@ enum Block {
         rect: FrameRect,
         palette: Option<(usize, usize)>,
         interlaced: bool,
-        min_code: u8,
+        min_code: CodeSize,
         data: usize,
         next: usize,
     },
@@ -145,52 +182,50 @@ fn next_frame(b: &[u8], mut pos: usize, loops: &mut Option<u16>) -> Result<Block
         match kind {
             0x3B => return Ok(Block::End),
             0x21 => {
-                let label = byte_at(b, pos + 1)?;
-                let body = pos + 2;
+                let label = byte_at(b, at(pos, 1))?;
+                let body = at(pos, 2);
                 if label == 0xF9 && byte_at(b, body)? >= 4 {
-                    let flags = byte_at(b, body + 1)?;
+                    let flags = byte_at(b, at(body, 1))?;
                     ctrl.disposal = match (flags >> 2) & 7 {
                         2 => Disposal::Background,
                         3 => Disposal::Previous,
                         _ => Disposal::None,
                     };
-                    ctrl.delay_cs = u16_at(b, body + 2)?;
-                    ctrl.transparent = (flags & 1 != 0).then_some(byte_at(b, body + 4)?);
+                    ctrl.delay_cs = u16_at(b, at(body, 2))?;
+                    ctrl.transparent = (flags & 1 != 0).then_some(byte_at(b, at(body, 4))?);
                 } else if label == 0xFF
                     && byte_at(b, body)? == 11
-                    && b.get(body + 1..body + 12) == Some(b"NETSCAPE2.0")
-                    && byte_at(b, body + 12)? >= 3
-                    && byte_at(b, body + 13)? == 1
+                    && b.get(at(body, 1)..at(body, 12)) == Some(b"NETSCAPE2.0")
+                    && byte_at(b, at(body, 12))? >= 3
+                    && byte_at(b, at(body, 13))? == 1
                 {
-                    *loops = Some(u16_at(b, body + 14)?);
+                    *loops = Some(u16_at(b, at(body, 14))?);
                 }
                 pos = skip_sub_blocks(b, body)?;
             }
             0x2C => {
                 let rect = FrameRect {
-                    x: u16_at(b, pos + 1)?,
-                    y: u16_at(b, pos + 3)?,
-                    w: u16_at(b, pos + 5)?,
-                    h: u16_at(b, pos + 7)?,
+                    x: u16_at(b, at(pos, 1))?,
+                    y: u16_at(b, at(pos, 3))?,
+                    w: u16_at(b, at(pos, 5))?,
+                    h: u16_at(b, at(pos, 7))?,
                 };
-                let flags = byte_at(b, pos + 9)?;
-                pos += 10;
+                let flags = byte_at(b, at(pos, 9))?;
+                pos = at(pos, 10);
                 let palette = if flags & 0x80 != 0 {
-                    let len = 3 << ((flags & 7) + 1);
-                    if b.len() < pos + len {
+                    let len = color_table_len(flags);
+                    if b.len() < at(pos, len) {
                         return Err(Error::Decode("gif truncated"));
                     }
-                    let r = (pos, pos + len);
-                    pos += len;
+                    let r = (pos, at(pos, len));
+                    pos = at(pos, len);
                     Some(r)
                 } else {
                     None
                 };
-                let min_code = byte_at(b, pos)?;
-                if !(1..=11).contains(&min_code) {
-                    return Err(Error::Decode("gif bad lzw code size"));
-                }
-                let data = pos + 1;
+                let min_code =
+                    CodeSize::new(byte_at(b, pos)?).ok_or(Error::Decode("gif bad lzw code size"))?;
+                let data = at(pos, 1);
                 let next = skip_sub_blocks(b, data)?;
                 return Ok(Block::Frame {
                     ctrl,
@@ -243,7 +278,8 @@ impl Bits<'_> {
             }
             if self.left_in_block == 0 {
                 let len = usize::from(*self.b.get(self.pos)?);
-                self.pos += 1;
+                // SAFE-ARITH: `pos < b.len()` (the byte exists).
+                self.pos = self.pos.wrapping_add(1);
                 if len == 0 {
                     self.done = true;
                     return None;
@@ -251,14 +287,21 @@ impl Bits<'_> {
                 self.left_in_block = len;
             }
             let v = *self.b.get(self.pos)?;
-            self.pos += 1;
-            self.left_in_block -= 1;
+            // SAFE-ARITH: `pos < b.len()` (the byte exists) and `left_in_block > 0` (set above
+            // when it was 0).
+            self.pos = self.pos.wrapping_add(1);
+            self.left_in_block = self.left_in_block.wrapping_sub(1);
+            // SHIFT: `n < size ≤ 12` here (the loop condition; callers pass widths `2..=12`).
             self.acc |= u32::from(v) << self.n;
-            self.n += 8;
+            // SAFE-ARITH: `n < 12`, so `n + 8 < 20`.
+            self.n = self.n.wrapping_add(8);
         }
-        let c = (self.acc & ((1 << size) - 1)) as u16;
+        // SHIFT: `size ≤ 12` (the LZW code width, see `decode_lzw`). SAFE-ARITH: `2^size ≥ 1`.
+        let c = (self.acc & (1u32 << size).wrapping_sub(1)) as u16;
+        // SHIFT: `size ≤ 12`, as above.
         self.acc >>= size;
-        self.n -= size;
+        // SAFE-ARITH: `n ≥ size` (the loop above).
+        self.n = self.n.wrapping_sub(size);
         Some(c)
     }
 }
@@ -274,6 +317,9 @@ struct Target<'a> {
     transparent: Option<u8>,
     /// Pixel counter within the frame.
     i: usize,
+    /// Column and row of pixel `i` in the frame (`i = row · w + fx`), kept incrementally.
+    fx: usize,
+    row: usize,
 }
 
 impl Target<'_> {
@@ -284,17 +330,20 @@ impl Target<'_> {
         if !self.interlaced {
             return row;
         }
+        // SAFE-ARITH: `h ≤ u16::MAX` and `row < h` (the caller's check), so the pass sizes
+        // sum to `h` and every result is below `h` (the passes partition the rows).
         let p1 = h.div_ceil(8);
-        let p2 = (h + 3) / 8;
-        let p3 = (h + 1) / 4;
-        if row < p1 {
-            row * 8
-        } else if row < p1 + p2 {
-            (row - p1) * 8 + 4
-        } else if row < p1 + p2 + p3 {
-            (row - p1 - p2) * 4 + 2
+        let p2 = h.wrapping_add(3) / 8;
+        let p3 = h.wrapping_add(1) / 4;
+        let (e1, e2, e3) = (p1, p1.wrapping_add(p2), p1.wrapping_add(p2).wrapping_add(p3));
+        if row < e1 {
+            row.wrapping_mul(8)
+        } else if row < e2 {
+            row.wrapping_sub(e1).wrapping_mul(8).wrapping_add(4)
+        } else if row < e3 {
+            row.wrapping_sub(e2).wrapping_mul(4).wrapping_add(2)
         } else {
-            (row - p1 - p2 - p3) * 2 + 1
+            row.wrapping_sub(e3).wrapping_mul(2).wrapping_add(1)
         }
     }
 
@@ -304,33 +353,46 @@ impl Target<'_> {
         if fw == 0 {
             return;
         }
-        let (fx, row) = (self.i % fw, self.i / fw);
-        self.i += 1;
+        let (fx, row) = (self.fx, self.row);
+        // SAFE-ARITH: `i ≤ w · h + MAX_CODES < 2^32` (the decoder stops at `w · h` pixels and
+        // flushes at most one code's expansion past it); `fx < fw ≤ u16::MAX` and `row ≤ i`.
+        self.i = self.i.wrapping_add(1);
+        self.fx = fx.wrapping_add(1);
+        if self.fx == fw {
+            self.fx = 0;
+            self.row = row.wrapping_add(1);
+        }
         if Some(idx) == self.transparent || row >= usize::from(self.rect.h) {
             return;
         }
-        let x = usize::from(self.rect.x) + fx;
-        let y = usize::from(self.rect.y) + self.frame_row(row);
+        // SAFE-ARITH: `rect.x`, `rect.y` are `u16`s, `fx < 2^16` and the frame row is below
+        // `rect.h ≤ u16::MAX`; inside the canvas the offset is below `4 · w · h`.
+        let x = usize::from(self.rect.x).wrapping_add(fx);
+        let y = usize::from(self.rect.y).wrapping_add(self.frame_row(row));
         if x >= self.canvas_w || y >= self.canvas_h {
             return;
         }
-        let o = (y * self.canvas_w + x) * 4;
-        let c = usize::from(idx) * 3;
-        let px = match self.palette.get(c..c + 3) {
-            Some(p) => [p[2], p[1], p[0], 255],
+        let o = y.wrapping_mul(self.canvas_w).wrapping_add(x).wrapping_mul(4);
+        let c = usize::from(idx).wrapping_mul(3);
+        let px = match self.palette.get(c..).and_then(<[u8]>::first_chunk) {
+            Some(&[r, g, b]) => [b, g, r, 255],
             None => [0, 0, 0, 255],
         };
-        self.canvas[o..o + 4].copy_from_slice(&px);
+        if let Some(dst) = self.canvas.get_mut(o..o.wrapping_add(4)) {
+            dst.copy_from_slice(&px);
+        }
     }
 }
 
 /// Decodes one frame's LZW data (starting at `data`) into `t`.
-fn decode_lzw(b: &[u8], data: usize, min_code: u8, lzw: &mut Lzw, t: &mut Target<'_>) {
-    let total = usize::from(t.rect.w) * usize::from(t.rect.h);
-    let clear = 1u16 << min_code;
-    let eoi = clear + 1;
-    let mut size = u32::from(min_code) + 1;
-    let mut next = clear + 2;
+fn decode_lzw(b: &[u8], data: usize, min_code: CodeSize, lzw: &mut Lzw, t: &mut Target<'_>) {
+    // SAFE-ARITH: `w, h` are `u16`s: `w · h < 2^32`.
+    let total = usize::from(t.rect.w).wrapping_mul(usize::from(t.rect.h));
+    let clear = min_code.clear();
+    // SAFE-ARITH: `clear = 2^size ≤ 2^11`, so `clear + 2 ≤ 2050`.
+    let eoi = clear.wrapping_add(1);
+    let mut size = min_code.first_width();
+    let mut next = clear.wrapping_add(2);
     let mut old: Option<u16> = None;
     let mut first = 0u8;
     let mut bits = Bits {
@@ -341,14 +403,15 @@ fn decode_lzw(b: &[u8], data: usize, min_code: u8, lzw: &mut Lzw, t: &mut Target
         n: 0,
         done: false,
     };
-    for i in 0..clear {
-        lzw.suffix[usize::from(i)] = i as u8;
+    // Codes are below `MAX_CODES` (12-bit): the dictionary lookups never fall back.
+    for (i, s) in (0..clear).zip(lzw.suffix.iter_mut()) {
+        *s = i as u8;
     }
     while t.i < total {
         let Some(code) = bits.code(size) else { return };
         if code == clear {
-            size = u32::from(min_code) + 1;
-            next = clear + 2;
+            size = min_code.first_width();
+            next = clear.wrapping_add(2);
             old = None;
             continue;
         }
@@ -365,11 +428,13 @@ fn decode_lzw(b: &[u8], data: usize, min_code: u8, lzw: &mut Lzw, t: &mut Target
             continue;
         };
         // Expand `code` (or `prev` + its first byte for the KwKwK case) onto the stack.
-        let mut sp = 0;
+        let mut sp = 0usize;
         let mut c = match code.cmp(&next) {
             core::cmp::Ordering::Less => code,
             core::cmp::Ordering::Equal => {
-                lzw.stack[0] = first;
+                if let Some(s) = lzw.stack.first_mut() {
+                    *s = first;
+                }
                 sp = 1;
                 prev
             }
@@ -379,23 +444,43 @@ fn decode_lzw(b: &[u8], data: usize, min_code: u8, lzw: &mut Lzw, t: &mut Target
             if sp >= MAX_CODES {
                 return;
             }
-            lzw.stack[sp] = lzw.suffix[usize::from(c)];
-            sp += 1;
-            c = lzw.prefix[usize::from(c)];
+            let (Some(slot), Some(&suffix), Some(&prefix)) = (
+                lzw.stack.get_mut(sp),
+                lzw.suffix.get(usize::from(c)),
+                lzw.prefix.get(usize::from(c)),
+            ) else {
+                // A chain longer than the dictionary (corrupt data): stop.
+                return;
+            };
+            *slot = suffix;
+            // SAFE-ARITH: `sp < stack.len() = MAX_CODES + 1` (the slot exists).
+            sp = sp.wrapping_add(1);
+            c = prefix;
         }
         first = c as u8;
-        lzw.stack[sp] = first;
-        sp += 1;
-        while sp > 0 {
-            sp -= 1;
-            t.put(lzw.stack[sp]);
+        let Some(slot) = lzw.stack.get_mut(sp) else {
+            return;
+        };
+        *slot = first;
+        // SAFE-ARITH: as above. The expansion is emitted in reverse.
+        sp = sp.wrapping_add(1);
+        for &v in lzw.stack.get(..sp).unwrap_or_default().iter().rev() {
+            t.put(v);
         }
         if usize::from(next) < MAX_CODES {
-            lzw.prefix[usize::from(next)] = prev;
-            lzw.suffix[usize::from(next)] = first;
-            next += 1;
+            if let (Some(p), Some(s)) = (
+                lzw.prefix.get_mut(usize::from(next)),
+                lzw.suffix.get_mut(usize::from(next)),
+            ) {
+                *p = prev;
+                *s = first;
+            }
+            // SAFE-ARITH: `next < MAX_CODES = 4096`.
+            next = next.wrapping_add(1);
+            // SHIFT: `size ≤ 12`: it starts at `first_width() ≤ 12` and grows only below 12.
             if u32::from(next) == 1 << size && size < 12 {
-                size += 1;
+                // SAFE-ARITH: `size < 12`.
+                size = size.wrapping_add(1);
             }
         }
         old = Some(code);
@@ -419,7 +504,8 @@ impl Decoder for GifDecoder {
     fn decode(&self, bytes: &[u8], out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
         let s = parse_screen(bytes)?;
         let header = out_header(s.w, s.h, true);
-        let n = usize::from(s.w) * usize::from(s.h) * 4;
+        // SAFE-ARITH: `w, h ≤ GIF_MAX_DIM = 2^14`: `n ≤ 2^30`.
+        let n = usize::from(s.w).wrapping_mul(usize::from(s.h)).wrapping_mul(4);
         prepare_out(out, n)?;
         let mut lzw = Lzw::new();
         let mut loops = None;
@@ -452,10 +538,13 @@ fn draw_frame(
     rect: FrameRect,
     palette: Option<(usize, usize)>,
     interlaced: bool,
-    min_code: u8,
+    min_code: CodeSize,
     data: usize,
 ) {
-    let pal = palette.or(s.palette).map_or(&[][..], |(a, e)| &b[a..e]);
+    let pal = palette
+        .or(s.palette)
+        .and_then(|(a, e)| b.get(a..e))
+        .unwrap_or_default();
     let mut t = Target {
         canvas,
         canvas_w: usize::from(s.w),
@@ -465,6 +554,8 @@ fn draw_frame(
         palette: pal,
         transparent: ctrl.transparent,
         i: 0,
+        fx: 0,
+        row: 0,
     };
     decode_lzw(b, data, min_code, lzw, &mut t);
 }
@@ -512,19 +603,27 @@ pub struct GifPlayer<'a> {
 impl<'a> GifPlayer<'a> {
     /// Parses the GIF and allocates everything needed to play it. The canvas starts
     /// transparent; call [`advance`](Self::advance) to show the first frame.
+    ///
+    /// # Errors
+    /// [`Error::InvalidHeader`] or [`Error::Decode`] for data that is not a playable GIF (including
+    /// one without frames); [`Error::Decode`] when the canvas cannot be allocated.
     pub fn new(bytes: &'a [u8]) -> Result<Self, Error> {
         let screen = parse_screen(bytes)?;
         // Scan once: frame count, loop count, whether `previous` disposal is used.
-        let (mut pos, mut frames, mut loops, mut needs_prev) = (screen.first_block, 0, None, false);
+        let (mut pos, mut frames, mut loops, mut needs_prev) = (screen.first_block, 0usize, None, false);
         while let Ok(Block::Frame { ctrl, next, .. }) = next_frame(bytes, pos, &mut loops) {
-            frames += 1;
+            // SAFE-ARITH: every frame takes input bytes, so `frames < bytes.len()`.
+            frames = frames.wrapping_add(1);
             needs_prev |= ctrl.disposal == Disposal::Previous;
             pos = next;
         }
         if frames == 0 {
             return Err(Error::Decode("gif has no frames"));
         }
-        let n = usize::from(screen.w) * usize::from(screen.h) * 4;
+        // SAFE-ARITH: `w, h ≤ GIF_MAX_DIM = 2^14`: `n ≤ 2^30`.
+        let n = usize::from(screen.w)
+            .wrapping_mul(usize::from(screen.h))
+            .wrapping_mul(4);
         let mut canvas = Vec::new();
         prepare_out(&mut canvas, n)?;
         let mut prev = Vec::new();
@@ -635,11 +734,13 @@ impl<'a> GifPlayer<'a> {
                     self.pending = Some((ctrl.disposal, rect));
                     self.pos = next;
                     self.frame_index = self.next_index;
-                    self.next_index += 1;
+                    // SAFE-ARITH: below the frame count (reset at every loop).
+                    self.next_index = self.next_index.wrapping_add(1);
                     return if ctrl.delay_cs == 0 {
                         GIF_DEFAULT_DELAY
                     } else {
-                        Duration::from_millis(u64::from(ctrl.delay_cs) * 10)
+                        // SAFE-ARITH: a `u16` times 10.
+                        Duration::from_millis(u64::from(ctrl.delay_cs).wrapping_mul(10))
                     };
                 }
                 Ok(Block::End) | Err(_) => {
@@ -661,7 +762,8 @@ impl<'a> GifPlayer<'a> {
         match self.loops {
             Some(0) => true,
             Some(n) if self.loops_done < n => {
-                self.loops_done += 1;
+                // SAFE-ARITH: `loops_done < n ≤ u16::MAX`.
+                self.loops_done = self.loops_done.wrapping_add(1);
                 true
             }
             _ => false,
@@ -677,16 +779,27 @@ impl<'a> GifPlayer<'a> {
             return;
         }
         let (cw, ch) = (usize::from(self.screen.w), usize::from(self.screen.h));
+        // SAFE-ARITH: sums of two `u16`s; the clamped rectangle lies inside the canvas, so
+        // the byte offsets are below `4 · cw · ch`.
         let x0 = usize::from(r.x).min(cw);
-        let x1 = (usize::from(r.x) + usize::from(r.w)).min(cw);
-        for y in usize::from(r.y)..(usize::from(r.y) + usize::from(r.h)).min(ch) {
-            let span = (y * cw + x0) * 4..(y * cw + x1) * 4;
+        let x1 = usize::from(r.x).wrapping_add(usize::from(r.w)).min(cw);
+        let y1 = usize::from(r.y).wrapping_add(usize::from(r.h)).min(ch);
+        for y in usize::from(r.y)..y1 {
+            let row = y.wrapping_mul(cw);
+            let span = row.wrapping_add(x0).wrapping_mul(4)..row.wrapping_add(x1).wrapping_mul(4);
+            // SAFE-INDEX: inside the canvas (and the backup of the same size); the fallbacks
+            // are never taken.
+            let Some(dst) = self.canvas.get_mut(span.clone()) else {
+                continue;
+            };
             match d {
-                Disposal::Background => self.canvas[span].fill(0),
-                Disposal::Previous if !self.prev.is_empty() => {
-                    self.canvas[span.clone()].copy_from_slice(&self.prev[span]);
+                Disposal::Background => dst.fill(0),
+                Disposal::Previous => {
+                    if let Some(src) = self.prev.get(span) {
+                        dst.copy_from_slice(src);
+                    }
                 }
-                _ => {}
+                Disposal::None => {}
             }
         }
     }
@@ -695,6 +808,25 @@ impl<'a> GifPlayer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn header_derived_widths_stay_in_range() {
+        for flags in 0..=u8::MAX {
+            let len = color_table_len(flags);
+            assert_eq!(len, 3 * (2 << (flags & 7)));
+            assert!((6..=768).contains(&len));
+        }
+        for bits in 0..=u8::MAX {
+            match CodeSize::new(bits) {
+                Some(c) => {
+                    assert!((1..=11).contains(&bits));
+                    assert_eq!(c.clear(), 1 << bits);
+                    assert!(c.first_width() <= 12);
+                }
+                None => assert!(!(1..=11).contains(&bits)),
+            }
+        }
+    }
 
     #[test]
     fn interlace_row_mapping_is_a_permutation() {
@@ -708,6 +840,8 @@ mod tests {
                 palette: &[],
                 transparent: None,
                 i: 0,
+                fx: 0,
+                row: 0,
             };
             let mut rows: Vec<usize> = (0..usize::from(h)).map(|r| t.frame_row(r)).collect();
             rows.sort_unstable();

@@ -26,6 +26,9 @@ safety = [
 ]
 ## Display-integrity mechanisms: `Widget::value_digest` of the value widgets (`docs/safety/profile.md` § 11); implied by `safety`. Off: not linked.
 display-integrity = ["twine-engine/display-integrity", "twine-render/display-integrity", "twine-text/display-integrity"]
+## Partitioned runtimes (ADR-001): forwards to the engine (widgets note the growth of their
+## buffers in their engine's partition, `WidgetCx::partition`). Not implied by `safety`.
+partitions = ["twine-core/partitions", "twine-engine/partitions"]
 ## Animated GIFs in `AnimImg::from_gif` (the GIF decoder of `twine-image`).
 gif = ["twine-image/img-gif"]
 ## Bidirectional text: mixed LTR/RTL lines drawn in visual order, textarea cursors mapped

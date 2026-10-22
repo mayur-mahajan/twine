@@ -220,7 +220,15 @@ impl<T: Clone + PartialEq + 'static, K: Eq + Hash + Clone + 'static> View for Fo
                 // comparisons and copies of the items are not.
                 items.read(|new| {
                     rt.untrack(|| {
-                        structural = diff(&mut state.borrow_mut(), new, bound, &*key, hasher, &mut counts);
+                        structural = diff(
+                            &mut state.borrow_mut(),
+                            new,
+                            bound,
+                            &*key,
+                            hasher,
+                            &mut counts,
+                            rt.partition(),
+                        );
                     });
                 });
                 if counts.cut > 0 {
@@ -340,7 +348,7 @@ impl<T: 'static, K> State<T, K> {
         let s = &mut self.scratch;
         self.rows.reserve_exact(bound);
         // The table is empty: nothing to rehash.
-        s.index.reserve(both, |_| 0);
+        s.index.reserve(both, NO_REHASH);
         s.plan.reserve_exact(both);
         s.fresh.reserve_exact(bound);
         s.old.reserve_exact(bound);
@@ -348,6 +356,15 @@ impl<T: 'static, K> State<T, K> {
         s.prev.reserve_exact(bound);
     }
 }
+
+/// The hasher an index-table operation passes for a rehash. One type for every call (a
+/// `dyn` reference), so the table's growth code (`reserve_rehash`) is instantiated once for
+/// all collections and call sites rather than once per closure (flash); the dynamic call
+/// only runs while the table grows, never on a lookup.
+type Rehash<'a> = &'a dyn Fn(&u32) -> u64;
+
+/// The [`Rehash`] of a reserve on an empty table (nothing to rehash).
+const NO_REHASH: Rehash<'static> = &|_| 0;
 
 /// The key of index-table entry `e`: a row's, or a new key's.
 #[inline]
@@ -371,6 +388,7 @@ fn diff<T: Clone + PartialEq + 'static, K: Eq + Hash + Clone>(
     key: &dyn Fn(&T) -> K,
     hasher: DefaultHashBuilder,
     counts: &mut Counts,
+    part: twine_core::Partition,
 ) -> bool {
     let new = match new.get(..bound) {
         Some(head) if head.len() < new.len() => {
@@ -392,7 +410,7 @@ fn diff<T: Clone + PartialEq + 'static, K: Eq + Hash + Clone>(
         counts.kept = same;
         return false;
     }
-    diff_keys(st, new, key, hasher, counts);
+    diff_keys(st, new, key, hasher, counts, part);
     true
 }
 
@@ -408,6 +426,7 @@ fn diff_keys<T: Clone + PartialEq + 'static, K: Eq + Hash + Clone>(
     key: &dyn Fn(&T) -> K,
     hasher: DefaultHashBuilder,
     counts: &mut Counts,
+    part: twine_core::Partition,
 ) {
     let State {
         rows,
@@ -425,16 +444,15 @@ fn diff_keys<T: Clone + PartialEq + 'static, K: Eq + Hash + Clone>(
     fresh.clear();
     let entries = rows.len().saturating_add(new.len());
     if index.capacity() < entries {
-        twine_core::alloc_guard::grew(AllocSite::Reconcile);
+        twine_core::alloc_guard::grew(part, AllocSite::Reconcile);
         // Empty (cleared): nothing to rehash.
-        index.reserve(entries, |_| 0);
+        index.reserve(entries, NO_REHASH);
     }
-    alloc_guard::reserve(plan, entries, AllocSite::Reconcile);
+    alloc_guard::reserve(part, plan, entries, AllocSite::Reconcile);
     let hash = |k: Option<&K>| k.map_or(0, |k| hasher.hash_one(k));
     for (j, r) in rows.iter().enumerate() {
-        index.insert_unique(hasher.hash_one(&r.key), entry(j), |&e| {
-            hash(key_of(rows, fresh, e))
-        });
+        let rehash: Rehash<'_> = &|&e| hash(key_of(rows, fresh, e));
+        index.insert_unique(hasher.hash_one(&r.key), entry(j), rehash);
     }
     for item in new {
         let k = key(item);
@@ -449,13 +467,14 @@ fn diff_keys<T: Clone + PartialEq + 'static, K: Eq + Hash + Clone>(
                 if let Some(row) = rows.get(index_of(j)) {
                     add(&mut counts.updated, usize::from(sync_item(row.item, item)));
                 }
-                alloc_guard::push(plan, j, AllocSite::Reconcile);
+                alloc_guard::push(part, plan, j, AllocSite::Reconcile);
             }
             None => {
                 let f = entry(fresh.len());
-                alloc_guard::push(fresh, (k, item.clone()), AllocSite::Reconcile);
-                index.insert_unique(h, NEW | TAKEN | f, |&e| hash(key_of(rows, fresh, e)));
-                alloc_guard::push(plan, NEW | f, AllocSite::Reconcile);
+                alloc_guard::push(part, fresh, (k, item.clone()), AllocSite::Reconcile);
+                let rehash: Rehash<'_> = &|&e| hash(key_of(rows, fresh, e));
+                index.insert_unique(h, NEW | TAKEN | f, rehash);
+                alloc_guard::push(part, plan, NEW | f, AllocSite::Reconcile);
             }
         }
     }
@@ -467,7 +486,7 @@ fn diff_keys<T: Clone + PartialEq + 'static, K: Eq + Hash + Clone>(
             .find(hasher.hash_one(&r.key), |&e| e & (NEW | INDEX) == me)
             .is_some_and(|&e| e & TAKEN != 0);
         if !taken {
-            alloc_guard::push(plan, me, AllocSite::Reconcile);
+            alloc_guard::push(part, plan, me, AllocSite::Reconcile);
         }
     }
     index.clear();
@@ -485,6 +504,7 @@ fn apply<T: 'static, K>(
     counts: &mut Counts,
 ) {
     let rt = scope.runtime();
+    let part = scope.partition();
     // Taken out for the time of the apply (moving the buffers allocates nothing): user code
     // runs meanwhile (cleanups, views) and may even delete the collection.
     let mut st = core::mem::replace(&mut *state.borrow_mut(), State::new());
@@ -503,7 +523,7 @@ fn apply<T: 'static, K>(
                 },
         } = &mut st;
         let n = *positions;
-        alloc_guard::reserve(old, rows.len(), AllocSite::Reconcile);
+        alloc_guard::reserve(part, old, rows.len(), AllocSite::Reconcile);
         old.extend(rows.drain(..).map(Some));
 
         // 1. Dispose and delete the rows that are gone (scope first, then node).
@@ -518,11 +538,11 @@ fn apply<T: 'static, K>(
 
         // 2. The rows that stay in place.
         if let Some(head) = plan.get_mut(..n) {
-            mark_stay(head, tails, prev);
+            mark_stay(head, tails, prev, part);
         }
 
         // 3. Walk the positions, placing each row right after the previous one.
-        alloc_guard::reserve(rows, n, AllocSite::Reconcile);
+        alloc_guard::reserve(part, rows, n, AllocSite::Reconcile);
         EngineAccess::with(rt, |e| {
             let mut fresh = fresh.drain(..);
             let mut placed: Option<NodeId> = None;
@@ -565,11 +585,11 @@ fn apply<T: 'static, K>(
 /// Flags (`STAY`) the positions of `plan` whose kept rows lie on a longest increasing run of
 /// old positions (patience sorting, O(n log n)); `NEW` positions are not on any run. `tails`
 /// and `prev` are the retained scratch.
-fn mark_stay(plan: &mut [u32], tails: &mut Vec<u32>, prev: &mut Vec<u32>) {
+fn mark_stay(plan: &mut [u32], tails: &mut Vec<u32>, prev: &mut Vec<u32>, part: twine_core::Partition) {
     tails.clear();
     prev.clear();
-    alloc_guard::reserve(tails, plan.len(), AllocSite::Reconcile);
-    alloc_guard::reserve(prev, plan.len(), AllocSite::Reconcile);
+    alloc_guard::reserve(part, tails, plan.len(), AllocSite::Reconcile);
+    alloc_guard::reserve(part, prev, plan.len(), AllocSite::Reconcile);
     let old_at = |plan: &[u32], i: u32| {
         plan.get(i as usize)
             .filter(|&&e| e & NEW == 0)
@@ -648,7 +668,12 @@ mod tests {
     /// The positions flagged `STAY` for `s` (`None` = a new row).
     fn run(s: &[Option<u32>]) -> Vec<bool> {
         let mut plan: Vec<u32> = s.iter().map(|v| v.unwrap_or(NEW)).collect();
-        mark_stay(&mut plan, &mut Vec::new(), &mut Vec::new());
+        mark_stay(
+            &mut plan,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            twine_core::Partition::MAIN,
+        );
         plan.iter().map(|e| e & STAY != 0).collect()
     }
 

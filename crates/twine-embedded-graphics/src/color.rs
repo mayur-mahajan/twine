@@ -93,6 +93,7 @@ impl EgColor for BinaryColor {
 
     #[inline]
     fn from_row(row: &[u8], x: usize) -> Self {
+        // SHIFT: `x % 8 < 8`.
         BinaryColor::from(row[x / 8] & (0x80 >> (x % 8)) != 0)
     }
 

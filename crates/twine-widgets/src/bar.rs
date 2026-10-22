@@ -76,7 +76,7 @@ impl ValueAnim {
     /// The value shown now.
     fn current(&self, value: i32) -> i32 {
         match self.state {
-            Some(s) => self.start + ((i64::from(self.end - self.start) * i64::from(s)) / 256) as i32,
+            Some(s) => util::lerp256(self.start, self.end, s),
             None => value,
         }
     }
@@ -278,6 +278,32 @@ impl Bar {
     /// Sets the range (LVGL `lv_bar_set_range`). `min > max` reverses the bar: the
     /// indicator grows from the other end. The value is clamped into the new range.
     /// Idempotent.
+    ///
+    /// Any pair of `i32`s is a valid range, up to `i32::MIN ..= i32::MAX`: the indicator's
+    /// position is computed in `i64`, exactly (`len · (v − min) / (max − min)`, truncated like
+    /// LVGL). Never panics.
+    ///
+    /// ```
+    /// use twine_core::Rect;
+    /// use twine_engine::MeasureCx;
+    /// use twine_testing::EngineHarness;
+    /// use twine_widgets::bar::{self, Bar};
+    ///
+    /// let mut h = EngineHarness::new(300, 40);
+    /// let screen = h.screen();
+    /// let b = bar::create(h.engine_mut(), screen).unwrap();
+    /// let indicator = |h: &mut EngineHarness, min, max, v| -> Rect {
+    ///     h.engine_mut().with_widget_mut(b, |w: &mut Bar, cx| {
+    ///         w.set_range(cx, min, max);
+    ///         w.set_value(cx, v, false);
+    ///     });
+    ///     h.run_until_idle();
+    ///     h.engine().widget::<Bar>(b).unwrap().indicator_area(&MeasureCx::new(h.engine(), b))
+    /// };
+    /// // The whole `i32` range at its top draws like 100 of 0…100.
+    /// let full = indicator(&mut h, i32::MIN, i32::MAX, i32::MAX);
+    /// assert_eq!(full, indicator(&mut h, 0, 100, 100));
+    /// ```
     pub fn set_range(&mut self, cx: &mut WidgetCx<'_>, min: i32, max: i32) {
         let reversed = min > max;
         let (lo, hi) = if reversed { (max, min) } else { (min, max) };
@@ -414,41 +440,47 @@ impl Bar {
             } else {
                 (c.x0, c.x1, c.width())
             };
-            (c0 - e, c1 + e, len / 2 + e)
+            (
+                c0.saturating_sub(e),
+                c1.saturating_add(e),
+                (len / 2).saturating_add(e),
+            )
         } else {
             let (a, b) = (before.area, after.area);
             let (c0, c1) = if hor {
-                (a.y1.min(b.y1), a.y2.max(b.y2) + 1)
+                (a.y1.min(b.y1), a.y2.max(b.y2).saturating_add(1))
             } else {
-                (a.x1.min(b.x1), a.x2.max(b.x2) + 1)
+                (a.x1.min(b.x1), a.x2.max(b.x2).saturating_add(1))
             };
             let r = m
                 .style_i32(Part::Indicator, PropId::Radius)
-                .clamp(0, (c1 - c0) / 2);
-            (c0 - ind_ext, c1 + ind_ext, r + ind_ext)
+                .clamp(0, (c1.saturating_sub(c0) / 2).max(0));
+            (
+                c0.saturating_sub(ind_ext),
+                c1.saturating_add(ind_ext),
+                r.saturating_add(ind_ext),
+            )
         };
-        let r = half + 1;
-        let (a, b) = (before.area, after.area);
-        let edges = if hor {
-            [(a.x1, b.x1), (a.x2 + 1, b.x2 + 1)]
-        } else {
-            [(a.y1, b.y1), (a.y2 + 1, b.y2 + 1)]
-        };
-        // A shown / hidden indicator changes between its (unchanged) ends as well.
+        let r = half.saturating_add(1);
+        // The main-axis span of an indicator (half-open).
         let span = |g: &IndicGeom| {
             if hor {
-                (g.area.x1, g.area.x2 + 1)
+                (g.area.x1, g.area.x2.saturating_add(1))
             } else {
-                (g.area.y1, g.area.y2 + 1)
+                (g.area.y1, g.area.y2.saturating_add(1))
             }
         };
+        let ((a0, a1), (b0, b1)) = (span(&before), span(&after));
+        let edges = [(a0, b0), (a1, b1)];
+        // A shown / hidden indicator changes between its (unchanged) ends as well.
         if before.drawn != after.drawn {
             let g = if after.drawn { &after } else { &before };
             let (lo, hi) = span(g);
+            let (lo, hi) = (lo.saturating_sub(r), hi.saturating_add(r));
             let area = if hor {
-                Rect::new(lo - r, cross0, hi + r, cross1)
+                Rect::new(lo, cross0, hi, cross1)
             } else {
-                Rect::new(cross0, lo - r, cross1, hi + r)
+                Rect::new(cross0, lo, cross1, hi)
             };
             cx.invalidate_area(area);
         }
@@ -456,7 +488,7 @@ impl Bar {
             if a == b {
                 continue;
             }
-            let (lo, hi) = (a.min(b) - r, a.max(b) + r);
+            let (lo, hi) = (a.min(b).saturating_sub(r), a.max(b).saturating_add(r));
             let strip = if hor {
                 Rect::new(lo, cross0, hi, cross1)
             } else {
@@ -489,11 +521,9 @@ impl Bar {
         let bar = m.engine().draw_area(m.node());
         let coords = m.coords();
         let (barw, barh) = (bar.width(), bar.height());
-        let range = if self.max == self.min {
-            1
-        } else {
-            self.max - self.min
-        };
+        // The value range in `i64` (exact for every `min`/`max`; an empty one is taken as 1 by
+        // `value_pos`).
+        let range = util::span(self.min, self.max);
         let hor = match self.orientation {
             Orientation::Horizontal => true,
             Orientation::Vertical => false,
@@ -503,80 +533,75 @@ impl Bar {
         let pad = m.padding(Part::Main);
         let b = Area::from_rect(bar);
         let mut ia = Area {
-            x1: b.x1 + pad.left,
-            y1: b.y1 + pad.top,
-            x2: b.x2 - pad.right,
-            y2: b.y2 - pad.bottom,
+            x1: b.x1.saturating_add(pad.left),
+            y1: b.y1.saturating_add(pad.top),
+            x2: b.x2.saturating_sub(pad.right),
+            y2: b.y2.saturating_sub(pad.bottom),
         };
+        // The minimal thickness, centered on the bar.
+        let thin = |o: i32, len: i32| o.saturating_add(len / 2).saturating_sub(BAR_SIZE_MIN / 2);
         if hor && ia.height() < BAR_SIZE_MIN {
-            ia.y1 = coords.y0 + barh / 2 - BAR_SIZE_MIN / 2;
-            ia.y2 = ia.y1 + BAR_SIZE_MIN;
+            ia.y1 = thin(coords.y0, barh);
+            ia.y2 = ia.y1.saturating_add(BAR_SIZE_MIN);
         } else if !hor && ia.width() < BAR_SIZE_MIN {
-            ia.x1 = coords.x0 + barw / 2 - BAR_SIZE_MIN / 2;
-            ia.x2 = ia.x1 + BAR_SIZE_MIN;
+            ia.x1 = thin(coords.x0, barw);
+            ia.x2 = ia.x1.saturating_add(BAR_SIZE_MIN);
         }
-        let anim_length = i64::from(if hor { ia.width() } else { ia.height() });
-        let pos = |v: i32| ((anim_length * i64::from(v - self.min)) / i64::from(range)) as i32;
+        let anim_length = if hor { ia.width() } else { ia.height() };
+        let pos = |v: i32| util::value_pos(anim_length, v, self.min, range);
         let anim_pos = |a: &ValueAnim, v: i32| match a.state {
-            Some(s) => {
-                let (from, to) = (pos(a.start), pos(a.end));
-                from + (((i64::from(to - from)) * i64::from(s)) / i64::from(ANIM_STATE_END)) as i32
-            }
+            Some(s) => util::lerp256(pos(a.start), pos(a.end), s),
             None => pos(v),
         };
-        let mut start_x = anim_pos(&self.start_anim, self.start_value);
-        let mut cur_x = anim_pos(&self.cur_anim, self.value);
+        let start_x = anim_pos(&self.start_anim, self.start_value);
+        // An area of width 0 is {x1 = 0, x2 = -1}.
+        let cur_x = anim_pos(&self.cur_anim, self.value).saturating_sub(1);
         let hor_rtl = hor && util::is_rtl(m);
         let reversed = self.reversed ^ hor_rtl;
-        // An area of width 0 is {x1 = 0, x2 = -1}.
-        cur_x -= 1;
-        let mut a = ia.to_array();
-        let (mut ax1, mut ax2) = if hor { (0, 2) } else { (1, 3) };
-        if reversed {
-            core::mem::swap(&mut ax1, &mut ax2);
-            cur_x = -cur_x;
-            start_x = -start_x;
-        }
-        if hor {
-            a[ax2] = a[ax1] + cur_x;
-            a[ax1] += start_x;
+        // The main axis of the indicator area: `lo`/`hi` are its first and last pixel. `e1` is
+        // the end the indicator grows from in LVGL's index form (`lo` normally, `hi` when
+        // reversed), `e2` the other one.
+        let (lo, hi) = if hor { (ia.x1, ia.x2) } else { (ia.y1, ia.y2) };
+        let (e1, e2) = if reversed { (hi, lo) } else { (lo, hi) };
+        let (cur_x, start_x) = if reversed {
+            (cur_x.saturating_neg(), start_x.saturating_neg())
         } else {
-            a[ax1] = a[ax2] - cur_x;
-            a[ax2] -= start_x;
-        }
-        if sym {
-            let shift = ((i64::from(-self.min) * anim_length) / i64::from(range)) as i32;
-            if hor {
-                let (left, right) = if reversed { (ax2, ax1) } else { (ax1, ax2) };
+            (cur_x, start_x)
+        };
+        let (e1, e2) = if hor {
+            (e1.saturating_add(start_x), e1.saturating_add(cur_x))
+        } else {
+            (e2.saturating_sub(cur_x), e2.saturating_sub(start_x))
+        };
+        let (lo, hi) = if reversed { (e2, e1) } else { (e1, e2) };
+        let (lo, hi) = if sym {
+            // `min < 0 < max` (symmetrical): the zero point's offset from the minimum end.
+            let shift = util::value_pos(anim_length, 0, self.min, range);
+            // The end the value reaches, and the zero point (both main-axis pixels).
+            let (end, zero) = if hor {
                 let zero = if reversed {
-                    a[ax1] - shift + 1
+                    e1.saturating_sub(shift).saturating_add(1)
                 } else {
-                    a[ax1] + shift
+                    e1.saturating_add(shift)
                 };
-                if a[ax2] > zero {
-                    a[right] = a[ax2];
-                    a[left] = zero;
-                } else {
-                    a[left] = a[ax2];
-                    a[right] = zero;
-                }
+                (e2, zero)
             } else {
-                let (top, bottom) = if reversed { (ax2, ax1) } else { (ax1, ax2) };
                 let zero = if reversed {
-                    a[ax2] + shift
+                    e2.saturating_add(shift)
                 } else {
-                    a[ax2] - shift + 1
+                    e2.saturating_sub(shift).saturating_add(1)
                 };
-                if a[ax1] > zero {
-                    a[bottom] = a[ax1];
-                    a[top] = zero;
-                } else {
-                    a[top] = a[ax1];
-                    a[bottom] = zero;
-                }
-            }
-        }
-        let area = Area::from_array(a);
+                (e1, zero)
+            };
+            if end > zero { (zero, end) } else { (end, zero) }
+        } else {
+            (lo, hi)
+        };
+        let area = if hor {
+            Area { x1: lo, x2: hi, ..ia }
+        } else {
+            Area { y1: lo, y2: hi, ..ia }
+        };
         let len = if hor { area.width() } else { area.height() };
         IndicGeom {
             area,
@@ -646,11 +671,11 @@ impl Bar {
         let mut body_area = indic;
         if mask_needed {
             if g.hor {
-                body_area.x0 = g.bar.x0 + pad.left;
-                body_area.x1 = g.bar.x1 - pad.right;
+                body_area.x0 = g.bar.x0.saturating_add(pad.left);
+                body_area.x1 = g.bar.x1.saturating_sub(pad.right);
             } else {
-                body_area.y0 = g.bar.y0 + pad.top;
-                body_area.y1 = g.bar.y1 - pad.bottom;
+                body_area.y0 = g.bar.y0.saturating_add(pad.top);
+                body_area.y1 = g.bar.y1.saturating_sub(pad.bottom);
             }
             body.radius = 0;
         }
@@ -686,7 +711,7 @@ impl Bar {
     pub(crate) fn ext_for(m: &MeasureCx<'_>) -> i32 {
         let pad = m.padding(Part::Main);
         let p = pad.left.min(pad.right).min(pad.top).min(pad.bottom);
-        util::part_ext_draw(m, Part::Indicator) - p.min(0)
+        util::part_ext_draw(m, Part::Indicator).saturating_sub(p.min(0))
     }
 }
 

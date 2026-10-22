@@ -10,6 +10,7 @@
 //! target and need no floating point.
 
 use core::fmt;
+use core::num::NonZeroU32;
 
 use super::Color;
 
@@ -117,8 +118,20 @@ impl Color {
     /// ```
     #[must_use]
     pub fn relative_luminance(self) -> u32 {
-        let lin = |v: u8| u64::from(SRGB_TO_LINEAR_PPM[usize::from(v)]);
-        let y = (2126 * lin(self.r) + 7152 * lin(self.g) + 722 * lin(self.b) + 5000) / 10_000;
+        // SAFE-INDEX: the table has 256 entries, one per `u8` value; the fallback is unreachable.
+        let lin = |v: u8| {
+            SRGB_TO_LINEAR_PPM
+                .get(usize::from(v))
+                .map_or(0, |&l| u64::from(l))
+        };
+        // SAFE-ARITH: each `lin` is at most 1_000_000 and the coefficients sum to 10_000, so the
+        // sum is below 2^34.
+        let y = 2126u64
+            .wrapping_mul(lin(self.r))
+            .wrapping_add(7152u64.wrapping_mul(lin(self.g)))
+            .wrapping_add(722u64.wrapping_mul(lin(self.b)))
+            .wrapping_add(5000)
+            / 10_000;
         // At most 1_000_000 (the coefficients sum to 10_000).
         u32::try_from(y).unwrap_or(1_000_000)
     }
@@ -139,7 +152,12 @@ impl Color {
         let (a, b) = (self.relative_luminance(), other.relative_luminance());
         let (hi, lo) = if a >= b { (a, b) } else { (b, a) };
         // (hi + 0.05) / (lo + 0.05) in hundredths, rounded down: at most 2100.
-        let r = (hi + 50_000) * 100 / (lo + 50_000);
+        // SAFE-ARITH: `hi`, `lo` ≤ 1_000_000 (`relative_luminance`), so every step is below
+        // 2^27.
+        let num = hi.wrapping_add(50_000).wrapping_mul(100);
+        // DIV: `lo + 50_000 ≥ 50_000`: non-zero by its type (`NonZeroU32::MIN` is 1, and a
+        // `NonZeroU32` sum saturates).
+        let r = num / NonZeroU32::MIN.saturating_add(lo.wrapping_add(49_999));
         ContrastRatio::from_hundredths(u16::try_from(r).unwrap_or(u16::MAX))
     }
 }

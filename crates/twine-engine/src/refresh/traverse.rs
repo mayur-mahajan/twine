@@ -99,7 +99,9 @@ fn opa_chain(engine: &Engine, id: Option<NodeId>) -> Opa {
 /// screen below the active one, or above it for "out" animations), top layer, system layer.
 /// Drawing starts at the topmost node that covers `area` opaquely (LVGL `refr_area_part`).
 pub(crate) fn draw_area(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, d: usize, area: Rect) {
-    let disp = &engine.displays[d];
+    let Some(disp) = engine.displays.get(d) else {
+        return;
+    };
     let mut roots: heapless::Vec<NodeId, 5> = heapless::Vec::new();
     let _ = roots.push(disp.bottom_layer);
     match disp.prev_screen {
@@ -118,12 +120,16 @@ pub(crate) fn draw_area(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, 
     let _ = roots.push(disp.top_layer);
     let _ = roots.push(disp.sys_layer);
     // Topmost cover: from the system layer down to the lowest screen.
-    let start = (1..roots.len())
+    let start = roots
+        .iter()
+        .enumerate()
+        .skip(1)
         .rev()
-        .find_map(|i| find_top_cover(engine, roots[i], area).map(|t| (i, t)));
+        .find_map(|(i, &r)| find_top_cover(engine, r, area).map(|t| (i, t)));
     if let Some((root_idx, top)) = start {
         draw_from(engine, p, aux, top, area);
-        for &r in &roots[root_idx + 1..] {
+        // The roots above the one holding the cover.
+        for &r in roots.iter().skip(root_idx).skip(1) {
             draw_node(engine, p, aux, r, area, Opa::COVER);
         }
     } else {
@@ -355,8 +361,8 @@ fn layer_setup(engine: &Engine, id: NodeId, coords: Rect, ext_draw: u16) -> (Rec
             .unwrap_or(BlendMode::Normal),
         transform: t.map(|mut t| {
             // The pivot is relative to the node; the layer starts `base_ext` further out.
-            t.pivot.x += i32::from(base_ext);
-            t.pivot.y += i32::from(base_ext);
+            t.pivot.x = t.pivot.x.saturating_add(i32::from(base_ext));
+            t.pivot.y = t.pivot.y.saturating_add(i32::from(base_ext));
             t
         }),
     };
@@ -382,7 +388,12 @@ fn bitmap_mask(engine: &Engine, id: NodeId) -> Option<Mask<'static>> {
             img.bytes().map(|alpha| {
                 let c = engine.coords(id);
                 let (w, h) = (i32::from(img.header.w), i32::from(img.header.h));
-                let area = Rect::from_xywh(c.x0 + (c.width() - w) / 2, c.y0 + (c.height() - h) / 2, w, h);
+                let area = Rect::from_xywh(
+                    c.x0.saturating_add(c.width().saturating_sub(w) / 2),
+                    c.y0.saturating_add(c.height().saturating_sub(h) / 2),
+                    w,
+                    h,
+                );
                 Mask::Map { area, alpha }
             })
         }
@@ -507,10 +518,10 @@ fn draw_bounds(engine: &Engine, p: &mut Painter<'_>, root: NodeId) {
         if !r.is_empty() {
             let (x0, y0, x1, y1) = (r.x0, r.y0, r.x1, r.y1);
             for e in [
-                Rect::new(x0, y0, x1, y0 + 1),
-                Rect::new(x0, y1 - 1, x1, y1),
-                Rect::new(x0, y0, x0 + 1, y1),
-                Rect::new(x1 - 1, y0, x1, y1),
+                Rect::new(x0, y0, x1, y0.saturating_add(1)),
+                Rect::new(x0, y1.saturating_sub(1), x1, y1),
+                Rect::new(x0, y0, x0.saturating_add(1), y1),
+                Rect::new(x1.saturating_sub(1), y0, x1, y1),
             ] {
                 p.fill(e, BOUNDS_COLOR, Opa::COVER);
             }

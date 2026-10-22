@@ -207,6 +207,10 @@ impl Code128 {
     /// a control character is needed before a lower-case letter, set B otherwise; a single
     /// character from the other of A/B uses `SHIFT`.
     ///
+    /// # Errors
+    /// [`Code128Error::Empty`] for empty `text`; [`Code128Error::InvalidChar`] naming the first
+    /// character that is not ASCII.
+    ///
     /// ```
     /// use twine_extra::barcode::{Code128, Code128Error};
     ///

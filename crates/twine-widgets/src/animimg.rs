@@ -230,16 +230,18 @@ impl AnimImg {
 
     /// Shows frame `idx` (LVGL `index_change`: clamped to the last frame).
     fn show(&mut self, cx: &mut WidgetCx<'_>, idx: usize) {
-        let n = self.frames.len();
-        if n == 0 {
+        let Some(last) = self.frames.len().checked_sub(1) else {
             return;
-        }
-        let idx = idx.min(n - 1);
+        };
+        let idx = idx.min(last);
         if idx == self.cur && self.image.src().is_some() {
             return;
         }
+        let Some(frame) = self.frames.get(idx).cloned() else {
+            return;
+        };
         self.cur = idx;
-        self.image.set_src(cx, self.frames[idx].clone());
+        self.image.set_src(cx, frame);
     }
 }
 

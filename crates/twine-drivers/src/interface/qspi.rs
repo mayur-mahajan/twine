@@ -94,6 +94,9 @@ pub trait QspiBus {
 
     /// Writes `instr` (8 bits) and `addr` (low 24 bits, most significant byte first) on one
     /// line, then `data` on `lines`, with chip select asserted for the whole transaction.
+    ///
+    /// # Errors
+    /// The bus error (`Self::Error`) when the transaction fails.
     fn write(&mut self, instr: u8, addr: u32, data: &[u8], lines: QspiLines) -> Result<(), Self::Error>;
 }
 

@@ -30,9 +30,15 @@ where
     WR: OutputPin<Error = D::Error>,
     DC: OutputPin<Error = D::Error>,
 {
+    /// At most 16 data lines: one bit of the `u16` bus value each (checked when the bus type
+    /// is instantiated; the interfaces use 8 and 16).
+    const WIDTH_FITS: () = assert!(N <= 16, "an i80 bus has at most 16 data lines");
+
     fn strobe(&mut self, value: u16) -> Result<(), D::Error> {
+        let () = Self::WIDTH_FITS;
         let changed = self.last.map_or(u16::MAX, |l| l ^ value);
         for (i, pin) in self.data.iter_mut().enumerate() {
+            // SHIFT: `i < N ≤ 16` (`WIDTH_FITS`), on a `u16`.
             let bit = 1u16 << i;
             if changed & bit != 0 {
                 pin.set_state((value & bit != 0).into())?;

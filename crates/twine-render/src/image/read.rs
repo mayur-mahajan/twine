@@ -16,19 +16,32 @@ pub(crate) const fn pack(c: Color, a: u8) -> u32 {
 
 /// Reads packed `0xAARRGGBB` texels of one image format.
 pub(crate) trait Texel {
-    /// Texel `(x, y)`; `0` (transparent) when the data is short.
+    /// Texel `(x, y)` with `x < img.w` and `y < img.h` (both below 2^16); `0` (transparent)
+    /// when the data is short.
     fn get(img: &ImagePixels<'_>, x: usize, y: usize) -> u32;
+}
+
+/// The four bytes of a slice of at least 4 bytes, as a little-endian `u32` (0 when shorter).
+#[inline(always)]
+fn le32(b: &[u8]) -> u32 {
+    b.first_chunk::<4>().map_or(0, |b| u32::from_le_bytes(*b))
 }
 
 pub(crate) struct Px<F>(core::marker::PhantomData<F>);
 impl<F: PixelFormat> Texel for Px<F> {
     #[inline(always)]
     fn get(img: &ImagePixels<'_>, x: usize, y: usize) -> u32 {
-        let o = y * usize::from(img.stride) + x * F::BYTES;
-        match img.data.get(o..o + F::BYTES) {
+        // SAFE-ARITH: `x, y < 2^16` (the trait's contract) and `F::BYTES ≤ 4`: `y · stride <
+        // 2^32` and `x · F::BYTES < 2^18` fit even a 32-bit `usize`; their sum is checked (a
+        // stride shorter than a row is caller data).
+        let start = y
+            .wrapping_mul(usize::from(img.stride))
+            .checked_add(x.wrapping_mul(F::BYTES));
+        let px = start.and_then(|o| img.data.get(o..o.wrapping_add(F::BYTES)));
+        match px {
             Some(b) => {
                 if F::FORMAT == ColorFormat::Argb8888 {
-                    u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+                    le32(b)
                 } else {
                     pack(F::to_color(F::read(b)), 255)
                 }
@@ -53,9 +66,11 @@ impl Texel for Indexed {
     #[inline(always)]
     fn get(img: &ImagePixels<'_>, x: usize, y: usize) -> u32 {
         let idx = usize::from(unpack_bits(img.row(y as u16), img.format.bpp(), x));
+        // SAFE-ARITH: `idx ≤ 255`.
+        let o = idx.wrapping_mul(4);
         img.palette
-            .and_then(|p| p.get(idx * 4..idx * 4 + 4))
-            .map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .and_then(|p| p.get(o..o.wrapping_add(4)))
+            .map_or(0, le32)
     }
 }
 
@@ -76,7 +91,19 @@ pub(crate) fn unpremultiply(v: u32) -> u32 {
     if a == 0 || a == 255 {
         return v;
     }
-    let un = |s: u32| ((((v >> s) & 0xFF) * 255 + a / 2) / a).min(255) << s;
+    // SAFE-ARITH: a channel times 255 plus `a / 2` is below 2^17. `a != 0` (returned above):
+    // the division's fallback is never taken.
+    let un = |s: u32| {
+        // SHIFT: `s` is one of the literal channel offsets 16, 8, 0 passed below.
+        let c = (v >> s) & 0xFF;
+        let q = c
+            .wrapping_mul(255)
+            .wrapping_add(a / 2)
+            .checked_div(a)
+            .unwrap_or(0);
+        // SHIFT: as above.
+        q.min(255) << s
+    };
     (a << 24) | un(16) | un(8) | un(0)
 }
 
@@ -193,8 +220,9 @@ pub(crate) fn convert_row<T: Texel>(
     ops: TexelOps,
     out: &mut [u8],
 ) {
-    for (i, px) in out[..n * 4].chunks_exact_mut(4).enumerate() {
-        let v = recolor(ops.key(T::get(img, x + i, y)), ops.recolor);
+    // `x + n ≤ img.w < 2^16` (the callers' runs): the bounded range covers every pixel.
+    for (px, x) in out.chunks_exact_mut(4).take(n).zip(x..usize::MAX) {
+        let v = recolor(ops.key(T::get(img, x, y)), ops.recolor);
         px.copy_from_slice(&v.to_le_bytes());
     }
 }
@@ -216,14 +244,21 @@ pub(crate) fn convert_row<T: Texel>(
 /// assert_eq!(out, [0, 0, 0, 0x40, 0, 0, 0, 0xFF]);
 /// ```
 pub fn read_row_argb(px: &ImagePixels<'_>, y: u16, x0: u16, w: u16, out: &mut [u8]) {
+    // SAFE-ARITH: `n ≤ out.len() / 4`, so `4n ≤ out.len()`.
     let n = usize::from(w).min(out.len() / 4);
+    let Some(out) = out.get_mut(..n.wrapping_mul(4)) else {
+        return;
+    };
     if y >= px.h {
-        out[..n * 4].fill(0);
+        out.fill(0);
         return;
     }
     let inside = usize::from(px.w.saturating_sub(x0)).min(n);
     with_texel!(px, T => convert_row::<T>(px, usize::from(x0), usize::from(y), inside, TexelOps::default(), out));
-    out[inside * 4..n * 4].fill(0);
+    // SAFE-ARITH: `inside ≤ n`. SAFE-INDEX: so the fallback is never taken.
+    if let Some(rest) = out.get_mut(inside.wrapping_mul(4)..) {
+        rest.fill(0);
+    }
 }
 
 #[cfg(test)]

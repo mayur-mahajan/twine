@@ -250,17 +250,7 @@ pub fn layout_children_with<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScr
 /// tells on which axes the size of `id` was set by its parent's layout (then it is not
 /// content-sized on that axis even if its style says so, as in LVGL).
 fn arrange<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, id: T::Id, ovr: [bool; 2]) {
-    let mut raw = content_rect(t.coords(id), spaces(&*t, id));
-    let sc = t.scroll(id);
-    let mut content = Rect::new(raw.x0 - sc.x, raw.y0 - sc.y, raw.x1 - sc.x, raw.y1 - sc.y);
-    let mut csize = raw_size(raw);
-    let sized = [
-        !ovr[0] && t.is_content_sized(id, Axis::X),
-        !ovr[1] && t.is_content_sized(id, Axis::Y),
-    ];
-    let rtl = is_rtl(&*t, id);
-    let kind = effective_kind(&*t, id, true);
-
+    // The children first: a leaf (most nodes) needs none of the container's values below.
     let frame = s.items.len();
     {
         let items = &mut s.items;
@@ -268,18 +258,42 @@ fn arrange<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, id: 
     }
     let end = s.items.len();
     if end == frame {
+        // A leaf: only the misconfiguration warning of `effective_kind` is left to give, and
+        // only for a grid (one style read; the check itself is out of line).
+        if style_enum::<T, LayoutKind>(&*t, id, PropId::Layout) == LayoutKind::Grid {
+            warn_leaf_grid(&*t, id);
+        }
         return;
     }
+    let mut raw = content_rect(t.coords(id), spaces(&*t, id));
+    let sc = t.scroll(id);
+    let mut content = Rect::new(
+        raw.x0.saturating_sub(sc.x),
+        raw.y0.saturating_sub(sc.y),
+        raw.x1.saturating_sub(sc.x),
+        raw.y1.saturating_sub(sc.y),
+    );
+    let mut csize = raw_size(raw);
+    let [ovr_x, ovr_y] = ovr;
+    let sized = [
+        !ovr_x && t.is_content_sized(id, Axis::X),
+        !ovr_y && t.is_content_sized(id, Axis::Y),
+    ];
+    let rtl = is_rtl(&*t, id);
+    let kind = effective_kind(&*t, id, true);
+
+    // SAFE-INDEX: `frame..end` are the items just pushed (indices of `s.items` until the
+    // truncation at the end); the `get` fallbacks are never taken.
     let mut docked = false;
-    for i in frame..end {
-        Item::classify(&mut s.items[i], &*t, kind);
-        docked |= s.items[i].is_docked();
+    for it in s.items.get_mut(frame..end).unwrap_or_default() {
+        Item::classify(it, &*t, kind);
+        docked |= it.is_docked();
     }
     if docked {
-        // The other children share the area above the docked ones.
+        // The other children share the area above the docked ones (`used ≥ 0`).
         let used = place_docked(t, s, frame, end, raw);
-        raw.y1 -= used;
-        content.y1 -= used;
+        raw.y1 = raw.y1.saturating_sub(used);
+        content.y1 = content.y1.saturating_sub(used);
         csize = raw_size(raw);
     }
 
@@ -291,7 +305,7 @@ fn arrange<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, id: 
 
     // Children not positioned by flex/grid: x/y/align.
     for i in frame..end {
-        let it = s.items[i];
+        let Some(&it) = s.items.get(i) else { break };
         if it.in_flow || it.aligned || it.is_docked() {
             continue;
         }
@@ -300,7 +314,7 @@ fn arrange<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, id: 
         place(t, s, it.id, rect);
     }
     for i in frame..end {
-        let it = s.items[i];
+        let Some(&it) = s.items.get(i) else { break };
         if !it.aligned {
             arrange(t, s, it.id, it.ovr);
         }
@@ -311,14 +325,19 @@ fn arrange<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, id: 
         let mut pending = false;
         let mut progress = false;
         for i in frame..end {
-            let it = s.items[i];
+            let Some(&it) = s.items.get(i) else { break };
             if !it.aligned || it.done {
                 continue;
             }
             pending = true;
             let Some(a) = t.align_to(it.id) else { continue };
-            let base_pending = (frame..end)
-                .any(|j| j != i && s.items[j].id == a.base && s.items[j].aligned && !s.items[j].done);
+            let base_pending = s
+                .items
+                .get(frame..end)
+                .unwrap_or_default()
+                .iter()
+                .zip(frame..)
+                .any(|(o, j)| j != i && o.id == a.base && o.aligned && !o.done);
             if base_pending {
                 continue;
             }
@@ -330,12 +349,21 @@ fn arrange<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, id: 
         }
         if !progress {
             // A cycle of align_to relations: break it at the first pending child.
-            if let Some(i) = (frame..end).find(|&i| s.items[i].aligned && !s.items[i].done) {
+            let items = s.items.get(frame..end).unwrap_or_default();
+            if let Some((_, i)) = items.iter().zip(frame..).find(|(o, _)| o.aligned && !o.done) {
                 place_aligned(t, s, i, csize);
             }
         }
     }
     s.items.truncate(frame);
+}
+
+/// The "grid without templates" warning of a leaf whose layout is `Grid` (as
+/// [`effective_kind`] gives it for a container).
+#[cold]
+#[inline(never)]
+fn warn_leaf_grid<T: LayoutTree + ?Sized>(t: &T, id: T::Id) {
+    let _ = effective_kind(t, id, true);
 }
 
 /// Places the docked children of the container being arranged ([`LayoutFlags::DOCK_BOTTOM`],
@@ -354,23 +382,28 @@ fn place_docked<T: LayoutTree + ?Sized>(
 ) -> i32 {
     let csize = raw_size(raw);
     let mut bottom = raw.y1;
+    // SAFE-INDEX: `frame..end` are the container's items; the fallbacks are never taken.
     for i in frame..end {
-        if !s.items[i].is_docked() {
+        let Some(&it) = s.items.get(i) else { break };
+        if !it.is_docked() {
             continue;
         }
-        let c = s.items[i].id;
+        let c = it.id;
         let r = resolve_node(&*t, s, c, csize, [Some(csize.w), None]);
-        bottom -= r.size.h.max(0);
+        let h = r.size.h.max(0);
+        bottom = bottom.saturating_sub(h);
         place(
             t,
             s,
             c,
-            Rect::new(raw.x0, bottom, raw.x1, bottom + r.size.h.max(0)),
+            Rect::new(raw.x0, bottom, raw.x1, bottom.saturating_add(h)),
         );
         // Its width is set by the parent (for its own children's content sizing).
-        s.items[i].ovr = [true, false];
+        if let Some(it) = s.items.get_mut(i) {
+            it.ovr = [true, false];
+        }
     }
-    (raw.y1 - bottom).clamp(0, csize.h.max(0))
+    raw.y1.saturating_sub(bottom).clamp(0, csize.h.max(0))
 }
 
 /// Positions the `align_to` child at `s.items[i]` and lays out its subtree.
@@ -378,8 +411,11 @@ fn place_docked<T: LayoutTree + ?Sized>(
 // whose stack use per tree level is measured (`docs/safety/profile.md` § 10).
 #[inline(never)]
 fn place_aligned<T: LayoutTree + ?Sized>(t: &mut T, s: &mut LayoutScratch<T::Id>, i: usize, csize: Size) {
-    let c = s.items[i].id;
-    s.items[i].done = true;
+    // SAFE-INDEX: `i` is an index of the container's items (the caller's loop); the fallback is
+    // never taken.
+    let Some(it) = s.items.get_mut(i) else { return };
+    it.done = true;
+    let c = it.id;
     let r = resolve_node(&*t, s, c, csize, [None; 2]);
     if let Some(a) = t.align_to(c) {
         let rect = align_to_rect(&*t, c, r.size, a);

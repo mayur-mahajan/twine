@@ -96,6 +96,10 @@ impl QrMatrix {
     /// back as text by scanners). The level is raised while the data still fits the chosen
     /// version (see [`ecc`](Self::ecc)); the mask is chosen by the standard penalty rules.
     ///
+    /// # Errors
+    /// [`QrError::DataTooLong`] when `data` does not fit the largest QR code (version 40) at level
+    /// `ecc`.
+    ///
     /// ```
     /// use twine_extra::qrcode::{Ecc, QrError, QrMatrix};
     ///
@@ -153,6 +157,7 @@ impl QrMatrix {
             let row = &mut bits[usize::from(y) * usize::from(stride)..][..usize::from(stride)];
             for x in 0..size {
                 if qr.get_module(i32::from(x), i32::from(y)) {
+                    // SHIFT: `x % 8 < 8`.
                     row[usize::from(x / 8)] |= 0x80 >> (x % 8);
                 }
             }
@@ -189,6 +194,7 @@ impl QrMatrix {
     pub fn get(&self, x: u8, y: u8) -> bool {
         x < self.size
             && y < self.size
+            // SHIFT: `x % 8 < 8`.
             && self.bits[usize::from(y) * usize::from(self.stride) + usize::from(x / 8)] & (0x80 >> (x % 8))
                 != 0
     }
@@ -234,6 +240,7 @@ pub struct DarkRuns<'a> {
 
 impl DarkRuns<'_> {
     fn bit(&self, x: u8) -> bool {
+        // SHIFT: `x % 8 < 8`.
         self.row[usize::from(x / 8)] & (0x80 >> (x % 8)) != 0
     }
 }

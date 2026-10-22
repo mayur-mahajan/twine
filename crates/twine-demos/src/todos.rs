@@ -1,6 +1,7 @@
 //! A todo list built on the **store pattern**: the application state is one `Copy` struct of
 //! signals and memos, [`Todos`], provided by the root scope as context; components read it
-//! with `cx.expect_context::<Todos>()` and change it only through its action methods
+//! with `cx.use_context::<Todos>()` (a missing store shows its error instead of panicking, so
+//! the demo builds in the `safety` profile) and change it only through its action methods
 //! ([`Todos::push`], [`toggle`](Todos::toggle), [`move_up`](Todos::move_up),
 //! [`remove`](Todos::remove), [`clear_done`](Todos::clear_done)). Commands from outside the
 //! UI (a companion app, a remote) arrive through a [`Ports`] channel and call the same
@@ -13,7 +14,7 @@
 //! See the facade's guide `twine::guide::app_state` for the pattern.
 
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use twine::prelude::*;
@@ -49,7 +50,7 @@ pub struct Ports {
 
 /// The application state: a `Copy` struct of reactive handles, provided as context by the
 /// root scope ([`Todos::provide`]) and read by any component with
-/// `cx.expect_context::<Todos>()`.
+/// `cx.use_context::<Todos>()`.
 ///
 /// The fields are private: views read through the read-only accessors ([`items`](Self::items),
 /// [`left`](Self::left), [`total`](Self::total)) and change the state only through the action
@@ -195,7 +196,7 @@ impl Todos {
 /// t.run_until_idle();
 /// assert_eq!(t.find(by_id("count")).text(), "2 of 2 left");
 /// // Tests reach the store like the components do.
-/// let todos = t.root_scope().expect_context::<Todos>();
+/// let todos = t.root_scope().use_context::<Todos>().unwrap();
 /// assert_eq!(todos.items().with(|v| v[1].text.clone()), "From the phone");
 /// assert!(t.find(by_text("From the phone")).is_visible());
 /// ```
@@ -221,7 +222,11 @@ pub fn app(cx: Scope, ports: Ports) -> impl View {
 /// "Add", the counter and "Clear done". Reads the store from the context.
 #[component]
 fn header(cx: Scope) -> impl View {
-    let todos = cx.expect_context::<Todos>(); // once, while building
+    // Once, while building; without a store (a wiring bug) the error is shown instead.
+    let todos = match cx.use_context::<Todos>() {
+        Ok(todos) => todos,
+        Err(missing) => return missing_store(missing),
+    };
     row((
         button(label("Add")).test_id("add").on_click(move || {
             todos.push(format!("Item {}", todos.next_id()));
@@ -237,13 +242,17 @@ fn header(cx: Scope) -> impl View {
     .gap(12)
     .align_items(CrossAlign::Center)
     .width(Length::pct(100))
+    .into_any()
 }
 
 /// One row: done toggle, text (struck through when done), move up, delete. `item` is the
 /// row's item signal (updated in place by `for_each`).
 #[component]
 fn todo_row(cx: Scope, item: ReadSignal<Todo>) -> impl View {
-    let todos = cx.expect_context::<Todos>();
+    let todos = match cx.use_context::<Todos>() {
+        Ok(todos) => todos,
+        Err(missing) => return missing_store(missing),
+    };
     let id = item.with_untracked(|t| t.id);
     row((
         button(label(Symbol::Ok)).on_click(move || todos.toggle(id)),
@@ -262,4 +271,12 @@ fn todo_row(cx: Scope, item: ReadSignal<Todo>) -> impl View {
     .gap(6)
     .align_items(CrossAlign::Center)
     .width(Length::pct(100))
+    .into_any()
+}
+
+/// What a component shows instead of its content when no [`Todos`] was provided above it (a
+/// wiring bug): the error, naming the missing type. The handled form of the lookup, so the
+/// demo has no panicking path (the `safety` profile has no `expect_context`).
+fn missing_store(missing: MissingContext) -> AnyView {
+    label(missing.to_string()).into_any()
 }

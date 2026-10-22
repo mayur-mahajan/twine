@@ -107,6 +107,9 @@ impl<I2C, IRQ, RST> Cst816s<I2C, IRQ, RST> {
 impl<I2C, IRQ, RST: OutputPin> Cst816s<I2C, IRQ, RST> {
     /// Pulses `RST` low for 10 ms and waits 50 ms for the controller to boot (no-op without a
     /// reset pin).
+    ///
+    /// # Errors
+    /// The reset pin error.
     pub fn reset(&mut self, delay: &mut impl DelayNs) -> Result<(), RST::Error> {
         if let Some(rst) = self.rst.as_mut() {
             rst.set_low()?;
@@ -126,6 +129,9 @@ impl<I2C, IRQ, RST: OutputPin> Cst816s<I2C, IRQ, RST> {
 
 impl<I2C: I2c, IRQ, RST> Cst816s<I2C, IRQ, RST> {
     /// Reads the first touch point in raw panel coordinates (`None`: no finger).
+    ///
+    /// # Errors
+    /// The I²C bus error.
     pub fn read_raw(&mut self) -> Result<Option<(u16, u16)>, I2C::Error> {
         let mut b = [0u8; 6];
         self.i2c.write_read(ADDR, &[REG_DATA], &mut b)?;

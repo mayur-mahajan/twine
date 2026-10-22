@@ -23,7 +23,8 @@
 //! | [`mod@error`] | [`Error`] |
 //! | [`fault`] | [`FaultKind`], [`Faults`], [`FaultCounts`], [`CapacityFault`](fault::CapacityFault): failures Twine recovered from, reported to the application |
 //! | [`limits`] | [`Limits`]: the memory bounds of an application (enforced as `Capacity` faults, optionally preallocated) |
-//! | [`alloc_guard`] | sealing: allocation after start-up detected at Twine's growth points ([`AllocSite`](alloc_guard::AllocSite)) |
+//! | [`partition`] | [`Partition`]: the identity of a partitioned runtime (one reactive runtime and its UIs; feature `partitions`) |
+//! | [`alloc_guard`] | sealing per partition: allocation after start-up detected at Twine's growth points ([`AllocSite`](alloc_guard::AllocSite)) |
 //! | [`audit`] | [`Audit`](audit::Audit), [`AuditSink`](audit::AuditSink), [`KeyValues`](audit::KeyValues): machine-readable configuration evidence |
 //! | [`crc`] | [`Crc32`]: the CRC-32 (IEEE 802.3) checksum of display-integrity checks and digests |
 //! | [`validity`] | [`Validity`], [`ValidityStatus`]: a value and how far it can be trusted (valid, stale, failed, no data) |
@@ -50,6 +51,9 @@
 //! - `safety`: the safety profile (enabled by the `twine` facade's `safety` feature; see
 //!   [`SAFETY_PROFILE`] and `docs/safety/profile.md`). Among other things it widens arena
 //!   generations to 48 bits ([`Generation`]), so no arena slot retires in practice.
+//! - `partitions`: [`Partition::COUNT`] = 4 partitioned runtimes instead of 1 (ADR-001,
+//!   `docs/design/adr-001-partitioned-runtimes.md`); per-partition seal domains in
+//!   [`alloc_guard`]. Not implied by `safety`. Without it [`Partition`] is zero-sized.
 //!
 //! ```
 //! use twine_core::prelude::*;
@@ -67,13 +71,14 @@
 // the `safety` feature (`cargo xtask ci` stage `clippy-safety`).
 #![cfg_attr(
     all(feature = "safety", not(test)),
-    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable,)
-)]
-// NOTE(R5.S11): sites of these lints remain (counts: `docs/safety/profile.md` § Lint status,
-// `cargo xtask safety-lints`); a lint moves to `deny` above when its last site is fixed.
-#![cfg_attr(
-    all(feature = "safety", not(test)),
-    allow(clippy::indexing_slicing, clippy::arithmetic_side_effects,)
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+    )
 )]
 #![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 
@@ -93,6 +98,7 @@ pub mod geometry;
 pub mod limits;
 pub mod log;
 pub mod math;
+pub mod partition;
 pub mod prelude;
 pub mod rect_set;
 pub mod rng;
@@ -110,6 +116,7 @@ pub use fault::{FaultCounts, FaultKind, Faults};
 pub use geometry::*;
 pub use limits::Limits;
 pub use math::{Angle, AngularSpeed, Fraction, Fx, Scale};
+pub use partition::Partition;
 pub use rect_set::{AddResult, RectSet};
 pub use rng::XorShift32;
 pub use small_vec::SmallVec;

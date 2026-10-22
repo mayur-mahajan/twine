@@ -357,9 +357,11 @@ impl<R: Dma2dRegs> Dma2d<R> {
         };
         let (w, h) = (area.width() as u32, area.height() as u32);
         let stride = dst.stride();
+        // DIV: `bytes` is 2, 3 or 4 (the `match` above).
         if stride % bytes != 0 || w > MAX_PL || h > MAX_NL {
             return None;
         }
+        // DIV: `bytes` is 2, 3 or 4 (the `match` above).
         let offset = (stride / bytes) as u32 - w; // OOR.LO
         if offset > MAX_OFFSET {
             return None;
@@ -516,11 +518,13 @@ fn source(src: &ImagePixels<'_>, opa: Opa) -> Option<Fg> {
     };
     let (w, h) = (usize::from(src.w), usize::from(src.h));
     let stride = usize::from(src.stride);
+    // DIV: `bytes` is 1 to 4 (the `match` above).
     if w == 0 || h == 0 || stride % bytes != 0 || stride < w * bytes {
         return None;
     }
     let len = (h - 1) * stride + w * bytes;
     let addr = src.data.as_ptr() as usize;
+    // DIV: `bytes` is 1 to 4 (the `match` above).
     let offset = (stride / bytes - w) as u32;
     if src.data.len() < len || offset > MAX_OFFSET || !aligned(addr, bytes) {
         return None;

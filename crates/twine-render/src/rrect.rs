@@ -3,13 +3,15 @@
 
 use twine_core::Rect;
 
-use crate::circle::{CircleRow, Quarter};
+use crate::circle::{CircleRow, MAX_RADIUS, Quarter};
+use crate::num::span;
 
-/// Effective radius of a rounded rectangle: `radius` clamped to `[0, min(w, h) / 2]`.
+/// Effective radius of a rounded rectangle: `radius` clamped to `[0, min(w, h) / 2]` and to
+/// [`MAX_RADIUS`] (the largest radius whose coverage is computed exactly).
 #[inline]
 #[must_use]
 pub(crate) fn eff_radius(area: Rect, radius: i32) -> i32 {
-    radius.clamp(0, area.width().min(area.height()) / 2)
+    radius.clamp(0, (area.width().min(area.height()) / 2).min(MAX_RADIUS))
 }
 
 /// The coverage of one row of a rounded rectangle:
@@ -44,9 +46,10 @@ impl<'c> RowSpan<'c> {
             return RowSpan::EMPTY;
         }
         let r = q.radius();
-        let py = (y - area.y0).min(area.y1 - 1 - y);
+        // Distance of the row from the nearer horizontal edge (`area.y0 ≤ y < area.y1`).
+        let py = span(area.y0, y).min(span(y, area.y1).saturating_sub(1));
         let (x0, x1) = (area.x0, area.x1);
-        if py >= r {
+        let Some(py) = i32::try_from(py).ok().filter(|&py| py < r) else {
             return RowSpan {
                 aa_l0: x0,
                 full_l: x0,
@@ -56,13 +59,15 @@ impl<'c> RowSpan<'c> {
                 x1,
                 row: CircleRow::FULL,
             };
-        }
+        };
         let row = q.row(py);
+        // Saturating: exact for every shape that fits the coordinate range (the quarter's
+        // values are at most the radius, at most half the width).
         RowSpan {
-            aa_l0: x0 + row.aa_start,
-            full_l: x0 + row.full_from,
-            full_r: x1 - row.full_from,
-            aa_r1: x1 - row.aa_start,
+            aa_l0: x0.saturating_add(row.aa_start),
+            full_l: x0.saturating_add(row.full_from),
+            full_r: x1.saturating_sub(row.full_from),
+            aa_r1: x1.saturating_sub(row.aa_start),
             x0,
             x1,
             row,
@@ -83,9 +88,14 @@ impl<'c> RowSpan<'c> {
         } else if x >= self.full_l && x < self.full_r {
             255
         } else if x < self.full_l {
-            self.row.cov(x - self.x0)
+            // SAFE-ARITH: `x0 ≤ aa_l0 ≤ x < full_l ≤ x0 + full_from` (exact sums, or
+            // saturated at `i32::MAX` above the exact one), so `0 ≤ x − x0 < full_from ≤
+            // MAX_RADIUS`.
+            self.row.cov(x.wrapping_sub(self.x0))
         } else {
-            self.row.cov(self.x1 - 1 - x)
+            // SAFE-ARITH: `x1 − full_from ≤ full_r ≤ x < aa_r1 ≤ x1`, so `0 ≤ x1 − 1 − x <
+            // full_from ≤ MAX_RADIUS` (and `x1 > x`, so `x1 − 1` does not wrap).
+            self.row.cov(self.x1.wrapping_sub(1).wrapping_sub(x))
         }
     }
 

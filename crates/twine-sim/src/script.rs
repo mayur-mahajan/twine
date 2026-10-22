@@ -232,6 +232,9 @@ fn parse_line(words: &[String]) -> Result<ScriptCmd, String> {
 }
 
 /// Parses a whole script.
+///
+/// # Errors
+/// The first [`ScriptError`], with its line number.
 pub fn parse(src: &str) -> Result<Vec<ScriptCmd>, ScriptError> {
     let mut cmds = Vec::new();
     for (i, line) in src.lines().enumerate() {
@@ -302,6 +305,8 @@ pub fn schedule(cmds: &[ScriptCmd]) -> Vec<(u64, ScriptAction)> {
                 out.push((t, ScriptAction::Press(*from)));
                 let steps = (ms / DRAG_STEP_MS).max(1);
                 for k in 1..=steps {
+                    // DIV: `steps ≥ 1` (`.max(1)`) and small (a drag's milliseconds / 16), so the
+                    // `i64` cast keeps it.
                     let lerp = |a: i32, b: i32| a + ((i64::from(b - a) * k as i64) / steps as i64) as i32;
                     let p = Point::new(lerp(from.x, to.x), lerp(from.y, to.y));
                     out.push((t + ms * k / steps, ScriptAction::Move(p)));

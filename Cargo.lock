@@ -3043,6 +3043,7 @@ version = "0.1.0"
 dependencies = [
  "critical-section",
  "env_logger",
+ "proptest",
  "twine",
  "twine-anim",
  "twine-assets",
@@ -3114,7 +3115,10 @@ dependencies = [
  "twine-reactive",
  "twine-style",
  "twine-testing",
+ "twine-theme",
  "twine-view",
+ "twine-widgets",
+ "twine-widgets-ext",
 ]
 
 [[package]]
@@ -4145,8 +4149,10 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "proc-macro2",
  "serde",
  "serde_json",
+ "syn 2.0.119",
  "toml 0.9.12+spec-1.1.0",
  "twine-cli",
  "twine-style",

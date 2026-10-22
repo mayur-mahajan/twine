@@ -64,7 +64,7 @@ impl<T: 'static> Memo<T> {
         stale_on_cycle: bool,
         f: impl FnOnce(&T) -> R,
     ) -> Result<R, ReactiveError> {
-        let (up, rc) = with_runtime(|rt| {
+        let (up, rc) = with_runtime(self.h.part, |rt| {
             let up = rt.update_if_necessary(self.h.key, &mut ());
             (up, rt.read_node(self.h.key, track))
         });

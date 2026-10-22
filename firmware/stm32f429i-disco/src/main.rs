@@ -80,12 +80,26 @@ async fn main(spawner: Spawner) {
         let regs = twine_accel_stm32::PacRegs::new(board.dma2d).unwrap_or_else(|_| defmt::panic!("DMA2D already owned"));
         builder.accel(twine_accel_stm32::Dma2d::new(regs).with_timeout(1_000_000))
     };
+    // `try_build`, not the panicking `build`: the form both profiles have (`safety` has no
+    // `build`). A UI that cannot be built (display, buffers or a widget rejected) stops here.
     let ui = builder
         .buffers(BufferMode::Full)
         .input(touch)
         .with_embassy_platform()
         .app_config(config)
-        .build(demo::app);
+        .try_build(demo::app)
+        .unwrap_or_else(|e| defmt::panic!("twine: cannot build the UI: {}", e));
+    // `perf-monitor` (opt-in): the on-screen performance overlay over the UI.
+    #[cfg(feature = "perf-monitor")]
+    let ui = {
+        let mut ui = ui;
+        if let Some(d) = ui.engine().default_display() {
+            if ui.engine_mut().set_perf_overlay(d, true).is_err() {
+                defmt::warn!("perf overlay: no room for it");
+            }
+        }
+        ui
+    };
     defmt::info!(
         "twine: {} demo on {}x{} LTDC, DMA2D {}",
         demo::NAME,

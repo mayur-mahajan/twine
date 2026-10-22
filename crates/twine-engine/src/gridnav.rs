@@ -122,7 +122,7 @@ pub fn gridnav_set_focused(engine: &mut Engine, container: NodeId, child: Option
             return;
         }
     }
-    if let Some(old) = engine.gridnavs[i].focused {
+    if let Some(old) = engine.gridnavs.get(i).and_then(|d| d.focused) {
         engine.clear_state(old, State::FOCUSED | State::FOCUS_KEY);
     }
     if let Some(c) = child {
@@ -187,7 +187,7 @@ fn gridnav_event(cx: &mut EventCx<'_>, ev: &Event) -> EventResult {
             let guess = match key {
                 Key::Right if !d.ctrl.contains(GridnavCtrl::VERTICAL_MOVE_ONLY) => {
                     if scroll_first && e.scroll_right(cur) > 0 {
-                        e.scroll_by_bounded(cur, -qw, 0, true);
+                        e.scroll_by_bounded(cur, qw.saturating_neg(), 0, true);
                         None
                     } else {
                         find_child(e, obj, cur, Find::Right).or_else(|| {
@@ -222,7 +222,7 @@ fn gridnav_event(cx: &mut EventCx<'_>, ev: &Event) -> EventResult {
                 }
                 Key::Down if !d.ctrl.contains(GridnavCtrl::HORIZONTAL_MOVE_ONLY) => {
                     if scroll_first && e.scroll_bottom(cur) > 0 {
-                        e.scroll_by_bounded(cur, 0, -qh, true);
+                        e.scroll_by_bounded(cur, 0, qh.saturating_neg(), true);
                         None
                     } else {
                         find_child(e, obj, cur, Find::Bottom).or_else(|| {
@@ -361,12 +361,18 @@ fn last_focusable(e: &Engine, obj: NodeId) -> Option<NodeId> {
 fn find_child(e: &Engine, obj: NodeId, start: NodeId, mode: Find) -> Option<NodeId> {
     let center = |n: NodeId| {
         let c = e.coords(n);
-        (c.x0 + c.width() / 2, c.y0 + c.height() / 2)
+        (
+            c.x0.saturating_add(c.width() / 2),
+            c.y0.saturating_add(c.height() / 2),
+        )
     };
     let cont = e.coords(obj);
     let (xs, ys) = center(start);
     let h_half = e.coords(start).height() / 2;
-    let h_max = cont.height() + e.scroll_top(obj) + e.scroll_bottom(obj);
+    let h_max = cont
+        .height()
+        .saturating_add(e.scroll_top(obj))
+        .saturating_add(e.scroll_bottom(obj));
     let mut best: Option<(NodeId, i64)> = None;
     for child in e.tree.children(obj) {
         if child == start || !focusable(e, child) {
@@ -376,37 +382,44 @@ fn find_child(e: &Engine, obj: NodeId, start: NodeId, mode: Find) -> Option<Node
         let c = e.coords(child);
         let (x_err, y_err) = match mode {
             Find::Left | Find::Right => {
-                let (xe, ye) = (xc - xs, yc - ys);
+                let (xe, ye) = (xc.saturating_sub(xs), yc.saturating_sub(ys));
                 if (mode == Find::Left && xe >= 0) || (mode == Find::Right && xe <= 0) || ye.abs() > h_half {
                     continue;
                 }
                 (xe, ye)
             }
             Find::Top | Find::Bottom => {
-                let (xe, ye) = (xc - xs, yc - ys);
+                let (xe, ye) = (xc.saturating_sub(xs), yc.saturating_sub(ys));
                 if (mode == Find::Top && ye >= 0) || (mode == Find::Bottom && ye <= 0) {
                     continue;
                 }
                 (xe, ye)
             }
             Find::NextRowFirst => {
-                let ye = yc - ys;
+                let ye = yc.saturating_sub(ys);
                 if ye <= 0 {
                     continue;
                 }
-                (c.x0 - cont.x0, ye)
+                (c.x0.saturating_sub(cont.x0), ye)
             }
             Find::PrevRowLast => {
-                let ye = yc - ys;
+                let ye = yc.saturating_sub(ys);
                 if ye >= 0 {
                     continue;
                 }
-                (cont.x1 - c.x1, ye)
+                (cont.x1.saturating_sub(c.x1), ye)
             }
-            Find::FirstRow => (xc - xs, c.y0 - cont.y0),
-            Find::LastRow => (xc - xs, h_max - (c.y0 - cont.y0)),
+            Find::FirstRow => (xc.saturating_sub(xs), c.y0.saturating_sub(cont.y0)),
+            Find::LastRow => (
+                xc.saturating_sub(xs),
+                h_max.saturating_sub(c.y0.saturating_sub(cont.y0)),
+            ),
         };
-        let d = i64::from(x_err) * i64::from(x_err) + i64::from(y_err) * i64::from(y_err);
+        let (x_err, y_err) = (i64::from(x_err), i64::from(y_err));
+        // SAFE-ARITH: each square is at most 2^62 (an `i32` squared); their sum saturates.
+        let d = x_err
+            .wrapping_mul(x_err)
+            .saturating_add(y_err.wrapping_mul(y_err));
         if best.is_none_or(|(_, bd)| d < bd) {
             best = Some((child, d));
         }

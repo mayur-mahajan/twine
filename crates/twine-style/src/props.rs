@@ -75,10 +75,10 @@ impl Props {
     #[must_use]
     pub const fn from_ids(ids: &[PropId]) -> Props {
         let mut p = Props::EMPTY;
-        let mut i = 0;
-        while i < ids.len() {
-            p = p.with(ids[i]);
-            i += 1;
+        let mut rest = ids;
+        while let [id, tail @ ..] = rest {
+            p = p.with(*id);
+            rest = tail;
         }
         p
     }
@@ -92,7 +92,10 @@ impl Props {
     #[must_use]
     pub const fn with(mut self, id: PropId) -> Props {
         let (w, b) = bit(id);
-        self.0[w] |= b;
+        // SAFE-INDEX: `w < WORDS` (`bit`); the fallback is never taken.
+        if let Some((_, [word, ..])) = self.0.split_at_mut_checked(w) {
+            *word |= b;
+        }
         self
     }
 
@@ -105,7 +108,10 @@ impl Props {
     #[must_use]
     pub const fn without(mut self, id: PropId) -> Props {
         let (w, b) = bit(id);
-        self.0[w] &= !b;
+        // SAFE-INDEX: `w < WORDS` (`bit`); the fallback is never taken.
+        if let Some((_, [word, ..])) = self.0.split_at_mut_checked(w) {
+            *word &= !b;
+        }
         self
     }
 
@@ -120,10 +126,10 @@ impl Props {
     #[inline]
     #[must_use]
     pub const fn union(mut self, other: Props) -> Props {
-        let mut i = 0;
-        while i < WORDS {
-            self.0[i] |= other.0[i];
-            i += 1;
+        let (mut a, mut b): (&mut [u32], &[u32]) = (&mut self.0, &other.0);
+        while let ([x, ra @ ..], [y, rb @ ..]) = (a, b) {
+            *x |= *y;
+            (a, b) = (ra, rb);
         }
         self
     }
@@ -139,10 +145,10 @@ impl Props {
     #[inline]
     #[must_use]
     pub const fn intersection(mut self, other: Props) -> Props {
-        let mut i = 0;
-        while i < WORDS {
-            self.0[i] &= other.0[i];
-            i += 1;
+        let (mut a, mut b): (&mut [u32], &[u32]) = (&mut self.0, &other.0);
+        while let ([x, ra @ ..], [y, rb @ ..]) = (a, b) {
+            *x &= *y;
+            (a, b) = (ra, rb);
         }
         self
     }
@@ -158,10 +164,10 @@ impl Props {
     #[inline]
     #[must_use]
     pub const fn difference(mut self, other: Props) -> Props {
-        let mut i = 0;
-        while i < WORDS {
-            self.0[i] &= !other.0[i];
-            i += 1;
+        let (mut a, mut b): (&mut [u32], &[u32]) = (&mut self.0, &other.0);
+        while let ([x, ra @ ..], [y, rb @ ..]) = (a, b) {
+            *x &= !*y;
+            (a, b) = (ra, rb);
         }
         self
     }
@@ -176,7 +182,11 @@ impl Props {
     #[must_use]
     pub const fn contains(&self, id: PropId) -> bool {
         let (w, b) = bit(id);
-        self.0[w] & b != 0
+        // SAFE-INDEX: `w < WORDS` (`bit`); the fallback is never taken.
+        match self.0.split_at_checked(w) {
+            Some((_, [word, ..])) => *word & b != 0,
+            _ => false,
+        }
     }
 
     /// Whether the set is empty.
@@ -188,12 +198,12 @@ impl Props {
     #[inline]
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        let mut i = 0;
-        while i < WORDS {
-            if self.0[i] != 0 {
+        let mut rest: &[u32] = &self.0;
+        while let [word, tail @ ..] = rest {
+            if *word != 0 {
                 return false;
             }
-            i += 1;
+            rest = tail;
         }
         true
     }
@@ -205,11 +215,12 @@ impl Props {
     /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
-        let mut n = 0;
-        let mut i = 0;
-        while i < WORDS {
-            n += self.0[i].count_ones() as usize;
-            i += 1;
+        let mut n: usize = 0;
+        let mut rest: &[u32] = &self.0;
+        while let [word, tail @ ..] = rest {
+            // SAFE-ARITH: at most `32 · WORDS` bits are counted.
+            n = n.wrapping_add(word.count_ones() as usize);
+            rest = tail;
         }
         n
     }
@@ -223,16 +234,19 @@ impl Props {
     /// ```
     pub fn iter(self) -> impl Iterator<Item = PropId> {
         let mut words = self.0;
-        let mut w = 0;
+        let mut w: usize = 0;
         core::iter::from_fn(move || {
-            while w < WORDS {
-                let word = words[w];
-                if word != 0 {
+            while let Some(word) = words.get_mut(w) {
+                if *word != 0 {
                     let b = word.trailing_zeros();
-                    words[w] &= word - 1;
-                    return PropId::from_u8((w * 32 + b as usize + 1) as u8);
+                    // SAFE-ARITH: `word != 0`.
+                    *word &= word.wrapping_sub(1);
+                    // SAFE-ARITH: `w < WORDS` and `b < 32`, so the id is at most
+                    // `32 · WORDS` (≤ 256: ids are `u8`s; an id past `PROP_COUNT` is `None`).
+                    return PropId::from_u8(w.wrapping_mul(32).wrapping_add(b as usize).wrapping_add(1) as u8);
                 }
-                w += 1;
+                // SAFE-ARITH: `w < WORDS`.
+                w = w.wrapping_add(1);
             }
             None
         })
@@ -242,19 +256,22 @@ impl Props {
 /// Word index and mask of `id` (bit `id − 1`).
 #[inline]
 const fn bit(id: PropId) -> (usize, u32) {
-    let i = id as usize - 1;
+    // SAFE-ARITH: ids start at 1 (`PropId`'s discriminants are `1..=PROP_COUNT`), so the
+    // result is `0..PROP_COUNT` and the word `i / 32 < WORDS`.
+    let i = (id as usize).wrapping_sub(1);
+    // SHIFT: `i % 32 < 32`, on a `u32`.
     (i / 32, 1 << (i % 32))
 }
 
 /// [`Props::INTERPOLABLE`], computed at compile time from the table's default values.
 const fn interpolable() -> Props {
     let mut p = Props::EMPTY;
-    let mut i = 0;
-    while i < PROP_COUNT {
-        if crate::transition::is_interpolable(PropId::ALL[i]) {
-            p = p.with(PropId::ALL[i]);
+    let mut rest: &[PropId] = &PropId::ALL;
+    while let [id, tail @ ..] = rest {
+        if crate::transition::is_interpolable(*id) {
+            p = p.with(*id);
         }
-        i += 1;
+        rest = tail;
     }
     p
 }

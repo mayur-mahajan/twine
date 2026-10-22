@@ -47,7 +47,7 @@ impl Engine {
             return;
         }
         twine_core::trace!(target: "twine::input", "outside press watch on {}", fmt_node_id(node));
-        twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::Handler);
+        twine_core::alloc_guard::note(self.partition(), twine_core::alloc_guard::AllocSite::Handler);
         self.outside_presses.push((node, Box::new(cb)));
     }
 

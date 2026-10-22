@@ -20,6 +20,9 @@ fn to_char(v: u32) -> Result<char> {
 
 /// Parses one `--range` spec into the characters it names.
 ///
+/// # Errors
+/// A message for a malformed spec, a reversed range, or a range of more than 65 536 code points.
+///
 /// ```
 /// use twine_cli::font::parse_range;
 /// assert_eq!(parse_range("0x41-0x43").unwrap(), vec!['A', 'B', 'C']);
@@ -51,6 +54,9 @@ pub fn parse_range(spec: &str) -> Result<Vec<char>> {
 }
 
 /// Parses and merges several specs: duplicates removed, sorted ascending.
+///
+/// # Errors
+/// The first error of [`parse_range`].
 ///
 /// ```
 /// use twine_cli::font::merge_ranges;

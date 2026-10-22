@@ -444,7 +444,8 @@ impl Iterator for Lineage {
             self.next = None;
             return None;
         }
-        self.left -= 1;
+        // `left > 0` (returned above).
+        self.left = self.left.saturating_sub(1);
         self.next = c.base;
         Some(c)
     }
@@ -488,6 +489,22 @@ impl<'a> MeasureCx<'a> {
     #[must_use]
     pub fn node(&self) -> NodeId {
         self.node
+    }
+
+    /// The engine's partition ([`Engine::partition`]): the seal domain a widget notes the
+    /// growth of its own layout caches in (`twine_core::alloc_guard::grew(cx.partition(), ..)`).
+    /// Free; never panics.
+    ///
+    /// ```
+    /// use twine_engine::{Engine, EngineConfig, MeasureCx, Obj};
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let n = e.create_root(Box::new(Obj)).unwrap();
+    /// assert_eq!(MeasureCx::new(&e, n).partition(), twine_core::Partition::MAIN);
+    /// ```
+    #[must_use]
+    #[inline]
+    pub fn partition(&self) -> twine_core::Partition {
+        self.engine.partition()
     }
 
     /// The engine.
@@ -654,6 +671,22 @@ impl<'a> WidgetCx<'a> {
     /// A context for `node`.
     pub fn new(engine: &'a mut Engine, node: NodeId) -> Self {
         Self { engine, node }
+    }
+
+    /// The engine's partition ([`Engine::partition`]): the seal domain a widget notes the
+    /// growth of its own buffers in (`twine_core::alloc_guard::grew(cx.partition(), ..)`).
+    /// Free; never panics.
+    ///
+    /// ```
+    /// use twine_engine::{Engine, EngineConfig, Obj, WidgetCx};
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let n = e.create_root(Box::new(Obj)).unwrap();
+    /// assert_eq!(WidgetCx::new(&mut e, n).partition(), twine_core::Partition::MAIN);
+    /// ```
+    #[must_use]
+    #[inline]
+    pub fn partition(&self) -> twine_core::Partition {
+        self.engine.partition()
     }
 
     /// The node.
@@ -928,7 +961,7 @@ impl<'a> WidgetCx<'a> {
     #[cold]
     #[inline(never)]
     fn grow_text(&mut self, buf: &mut alloc::string::String, len: usize) {
-        twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
+        twine_core::alloc_guard::grew(self.partition(), twine_core::alloc_guard::AllocSite::Text);
         let limits = &self.engine.limits;
         let want = if limits.preallocate {
             len.max(usize::from(limits.max_text_len))
@@ -957,7 +990,7 @@ impl<'a> WidgetCx<'a> {
     /// ```
     pub fn limit_text(&mut self, buf: &mut alloc::string::String, cap_before: usize) {
         if buf.capacity() != cap_before {
-            twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
+            twine_core::alloc_guard::grew(self.partition(), twine_core::alloc_guard::AllocSite::Text);
         }
         let max = usize::from(self.engine.limits.max_text_len);
         if buf.len() > max {
@@ -1005,24 +1038,43 @@ pub fn default_hit_test(cx: &MeasureCx<'_>, p: Point) -> bool {
     if r == 0 {
         return true;
     }
-    // Distance of the pixel center from the nearest corner circle center, in half pixels.
-    let cx0 = if p.x < c.x0 + r {
-        c.x0 + r
-    } else if p.x >= c.x1 - r {
-        c.x1 - r
+    // Distance of the pixel center from the nearest corner circle center, in half pixels,
+    // in `i64`: every value below is an `i32` or a sum of two, doubled.
+    let (r, x, y) = (i64::from(r), i64::from(p.x), i64::from(p.y));
+    let (x0, y0, x1, y1) = (i64::from(c.x0), i64::from(c.y0), i64::from(c.x1), i64::from(c.y1));
+    // SAFE-ARITH: sums of two `i32`s (below 2^32 in magnitude).
+    let (left, top, right, bottom) = (
+        x0.wrapping_add(r),
+        y0.wrapping_add(r),
+        x1.wrapping_sub(r),
+        y1.wrapping_sub(r),
+    );
+    let cx0 = if x < left {
+        left
+    } else if x >= right {
+        right
     } else {
         return true;
     };
-    let cy0 = if p.y < c.y0 + r {
-        c.y0 + r
-    } else if p.y >= c.y1 - r {
-        c.y1 - r
+    let cy0 = if y < top {
+        top
+    } else if y >= bottom {
+        bottom
     } else {
         return true;
     };
-    let dx = i64::from(2 * p.x + 1 - 2 * cx0);
-    let dy = i64::from(2 * p.y + 1 - 2 * cy0);
-    dx * dx + dy * dy <= 4 * i64::from(r) * i64::from(r)
+    // SAFE-ARITH: doubled values below 2^33 in magnitude.
+    let dx = x
+        .wrapping_mul(2)
+        .wrapping_add(1)
+        .wrapping_sub(cx0.wrapping_mul(2));
+    // SAFE-ARITH: as above.
+    let dy = y
+        .wrapping_mul(2)
+        .wrapping_add(1)
+        .wrapping_sub(cy0.wrapping_mul(2));
+    // The squares saturate (only far outside the radius); `4 r²` too.
+    dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy)) <= r.saturating_mul(r).saturating_mul(4)
 }
 
 /// The radius actually drawn: at most half the shorter side.

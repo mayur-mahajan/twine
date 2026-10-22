@@ -269,6 +269,10 @@ pub trait DisplayDriver {
     ///
     /// On error the buffer must be returned by the next `poll_flush`. The engine treats the
     /// area as not shown: by default it redraws it on a later frame (its flush policy decides).
+    ///
+    /// # Errors
+    /// The driver's error (`Self::Error`) when the transfer cannot start; see above for how the
+    /// engine recovers.
     fn begin_flush(&mut self, area: Rect, buf: DrawBufferMem) -> Result<(), Self::Error>;
 
     /// Polls for completion of the oldest flush in progress.
@@ -470,6 +474,10 @@ pub trait FramebufferDisplay {
     /// On error the engine assumes nothing was scanned out: it does not swap, keeps rendering
     /// into the same back buffer and never waits for [`present_done`](Self::present_done) of
     /// the failed call.
+    ///
+    /// # Errors
+    /// The driver's error (`Self::Error`) when the buffer cannot be scanned out; see above for how
+    /// the engine recovers.
     fn present(&mut self, index: u8) -> Result<(), Self::Error>;
 
     /// `true` once the last [`present`](Self::present) has taken effect (the buffer swap

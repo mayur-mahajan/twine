@@ -13,15 +13,17 @@
 use core::any::{Any, TypeId};
 use core::ptr::NonNull;
 
+use twine_core::Partition;
+
 use crate::global::{Runtime, with_runtime};
 
 /// Restores the slot's previous content when a [`provide_ambient`] or [`with_ambient`] frame
 /// ends (also on unwinding).
-struct Restore(Option<NonNull<dyn Any>>);
+struct Restore(Partition, Option<NonNull<dyn Any>>);
 
 impl Drop for Restore {
     fn drop(&mut self) {
-        swap_slot(self.0.take());
+        swap_slot(self.0, self.1.take());
     }
 }
 
@@ -32,15 +34,17 @@ impl Drop for Restore {
 /// runtime access stays in this one out-of-line function and each instantiation is only a
 /// few instructions around the call (a direct call, no indirection).
 #[inline(never)]
-fn swap_slot(value: Option<NonNull<dyn Any>>) -> Option<NonNull<dyn Any>> {
-    with_runtime(|rt| core::mem::replace(&mut rt.inner.borrow_mut().ambient, value))
+fn swap_slot(part: Partition, value: Option<NonNull<dyn Any>>) -> Option<NonNull<dyn Any>> {
+    with_runtime(part, |rt| {
+        core::mem::replace(&mut rt.inner.borrow_mut().ambient, value)
+    })
 }
 
 /// The type of the value in the slot (`None` when there is none or it is borrowed), read
 /// without taking it out of the slot. Out of line like [`swap_slot`].
 #[inline(never)]
-fn slot_type() -> Option<TypeId> {
-    let p = with_runtime(|rt| rt.inner.borrow().ambient)?;
+fn slot_type(part: Partition) -> Option<TypeId> {
+    let p = with_runtime(part, |rt| rt.inner.borrow().ambient)?;
     // SAFETY: `p` was created by `provide_ambient` from a `&mut dyn Any` that is alive while
     // it is in the slot (see `with_ambient`: the providing frame is still active further down
     // this call stack, and the slot is reset before it ends). While the value is in the slot
@@ -55,13 +59,13 @@ fn slot_type() -> Option<TypeId> {
 
 /// See [`Runtime::ambient_is`].
 #[inline]
-pub(crate) fn ambient_is<T: Any>() -> bool {
-    slot_type() == Some(TypeId::of::<T>())
+pub(crate) fn ambient_is<T: Any>(part: Partition) -> bool {
+    slot_type(part) == Some(TypeId::of::<T>())
 }
 
 /// See [`Runtime::provide_ambient`].
-pub(crate) fn provide_ambient<R>(value: &mut dyn Any, f: impl FnOnce() -> R) -> R {
-    let _restore = Restore(swap_slot(Some(NonNull::from(value))));
+pub(crate) fn provide_ambient<R>(part: Partition, value: &mut dyn Any, f: impl FnOnce() -> R) -> R {
+    let _restore = Restore(part, swap_slot(part, Some(NonNull::from(value))));
     f()
 }
 
@@ -87,7 +91,7 @@ impl Runtime {
     #[inline]
     #[must_use]
     pub fn ambient_is<T: Any>(self) -> bool {
-        ambient_is::<T>()
+        ambient_is::<T>(self.partition())
     }
 
     /// Makes `value` available to [`with_ambient`](Self::with_ambient) calls made (directly or
@@ -110,7 +114,7 @@ impl Runtime {
     /// ```
     #[inline]
     pub fn provide_ambient<R>(self, value: &mut dyn Any, f: impl FnOnce() -> R) -> R {
-        provide_ambient(value, f)
+        provide_ambient(self.partition(), value, f)
     }
 
     /// Calls `f` with the value of the innermost active
@@ -140,20 +144,20 @@ impl Runtime {
     /// Only when `f` panics (the panic propagates after the value was put back).
     #[inline]
     pub fn with_ambient<R>(self, f: impl FnOnce(Option<&mut dyn Any>) -> R) -> R {
-        with_ambient(f)
+        with_ambient(self.partition(), f)
     }
 }
 
 /// See [`Runtime::with_ambient`].
-pub(crate) fn with_ambient<R>(f: impl FnOnce(Option<&mut dyn Any>) -> R) -> R {
-    let taken = swap_slot(None);
-    let _restore = Restore(taken);
+pub(crate) fn with_ambient<R>(part: Partition, f: impl FnOnce(Option<&mut dyn Any>) -> R) -> R {
+    let taken = swap_slot(part, None);
+    let _restore = Restore(part, taken);
     let value = taken.map(|p| {
         // SAFETY: `p` was created by `provide_ambient` from a `&mut dyn Any` whose borrow
         // lasts for that function's whole frame, and the slot is reset to the previous value
-        // before the frame ends (`Restore`, also on unwinding). The slot lives in the reactive
-        // runtime, which is confined to one execution context (thread-local with `std`, the
-        // context holding the `Runtime` token otherwise), so the providing frame is still active further down this
+        // before the frame ends (`Restore`, also on unwinding). The slot lives in partition
+        // `part`'s reactive runtime, which is confined to one execution context (thread-local
+        // with `std`, the context holding that partition's `Runtime` token otherwise), so the providing frame is still active further down this
         // very call stack while we run: the pointee is alive. Nobody else can access it:
         // `provide_ambient` gives up its access to `value` for its whole frame (the caller's
         // `&mut` is reborrowed into `p` and not used until it returns), and we just took `p`
@@ -171,15 +175,17 @@ pub(crate) fn with_ambient<R>(f: impl FnOnce(Option<&mut dyn Any>) -> R) -> R {
 mod tests {
     use super::*;
 
+    const M: Partition = Partition::MAIN;
+
     #[test]
     fn nested_provides_shadow_and_restore() {
         let mut a = 1u8;
         let mut b = 2u8;
-        provide_ambient(&mut a, || {
-            provide_ambient(&mut b, || {
-                with_ambient(|v| *v.unwrap().downcast_mut::<u8>().unwrap() += 10);
+        provide_ambient(M, &mut a, || {
+            provide_ambient(M, &mut b, || {
+                with_ambient(M, |v| *v.unwrap().downcast_mut::<u8>().unwrap() += 10);
             });
-            with_ambient(|v| *v.unwrap().downcast_mut::<u8>().unwrap() += 100);
+            with_ambient(M, |v| *v.unwrap().downcast_mut::<u8>().unwrap() += 100);
         });
         assert_eq!((a, b), (101, 12));
     }
@@ -187,12 +193,12 @@ mod tests {
     #[test]
     fn reprovide_from_a_borrow() {
         let mut a = 0i32;
-        provide_ambient(&mut a, || {
-            with_ambient(|v| {
+        provide_ambient(M, &mut a, || {
+            with_ambient(M, |v| {
                 let v = v.unwrap();
                 // Hand the borrowed value on to nested code.
-                provide_ambient(v, || {
-                    with_ambient(|w| *w.unwrap().downcast_mut::<i32>().unwrap() += 1);
+                provide_ambient(M, v, || {
+                    with_ambient(M, |w| *w.unwrap().downcast_mut::<i32>().unwrap() += 1);
                 });
                 *v.downcast_mut::<i32>().unwrap() += 1;
             });
@@ -204,32 +210,32 @@ mod tests {
     fn ambient_is_follows_provides_and_borrows() {
         let mut a = 0u8;
         let mut b = 0i32;
-        assert!(!ambient_is::<u8>());
-        provide_ambient(&mut a, || {
-            assert!(ambient_is::<u8>());
-            provide_ambient(&mut b, || {
-                assert!(ambient_is::<i32>());
-                assert!(!ambient_is::<u8>()); // shadowed
+        assert!(!ambient_is::<u8>(M));
+        provide_ambient(M, &mut a, || {
+            assert!(ambient_is::<u8>(M));
+            provide_ambient(M, &mut b, || {
+                assert!(ambient_is::<i32>(M));
+                assert!(!ambient_is::<u8>(M)); // shadowed
             });
-            assert!(ambient_is::<u8>());
-            with_ambient(|v| {
-                assert!(!ambient_is::<u8>()); // borrowed
+            assert!(ambient_is::<u8>(M));
+            with_ambient(M, |v| {
+                assert!(!ambient_is::<u8>(M)); // borrowed
                 // Handed on: visible again, as its own type.
-                provide_ambient(v.unwrap(), || assert!(ambient_is::<u8>()));
-                assert!(!ambient_is::<u8>());
+                provide_ambient(M, v.unwrap(), || assert!(ambient_is::<u8>(M)));
+                assert!(!ambient_is::<u8>(M));
             });
-            assert!(ambient_is::<u8>());
+            assert!(ambient_is::<u8>(M));
         });
-        assert!(!ambient_is::<u8>());
+        assert!(!ambient_is::<u8>(M));
     }
 
     #[test]
     fn restored_after_panic() {
         let mut a = 0i32;
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            provide_ambient(&mut a, || with_ambient(|_| panic!("boom")))
+            provide_ambient(M, &mut a, || with_ambient(M, |_| panic!("boom")))
         }));
         assert!(r.is_err());
-        with_ambient(|v| assert!(v.is_none()));
+        with_ambient(M, |v| assert!(v.is_none()));
     }
 }

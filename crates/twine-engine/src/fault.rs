@@ -221,7 +221,11 @@ impl Engine {
         let st = &mut self.faults;
         st.pending.insert(record.kind);
         st.counts.add(record.kind, record.occurrences);
-        st.last[record.kind.index()] = Some(record);
+        // SAFE-INDEX: `kind.index() < FaultKind::COUNT`, the table's length; the fallback is
+        // never taken.
+        if let Some(slot) = st.last.get_mut(record.kind.index()) {
+            *slot = Some(record);
+        }
         let hook = st.hook;
         twine_core::debug!(
             target: "twine::fault",
@@ -256,7 +260,8 @@ impl Engine {
     }
 
     /// Raises [`FaultKind::AllocAfterSeal`] for the allocations Twine's growth points noted
-    /// since the last call while sealed ([`twine_core::alloc_guard`]): one record, `code` = the
+    /// in this engine's partition ([`partition`](Self::partition)) since the last call while
+    /// it was sealed ([`twine_core::alloc_guard`]): one record, `code` = the
     /// last [`AllocSite`](twine_core::alloc_guard::AllocSite), `occurrences` = their number.
     /// Does nothing when there were none (a few loads). `Ui` calls it at every update, and
     /// [`take_faults`](Self::take_faults) before it reports. Never panics; allocates nothing.
@@ -267,15 +272,15 @@ impl Engine {
     /// use twine_engine::{Engine, EngineConfig, Obj};
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// alloc_guard::seal();
+    /// alloc_guard::seal(e.partition());
     /// e.create_root(Box::new(Obj)).unwrap(); // a widget created after the seal
     /// e.raise_alloc_after_seal();
     /// let r = e.last_fault(FaultKind::AllocAfterSeal).unwrap();
     /// assert_eq!(r.code, AllocSite::Widget.code());
-    /// alloc_guard::unseal();
+    /// alloc_guard::unseal(e.partition());
     /// ```
     pub fn raise_alloc_after_seal(&mut self) {
-        if let Some(r) = twine_core::alloc_guard::take() {
+        if let Some(r) = twine_core::alloc_guard::take(self.partition()) {
             self.raise_fault(
                 FaultRecord::new(FaultKind::AllocAfterSeal)
                     .occurrences(r.count)
@@ -345,7 +350,9 @@ impl Engine {
     /// ```
     #[must_use]
     pub fn last_fault(&self, kind: FaultKind) -> Option<&FaultRecord> {
-        self.faults.last[kind.index()].as_ref()
+        // SAFE-INDEX: `kind.index() < FaultKind::COUNT`, the table's length; the fallback is
+        // never taken.
+        self.faults.last.get(kind.index()).and_then(Option::as_ref)
     }
 
     /// Sets the function called for every raised fault (`None` removes it; a new hook

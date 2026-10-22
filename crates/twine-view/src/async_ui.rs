@@ -1251,6 +1251,13 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
         self.engine.reset_worst();
     }
 
+    /// The partition the UI belongs to, as [`Ui::partition`](crate::Ui::partition). Never
+    /// panics.
+    #[must_use]
+    pub fn partition(&self) -> twine_core::Partition {
+        self.core.partition()
+    }
+
     /// The number of completed updates, as [`Ui::heartbeat`](crate::Ui::heartbeat). Never
     /// panics.
     #[must_use]
@@ -1259,7 +1266,8 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
     }
 
     /// Ends start-up, as [`Ui::seal`](crate::Ui::seal): checks the heap budget against this
-    /// report (draw buffers included), then seals the allocation guard. Returns the report.
+    /// report (draw buffers included), then seals the allocation guard of the UI's partition.
+    /// Returns the report.
     /// ```
     /// # use twine_core::{ColorFormat, Rect};
     /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
@@ -1274,9 +1282,9 @@ impl<D: AsyncDisplayDriver, W: AsyncInputWait> AsyncUi<D, W> {
     /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
     /// let mut ui = Ui::builder_async(Panel).runtime(Runtime::take().unwrap()).buffers(BufferMode::partial_single(buf())).platform(&MockPlatform::new()).build(|_| label("hi"));
     /// let report = ui.seal();
-    /// assert!(twine_core::alloc_guard::is_sealed());
+    /// assert!(twine_core::alloc_guard::is_sealed(ui.partition()));
     /// assert_eq!(report, ui.memory_report());
-    /// twine_core::alloc_guard::unseal();
+    /// twine_core::alloc_guard::unseal(ui.partition());
     /// ```
     pub fn seal(&mut self) -> crate::MemoryReport {
         let report = self.memory_report();

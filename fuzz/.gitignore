@@ -1,4 +1,8 @@
 target/
-corpus/
+# Fuzzer-generated corpus files stay local; the hand-written seeds (`corpus/<target>/r5s*`,
+# built and checked by the decoder tests) are tracked.
+corpus/**
+!corpus/*/
+!corpus/*/r5s*
 artifacts/
 coverage/

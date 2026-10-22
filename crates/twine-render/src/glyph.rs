@@ -9,6 +9,7 @@ use twine_core::{Color, ColorFormat, Opa, PixelFormat, Rect};
 use crate::blend::{BlendMode, Source};
 use crate::dispatch::dispatch_format;
 use crate::mask::MaskResult;
+use crate::num::{advance, mul8, span};
 use crate::{AccelResult, Painter};
 
 /// Channel order of the three coverage values per pixel of subpixel glyphs (the panel's
@@ -25,11 +26,7 @@ pub enum SubpxOrder {
 
 #[inline]
 fn scale(v: u8, opa: Opa) -> u8 {
-    if opa.raw() == 255 {
-        v
-    } else {
-        twine_core::math::udiv255(u32::from(v) * u32::from(opa.raw())) as u8
-    }
+    if opa.raw() == 255 { v } else { mul8(v, opa.raw()) }
 }
 
 /// Per-channel blend of one LCD row into pixels of format `F`.
@@ -41,13 +38,14 @@ fn lcd_row<F: PixelFormat>(
     opa: Opa,
     order: SubpxOrder,
 ) {
-    for (i, px) in row.chunks_exact_mut(F::BYTES).enumerate() {
-        let c = &cov[i * 3..i * 3 + 3];
-        let (mut cr, cg, mut cb) = (c[0], c[1], c[2]);
+    let masks = mask.map(|m| m.iter().copied().map(Some));
+    let masks = masks.into_iter().flatten().chain(core::iter::repeat(None));
+    for ((px, c), m) in row.chunks_exact_mut(F::BYTES).zip(cov.chunks_exact(3)).zip(masks) {
+        let &[mut cr, cg, mut cb] = c else { continue };
         if order == SubpxOrder::Bgr {
             core::mem::swap(&mut cr, &mut cb);
         }
-        let m = mask.map_or(opa, |m| Opa::from_raw(scale(m[i], opa)));
+        let m = m.map_or(opa, |m| Opa::from_raw(scale(m, opa)));
         let (ar, ag, ab) = (scale(cr, m), scale(cg, m), scale(cb, m));
         if ar == 0 && ag == 0 && ab == 0 {
             continue;
@@ -82,8 +80,12 @@ impl Painter<'_> {
         if opa.is_transparent() || area.is_empty() {
             return;
         }
-        let w = area.width() as usize;
-        if stride < w || alpha.len() < stride * (area.height() as usize - 1) + w {
+        let w = span(area.x0, area.x1);
+        // The last row needs only `w` bytes (saturating: an impossible size is "too small").
+        let needed = stride
+            .saturating_mul(span(area.y0, area.y1).saturating_sub(1))
+            .saturating_add(w);
+        if stride < w || alpha.len() < needed {
             debug_assert!(false, "glyph_a8: coverage buffer too small");
             twine_core::warn!(target: "twine::render", "glyph_a8: coverage buffer too small; not drawn");
             return;
@@ -103,28 +105,36 @@ impl Painter<'_> {
         }
         let mut cov = take(&mut self.caches_mut().cov);
         let chunk = cov.len().max(1);
+        // The visible columns of every row (`vis` lies inside `area`).
+        let cols = span(area.x0, vis.x0)..span(area.x0, vis.x1);
         for y in vis.y0..vis.y1 {
-            let row = &alpha[(y - area.y0) as usize * stride..][..w];
+            // SAFE-ARITH: rows of `area` start below `alpha.len()` (checked above).
+            let start = span(area.y0, y).wrapping_mul(stride);
+            // SAFE-INDEX: `alpha` holds `w` bytes from every row start (checked above) and
+            // `cols` lies within `0..w`; the fallback is never taken.
+            let row = alpha
+                .get(start..)
+                .and_then(|r| r.get(cols.clone()))
+                .unwrap_or_default();
             let mut x = vis.x0;
-            while x < vis.x1 {
-                let n = ((vis.x1 - x) as usize).min(chunk);
-                let src = &row[(x - area.x0) as usize..][..n];
-                if src.iter().all(|&v| v == 0) {
-                    x += n as i32;
-                    continue;
+            for src in row.chunks(chunk) {
+                let e = advance(x, src.len(), vis.x1);
+                if src.iter().any(|&v| v != 0) {
+                    // SAFE-INDEX: `src.len() ≤ chunk = cov.len()`; the fallback is never taken.
+                    if let Some(c) = cov.get_mut(..src.len()) {
+                        c.copy_from_slice(src);
+                        self.blend_masked_span(
+                            y,
+                            x,
+                            e,
+                            Source::Solid(color),
+                            Some(c),
+                            opa,
+                            BlendMode::Normal,
+                        );
+                    }
                 }
-                let c = &mut cov[..n];
-                c.copy_from_slice(src);
-                self.blend_masked_span(
-                    y,
-                    x,
-                    x + n as i32,
-                    Source::Solid(color),
-                    Some(c),
-                    opa,
-                    BlendMode::Normal,
-                );
-                x += n as i32;
+                x = e;
             }
         }
         self.caches_mut().cov = cov;
@@ -146,8 +156,12 @@ impl Painter<'_> {
         if opa.is_transparent() || area.is_empty() {
             return;
         }
-        let w = area.width() as usize;
-        if stride < 3 * w || cov.len() < stride * (area.height() as usize - 1) + 3 * w {
+        let w = span(area.x0, area.x1);
+        let w3 = w.saturating_mul(3);
+        let needed = stride
+            .saturating_mul(span(area.y0, area.y1).saturating_sub(1))
+            .saturating_add(w3);
+        if stride < w3 || cov.len() < needed {
             debug_assert!(false, "glyph_lcd: coverage buffer too small");
             twine_core::warn!(target: "twine::render", "glyph_lcd: coverage buffer too small; not drawn");
             return;
@@ -162,44 +176,49 @@ impl Painter<'_> {
         ) && crate::is_format_enabled(format);
         let mut mask = take(&mut self.caches_mut().mask);
         let chunk = mask.len().max(1);
+        // SAFE-ARITH: the visible byte columns lie within the `3w` bytes of a row.
+        let cols = span(area.x0, vis.x0).wrapping_mul(3)..span(area.x0, vis.x1).wrapping_mul(3);
         for y in vis.y0..vis.y1 {
-            let row = &cov[(y - area.y0) as usize * stride..][..3 * w];
+            // SAFE-ARITH: rows of `area` start below `cov.len()` (checked above).
+            let start = span(area.y0, y).wrapping_mul(stride);
+            // SAFE-INDEX: `cov` holds `3w` bytes from every row start (checked above); the
+            // fallback is never taken.
+            let row = cov
+                .get(start..)
+                .and_then(|r| r.get(cols.clone()))
+                .unwrap_or_default();
             let mut x = vis.x0;
-            while x < vis.x1 {
-                let n = ((vis.x1 - x) as usize).min(chunk);
-                let off = (x - area.x0) as usize;
-                let src = &row[off * 3..(off + n) * 3];
+            // SAFE-ARITH: `chunk ≤ max_span ≤ 65_535`.
+            for src in row.chunks(chunk.wrapping_mul(3)) {
+                let n = src.len() / 3;
+                let e = advance(x, n, vis.x1);
+                // SAFE-INDEX: `n ≤ chunk = mask.len()`; the fallback is never taken.
+                let Some(m) = mask.get_mut(..n) else {
+                    break;
+                };
                 if src.iter().all(|&v| v == 0) {
-                    x += n as i32;
+                    x = e;
                     continue;
                 }
-                let m = &mut mask[..n];
                 if per_channel {
                     m.fill(255);
                     let r = self.apply_masks(y, x, m);
                     if r != MaskResult::Transparent {
                         let mref = (r == MaskResult::Changed).then_some(&*m);
                         let buf = self.buf_mut();
-                        let dst = buf.row_mut(y, x, x + n as i32);
+                        let dst = buf.row_mut(y, x, e);
                         dispatch_format!(format, F => lcd_row::<F>(dst, src, mref, color, opa, order));
-                        self.mark_touched(Rect::new(x, y, x + n as i32, y + 1));
+                        self.mark_touched(Rect::new(x, y, e, y.saturating_add(1)));
                     }
                 } else {
-                    for (i, v) in m.iter_mut().enumerate() {
-                        let t = &src[i * 3..i * 3 + 3];
-                        *v = ((u16::from(t[0]) + u16::from(t[1]) + u16::from(t[2]) + 1) / 3) as u8;
+                    for (v, t) in m.iter_mut().zip(src.chunks_exact(3)) {
+                        // SAFE-ARITH: three `u8`s plus one sum to at most 766.
+                        let sum = t.iter().fold(1u16, |s, &c| s.wrapping_add(u16::from(c)));
+                        *v = (sum / 3) as u8;
                     }
-                    self.blend_masked_span(
-                        y,
-                        x,
-                        x + n as i32,
-                        Source::Solid(color),
-                        Some(m),
-                        opa,
-                        BlendMode::Normal,
-                    );
+                    self.blend_masked_span(y, x, e, Source::Solid(color), Some(m), opa, BlendMode::Normal);
                 }
-                x += n as i32;
+                x = e;
             }
         }
         self.caches_mut().mask = mask;

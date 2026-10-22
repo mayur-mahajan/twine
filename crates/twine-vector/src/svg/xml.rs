@@ -35,15 +35,54 @@ pub(crate) struct Reader<'a> {
     pos: usize,
 }
 
-fn is_name_char(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.' | b':') || c >= 0x80
+/// Byte classes of the tokenizer, one table lookup per byte: [`NAME`] and [`WS`] bits.
+static CLASS: [u8; 256] = {
+    let mut t = [0u8; 256];
+    // Slice patterns: no index in a constant.
+    let mut rest: &mut [u8] = &mut t;
+    let mut b = 0u8;
+    while let [entry, tail @ ..] = rest {
+        if b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':') || b >= 0x80 {
+            *entry |= NAME;
+        }
+        if matches!(b, b' ' | b'\t' | b'\r' | b'\n') {
+            *entry |= WS;
+        }
+        b = b.wrapping_add(1);
+        rest = tail;
+    }
+    t
+};
+/// [`CLASS`] bit: a name character.
+const NAME: u8 = 1;
+/// [`CLASS`] bit: white space.
+const WS: u8 = 2;
+
+#[inline]
+fn class(c: u8) -> u8 {
+    // A `u8` indexes the 256 entries: the fallback is never taken.
+    CLASS.get(usize::from(c)).copied().unwrap_or(0)
 }
 
+#[inline]
+fn is_name_char(c: u8) -> bool {
+    class(c) & NAME != 0
+}
+
+#[inline]
 fn is_ws(c: u8) -> bool {
-    matches!(c, b' ' | b'\t' | b'\r' | b'\n')
+    class(c) & WS != 0
 }
 
 impl<'a> Reader<'a> {
+    /// Moves the position forward by `n` bytes that the caller has just read or found, so
+    /// `pos + n ≤ len`.
+    #[inline]
+    pub(crate) fn bump(&mut self, n: usize) {
+        // SAFE-ARITH: `pos + n ≤ len ≤ isize::MAX` (the caller's contract above).
+        self.pos = self.pos.wrapping_add(n);
+    }
+
     pub(crate) fn new(s: &'a str) -> Self {
         Self { s, pos: 0 }
     }
@@ -63,7 +102,9 @@ impl<'a> Reader<'a> {
         let rest = self.s.get(self.pos..).ok_or(SvgError::UnexpectedEof)?;
         match rest.find(end) {
             Some(i) => {
-                self.pos += i + end.len();
+                // SAFE-ARITH: the sum is an offset inside the input (the found byte and the one after
+                // it, or the end marker), below `isize::MAX`.
+                self.bump(i.wrapping_add(end.len()));
                 Ok(())
             }
             None => Err(SvgError::UnexpectedEof),
@@ -73,8 +114,8 @@ impl<'a> Reader<'a> {
     fn name(&mut self) -> Result<&'a str, SvgError> {
         let b = self.bytes();
         let start = self.pos;
-        while self.pos < b.len() && is_name_char(b[self.pos]) {
-            self.pos += 1;
+        while b.get(self.pos).is_some_and(|&c| is_name_char(c)) {
+            self.bump(1);
         }
         if self.pos == start {
             return Err(SvgError::Malformed(start));
@@ -84,8 +125,8 @@ impl<'a> Reader<'a> {
 
     fn skip_ws(&mut self) {
         let b = self.bytes();
-        while self.pos < b.len() && is_ws(b[self.pos]) {
-            self.pos += 1;
+        while b.get(self.pos).is_some_and(|&c| is_ws(c)) {
+            self.bump(1);
         }
     }
 
@@ -94,9 +135,8 @@ impl<'a> Reader<'a> {
         let b = self.bytes();
         let mut depth = 0u32;
         let mut quote = 0u8;
-        while self.pos < b.len() {
-            let c = b[self.pos];
-            self.pos += 1;
+        while let Some(&c) = b.get(self.pos) {
+            self.bump(1);
             if quote != 0 {
                 if c == quote {
                     quote = 0;
@@ -105,7 +145,7 @@ impl<'a> Reader<'a> {
             }
             match c {
                 b'"' | b'\'' => quote = c,
-                b'[' => depth += 1,
+                b'[' => depth = depth.saturating_add(1),
                 b']' => depth = depth.saturating_sub(1),
                 b'>' if depth == 0 => return Ok(()),
                 _ => {}
@@ -122,9 +162,9 @@ impl<'a> Reader<'a> {
                 self.pos = self.s.len();
                 return Ok(None);
             };
-            self.pos += i;
+            self.bump(i);
             if self.starts_with("<!--") {
-                self.pos += 4;
+                self.bump(4);
                 self.skip_past("-->")?;
             } else if self.starts_with("<?") {
                 self.skip_past("?>")?;
@@ -133,16 +173,16 @@ impl<'a> Reader<'a> {
             } else if self.starts_with("<!") {
                 self.skip_decl()?;
             } else if self.starts_with("</") {
-                self.pos += 2;
+                self.bump(2);
                 let name = self.name()?;
                 self.skip_ws();
                 if !self.starts_with(">") {
                     return Err(SvgError::Malformed(self.pos));
                 }
-                self.pos += 1;
+                self.bump(1);
                 return Ok(Some(Token::End { name }));
             } else {
-                self.pos += 1;
+                self.bump(1);
                 let name = self.name()?;
                 let attr_start = self.pos;
                 let attrs_end = self.scan_attrs()?;
@@ -150,7 +190,7 @@ impl<'a> Reader<'a> {
                     s: self.s.get(attr_start..attrs_end).unwrap_or(""),
                 };
                 let self_closing = self.starts_with("/>");
-                self.pos += if self_closing { 2 } else { 1 };
+                self.bump(if self_closing { 2 } else { 1 });
                 return Ok(Some(Token::Start {
                     name,
                     attrs,
@@ -174,7 +214,7 @@ impl<'a> Reader<'a> {
                 None => return Err(SvgError::UnexpectedEof),
                 Some(b'>') => return Ok(self.pos),
                 Some(b'/') => {
-                    return if b.get(self.pos + 1) == Some(&b'>') {
+                    return if b.get(self.pos.saturating_add(1)) == Some(&b'>') {
                         Ok(self.pos)
                     } else {
                         Err(SvgError::Malformed(self.pos))
@@ -188,16 +228,18 @@ impl<'a> Reader<'a> {
             if b.get(self.pos) != Some(&b'=') {
                 return Err(SvgError::Malformed(self.pos));
             }
-            self.pos += 1;
+            self.bump(1);
             self.skip_ws();
             let q = match b.get(self.pos) {
                 Some(&q @ (b'"' | b'\'')) => q,
                 Some(_) => return Err(SvgError::Malformed(self.pos)),
                 None => return Err(SvgError::UnexpectedEof),
             };
-            self.pos += 1;
+            self.bump(1);
             match b.get(self.pos..).and_then(|r| r.iter().position(|&c| c == q)) {
-                Some(i) => self.pos += i + 1,
+                // SAFE-ARITH: the sum is an offset inside the input (the found byte and the one after
+                // it, or the end marker), below `isize::MAX`.
+                Some(i) => self.bump(i.wrapping_add(1)),
                 None => return Err(SvgError::UnexpectedEof),
             }
         }
@@ -231,30 +273,47 @@ pub(crate) struct AttrIter<'a> {
     pos: usize,
 }
 
+impl AttrIter<'_> {
+    /// Moves the position forward by `n` bytes that the caller has just read or found, so
+    /// `pos + n ≤ len`.
+    #[inline]
+    fn bump(&mut self, n: usize) {
+        // SAFE-ARITH: `pos + n ≤ len ≤ isize::MAX` (the caller's contract above).
+        self.pos = self.pos.wrapping_add(n);
+    }
+}
+
 impl<'a> Iterator for AttrIter<'a> {
     type Item = (&'a str, &'a str);
     fn next(&mut self) -> Option<Self::Item> {
         let b = self.s.as_bytes();
-        while self.pos < b.len() && is_ws(b[self.pos]) {
-            self.pos += 1;
+        while b.get(self.pos).is_some_and(|&c| is_ws(c)) {
+            self.bump(1);
         }
         let n0 = self.pos;
-        while self.pos < b.len() && is_name_char(b[self.pos]) {
-            self.pos += 1;
+        while b.get(self.pos).is_some_and(|&c| is_name_char(c)) {
+            self.bump(1);
         }
         if self.pos == n0 {
             return None;
         }
         let name = self.s.get(n0..self.pos)?;
         let eq = b.get(self.pos..)?.iter().position(|&c| c == b'=')?;
-        self.pos += eq + 1;
+        // SAFE-ARITH: the sum is an offset inside the input (the found byte and the one after
+        // it, or the end marker), below `isize::MAX`.
+        self.bump(eq.wrapping_add(1));
         let qo = b.get(self.pos..)?.iter().position(|&c| c == b'"' || c == b'\'')?;
-        self.pos += qo;
-        let q = b[self.pos];
-        let v0 = self.pos + 1;
+        self.bump(qo);
+        let q = *b.get(self.pos)?;
+        self.bump(1);
+        let v0 = self.pos;
         let len = b.get(v0..)?.iter().position(|&c| c == q)?;
-        self.pos = v0 + len + 1;
-        Some((name, self.s.get(v0..v0 + len)?))
+        // SAFE-ARITH: the sum is an offset inside the input (the found byte and the one after
+        // it, or the end marker), below `isize::MAX`.
+        self.bump(len.wrapping_add(1));
+        // The quote follows the value: `v0 + len < self.pos`.
+        let v1 = self.pos.wrapping_sub(1);
+        Some((name, self.s.get(v0..v1)?))
     }
 }
 
@@ -276,15 +335,19 @@ pub(crate) fn unescape<'b>(v: &'b str, buf: &'b mut String) -> &'b str {
     }
     buf.clear();
     let mut rest = v;
+    // The positions below are those of the ASCII bytes `&` and `;`: char boundaries, so the
+    // `get`s never fall back.
     while let Some(i) = rest.find('&') {
-        buf.push_str(&rest[..i]);
-        rest = &rest[i..];
+        let (text, from_amp) = rest.split_at_checked(i).unwrap_or((rest, ""));
+        buf.push_str(text);
+        rest = from_amp;
+        let after_amp = rest.get(1..).unwrap_or_default();
         let Some(end) = rest.find(';').filter(|&e| e <= 12) else {
             buf.push('&');
-            rest = &rest[1..];
+            rest = after_amp;
             continue;
         };
-        let ent = &rest[1..end];
+        let ent = rest.get(1..end).unwrap_or_default();
         let ch = match ent {
             "amp" => Some('&'),
             "lt" => Some('<'),
@@ -301,10 +364,10 @@ pub(crate) fn unescape<'b>(v: &'b str, buf: &'b mut String) -> &'b str {
         };
         if let Some(c) = ch {
             buf.push(c);
-            rest = &rest[end + 1..];
+            rest = rest.get(end.saturating_add(1)..).unwrap_or_default();
         } else {
             buf.push('&');
-            rest = &rest[1..];
+            rest = after_amp;
         }
     }
     buf.push_str(rest);

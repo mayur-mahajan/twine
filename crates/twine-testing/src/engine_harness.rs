@@ -535,6 +535,9 @@ impl EngineHarness {
     }
 
     /// The active screen.
+    ///
+    /// # Panics
+    /// If the harness display was removed from the engine.
     #[must_use]
     pub fn screen(&self) -> NodeId {
         self.engine.active_screen(self.display).expect("harness display")
@@ -638,6 +641,10 @@ impl EngineHarness {
     }
 
     /// Asserts that an update renders nothing and returns [`Wake::Idle`] (P1).
+    ///
+    /// # Panics
+    /// If the update returns anything other than [`Wake::Idle`] or flushes an area (this is the
+    /// assertion).
     #[track_caller]
     pub fn assert_idle(&mut self) {
         let w = self.update();
@@ -713,6 +720,9 @@ impl EngineHarness {
 
     /// The panel as 8-bit RGB (physical orientation; for framebuffer modes the presented
     /// buffer).
+    ///
+    /// # Panics
+    /// If the harness display was removed from the engine.
     #[must_use]
     pub fn panel_rgb888(&self) -> Vec<u8> {
         let d = self.display;
@@ -780,6 +790,10 @@ impl EngineHarness {
 
     /// The harness pointer (a [`MockPointer`] with [`PollHint::Interrupt`]), registered on
     /// first use.
+    ///
+    /// # Panics
+    /// If the engine refuses the device: the test registered
+    /// [`MAX_INPUTS`](twine_engine::MAX_INPUTS) devices of its own.
     pub fn pointer_input(&mut self) -> (InputId, MockPointer) {
         if self.inputs.pointer.is_none() {
             let m = MockPointer::new();
@@ -795,6 +809,10 @@ impl EngineHarness {
 
     /// The harness keypad ([`MockKeypad`], interrupt driven), registered on first use and
     /// attached to the engine's default group (if any at that time).
+    ///
+    /// # Panics
+    /// If the engine refuses the device: the test registered
+    /// [`MAX_INPUTS`](twine_engine::MAX_INPUTS) devices of its own.
     pub fn keypad_input(&mut self) -> (InputId, MockKeypad) {
         if self.inputs.keypad.is_none() {
             let m = MockKeypad::new();
@@ -812,6 +830,10 @@ impl EngineHarness {
 
     /// The harness encoder ([`MockEncoder`], interrupt driven), registered on first use and
     /// attached to the engine's default group (if any at that time).
+    ///
+    /// # Panics
+    /// If the engine refuses the device: the test registered
+    /// [`MAX_INPUTS`](twine_engine::MAX_INPUTS) devices of its own.
     pub fn encoder_input(&mut self) -> (InputId, MockEncoder) {
         if self.inputs.encoder.is_none() {
             let m = MockEncoder::new();
@@ -865,6 +887,7 @@ impl EngineHarness {
         self.press(from);
         for k in 1..=steps {
             self.clock.advance(Duration::us(period));
+            // DIV: `steps ≥ 1` (`.max(1)`); a test drag has far fewer than 2^63 steps.
             let lerp = |a: i32, b: i32| a + ((i64::from(b - a) * k as i64) / steps as i64) as i32;
             self.move_to(Point::new(lerp(from.x, to.x), lerp(from.y, to.y)));
         }

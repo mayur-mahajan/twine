@@ -82,7 +82,7 @@ impl Dash {
     pub fn is_valid(&self) -> bool {
         !self.pattern.is_empty()
             && self.pattern.iter().all(|v| v.raw() >= 0)
-            && self.pattern.iter().map(|v| i64::from(v.raw())).sum::<i64>() > 0
+            && self.pattern.iter().any(|v| v.raw() > 0)
     }
 }
 
@@ -121,17 +121,20 @@ impl Default for Stroke {
     }
 }
 
-/// Raw 16.16 vector.
+/// Raw 16.16 vector. The stroker works on path coordinates (`i32` raw values) plus offsets of
+/// at most the half width or the miter length; its sums saturate (exact for every outline
+/// that fits the coordinate range, which `fxp` saturates to anyway). Outline building is per
+/// vertex, not per pixel.
 type V = (i64, i64);
 
 #[inline]
 fn add(a: V, b: V) -> V {
-    (a.0 + b.0, a.1 + b.1)
+    (a.0.saturating_add(b.0), a.1.saturating_add(b.1))
 }
 
 #[inline]
 fn neg(a: V) -> V {
-    (-a.0, -a.1)
+    (a.0.saturating_neg(), a.1.saturating_neg())
 }
 
 /// `v` scaled to length `len`.
@@ -189,7 +192,7 @@ impl Stroker<'_> {
     fn normal(&self, a: FxPoint, b: FxPoint) -> V {
         let (ax, ay) = a.raw();
         let (bx, by) = b.raw();
-        with_len((ay - by, bx - ax), self.hw)
+        with_len((ay.saturating_sub(by), bx.saturating_sub(ax)), self.hw)
     }
 
     /// Arc around `c` from offset `from` to `to` (both of length `hw`, angle < 180°), emitting
@@ -197,19 +200,20 @@ impl Stroker<'_> {
     fn arc(&self, o: &mut Outline<'_>, c: V, from: V, to: V, depth: u32) {
         let m = add(from, to);
         let ml = hypot(m.0, m.1);
-        let sag = self.hw - ml / 2;
+        let sag = self.hw.saturating_sub(ml / 2);
         if depth >= 10 || sag <= self.tol || ml == 0 {
             o.to(add(c, to));
             return;
         }
         let mid = with_len(m, self.hw);
-        self.arc(o, c, from, mid, depth + 1);
-        self.arc(o, c, mid, to, depth + 1);
+        // SAFE-ARITH: `depth < 10` (returned above).
+        self.arc(o, c, from, mid, depth.wrapping_add(1));
+        self.arc(o, c, mid, to, depth.wrapping_add(1));
     }
 
     /// Half circle from `n` to `−n` around `c` through the direction `(n.y, −n.x)`.
     fn half_circle(&self, o: &mut Outline<'_>, c: V, n: V) {
-        let d = (n.1, -n.0);
+        let d = (n.1, n.0.saturating_neg());
         self.arc(o, c, n, d, 0);
         self.arc(o, c, d, neg(n), 0);
     }
@@ -218,8 +222,11 @@ impl Stroker<'_> {
     /// with the outgoing offset `p + nb`.
     fn join(&self, o: &mut Outline<'_>, p: V, na: V, nb: V) {
         o.to(add(p, na));
-        let cross = i128::from(nb.0) * i128::from(na.1) - i128::from(nb.1) * i128::from(na.0);
-        let dot = i128::from(na.0) * i128::from(nb.0) + i128::from(na.1) * i128::from(nb.1);
+        // Products of two `i64`s fit in `i128`; their sums saturate (exact for normals of
+        // length `hw ≤ 2^30`).
+        let mul = |a: i64, b: i64| i128::from(a).saturating_mul(i128::from(b));
+        let cross = mul(nb.0, na.1).saturating_sub(mul(nb.1, na.0));
+        let dot = mul(na.0, nb.0).saturating_add(mul(na.1, nb.1));
         if cross == 0 && dot > 0 {
             o.to(add(p, nb));
             return;
@@ -233,19 +240,26 @@ impl Stroker<'_> {
         match self.s.join {
             LineJoin::Bevel => {}
             LineJoin::Miter => {
-                let hw2 = i128::from(self.hw) * i128::from(self.hw);
-                let den = hw2 + dot;
+                let hw2 = mul(self.hw, self.hw);
+                let den = hw2.saturating_add(dot);
                 let lim = i128::from(self.s.miter_limit.raw().max(0));
                 // ratio² = 2·hw² / (hw² + na·nb) ≤ limit²  (limit in 16.16).
-                if den > 0 && (2 * hw2) << 32 <= lim * lim * den {
+                if den > 0
+                    && hw2.saturating_mul(2).saturating_mul(1 << 32)
+                        <= lim.saturating_mul(lim).saturating_mul(den)
+                {
                     let m = add(na, nb);
-                    let k = |v: i64| (i128::from(v) * hw2 / den) as i64;
-                    o.to((p.0 + k(m.0), p.1 + k(m.1)));
+                    // `den > 0` (the `if`): the division's fallback is never taken.
+                    let k = |v: i64| {
+                        let q = i128::from(v).saturating_mul(hw2).checked_div(den).unwrap_or(0);
+                        q.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
+                    };
+                    o.to(add(p, (k(m.0), k(m.1))));
                 }
             }
             LineJoin::Round => {
                 if cross == 0 {
-                    let d = (na.1, -na.0);
+                    let d = (na.1, na.0.saturating_neg());
                     self.arc(o, p, na, d, 0);
                     self.arc(o, p, d, nb, 0);
                 } else {
@@ -262,7 +276,7 @@ impl Stroker<'_> {
         match self.s.cap {
             LineCap::Butt => {}
             LineCap::Square => {
-                let d = (n.1, -n.0);
+                let d = (n.1, n.0.saturating_neg());
                 o.to(add(add(p, n), d));
                 o.to(add(add(p, neg(n)), d));
             }
@@ -274,7 +288,17 @@ impl Stroker<'_> {
     fn polyline(&self, o: &mut Outline<'_>, pl: Polyline<'_>) {
         let pts = pl.points;
         let n = pts.len();
-        let raw = |i: usize| pts[i].raw();
+        // Point `i` modulo `n` (closed polylines wrap around); `n ≥ 1` past the check below,
+        // so the `get` never falls back.
+        let at = |i: usize| -> FxPoint {
+            pts.get(i.checked_rem(n).unwrap_or(0))
+                .copied()
+                .unwrap_or_default()
+        };
+        let raw = |i: usize| at(i).raw();
+        if n == 0 {
+            return;
+        }
         if n == 1 {
             // Zero-length sub-path: a dot for round and square caps.
             let c = raw(0);
@@ -284,42 +308,47 @@ impl Stroker<'_> {
                 LineCap::Round => {
                     o.start(add(c, (h, 0)));
                     self.half_circle(o, c, (h, 0));
-                    self.half_circle(o, c, (-h, 0));
+                    self.half_circle(o, c, (h.saturating_neg(), 0));
                     o.close();
                 }
                 LineCap::Square => {
-                    o.start((c.0 - h, c.1 - h));
-                    o.to((c.0 + h, c.1 - h));
-                    o.to((c.0 + h, c.1 + h));
-                    o.to((c.0 - h, c.1 + h));
+                    let (x0, x1) = (c.0.saturating_sub(h), c.0.saturating_add(h));
+                    let (y0, y1) = (c.1.saturating_sub(h), c.1.saturating_add(h));
+                    o.start((x0, y0));
+                    o.to((x1, y0));
+                    o.to((x1, y1));
+                    o.to((x0, y1));
                     o.close();
                 }
             }
             return;
         }
-        let nrm = |i: usize| self.normal(pts[i % n], pts[(i + 1) % n]);
+        // SAFE-ARITH (the index arithmetic below): `n ≥ 2` here and every index is below `2n`.
+        let nrm = |i: usize| self.normal(at(i), at(i.wrapping_add(1)));
         if pl.closed {
             // Left side forward.
             o.start(add(raw(0), nrm(0)));
             for j in 1..=n {
-                self.join(o, raw(j % n), nrm(j - 1), nrm(j % n));
+                self.join(o, raw(j), nrm(j.wrapping_sub(1)), nrm(j));
             }
             o.close();
             // Right side backward.
-            o.start(add(raw(0), neg(nrm(n - 1))));
+            let last = n.wrapping_sub(1);
+            o.start(add(raw(0), neg(nrm(last))));
             for j in (0..n).rev() {
-                self.join(o, raw(j), neg(nrm(j)), neg(nrm((j + n - 1) % n)));
+                self.join(o, raw(j), neg(nrm(j)), neg(nrm(j.wrapping_add(last))));
             }
             o.close();
         } else {
+            let (last, before) = (n.wrapping_sub(1), n.wrapping_sub(2));
             o.start(add(raw(0), nrm(0)));
-            for i in 1..n - 1 {
-                self.join(o, raw(i), nrm(i - 1), nrm(i));
+            for i in 1..last {
+                self.join(o, raw(i), nrm(i.wrapping_sub(1)), nrm(i));
             }
-            o.to(add(raw(n - 1), nrm(n - 2)));
-            self.cap(o, raw(n - 1), nrm(n - 2));
-            for i in (1..n - 1).rev() {
-                self.join(o, raw(i), neg(nrm(i)), neg(nrm(i - 1)));
+            o.to(add(raw(last), nrm(before)));
+            self.cap(o, raw(last), nrm(before));
+            for i in (1..last).rev() {
+                self.join(o, raw(i), neg(nrm(i)), neg(nrm(i.wrapping_sub(1))));
             }
             o.to(add(raw(0), neg(nrm(0))));
             self.cap(o, raw(0), neg(nrm(0)));
@@ -337,9 +366,13 @@ pub const MAX_DASHES_PER_POLYLINE: i64 = 4096;
 fn dash_polylines(input: &Polylines, dash: &Dash, out: &mut Polylines) {
     let pat = &dash.pattern;
     let len = pat.len();
-    let count = if len % 2 == 1 { 2 * len } else { len };
-    let val = |k: usize| i64::from(pat[k % len].raw());
-    let total: i64 = (0..count).map(val).sum();
+    // An odd pattern is repeated once. `len ≤ MAX_DASHES = 8`.
+    let count = if len % 2 == 1 { len.saturating_mul(2) } else { len };
+    // Entry `k` of the (repeated) pattern; `len ≥ 1` (the only caller passes a valid pattern,
+    // `Dash::is_valid`), so the fallbacks are never taken.
+    let val = |k: usize| i64::from(pat.get(k.checked_rem(len).unwrap_or(0)).map_or(0, |v| v.raw()));
+    let total = (0..count).fold(0i64, |s, k| s.saturating_add(val(k)));
+    // Lengths are sums of segment lengths (each below 2^33): they saturate rather than wrap.
     for pl in input.iter() {
         let pts = pl.points;
         let nseg = if pl.closed {
@@ -347,60 +380,79 @@ fn dash_polylines(input: &Polylines, dash: &Dash, out: &mut Polylines) {
         } else {
             pts.len().saturating_sub(1)
         };
-        let seg = |i: usize| (pts[i].raw(), pts[(i + 1) % pts.len()].raw());
-        let length: i64 = (0..nseg)
-            .map(|i| {
-                let (a, b) = seg(i);
-                hypot(b.0 - a.0, b.1 - a.1)
-            })
-            .sum();
-        if length / total.max(1) > MAX_DASHES_PER_POLYLINE {
+        // Segment `i` (the last one of a closed polyline wraps to the first point); `i <
+        // nseg ≤ pts.len()`, so `pts` is not empty and the fallbacks are never taken.
+        let seg = |i: usize| {
+            let p = |j: usize| {
+                pts.get(j.checked_rem(pts.len()).unwrap_or(0))
+                    .map_or((0, 0), |p| p.raw())
+            };
+            (p(i), p(i.saturating_add(1)))
+        };
+        let seg_len =
+            |(a, b): ((i64, i64), (i64, i64))| hypot(b.0.saturating_sub(a.0), b.1.saturating_sub(a.1));
+        let length = (0..nseg).fold(0i64, |s, i| s.saturating_add(seg_len(seg(i))));
+        if length.checked_div(total.max(1)).unwrap_or(0) > MAX_DASHES_PER_POLYLINE {
             twine_core::warn!(target: "twine::vector", "dash pattern too fine for the path; stroking solid");
-            out.begin(pts[0]);
-            for &p in &pts[1..] {
+            let Some((&first, rest)) = pts.split_first() else {
+                continue;
+            };
+            out.begin(first);
+            for &p in rest {
                 out.push(p);
             }
             out.end(pl.closed);
             continue;
         }
-        // Advance by the offset.
+        // Advance by the offset. `total > 0` (a valid pattern): the fallback is never taken.
         let mut k = 0usize;
         let mut rem = val(0);
-        let mut off = i64::from(dash.offset.raw()).rem_euclid(total);
+        let mut off = i64::from(dash.offset.raw())
+            .checked_rem_euclid(total)
+            .unwrap_or(0);
+        let next = |k: usize| k.saturating_add(1).checked_rem(count).unwrap_or(0);
         while off > 0 {
             if off >= rem {
-                off -= rem;
-                k = (k + 1) % count;
+                // SAFE-ARITH: `off ≥ rem` here.
+                off = off.wrapping_sub(rem);
+                k = next(k);
                 rem = val(k);
             } else {
-                rem -= off;
+                // SAFE-ARITH: `rem > off` here.
+                rem = rem.wrapping_sub(off);
                 off = 0;
             }
         }
         let mut drawing = false;
         for i in 0..nseg {
             let (a, b) = seg(i);
-            let l = hypot(b.0 - a.0, b.1 - a.1);
-            let at = |s: i64| fxp(a.0 + muldiv(b.0 - a.0, s, l), a.1 + muldiv(b.1 - a.1, s, l));
-            let mut pos = 0;
+            let l = seg_len((a, b));
+            let at = |s: i64| {
+                fxp(
+                    a.0.saturating_add(muldiv(b.0.saturating_sub(a.0), s, l)),
+                    a.1.saturating_add(muldiv(b.1.saturating_sub(a.1), s, l)),
+                )
+            };
+            let mut pos = 0i64;
             loop {
-                let step = rem.min(l - pos);
+                // SAFE-ARITH: `0 ≤ pos ≤ l` (the loop ends at `l`) and `0 ≤ step ≤ rem`.
+                let step = rem.min(l.wrapping_sub(pos));
                 let on = k % 2 == 0;
                 if on {
                     if !drawing {
                         out.begin(at(pos));
                         drawing = true;
                     }
-                    out.push(at(pos + step));
+                    out.push(at(pos.wrapping_add(step)));
                 }
-                pos += step;
-                rem -= step;
+                pos = pos.wrapping_add(step);
+                rem = rem.wrapping_sub(step);
                 if rem == 0 {
                     if on {
                         out.end(false);
                         drawing = false;
                     }
-                    k = (k + 1) % count;
+                    k = next(k);
                     rem = val(k);
                 }
                 if pos >= l {

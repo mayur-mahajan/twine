@@ -320,7 +320,7 @@ impl BufferMode {
                 if u16::from(align) > info.height {
                     // Not even the whole screen holds `align` rows: refuse before allocating.
                     return Err(EngineError::BufferTooSmall {
-                        needed: info.bytes_per_row() * usize::from(align),
+                        needed: info.bytes_per_row().saturating_mul(usize::from(align)),
                         got: len,
                     });
                 }
@@ -356,9 +356,15 @@ fn misaligned(m: &DrawBufferMem) -> Result<(), EngineError> {
 /// A zeroed, 4-byte aligned heap buffer of `len` bytes, leaked (allocated once, like a
 /// `'static` MCU buffer; at most 3 bytes of padding).
 pub(crate) fn leak_buffer(len: usize) -> DrawBufferMem {
-    let v: &'static mut [u8] = Box::leak(alloc::vec![0u8; len + LEAK_PAD].into_boxed_slice());
+    let v: &'static mut [u8] = Box::leak(alloc::vec![0u8; len.saturating_add(LEAK_PAD)].into_boxed_slice());
     let off = v.as_ptr().align_offset(4).min(LEAK_PAD);
-    DrawBufferMem::new(&mut v[off..off + len])
+    // SAFE-INDEX: `off ≤ LEAK_PAD` and `v` holds `len + LEAK_PAD` bytes (a larger request
+    // fails to allocate), so `off..off + len` is inside `v`; the empty fallback is never taken.
+    DrawBufferMem::new(
+        v.get_mut(off..)
+            .and_then(|t| t.get_mut(..len))
+            .unwrap_or_default(),
+    )
 }
 
 /// Object-safe view of a [`DisplayDriver`] (errors mapped to [`EngineError::Driver`], with
@@ -563,7 +569,9 @@ impl DrawBufferUsage {
         let bufs = bufs.iter().flatten();
         if heap {
             Self {
-                heap: bufs.map(|m| m.len() + LEAK_PAD).sum(),
+                heap: bufs.fold(0, |sum: usize, m| {
+                    sum.saturating_add(m.len().saturating_add(LEAK_PAD))
+                }),
                 caller: 0,
             }
         } else {
@@ -654,6 +662,12 @@ impl Engine {
     /// Fails with [`EngineError::FormatDisabled`] (and raises [`FaultKind::FormatDisabled`])
     /// when the renderer for the display's colour format is not compiled in.
     ///
+    /// # Errors
+    /// [`EngineError::TooManyDisplays`]; [`EngineError::TooManyNodes`] when
+    /// [`Limits::max_nodes`](twine_core::Limits::max_nodes) leaves no room for the display's layer
+    /// and screen nodes; [`EngineError::FormatDisabled`] (see above);
+    /// [`EngineError::InvalidConfig`] for a display without pixels.
+    ///
     /// ```
     /// use twine_core::ColorFormat;
     /// use twine_engine::{Engine, EngineConfig};
@@ -692,6 +706,15 @@ impl Engine {
     ///
     /// Fails with [`EngineError::FormatDisabled`] (and raises [`FaultKind::FormatDisabled`])
     /// when the renderer for the display's colour format is not compiled in.
+    ///
+    /// # Errors
+    /// [`EngineError::BufferModeMismatch`] for a partial or `Alloc` buffer mode, or a `Full` driver
+    /// that hands out one framebuffer; [`EngineError::TooManyDisplays`];
+    /// [`EngineError::TooManyNodes`] when [`Limits::max_nodes`](twine_core::Limits::max_nodes)
+    /// leaves no room for the display's layer and screen nodes; [`EngineError::FormatDisabled`]
+    /// (see above); [`EngineError::InvalidConfig`] for a software rotation or an `I1` width that is
+    /// not a multiple of 8; [`EngineError::BufferTooSmall`] for a framebuffer that is not exactly
+    /// `width × height` pixels.
     #[allow(clippy::needless_pass_by_value)] // symmetric with `add_display`, which consumes its buffers
     pub fn add_framebuffer_display(
         &mut self,
@@ -734,7 +757,7 @@ impl Engine {
     /// nodes. Checked before anything is allocated for the display (F10b), so creating them
     /// in `push_display` cannot fail.
     fn check_display_nodes(&mut self) -> Result<(), EngineError> {
-        if self.tree.len() + DISPLAY_NODES <= usize::from(self.limits.max_nodes) {
+        if self.tree.len().saturating_add(DISPLAY_NODES) <= usize::from(self.limits.max_nodes) {
             Ok(())
         } else {
             self.display_nodes_exhausted()
@@ -885,6 +908,11 @@ impl Engine {
     }
 
     /// Creates a new (inactive) screen on `display`: a root [`Obj`] covering the display.
+    ///
+    /// # Errors
+    /// [`EngineError::DisplayNotFound`] for an unknown `display`; [`EngineError::TooManyNodes`]
+    /// when [`Limits::max_nodes`](twine_core::Limits::max_nodes) is reached (a capacity fault is
+    /// raised).
     pub fn create_screen(&mut self, display: DisplayId) -> Result<NodeId, EngineError> {
         let area = self
             .display(display)
@@ -894,7 +922,10 @@ impl Engine {
         if let Some(n) = self.tree.node_mut(s) {
             n.coords = area;
         }
-        self.displays[display.index()].screens.push(s);
+        // Found above; displays are never removed.
+        if let Some(d) = self.displays.get_mut(display.index()) {
+            d.screens.push(s);
+        }
         self.apply_theme_on_create(s);
         Ok(s)
     }
@@ -909,7 +940,9 @@ impl Engine {
 
     /// The instant screen switch of display `d` (LVGL `load_new_screen`).
     pub(crate) fn load_screen_now(&mut self, d: usize, screen: NodeId) {
-        let old = self.displays[d].active_screen;
+        let Some(old) = self.displays.get(d).map(|x| x.active_screen) else {
+            return;
+        };
         if old == screen {
             return;
         }
@@ -923,8 +956,11 @@ impl Engine {
         let Some(d) = self.displays.iter().position(|x| x.screens.contains(&screen)) else {
             return;
         };
-        self.displays[d].active_screen = screen;
-        let (id, area) = (self.displays[d].id, self.displays[d].area());
+        let Some(disp) = self.displays.get_mut(d) else {
+            return;
+        };
+        disp.active_screen = screen;
+        let (id, area) = (disp.id, disp.area());
         twine_core::info!(target: "twine::engine", "display {}: screen {} loaded", id, fmt_node_id(screen));
         self.invalidate_area(id, area, InvalidateReason::Explicit);
         // A press on the old screen must not continue on the new one.
@@ -992,6 +1028,12 @@ impl Engine {
 
     /// Creates a node for `widget` as the last child of `parent`, then calls `Widget::init`.
     /// Unknown parents log `warn!` and fail with [`EngineError::NodeNotFound`].
+    ///
+    /// # Errors
+    /// [`EngineError::NodeNotFound`] for an unknown `parent`; [`EngineError::TooManyNodes`] when
+    /// [`Limits::max_nodes`](twine_core::Limits::max_nodes) is reached (a capacity fault is
+    /// raised); [`EngineError::TooDeep`] when the node would be deeper than
+    /// [`Limits::max_tree_depth`](twine_core::Limits::max_tree_depth) (a capacity fault is raised).
     pub fn create(&mut self, parent: NodeId, widget: Box<dyn Widget>) -> Result<NodeId, EngineError> {
         if !self.tree.contains(parent) {
             twine_core::warn!(target: "twine::engine", "create: parent {} not found", fmt_node_id(parent));
@@ -1086,6 +1128,10 @@ impl Engine {
 
     /// Creates a root node that belongs to no display (LVGL `lv_obj_create(NULL)` before the
     /// screen is used). Useful for tests and for building trees off-screen.
+    ///
+    /// # Errors
+    /// [`EngineError::TooManyNodes`] when [`Limits::max_nodes`](twine_core::Limits::max_nodes) is
+    /// reached (a capacity fault is raised).
     pub fn create_root(&mut self, widget: Box<dyn Widget>) -> Result<NodeId, EngineError> {
         let id = self.tree_create(None, widget)?;
         self.init_widget(id);
@@ -1165,6 +1211,11 @@ impl Engine {
     /// the area is invalidated, the nodes are freed and the parent receives `ChildDeleted`
     /// (with the deleted node as target). Layers and active screens cannot be deleted. The
     /// animations and style transitions of the deleted nodes stop.
+    ///
+    /// # Errors
+    /// [`EngineError::NodeNotFound`] for an unknown `id`; [`EngineError::InvalidConfig`] for a
+    /// layer, an active screen or (with `display-integrity`) the fail-safe screen. Nothing is
+    /// deleted on error.
     pub fn delete(&mut self, id: NodeId) -> Result<(), EngineError> {
         if !self.tree.contains(id) {
             twine_core::warn!(target: "twine::engine", "delete: node {} not found", fmt_node_id(id));
@@ -1244,6 +1295,7 @@ impl Engine {
         if let Some(p) = parent.filter(|p| self.tree.contains(*p)) {
             self.mark_layout(p, crate::LayoutDirty::CHILDREN);
             twine_core::alloc_guard::push(
+                self.partition(),
                 &mut self.layout.readjust,
                 p,
                 twine_core::alloc_guard::AllocSite::EngineScratch,

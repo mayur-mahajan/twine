@@ -14,6 +14,9 @@ pub const MAX_DRIVES: usize = 8;
 /// The letter must be an ASCII letter followed by `:`; anything else is
 /// [`Error::InvalidPath`]. Letters are case-sensitive (like LVGL).
 ///
+/// # Errors
+/// [`Error::InvalidPath`] when `path` does not start with an ASCII letter and `:`.
+///
 /// ```
 /// use twine_fs::{Error, parse_path};
 /// assert_eq!(parse_path("A:/img/logo.qoi"), Ok(('A', "/img/logo.qoi")));
@@ -66,6 +69,10 @@ impl Vfs {
 
     /// Mounts `fs` as drive `letter` (an ASCII letter), replacing (and returning) a file system
     /// already mounted there. [`Error::TooManyDrives`] when [`MAX_DRIVES`] are mounted.
+    ///
+    /// # Errors
+    /// [`Error::InvalidPath`] when `letter` is not an ASCII letter; [`Error::TooManyDrives`] when
+    /// [`MAX_DRIVES`] are mounted.
     pub fn mount(
         &mut self,
         letter: char,
@@ -111,6 +118,10 @@ impl Vfs {
     }
 
     /// Opens `path` (`"A:/dir/file"`); the returned [`File`] closes itself when dropped.
+    ///
+    /// # Errors
+    /// [`Error::InvalidPath`] without a drive letter, [`Error::UnknownDrive`] when nothing is
+    /// mounted at it, and the errors of [`FileSystem::open`].
     pub fn open(&mut self, path: &str, mode: OpenMode) -> Result<File<'_>, Error> {
         let res = self
             .resolve(path)
@@ -125,18 +136,27 @@ impl Vfs {
     }
 
     /// Lists the directory `path` (see [`FileSystem::read_dir`]).
+    ///
+    /// # Errors
+    /// [`Error::InvalidPath`], [`Error::UnknownDrive`], and the errors of [`FileSystem::read_dir`].
     pub fn read_dir(&mut self, path: &str, out: &mut dyn FnMut(DirEntry<'_>)) -> Result<(), Error> {
         let (fs, rest) = self.resolve(path)?;
         fs.read_dir(rest, out)
     }
 
     /// Metadata of `path`.
+    ///
+    /// # Errors
+    /// [`Error::InvalidPath`], [`Error::UnknownDrive`], and the errors of [`FileSystem::metadata`].
     pub fn metadata(&mut self, path: &str) -> Result<Metadata, Error> {
         let (fs, rest) = self.resolve(path)?;
         fs.metadata(rest)
     }
 
     /// Reads the whole file `path` into a new vector.
+    ///
+    /// # Errors
+    /// The errors of [`open`](Self::open) and [`File::read_to_end`].
     pub fn read_to_vec(&mut self, path: &str) -> Result<Vec<u8>, Error> {
         let mut out = Vec::new();
         self.open(path, OpenMode::Read)?.read_to_end(&mut out)?;
@@ -174,6 +194,9 @@ impl core::fmt::Debug for File<'_> {
 
 impl<'a> File<'a> {
     /// Opens `path` (a driver path, without drive letter) on `fs`.
+    ///
+    /// # Errors
+    /// The errors of [`FileSystem::open`].
     pub fn open(fs: &'a mut dyn FileSystem, path: &str, mode: OpenMode) -> Result<Self, Error> {
         let handle = fs.open(path, mode)?;
         Ok(Self {
@@ -190,11 +213,17 @@ impl<'a> File<'a> {
     }
 
     /// Reads up to `buf.len()` bytes; returns the number read (0 at the end).
+    ///
+    /// # Errors
+    /// The errors of [`FileSystem::read`].
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         self.fs.read(self.handle, buf)
     }
 
     /// Reads exactly `buf.len()` bytes; [`Error::Io`] if the file ends first.
+    ///
+    /// # Errors
+    /// [`Error::Io`] when the file ends first, and the errors of [`read`](Self::read).
     pub fn read_exact(&mut self, mut buf: &mut [u8]) -> Result<(), Error> {
         while !buf.is_empty() {
             let n = self.read(buf)?;
@@ -207,6 +236,10 @@ impl<'a> File<'a> {
     }
 
     /// Appends the rest of the file to `out`; returns the number of bytes read.
+    ///
+    /// # Errors
+    /// [`Error::OutOfMemory`] when `out` cannot grow (bytes read so far stay in `out`), and the
+    /// errors of [`read`](Self::read), [`seek`](Self::seek) and [`tell`](Self::tell).
     pub fn read_to_end(&mut self, out: &mut Vec<u8>) -> Result<usize, Error> {
         let start = out.len();
         let pos = self.tell()?;
@@ -226,11 +259,17 @@ impl<'a> File<'a> {
     }
 
     /// Writes `buf`; returns the number of bytes written.
+    ///
+    /// # Errors
+    /// The errors of [`FileSystem::write`].
     pub fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         self.fs.write(self.handle, buf)
     }
 
     /// Writes all of `buf`; [`Error::Io`] if the file system stops accepting data.
+    ///
+    /// # Errors
+    /// [`Error::Io`] when a write accepts no bytes, and the errors of [`write`](Self::write).
     pub fn write_all(&mut self, mut buf: &[u8]) -> Result<(), Error> {
         while !buf.is_empty() {
             let n = self.write(buf)?;
@@ -243,16 +282,25 @@ impl<'a> File<'a> {
     }
 
     /// Moves the cursor; returns the new position.
+    ///
+    /// # Errors
+    /// The errors of [`FileSystem::seek`].
     pub fn seek(&mut self, pos: SeekFrom) -> Result<u64, Error> {
         self.fs.seek(self.handle, pos)
     }
 
     /// The cursor position.
+    ///
+    /// # Errors
+    /// The errors of [`FileSystem::tell`].
     pub fn tell(&mut self) -> Result<u64, Error> {
         self.fs.tell(self.handle)
     }
 
     /// Closes the file, reporting errors (dropping closes too, but only logs them).
+    ///
+    /// # Errors
+    /// The errors of [`FileSystem::close`].
     pub fn close(mut self) -> Result<(), Error> {
         self.open = false;
         self.fs.close(self.handle)

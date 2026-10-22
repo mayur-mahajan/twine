@@ -10,8 +10,8 @@ use std::time::Instant;
 use serde_json::Value;
 
 use crate::cmd::{
-    firmware, fonts, images, layers, miri, nostd, progress, safety, sim, snapshots, stack, style_props, todo,
-    traceability,
+    divisions, firmware, fonts, guidelines, images, layers, miri, nostd, progress, safety, shifts, sim,
+    snapshots, stack, style_props, todo, traceability,
 };
 use crate::util::{R, cargo, cargo_ci, output, run as run_cmd, warn};
 
@@ -339,6 +339,47 @@ fn test_features() -> Result<Outcome, Box<dyn std::error::Error>> {
     ] {
         run_cmd(cargo_ci().args(["test", "-p", pkg, "--features", "display-integrity"]))?;
     }
+    // Partitioned runtimes (R5.S07, ADR-001, SAF-034): opt-in and not in `full`, so the runs
+    // above build without them. The runtime's slots, claims, ownership and seal domains (with
+    // the host-only cross-partition check of `debug-checks`), the core's partition table, and
+    // the view's fault-injection isolation test with its control run — in the default profile
+    // and in the safety profile (which adds the `no-panic-runtime` misuse case).
+    run_cmd(cargo_ci().args(["test", "-p", "twine-core", "--features", "partitions", "--lib"]))?;
+    run_cmd(cargo_ci().args(["test", "-p", "twine-reactive", "--features", "partitions"]))?;
+    run_cmd(cargo_ci().args([
+        "test",
+        "-p",
+        "twine-reactive",
+        "--features",
+        "partitions,debug-checks",
+        "--test",
+        "partitions",
+    ]))?;
+    run_cmd(cargo_ci().args([
+        "test",
+        "-p",
+        "twine-reactive",
+        "--features",
+        "safety,partitions",
+        "--lib",
+        "--tests",
+    ]))?;
+    run_cmd(cargo_ci().args([
+        "test",
+        "-p",
+        "twine-view",
+        "--features",
+        "partitions,display-integrity",
+    ]))?;
+    run_cmd(cargo_ci().args([
+        "test",
+        "-p",
+        "twine-view",
+        "--features",
+        "safety,partitions",
+        "--lib",
+        "--tests",
+    ]))?;
     // The engine's parts the profile excludes, which its dev-dependencies no longer enable.
     run_cmd(cargo_ci().args(["test", "-p", "twine-engine", "--features", "perf-monitor,fs"]))?;
     // The reactive runtime's `no-panic-runtime` behaviour (tests/no_panic_runtime.rs) and the
@@ -361,6 +402,34 @@ fn test_features() -> Result<Outcome, Box<dyn std::error::Error>> {
     for chip in ["stm32f429zi", "stm32h743zi"] {
         run_cmd(cargo_ci().args(["test", "-p", "twine-accel-stm32", "--lib", "--features", chip]))?;
     }
+    // Decoders and glyph readers in the release profile (R5.S09, SAF-032; R5.S10, SAF-033): there
+    // an out-of-range shift silently masks its amount instead of panicking, so the header
+    // validation that keeps every header-derived shift amount in range — and refuses zero-size
+    // images — is checked without debug assertions too.
+    run_cmd(cargo_ci().args([
+        "test",
+        "--release",
+        "-p",
+        "twine-image",
+        "--lib",
+        "--test",
+        "shift_amounts",
+        "--test",
+        "decoders",
+        "--test",
+        "gif",
+        "--test",
+        "zero_size",
+    ]))?;
+    run_cmd(cargo_ci().args([
+        "test",
+        "--release",
+        "-p",
+        "twine-text",
+        "--lib",
+        "--test",
+        "shift_amounts",
+    ]))?;
     Ok(Outcome::Ok)
 }
 
@@ -395,6 +464,23 @@ fn images_check() -> Result<Outcome, Box<dyn std::error::Error>> {
 /// The requirements → tests matrix is current and every requirement is verified (R5.S08).
 fn traceability_check() -> Result<Outcome, Box<dyn std::error::Error>> {
     ok(traceability::run(true))
+}
+
+/// Every shift by a non-literal amount in library code carries a `// SHIFT:` proof, and the
+/// inventory `docs/safety/shifts.md` is current (R5.S09).
+fn shifts_check() -> Result<Outcome, Box<dyn std::error::Error>> {
+    ok(shifts::run(true))
+}
+
+/// Every divisor that is not a literal in library code is non-zero by a `NonZero` type, a guard
+/// or a `// DIV:` proof, and the inventory `docs/safety/divisions.md` is current (R5.S10).
+fn divisions_check() -> Result<Outcome, Box<dyn std::error::Error>> {
+    ok(divisions::run(true))
+}
+
+/// The measured block of the coding-guidelines register is current (R5.S10).
+fn guidelines_check() -> Result<Outcome, Box<dyn std::error::Error>> {
+    ok(guidelines::run(true))
 }
 
 fn style_props_check() -> Result<Outcome, Box<dyn std::error::Error>> {
@@ -537,6 +623,9 @@ const STAGES: &[(&str, bool, StageFn)] = &[
     ("images", true, images_check),
     ("style-props", true, style_props_check),
     ("traceability", true, traceability_check),
+    ("shifts", true, shifts_check),
+    ("divisions", true, divisions_check),
+    ("guidelines", true, guidelines_check),
     ("nostd", false, nostd_build),
     ("safety-exclusions", false, safety_exclusions),
     ("stack-budget", false, stack_budget),

@@ -157,6 +157,29 @@ enum Cmd {
         #[arg(long)]
         check: bool,
     },
+    /// Audit the shift amounts of every crate's library code: each shift by a non-literal
+    /// amount needs a `// SHIFT: …` proof; writes `docs/safety/shifts.md`.
+    Shifts {
+        /// Only verify that every such shift has a proof and the file is up to date.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Audit the divisors of every crate's library code: each integer division or remainder by
+    /// a non-literal divisor needs a `NonZero` type, a `.max(1)` guard or a `// DIV: …` proof;
+    /// writes `docs/safety/divisions.md`.
+    Divisions {
+        /// Only verify that every such divisor is proven and the file is up to date.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Measure what the coding-guidelines register cites (recursion, divisions, shifts,
+    /// macros) and rewrite its generated block in
+    /// `docs/safety/coding-guidelines-deviations.md`.
+    Guidelines {
+        /// Only verify that the block is current and every shift and divisor is proven.
+        #[arg(long)]
+        check: bool,
+    },
     /// Measure the stack the engine's recursive tree walks need per tree level (release build of
     /// `twine-engine/tests/stack_depth.rs`) and check the worst case at the reference depth
     /// against the budget (`docs/safety/profile.md` § 10.4).
@@ -234,6 +257,9 @@ fn main() {
         Cmd::Traceability { check } => cmd::traceability::run(check),
         Cmd::SafetyLints { update } => cmd::safety::run_lint_status(update),
         Cmd::Panics { check } => cmd::panics::run(check),
+        Cmd::Shifts { check } => cmd::shifts::run(check),
+        Cmd::Divisions { check } => cmd::divisions::run(check),
+        Cmd::Guidelines { check } => cmd::guidelines::run(check),
         Cmd::StackBudget { update } => cmd::stack::run(update),
     };
     if let Err(e) = result {

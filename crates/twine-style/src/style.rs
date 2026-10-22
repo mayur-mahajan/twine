@@ -3,6 +3,8 @@
 use alloc::rc::Rc;
 use alloc::vec::Vec;
 
+use twine_core::Partition;
+
 use crate::prop::{PropId, StyleProp};
 use crate::tracks::{GridTracks, OwnedSlots, TracksRef};
 use crate::transition::{Transition, TransitionId, TransitionRef, TransitionValue};
@@ -59,10 +61,10 @@ fn find_transition(props: &[StyleProp], has_group: u16) -> Option<TransitionRef>
 
 const fn mask_of(props: &[StyleProp]) -> u16 {
     let mut mask = 0u16;
-    let mut i = 0;
-    while i < props.len() {
-        mask |= props[i].id().group_bit();
-        i += 1;
+    let mut rest = props;
+    while let [p, tail @ ..] = rest {
+        mask |= p.id().group_bit();
+        rest = tail;
     }
     mask
 }
@@ -76,19 +78,23 @@ const FILLER: StyleProp = StyleProp::Opacity(crate::design::DesignValue::Fixed(t
 #[must_use]
 pub const fn merged_len(parts: &[&[StyleProp]]) -> usize {
     let mut seen = [false; crate::PROP_COUNT + 1];
-    let mut n = 0;
-    let mut i = 0;
-    while i < parts.len() {
-        let mut j = 0;
-        while j < parts[i].len() {
-            let id = parts[i][j].id() as usize;
-            if !seen[id] {
-                seen[id] = true;
-                n += 1;
+    let mut n: usize = 0;
+    let mut rest = parts;
+    while let [part, more @ ..] = rest {
+        let mut props: &[StyleProp] = part;
+        while let [p, tail @ ..] = props {
+            // SAFE-INDEX: ids are `1..=PROP_COUNT`, below the table's length; the fallback is
+            // never taken.
+            if let Some((_, [seen, ..])) = seen.split_at_mut_checked(p.id() as usize) {
+                if !*seen {
+                    *seen = true;
+                    // SAFE-ARITH: at most `PROP_COUNT` distinct ids are counted.
+                    n = n.wrapping_add(1);
+                }
             }
-            j += 1;
+            props = tail;
         }
-        i += 1;
+        rest = more;
     }
     n
 }
@@ -103,26 +109,33 @@ pub const fn merge_props<const N: usize>(parts: &[&[StyleProp]]) -> [StyleProp; 
     let mut out = [FILLER; N];
     // Index into `out` of each property id (`usize::MAX`: not yet seen).
     let mut slot = [usize::MAX; crate::PROP_COUNT + 1];
-    let mut n = 0;
-    let mut i = 0;
-    while i < parts.len() {
-        let mut j = 0;
-        while j < parts[i].len() {
-            let p = parts[i][j];
-            let id = p.id() as usize;
-            if slot[id] == usize::MAX {
-                // PANIC: evaluated at compile time (the style macros call it for `const` items,
-                // with `N` from `merged_len`): a wrong `N` fails the build, never a device.
-                assert!(n < N, "merge_props: N is smaller than merged_len");
-                slot[id] = n;
-                out[n] = p;
-                n += 1;
-            } else {
-                out[slot[id]] = p;
+    let mut n: usize = 0;
+    let mut rest = parts;
+    while let [part, more @ ..] = rest {
+        let mut props: &[StyleProp] = part;
+        while let [p, tail @ ..] = props {
+            // SAFE-INDEX: ids are `1..=PROP_COUNT`, below the table's length; `n < N` (the
+            // assertion) and stored positions are earlier `n`s, below `N`. The fallbacks are
+            // never taken.
+            if let Some((_, [pos, ..])) = slot.split_at_mut_checked(p.id() as usize) {
+                if *pos == usize::MAX {
+                    // PANIC: evaluated at compile time (the style macros call it for `const`
+                    // items, with `N` from `merged_len`): a wrong `N` fails the build, never a
+                    // device.
+                    assert!(n < N, "merge_props: N is smaller than merged_len");
+                    *pos = n;
+                    if let Some((_, [o, ..])) = out.split_at_mut_checked(n) {
+                        *o = *p;
+                    }
+                    // SAFE-ARITH: `n < N` (the assertion).
+                    n = n.wrapping_add(1);
+                } else if let Some((_, [o, ..])) = out.split_at_mut_checked(*pos) {
+                    *o = *p;
+                }
             }
-            j += 1;
+            props = tail;
         }
-        i += 1;
+        rest = more;
     }
     // PANIC: compile-time only, as above.
     assert!(n == N, "merge_props: N is larger than merged_len");
@@ -327,6 +340,9 @@ impl StyleContainer for StyleRef {
 pub struct StyleBuf {
     props: Vec<StyleProp>,
     has_group: u16,
+    /// The seal domain the property list's growth is noted in (zero-sized without the
+    /// `partitions` feature; in the padding after `has_group` with it).
+    part: Partition,
     held: OwnedSlots,
 }
 
@@ -337,8 +353,31 @@ impl StyleBuf {
         Self {
             props: Vec::new(),
             has_group: 0,
+            part: Partition::MAIN,
             held: OwnedSlots::new(),
         }
+    }
+
+    /// Moves the style to partition `p`'s seal domain: a property set for the first time after
+    /// `p` was sealed is noted there ([`AllocSite::StyleProps`](twine_core::alloc_guard::AllocSite::StyleProps)).
+    /// A style starts in [`Partition::MAIN`]; the engine moves the styles it owns (node-local
+    /// styles) to its own partition. Never panics.
+    ///
+    /// ```
+    /// use twine_core::Partition;
+    /// use twine_style::StyleBuf;
+    /// let mut s = StyleBuf::new();
+    /// s.set_partition(Partition::MAIN);
+    /// assert_eq!(s.partition(), Partition::MAIN);
+    /// ```
+    pub fn set_partition(&mut self, p: Partition) {
+        self.part = p;
+    }
+
+    /// The partition set with [`set_partition`](Self::set_partition).
+    #[must_use]
+    pub fn partition(&self) -> Partition {
+        self.part
     }
 
     /// Sets a property, replacing an existing value of the same property in place. Returns
@@ -387,7 +426,12 @@ impl StyleBuf {
             return true;
         }
         // A property set for the first time grows the list (noted after a seal).
-        twine_core::alloc_guard::push(&mut self.props, p, twine_core::alloc_guard::AllocSite::StyleProps);
+        twine_core::alloc_guard::push(
+            self.part,
+            &mut self.props,
+            p,
+            twine_core::alloc_guard::AllocSite::StyleProps,
+        );
         self.has_group |= id.group_bit();
         true
     }
@@ -642,8 +686,7 @@ impl From<&Style> for StyleBuf {
     fn from(s: &Style) -> Self {
         let mut b = StyleBuf {
             props: Vec::with_capacity(s.props.len()),
-            has_group: 0,
-            held: OwnedSlots::new(),
+            ..StyleBuf::new()
         };
         b.extend_from(s);
         b

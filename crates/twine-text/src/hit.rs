@@ -96,8 +96,8 @@ impl TextLayout<'_> {
     pub fn line_x(&self, line: &Line, area_w: i32, align: TextAlign) -> i32 {
         match align {
             TextAlign::Left | TextAlign::Auto => 0,
-            TextAlign::Center => (area_w - line.width).div_euclid(2),
-            TextAlign::Right => area_w - line.width,
+            TextAlign::Center => area_w.saturating_sub(line.width).div_euclid(2),
+            TextAlign::Right => area_w.saturating_sub(line.width),
         }
     }
 
@@ -118,9 +118,11 @@ impl TextLayout<'_> {
     /// without trailing spaces. `None` when the text fits.
     #[must_use]
     pub fn ellipsize(&self, max_lines: usize) -> Option<Ellipsis> {
-        let max_lines = max_lines.max(1);
+        // SAFE-ARITH: `max_lines ≥ 1`; byte offsets below are inside `text` (at most
+        // `text.len()`, below `isize::MAX`).
+        let last = max_lines.max(1).wrapping_sub(1);
         let mut it = self.lines();
-        let line = it.nth(max_lines - 1)?;
+        let line = it.nth(last)?;
         it.next()?;
         let ls = self.letter_space;
         let budget = if self.flags.contains(TextFlags::EXPAND) {
@@ -132,7 +134,7 @@ impl TextLayout<'_> {
         let mut pen = Pen::default();
         let mut end = line.range.start;
         for (i, c) in sub(self.text, line.range.clone()).char_indices() {
-            let b = line.range.start + i;
+            let b = line.range.start.wrapping_add(i);
             // The prefix's last glyph is followed by '.' when drawn.
             let mut with_dot = pen;
             with_dot.add(self.font.advance_px(c, Some('.')), ls);
@@ -140,12 +142,13 @@ impl TextLayout<'_> {
             if with_dot.x > budget {
                 break;
             }
-            end = b + c.len_utf8();
+            end = b.wrapping_add(c.len_utf8());
             pen.add(self.adv(c, b), ls);
         }
-        let keep_end = line.range.start + sub(self.text, line.range.start..end).trim_end_matches(' ').len();
+        let kept = sub(self.text, line.range.start..end).trim_end_matches(' ').len();
+        let keep_end = line.range.start.wrapping_add(kept);
         Some(Ellipsis {
-            line_index: max_lines - 1,
+            line_index: last,
             keep: line.range.start..keep_end,
         })
     }
@@ -171,7 +174,8 @@ impl TextLayout<'_> {
             match it.next() {
                 Some(l) => {
                     line = l;
-                    k += 1;
+                    // SAFE-ARITH: at most one line per byte of `text`, plus one.
+                    k = k.wrapping_add(1);
                 }
                 None => return (k, line),
             }
@@ -198,15 +202,17 @@ impl TextLayout<'_> {
         let idx = if p.y <= 0 || lh <= 0 {
             0
         } else {
-            (p.y / lh) as usize
+            // `lh > 0` (the `if`): the fallback is never taken.
+            p.y.checked_div(lh).unwrap_or(0) as usize
         };
         let line = self.line_at(idx);
-        let x = p.x - self.line_x(&line, area_w, align);
+        let x = p.x.saturating_sub(self.line_x(&line, area_w, align));
         let mut pen = Pen::default();
         for (i, c) in sub(self.text, line.range.clone()).char_indices() {
-            let b = line.range.start + i;
+            // SAFE-ARITH: a byte offset inside `text`.
+            let b = line.range.start.wrapping_add(i);
             let a = self.adv(c, b);
-            if x < pen.x + (a.max(0) + 1) / 2 {
+            if x < pen.x.saturating_add(a.max(0).saturating_add(1) / 2) {
                 return b;
             }
             pen.add(a, self.letter_space);
@@ -223,11 +229,14 @@ impl TextLayout<'_> {
         let end = i.clamp(line.range.start, line.range.end);
         let mut pen = Pen::default();
         for (j, c) in sub(self.text, line.range.start..end).char_indices() {
-            pen.add(self.adv(c, line.range.start + j), self.letter_space);
+            // SAFE-ARITH: a byte offset inside `text`.
+            pen.add(self.adv(c, line.range.start.wrapping_add(j)), self.letter_space);
         }
         Point::new(
-            self.line_x(&line, area_w, align) + pen.x,
-            k as i32 * self.line_height(),
+            self.line_x(&line, area_w, align).saturating_add(pen.x),
+            i32::try_from(k)
+                .unwrap_or(i32::MAX)
+                .saturating_mul(self.line_height()),
         )
     }
 }

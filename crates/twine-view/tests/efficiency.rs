@@ -138,7 +138,7 @@ fn no_alloc_steady_state_frames() {
             t.advance(period);
         }
     });
-    twine_core::alloc_guard::unseal();
+    twine_core::alloc_guard::unseal(twine_core::Partition::MAIN);
     assert_eq!(t.engine().fault_counts().get(FaultKind::AllocAfterSeal), 0);
     let _ = EngineConfig::default();
 }

@@ -15,7 +15,9 @@ static A: CountingAllocator = CountingAllocator;
 
 /// A five-pointed star of outer radius `r` around (`cx`, `cy`), rotated by `angle`.
 fn star(scene: &mut VectorScene, cx: i32, cy: i32, r: i32, angle: Angle, color: Color) {
-    let (path, dsc) = scene.path_mut();
+    let Some((path, dsc)) = scene.path_mut() else {
+        return;
+    };
     for k in 0..10 {
         let radius = if k % 2 == 0 { r } else { r * 2 / 5 };
         let t = Transform::rotate(Angle::deci_deg(k * 360));
@@ -46,7 +48,9 @@ fn circle_ui() -> (TestUi, Signal<i32>, Signal<u8>) {
         vector_canvas(move |scene| {
             // Reads `other` but draws the same scene for every value of it.
             let _ = other.get();
-            let (path, dsc) = scene.path_mut();
+            let Some((path, dsc)) = scene.path_mut() else {
+                return;
+            };
             path.circle(FxPoint::from_int(x.get(), 50), Fx::from_int(10));
             *dsc = VectorDsc::fill(Color::RED);
         })

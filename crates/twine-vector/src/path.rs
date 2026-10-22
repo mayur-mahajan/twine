@@ -327,14 +327,22 @@ impl Iterator for PathIter<'_> {
     fn next(&mut self) -> Option<PathEl> {
         let verb = *self.path.verbs.get(self.v)?;
         let n = verb.points();
-        let pts = self.path.points.get(self.p..self.p + n)?;
-        self.v += 1;
-        self.p += n;
+        let pts = self.path.points.get(self.p..self.p.saturating_add(n))?;
+        // SAFE-ARITH: the verb and its points exist, so both counters stay below the lengths.
+        self.v = self.v.wrapping_add(1);
+        self.p = self.p.wrapping_add(n);
+        // `pts` holds exactly `verb.points()` points (`get` above): the `?`s are never taken.
         Some(match verb {
-            Verb::MoveTo => PathEl::MoveTo(pts[0]),
-            Verb::LineTo => PathEl::LineTo(pts[0]),
-            Verb::QuadTo => PathEl::QuadTo(pts[0], pts[1]),
-            Verb::CubicTo => PathEl::CubicTo(pts[0], pts[1], pts[2]),
+            Verb::MoveTo => PathEl::MoveTo(*pts.first()?),
+            Verb::LineTo => PathEl::LineTo(*pts.first()?),
+            Verb::QuadTo => {
+                let &[c, p] = pts else { return None };
+                PathEl::QuadTo(c, p)
+            }
+            Verb::CubicTo => {
+                let &[c1, c2, p] = pts else { return None };
+                PathEl::CubicTo(c1, c2, p)
+            }
             Verb::Close => PathEl::Close,
         })
     }
@@ -363,6 +371,9 @@ fn sqrt_fx128(v: i128) -> i64 {
 }
 
 /// Converts an SVG arc (endpoint parameterization) into cubics appended to `path`.
+///
+/// Set-up arithmetic per arc (not per pixel): it saturates (exact for every arc whose values
+/// fit, as before; extreme radii or end points give a clamped arc instead of an overflow).
 #[allow(clippy::too_many_arguments)]
 fn arc_segments(
     path: &mut Path,
@@ -374,82 +385,85 @@ fn arc_segments(
     large: bool,
     sweep: bool,
 ) {
+    use core::num::Saturating as S;
     let (c, s) = (i64::from(cos_fx(x_rot).raw()), i64::from(sin_fx(x_rot).raw()));
     let (x0, y0) = p0.raw();
     let (x1, y1) = p.raw();
-    let (hx, hy) = ((x0 - x1) / 2, (y0 - y1) / 2);
+    let (hx, hy) = ((S(x0) - S(x1)).0 / 2, (S(y0) - S(y1)).0 / 2);
     // Step 1: (x1', y1') in 16.16.
-    let xp = (c * hx + s * hy) >> 16;
-    let yp = (-s * hx + c * hy) >> 16;
+    let xp = (S(c) * S(hx) + S(s) * S(hy)).0 >> 16;
+    let yp = (S(c) * S(hy) - S(s) * S(hx)).0 >> 16;
     // Step 2: scale up radii that are too small. Λ in 16.16.
-    let (xp2, yp2) = (i128::from(xp) * i128::from(xp), i128::from(yp) * i128::from(yp));
-    let lambda = (xp2 << 16) / (i128::from(rx) * i128::from(rx)).max(1)
-        + (yp2 << 16) / (i128::from(ry) * i128::from(ry)).max(1);
-    if lambda > 1 << 16 {
-        let f = sqrt_fx128(lambda);
-        rx = muldiv(rx, f, 1 << 16) + 1;
-        ry = muldiv(ry, f, 1 << 16) + 1;
+    let w = |v: i64| S(i128::from(v));
+    let (xp2, yp2) = (w(xp) * w(xp), w(yp) * w(yp));
+    // The divisors are at least 1 (`.max(1)`): the fallbacks are never taken.
+    let ratio = |n: S<i128>, d: S<i128>| (n.0 << 16).checked_div(d.0.max(1)).unwrap_or(0);
+    let lambda = S(ratio(xp2, w(rx) * w(rx))) + S(ratio(yp2, w(ry) * w(ry)));
+    if lambda.0 > 1 << 16 {
+        let f = sqrt_fx128(lambda.0);
+        rx = (S(muldiv(rx, f, 1 << 16)) + S(1)).0;
+        ry = (S(muldiv(ry, f, 1 << 16)) + S(1)).0;
     }
     // Step 3: center (cx', cy'). Work in 24.8 to keep the 4th powers inside i128.
-    let (rx8, ry8, xp8, yp8) = (
-        i128::from(rx >> 8),
-        i128::from(ry >> 8),
-        i128::from(xp >> 8),
-        i128::from(yp >> 8),
-    );
+    let (rx8, ry8, xp8, yp8) = (w(rx >> 8), w(ry >> 8), w(xp >> 8), w(yp >> 8));
     let (rx2, ry2) = (rx8 * rx8, ry8 * ry8);
     let num = rx2 * ry2 - rx2 * yp8 * yp8 - ry2 * xp8 * xp8;
     let den = rx2 * yp8 * yp8 + ry2 * xp8 * xp8;
-    let mut coef = if num <= 0 || den == 0 {
+    let mut coef = if num.0 <= 0 || den.0 == 0 {
         0
     } else {
-        sqrt_fx128((num << 16) / den)
+        // `den != 0` (the `if`): the fallback is never taken.
+        sqrt_fx128((num.0 << 16).checked_div(den.0).unwrap_or(0))
     };
     if large == sweep {
-        coef = -coef;
+        coef = coef.saturating_neg();
     }
     let cxp = muldiv(muldiv(coef, rx, 1 << 16), yp, ry);
-    let cyp = -muldiv(muldiv(coef, ry, 1 << 16), xp, rx);
+    let cyp = muldiv(muldiv(coef, ry, 1 << 16), xp, rx).saturating_neg();
     // Step 4: center in user space.
     let wide = |a: i64, b: i64, d: i64, e: i64| {
-        let v = (i128::from(a) * i128::from(b) + i128::from(d) * i128::from(e)) >> 16;
+        let v = (w(a) * w(b) + w(d) * w(e)).0 >> 16;
         v.clamp(i128::from(i64::MIN / 4), i128::from(i64::MAX / 4)) as i64
     };
-    let cx = wide(c, cxp, -s, cyp) + (x0 + x1) / 2;
-    let cy = wide(s, cxp, c, cyp) + (y0 + y1) / 2;
+    let mid = |a: i64, b: i64| (S(a) + S(b)).0 / 2;
+    let cx = (S(wide(c, cxp, s.saturating_neg(), cyp)) + S(mid(x0, x1))).0;
+    let cy = (S(wide(s, cxp, c, cyp)) + S(mid(y0, y1))).0;
     // Unit vectors (16.16) of the start and end points on the unit circle.
     // Unit vectors: |u| = |v| = 1 up to rounding, which tiny radii amplify; clamping to ±2
     // keeps the products below in range (degenerate arcs stay degenerate, never overflow).
     let unit = |v: i64| v.clamp(-(2 << 16), 2 << 16);
     let u = (
-        unit(muldiv(xp - cxp, 1 << 16, rx)),
-        unit(muldiv(yp - cyp, 1 << 16, ry)),
+        unit(muldiv((S(xp) - S(cxp)).0, 1 << 16, rx)),
+        unit(muldiv((S(yp) - S(cyp)).0, 1 << 16, ry)),
     );
     let v = (
-        unit(muldiv(-xp - cxp, 1 << 16, rx)),
-        unit(muldiv(-yp - cyp, 1 << 16, ry)),
+        unit(muldiv((S(0) - S(xp) - S(cxp)).0, 1 << 16, rx)),
+        unit(muldiv((S(0) - S(yp) - S(cyp)).0, 1 << 16, ry)),
     );
     let th1 = atan2(sat(u.1), sat(u.0)).as_deci_deg();
     let th2 = atan2(sat(v.1), sat(v.0)).as_deci_deg();
-    let mut dth = (th2 - th1).rem_euclid(3600);
+    // SAFE-ARITH: angles from `atan2` are within `±3600`.
+    let mut dth = th2.wrapping_sub(th1).rem_euclid(3600);
     if !sweep && dth > 0 {
-        dth -= 3600;
+        dth = dth.wrapping_sub(3600);
     }
     if dth == 0 {
         path.line_to(p);
         return;
     }
-    let n = (dth.abs() + 899) / 900;
-    let delta = dth / n;
+    // SAFE-ARITH: `|dth| < 3600`, so `n ∈ 1..=4`.
+    let n = dth.abs().wrapping_add(899) / 900;
+    // `n ≥ 1` (`dth != 0`): the fallback is never taken.
+    let delta = dth.checked_div(n).unwrap_or(dth);
     // Maps a unit-circle point to user space.
     let map = |ux: i64, uy: i64| -> FxPoint {
-        let w = |v: i128| v.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
-        let (c, s) = (i128::from(c), i128::from(s));
-        let ex = (i128::from(rx) * i128::from(ux)) >> 16;
-        let ey = (i128::from(ry) * i128::from(uy)) >> 16;
+        let sat64 = |v: S<i128>| v.0.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
+        let (c, s) = (w(c), w(s));
+        let ex = S((w(rx) * w(ux)).0 >> 16);
+        let ey = S((w(ry) * w(uy)).0 >> 16);
         fxp(
-            w(((c * ex - s * ey) >> 16) + i128::from(cx)),
-            w(((s * ex + c * ey) >> 16) + i128::from(cy)),
+            sat64(S((c * ex - s * ey).0 >> 16) + w(cx)),
+            sat64(S((s * ex + c * ey).0 >> 16) + w(cy)),
         )
     };
     // k = 4/3 · tan(δ/4), signed.
@@ -457,22 +471,28 @@ fn arc_segments(
     let k = muldiv(
         4 << 16,
         i64::from(sin_fx(q).raw()),
-        3 * i64::from(cos_fx(q).raw()).max(1),
+        3i64.saturating_mul(i64::from(cos_fx(q).raw()).max(1)),
     );
+    // Unit vectors are within `±2^17` and `k`, `cos`, `sin` within `±2^17` too: the products
+    // below are small, but formed saturating like the rest of the set-up.
     let point_at = |i: i32| -> (i64, i64) {
         if i == n {
             return v;
         }
-        let a = Angle::deci_deg(delta * i);
-        let (ca, sa) = (i64::from(cos_fx(a).raw()), i64::from(sin_fx(a).raw()));
+        let a = Angle::deci_deg(delta.saturating_mul(i));
+        let (ca, sa) = (S(i64::from(cos_fx(a).raw())), S(i64::from(sin_fx(a).raw())));
         // u·cos a + perp(u)·sin a, perp(x, y) = (−y, x).
-        ((u.0 * ca - u.1 * sa) >> 16, (u.1 * ca + u.0 * sa) >> 16)
+        (
+            (S(u.0) * ca - S(u.1) * sa).0 >> 16,
+            (S(u.1) * ca + S(u.0) * sa).0 >> 16,
+        )
     };
     let mut a = u;
     for i in 1..=n {
         let b = point_at(i);
-        let c1 = (a.0 - ((k * a.1) >> 16), a.1 + ((k * a.0) >> 16));
-        let c2 = (b.0 + ((k * b.1) >> 16), b.1 - ((k * b.0) >> 16));
+        let kk = |p: i64| (S(k) * S(p)).0 >> 16;
+        let c1 = ((S(a.0) - S(kk(a.1))).0, (S(a.1) + S(kk(a.0))).0);
+        let c2 = ((S(b.0) + S(kk(b.1))).0, (S(b.1) - S(kk(b.0))).0);
         let end = if i == n { p } else { map(b.0, b.1) };
         path.cubic_to(map(c1.0, c1.1), map(c2.0, c2.1), end);
         a = b;

@@ -39,10 +39,17 @@ demo-counter = []
 demo-controls = []
 ## Render in software only (no DMA2D), to compare frame times.
 no-dma2d = []
+## The on-screen performance overlay (fps, CPU, render and flush time, heap) over the UI: a
+## debugging aid, off by default (the `twine::perf` log line does not need it). Refused
+## together with `safety`.
+perf-monitor = ["twine/perf-monitor"]
+## Twine's safety profile (`docs/safety/profile.md`: no panicking APIs, bounded resources,
+## fault reporting); excludes `perf-monitor`.
+safety = ["twine/safety"]
 # NOTE(P20.S10): `demo-data-widgets` is added once the data_widgets demo exists (Phase 20).
 
 [dependencies]
-twine = { path = "../../crates/twine", default-features = false, features = ["defmt", "color-rgb565", "perf-monitor", "montserrat-20", "drivers-stmpe811", "embassy"] }
+twine = { path = "../../crates/twine", default-features = false, features = ["defmt", "color-rgb565", "montserrat-20", "drivers-stmpe811", "embassy"] }
 twine-accel-stm32 = { path = "../../crates/twine-accel-stm32", features = ["stm32f429zi", "defmt"] }
 twine-demos = { path = "../../crates/twine-demos", features = ["defmt"] }
 

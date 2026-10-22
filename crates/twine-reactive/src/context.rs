@@ -110,13 +110,16 @@ impl Scope {
     /// let child = root.child();
     /// assert_eq!(child.use_context::<Theme>(), Ok(Theme("dark")));
     /// child.provide(Theme("light")); // shadows the root's value below `child`
-    /// assert_eq!(child.child().expect_context::<Theme>(), Theme("light"));
-    /// assert_eq!(root.expect_context::<Theme>(), Theme("dark"));
+    /// assert_eq!(child.child().use_context::<Theme>().unwrap(), Theme("light"));
+    /// assert_eq!(root.use_context::<Theme>().unwrap(), Theme("dark"));
     /// ```
     pub fn provide<T: Clone + 'static>(self, value: T) {
-        twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::ReactiveContext);
+        twine_core::alloc_guard::note(
+            self.partition(),
+            twine_core::alloc_guard::AllocSite::ReactiveContext,
+        );
         let value: Rc<dyn Any> = Rc::new(value);
-        let old = with_runtime(|rt| {
+        let old = with_runtime(self.partition(), |rt| {
             let mut inner = rt.inner.borrow_mut();
             let Some(data) = inner.scopes.get_mut(self.key()) else {
                 return Err(value);
@@ -126,6 +129,7 @@ impl Scope {
                 Ok(Some(core::mem::replace(&mut slot.1, value)))
             } else {
                 twine_core::alloc_guard::push(
+                    self.partition(),
                     &mut data.contexts,
                     (id, value),
                     twine_core::alloc_guard::AllocSite::ReactiveContext,
@@ -153,6 +157,9 @@ impl Scope {
     ///
     /// Never panics.
     ///
+    /// # Errors
+    /// [`MissingContext`] naming `T` when no ancestor provides one, or when the scope is disposed.
+    ///
     /// ```
     /// use twine_reactive::{Runtime, Signal};
     ///
@@ -164,7 +171,7 @@ impl Scope {
     /// let page = root.child().child();
     /// let Ok(Volume(v)) = page.use_context::<Volume>() else { panic!("provided by the root") };
     /// v.set(7);
-    /// assert_eq!(root.expect_context::<Volume>().0.get(), 7);
+    /// assert_eq!(root.use_context::<Volume>().unwrap().0.get(), 7);
     /// assert!(page.use_context::<u8>().is_err());
     /// ```
     #[inline]
@@ -211,7 +218,7 @@ impl Scope {
     /// The value with type id `id` nearest to this scope (shared, not cloned). Not generic, so
     /// one copy serves every context type. Allocation-free.
     fn find_context(self, id: TypeId) -> Option<Rc<dyn Any>> {
-        with_runtime(|rt| {
+        with_runtime(self.partition(), |rt| {
             let inner = rt.inner.borrow();
             let mut cur = Some(self.key());
             while let Some(s) = cur {

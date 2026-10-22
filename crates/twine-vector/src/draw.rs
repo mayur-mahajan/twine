@@ -49,16 +49,21 @@ pub struct VectorDsc {
 
 impl Default for VectorDsc {
     fn default() -> Self {
-        Self {
-            transform: Transform::IDENTITY,
-            fill: None,
-            stroke: None,
-            opa: Opa::COVER,
-            fill_opa: Opa::COVER,
-            stroke_opa: Opa::COVER,
-            blend_mode: BlendMode::Normal,
-        }
+        Self::DEFAULT
     }
+}
+
+impl VectorDsc {
+    /// The default descriptor (draws nothing: no fill, no stroke), usable in `const`s.
+    pub(crate) const DEFAULT: VectorDsc = VectorDsc {
+        transform: Transform::IDENTITY,
+        fill: None,
+        stroke: None,
+        opa: Opa::COVER,
+        fill_opa: Opa::COVER,
+        stroke_opa: Opa::COVER,
+        blend_mode: BlendMode::Normal,
+    };
 }
 
 impl VectorDsc {
@@ -209,7 +214,11 @@ impl VectorCaches {
     /// Bytes currently reserved by all buffers.
     #[must_use]
     pub fn bytes_reserved(&self) -> usize {
-        self.lines.capacity() * core::mem::size_of::<Line>() + self.raster.bytes_reserved() + 1024
+        self.lines
+            .capacity()
+            .saturating_mul(core::mem::size_of::<Line>())
+            .saturating_add(self.raster.bytes_reserved())
+            .saturating_add(1024)
     }
 }
 
@@ -341,7 +350,12 @@ fn user_tolerance(t: &Transform) -> Fx {
     let sx = hypot(i64::from(t.a.raw()), i64::from(t.b.raw()));
     let sy = hypot(i64::from(t.c.raw()), i64::from(t.d.raw()));
     let s = sx.max(sy).max(1 << 8);
-    let tol = i64::from(DEFAULT_TOLERANCE.raw()) * 65_536 / s;
+    // SAFE-ARITH: the tolerance is `2^14`, times `2^16`. `s ≥ 256` (`.max(1 << 8)` above): the
+    // division's fallback is never taken.
+    let tol = i64::from(DEFAULT_TOLERANCE.raw())
+        .wrapping_mul(65_536)
+        .checked_div(s)
+        .unwrap_or(0);
     Fx::from_raw(tol.clamp(64, i64::from(i32::MAX)) as i32)
 }
 

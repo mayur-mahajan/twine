@@ -131,6 +131,9 @@ impl<I2C: I2c, IRQ> Gt911<I2C, IRQ> {
     }
 
     /// Reads and logs the product ID and configuration version; returns `(id, version)`.
+    ///
+    /// # Errors
+    /// The I²C bus error.
     pub fn probe(&mut self) -> Result<([u8; 4], u8), I2C::Error> {
         let mut id = [0u8; 4];
         self.read_reg(REG_PRODUCT_ID, &mut id)?;
@@ -142,6 +145,9 @@ impl<I2C: I2c, IRQ> Gt911<I2C, IRQ> {
 
     /// Reads one report: `Ok(None)` if the buffer is not ready, `Ok(Some(None))` if ready and
     /// not touched, `Ok(Some(Some((x, y))))` for the first point. Clears the status when ready.
+    ///
+    /// # Errors
+    /// The I²C bus error.
     pub fn read_raw(&mut self) -> Result<Option<Option<(u16, u16)>>, I2C::Error> {
         let mut status = [0u8; 1];
         self.read_reg(REG_STATUS, &mut status)?;

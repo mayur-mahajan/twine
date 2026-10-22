@@ -8,6 +8,7 @@
 //! flattening, so the tolerance holds in device space.
 
 use alloc::vec::Vec;
+use core::num::NonZeroI128;
 
 use twine_core::math::isqrt64;
 use twine_core::{Fx, Transform};
@@ -36,8 +37,11 @@ pub struct Line {
 fn segment_count(m: i64, degree: i64, tol: Fx) -> u32 {
     let tol = i64::from(tol.raw().max(1));
     // r = d(d−1)/8 · m / tol, in 16.16.
-    let num = (i128::from(m) * i128::from(degree * (degree - 1))) << 16;
-    let r = num / i128::from(8 * tol);
+    // SAFE-ARITH: `degree ≤ 3` and `|m| < 2^63`: below 2^66, shifted below 2^82. `tol ≥ 1`
+    // (`.max(1)` above) and `≤ i32::MAX`, so `8 · tol` is non-zero and fits: the division's
+    // fallback is never taken.
+    let num = i128::from(m).wrapping_mul(i128::from(degree.wrapping_mul(degree.wrapping_sub(1)))) << 16;
+    let r = num.checked_div(i128::from(tol.wrapping_mul(8))).unwrap_or(0);
     let r = u64::try_from(r).unwrap_or(u64::MAX).min(1 << 40);
     // √r in 16.16 = √(r · 2^16); round up to an integer.
     let s = u64::from(isqrt64(r << 16));
@@ -50,7 +54,9 @@ fn diff_len(a: FxPoint, b: FxPoint, c: FxPoint) -> i64 {
     let (ax, ay) = a.raw();
     let (bx, by) = b.raw();
     let (cx, cy) = c.raw();
-    crate::geom::hypot(ax - 2 * bx + cx, ay - 2 * by + cy)
+    // SAFE-ARITH: the coordinates are `i32`s: `|a − 2b + c| < 2^34`.
+    let d = |a: i64, b: i64, c: i64| a.wrapping_sub(b.wrapping_mul(2)).wrapping_add(c);
+    crate::geom::hypot(d(ax, bx, cx), d(ay, by, cy))
 }
 
 /// Calls `f` with the points of the flattened quadratic `p0 → p2` (excluding `p0`).
@@ -59,15 +65,26 @@ pub(crate) fn flatten_quad(p0: FxPoint, p1: FxPoint, p2: FxPoint, tol: Fx, mut f
     let (x0, y0) = p0.raw();
     let (x1, y1) = p1.raw();
     let (x2, y2) = p2.raw();
-    let nn = n * n;
+    // SAFE-ARITH (the curve evaluations): `1 ≤ n ≤ MAX_CURVE_SEGMENTS = 64`, so the Bernstein
+    // weights are at most `3 · 64^3 < 2^20`; times `i32` coordinates and summed in `i128`
+    // they stay below 2^54.
+    let Some(nn) = NonZeroI128::new(i128::from(n.wrapping_mul(n))) else {
+        f(p2);
+        return;
+    };
     for i in 1..n {
-        let (a, b) = (n - i, i);
-        let w = [a * a, 2 * a * b, b * b];
+        let (a, b) = (n.wrapping_sub(i), i);
+        let [w0, w1, w2] = [
+            a.wrapping_mul(a),
+            a.wrapping_mul(b).wrapping_mul(2),
+            b.wrapping_mul(b),
+        ];
         let ev = |v0: i64, v1: i64, v2: i64| -> i64 {
-            let s = i128::from(w[0]) * i128::from(v0)
-                + i128::from(w[1]) * i128::from(v1)
-                + i128::from(w[2]) * i128::from(v2);
-            div_round(s, i128::from(nn))
+            let s = i128::from(w0)
+                .wrapping_mul(i128::from(v0))
+                .wrapping_add(i128::from(w1).wrapping_mul(i128::from(v1)))
+                .wrapping_add(i128::from(w2).wrapping_mul(i128::from(v2)));
+            div_round(s, nn)
         };
         f(fxp(ev(x0, x1, x2), ev(y0, y1, y2)));
     }
@@ -89,25 +106,43 @@ pub(crate) fn flatten_cubic(
     let (x1, y1) = p1.raw();
     let (x2, y2) = p2.raw();
     let (x3, y3) = p3.raw();
-    let n3 = n * n * n;
+    // SAFE-ARITH: as in `flatten_quad`.
+    let Some(n3) = NonZeroI128::new(i128::from(n.wrapping_mul(n).wrapping_mul(n))) else {
+        f(p3);
+        return;
+    };
     for i in 1..n {
-        let (a, b) = (n - i, i);
-        let w = [a * a * a, 3 * a * a * b, 3 * a * b * b, b * b * b];
+        let (a, b) = (n.wrapping_sub(i), i);
+        let (aa, bb) = (a.wrapping_mul(a), b.wrapping_mul(b));
+        let [w0, w1, w2, w3] = [
+            aa.wrapping_mul(a),
+            aa.wrapping_mul(b).wrapping_mul(3),
+            bb.wrapping_mul(a).wrapping_mul(3),
+            bb.wrapping_mul(b),
+        ];
         let ev = |v0: i64, v1: i64, v2: i64, v3: i64| -> i64 {
-            let s = i128::from(w[0]) * i128::from(v0)
-                + i128::from(w[1]) * i128::from(v1)
-                + i128::from(w[2]) * i128::from(v2)
-                + i128::from(w[3]) * i128::from(v3);
-            div_round(s, i128::from(n3))
+            let s = i128::from(w0)
+                .wrapping_mul(i128::from(v0))
+                .wrapping_add(i128::from(w1).wrapping_mul(i128::from(v1)))
+                .wrapping_add(i128::from(w2).wrapping_mul(i128::from(v2)))
+                .wrapping_add(i128::from(w3).wrapping_mul(i128::from(v3)));
+            div_round(s, n3)
         };
         f(fxp(ev(x0, x1, x2, x3), ev(y0, y1, y2, y3)));
     }
     f(p3);
 }
 
-fn div_round(n: i128, d: i128) -> i64 {
-    let q = (n.abs() + d / 2) / d;
-    let q = if n < 0 { -q } else { q };
+/// `n / d` rounded half away from zero for a positive `d`, saturated to `i64` (callers pass
+/// `|n| < 2^54`).
+fn div_round(n: i128, d: NonZeroI128) -> i64 {
+    // SAFE-ARITH: `|n| < 2^54`. `d != 0` (its type): the division's fallback is never taken.
+    let q = n
+        .wrapping_abs()
+        .wrapping_add(d.get() / 2)
+        .checked_div(d.get())
+        .unwrap_or(0);
+    let q = if n < 0 { q.wrapping_neg() } else { q };
     q.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 
@@ -216,7 +251,9 @@ impl Polylines {
     /// Iterates the polylines.
     pub fn iter(&self) -> impl Iterator<Item = Polyline<'_>> + '_ {
         self.ranges.iter().map(|&(a, b, closed)| Polyline {
-            points: &self.points[a as usize..b as usize],
+            // SAFE-INDEX: ranges describe parts of `points` (`begin`/`push`/`end`); the
+            // fallback is never taken.
+            points: self.points.get(a as usize..b as usize).unwrap_or_default(),
             closed,
         })
     }
@@ -247,9 +284,12 @@ impl Polylines {
             return;
         };
         r.2 = closed;
-        if closed && r.1 - r.0 >= 2 && self.points[r.0 as usize] == self.points[r.1 as usize - 1] {
+        // The range is a non-empty tail of `points` (`r.0 ≤ r.1 = points.len()`).
+        let pts = self.points.get(r.0 as usize..r.1 as usize).unwrap_or_default();
+        if closed && pts.len() >= 2 && pts.first() == pts.last() {
             self.points.pop();
-            r.1 -= 1;
+            // SAFE-ARITH: `r.1 − r.0 ≥ 2`.
+            r.1 = r.1.wrapping_sub(1);
         }
     }
 }

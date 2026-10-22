@@ -13,6 +13,8 @@ use twine_core::{Angle, ColorFormat, Opa, Point, Rect, Scale, Transform};
 
 use crate::blend::{BlendMode, Source};
 use crate::dispatch::warn_once;
+use crate::image::read::TexelOps;
+use crate::num::{advance, span};
 use crate::transform_blit::BlitDsc;
 use crate::{DrawBuf, ImagePixels, Painter};
 
@@ -63,7 +65,10 @@ impl LayerTransform {
     /// ```
     #[must_use]
     pub fn to_transform(&self, area: Rect) -> Transform {
-        let p = Point::new(area.x0 + self.pivot.x, area.y0 + self.pivot.y);
+        let p = Point::new(
+            area.x0.saturating_add(self.pivot.x),
+            area.y0.saturating_add(self.pivot.y),
+        );
         Transform::scale(self.scale_x.to_fx(), self.scale_y.to_fx())
             .then(Transform::skew(self.skew_x, self.skew_y))
             .then(Transform::rotate(self.rotation))
@@ -163,7 +168,9 @@ impl Painter<'_> {
     #[inline(never)]
     fn layer_with_buf(&mut self, area: Rect, dsc: &LayerDsc, mut f: impl FnMut(&mut Painter<'_>)) {
         if let Some(t) = dsc.transform.filter(|t| !t.is_identity()) {
-            let need = area.width() as usize * area.height() as usize * 4;
+            let need = span(area.x0, area.x1)
+                .saturating_mul(span(area.y0, area.y1))
+                .saturating_mul(4);
             if need <= self.caches_mut().layer_buf.len() {
                 self.layer_transformed(area, dsc, &t, f);
                 return;
@@ -181,8 +188,15 @@ impl Painter<'_> {
         let Some(region) = area.intersection(&self.clip()) else {
             return;
         };
-        let row_bytes = region.width() as usize * 4;
-        let rows = (self.caches_mut().layer_buf.len() / row_bytes) as i32;
+        let row_bytes = span(region.x0, region.x1).saturating_mul(4);
+        // `region` is a non-empty intersection, so `row_bytes ≥ 4`: the fallback is never
+        // taken.
+        let rows = self
+            .caches_mut()
+            .layer_buf
+            .len()
+            .checked_div(row_bytes)
+            .unwrap_or(0);
         if rows == 0 {
             if warn_once(&WARN_SMALL) {
                 twine_core::warn!(
@@ -197,11 +211,17 @@ impl Painter<'_> {
         let mut lb = take(&mut self.caches_mut().layer_buf);
         let mut y0 = region.y0;
         while y0 < region.y1 {
-            let strip = Rect::new(region.x0, y0, region.x1, (y0 + rows).min(region.y1));
-            let bytes = row_bytes * strip.height() as usize;
-            lb[..bytes].fill(0);
+            let strip = Rect::new(region.x0, y0, region.x1, advance(y0, rows, region.y1));
+            // SAFE-ARITH: at most `rows` rows of `row_bytes`, which fit the layer buffer
+            // (`rows = len / row_bytes`).
+            let bytes = row_bytes.wrapping_mul(span(strip.y0, strip.y1));
+            // SAFE-INDEX: as above; the fallback is never taken.
+            let Some(strip_buf) = lb.get_mut(..bytes) else {
+                break;
+            };
+            strip_buf.fill(0);
             let drawn = {
-                let Ok(buf) = DrawBuf::new_packed(&mut lb[..bytes], ColorFormat::Argb8888, strip) else {
+                let Ok(buf) = DrawBuf::new_packed(strip_buf, ColorFormat::Argb8888, strip) else {
                     break;
                 };
                 let mut child = Painter::new(buf, self.caches_mut());
@@ -213,9 +233,12 @@ impl Painter<'_> {
                 child.touched_area()
             };
             if let Some(t) = drawn.and_then(|t| t.intersection(&strip)) {
-                for y in t.y0..t.y1 {
-                    let o = (y - strip.y0) as usize * row_bytes + (t.x0 - strip.x0) as usize * 4;
-                    let row = &lb[o..o + t.width() as usize * 4];
+                // SAFE-ARITH: `t` lies inside the strip, so the byte columns lie inside a row.
+                let cols = span(strip.x0, t.x0).wrapping_mul(4)..span(strip.x0, t.x1).wrapping_mul(4);
+                let rows = lb.chunks_exact(row_bytes.max(1)).skip(span(strip.y0, t.y0));
+                for (y, row) in (t.y0..t.y1).zip(rows) {
+                    // SAFE-INDEX: `cols` lies within the row; the fallback is never taken.
+                    let row = row.get(cols.clone()).unwrap_or_default();
                     self.blend_masked_span(y, t.x0, t.x1, Source::Argb(row), None, dsc.opa, dsc.blend_mode);
                 }
             }
@@ -231,11 +254,17 @@ impl Painter<'_> {
         t: &LayerTransform,
         mut f: impl FnMut(&mut Painter<'_>),
     ) {
-        let (w, h) = (area.width() as usize, area.height() as usize);
+        let (w, h) = (span(area.x0, area.x1), span(area.y0, area.y1));
         let mut lb = take(&mut self.caches_mut().layer_buf);
-        lb[..w * h * 4].fill(0);
+        // The caller checked that `w · h · 4` bytes fit the layer buffer.
+        let bytes = w.saturating_mul(h).saturating_mul(4);
+        let Some(buf_bytes) = lb.get_mut(..bytes) else {
+            self.caches_mut().layer_buf = lb;
+            return;
+        };
+        buf_bytes.fill(0);
         let drawn = {
-            match DrawBuf::new_packed(&mut lb[..w * h * 4], ColorFormat::Argb8888, area) {
+            match DrawBuf::new_packed(buf_bytes, ColorFormat::Argb8888, area) {
                 Ok(buf) => {
                     let mut child = Painter::new(buf, self.caches_mut());
                     #[cfg(feature = "display-integrity")]
@@ -249,13 +278,23 @@ impl Painter<'_> {
             }
         };
         if drawn {
-            let img = ImagePixels::new(ColorFormat::Argb8888, w as u16, h as u16, &lb[..w * h * 4]);
+            let img = ImagePixels::new(
+                ColorFormat::Argb8888,
+                u16::try_from(w).unwrap_or(u16::MAX),
+                u16::try_from(h).unwrap_or(u16::MAX),
+                lb.get(..bytes).unwrap_or_default(),
+            );
             let transform = Transform::translate(
                 twine_core::Fx::from_int(area.x0),
                 twine_core::Fx::from_int(area.y0),
             )
             .then(t.to_transform(area));
-            self.blit_transformed(
+            // The sampler directly, not `blit_transformed`: its integer-translation fast path
+            // (`blit_recolor`, with a converter per source format) is for images; a layer
+            // transform is a rotation, scale or skew (an integer translation would still
+            // sample exactly), and calling it here would link a second copy of that path
+            // (flash).
+            self.blit_transformed_with(
                 &img,
                 &BlitDsc {
                     transform,
@@ -264,6 +303,8 @@ impl Painter<'_> {
                     blend_mode: dsc.blend_mode,
                     recolor: None,
                 },
+                TexelOps::default(),
+                None,
             );
         }
         self.caches_mut().layer_buf = lb;

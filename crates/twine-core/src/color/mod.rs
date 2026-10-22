@@ -32,7 +32,13 @@ use crate::math::udiv255;
 #[inline]
 #[must_use]
 pub const fn mix_channel(fg: u8, bg: u8, a: u8) -> u8 {
-    udiv255(fg as u32 * a as u32 + bg as u32 * (255 - a as u32)) as u8
+    // SAFE-ARITH: `!a` is `255 − a`; the weights sum to 255, so the sum is at most
+    // `255 · 255`, inside `u32` and inside `udiv255`'s domain.
+    udiv255(
+        (fg as u32)
+            .wrapping_mul(a as u32)
+            .wrapping_add((bg as u32).wrapping_mul((!a) as u32)),
+    ) as u8
 }
 
 /// A 24-bit RGB color (the canonical color type; pixel formats convert from/to it).
@@ -91,10 +97,11 @@ impl Color {
     /// From `0xRGB`; each nibble is expanded ×17 (`0xF` → `0xFF`).
     #[must_use]
     pub const fn hex3(v: u16) -> Color {
+        // SAFE-ARITH: each nibble is at most 15 and `15 · 17 = 255`.
         Color::new(
-            ((v >> 8) & 0xF) as u8 * 17,
-            ((v >> 4) & 0xF) as u8 * 17,
-            (v & 0xF) as u8 * 17,
+            (((v >> 8) & 0xF) as u8).wrapping_mul(17),
+            (((v >> 4) & 0xF) as u8).wrapping_mul(17),
+            ((v & 0xF) as u8).wrapping_mul(17),
         )
     }
 
@@ -117,7 +124,12 @@ impl Color {
     /// Perceived brightness `(r·77 + g·151 + b·28) >> 8` (white → 255).
     #[must_use]
     pub const fn luminance(self) -> u8 {
-        ((self.r as u32 * 77 + self.g as u32 * 151 + self.b as u32 * 28) >> 8) as u8
+        // SAFE-ARITH: the weights sum to 256, so the sum is at most `255 · 256`.
+        let sum = (self.r as u32)
+            .wrapping_mul(77)
+            .wrapping_add((self.g as u32).wrapping_mul(151))
+            .wrapping_add((self.b as u32).wrapping_mul(28));
+        (sum >> 8) as u8
     }
 
     /// Blends `fg` over `bg` with alpha `a`, per channel with [`mix_channel`].

@@ -241,7 +241,10 @@ impl Options {
     pub fn len(&self) -> usize {
         match self.text() {
             Some(t) => t.len(),
-            None => self.iter().map(|o| o.len() + 1).sum::<usize>().saturating_sub(1),
+            None => self
+                .iter()
+                .fold(0usize, |n, o| n.saturating_add(o.len()).saturating_add(1))
+                .saturating_sub(1),
         }
     }
 
@@ -263,10 +266,15 @@ impl Options {
             l.letter_space = letter_space;
             l.max_width = COORD_MAX;
             w = w.max(l.measure().w);
-            n += 1;
+            n = n.saturating_add(1);
         }
         let n = n.max(1);
-        Size::new(w, n * i32::from(font.line_height) + (n - 1) * line_space)
+        let lines = n.saturating_mul(i32::from(font.line_height));
+        // SAFE-ARITH: `n ≥ 1`.
+        Size::new(
+            w,
+            lines.saturating_add(n.wrapping_sub(1).saturating_mul(line_space)),
+        )
     }
 
     /// Replaces the options with a copy of `s`, reusing the owned buffer's capacity. The text
@@ -410,7 +418,7 @@ pub(crate) fn count(s: &str) -> u16 {
     if s.is_empty() {
         return 0;
     }
-    let n = s.bytes().filter(|&b| b == b'\n').count() + 1;
+    let n = s.bytes().filter(|&b| b == b'\n').count().saturating_add(1);
     u16::try_from(n).unwrap_or(u16::MAX)
 }
 

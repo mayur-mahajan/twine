@@ -25,7 +25,8 @@ pub trait PixelFormat: Copy + 'static {
     type Raw: Copy + Default + PartialEq + core::fmt::Debug + 'static;
     /// The runtime tag of this format.
     const FORMAT: ColorFormat;
-    /// Bytes per pixel.
+    /// Bytes per pixel (at least 1: the renderer divides by it and asserts this at compile
+    /// time).
     const BYTES: usize;
     /// Converts a color to the raw pixel value.
     fn from_color(c: Color) -> Self::Raw;
@@ -35,13 +36,13 @@ pub trait PixelFormat: Copy + 'static {
     fn mix(fg: Self::Raw, bg: Self::Raw, a: Opa) -> Self::Raw;
     /// Reads a pixel from the first [`Self::BYTES`](PixelFormat::BYTES) bytes of `bytes`.
     ///
-    /// # Panics
-    /// If `bytes` is shorter than `BYTES` (callers slice whole pixels).
+    /// Never panics: callers slice whole pixels; a slice shorter than `BYTES` reads as
+    /// `Self::Raw::default()` (black / transparent). The length check is the one indexing
+    /// would make, and disappears where the caller's slicing already proves the length.
     fn read(bytes: &[u8]) -> Self::Raw;
     /// Writes a pixel to the first `BYTES` bytes of `bytes`.
     ///
-    /// # Panics
-    /// If `bytes` is shorter than `BYTES`.
+    /// Never panics: a slice shorter than `BYTES` is left unchanged.
     fn write(bytes: &mut [u8], raw: Self::Raw);
 }
 
@@ -75,11 +76,13 @@ impl PixelFormat for Rgb565 {
     generic_mix!();
     #[inline]
     fn read(bytes: &[u8]) -> u16 {
-        u16::from_le_bytes([bytes[0], bytes[1]])
+        bytes.first_chunk().map_or(0, |b| u16::from_le_bytes(*b))
     }
     #[inline]
     fn write(bytes: &mut [u8], raw: u16) {
-        bytes[..2].copy_from_slice(&raw.to_le_bytes());
+        if let Some(b) = bytes.first_chunk_mut() {
+            *b = raw.to_le_bytes();
+        }
     }
 }
 
@@ -111,11 +114,13 @@ impl PixelFormat for Rgb565Swapped {
     generic_mix!();
     #[inline]
     fn read(bytes: &[u8]) -> u16 {
-        u16::from_le_bytes([bytes[0], bytes[1]])
+        bytes.first_chunk().map_or(0, |b| u16::from_le_bytes(*b))
     }
     #[inline]
     fn write(bytes: &mut [u8], raw: u16) {
-        bytes[..2].copy_from_slice(&raw.to_le_bytes());
+        if let Some(b) = bytes.first_chunk_mut() {
+            *b = raw.to_le_bytes();
+        }
     }
 }
 
@@ -139,11 +144,13 @@ impl PixelFormat for Rgb888 {
     generic_mix!();
     #[inline]
     fn read(bytes: &[u8]) -> [u8; 3] {
-        [bytes[0], bytes[1], bytes[2]]
+        bytes.first_chunk().copied().unwrap_or_default()
     }
     #[inline]
     fn write(bytes: &mut [u8], raw: [u8; 3]) {
-        bytes[..3].copy_from_slice(&raw);
+        if let Some(b) = bytes.first_chunk_mut() {
+            *b = raw;
+        }
     }
 }
 
@@ -167,11 +174,13 @@ impl PixelFormat for Xrgb8888 {
     generic_mix!();
     #[inline]
     fn read(bytes: &[u8]) -> u32 {
-        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        bytes.first_chunk().map_or(0, |b| u32::from_le_bytes(*b))
     }
     #[inline]
     fn write(bytes: &mut [u8], raw: u32) {
-        bytes[..4].copy_from_slice(&raw.to_le_bytes());
+        if let Some(b) = bytes.first_chunk_mut() {
+            *b = raw.to_le_bytes();
+        }
     }
 }
 
@@ -214,11 +223,13 @@ impl PixelFormat for Argb8888 {
     generic_mix!();
     #[inline]
     fn read(bytes: &[u8]) -> u32 {
-        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        bytes.first_chunk().map_or(0, |b| u32::from_le_bytes(*b))
     }
     #[inline]
     fn write(bytes: &mut [u8], raw: u32) {
-        bytes[..4].copy_from_slice(&raw.to_le_bytes());
+        if let Some(b) = bytes.first_chunk_mut() {
+            *b = raw.to_le_bytes();
+        }
     }
 }
 
@@ -242,11 +253,13 @@ impl PixelFormat for L8 {
     generic_mix!();
     #[inline]
     fn read(bytes: &[u8]) -> u8 {
-        bytes[0]
+        bytes.first().copied().unwrap_or(0)
     }
     #[inline]
     fn write(bytes: &mut [u8], raw: u8) {
-        bytes[0] = raw;
+        if let Some(b) = bytes.first_mut() {
+            *b = raw;
+        }
     }
 }
 
@@ -283,6 +296,7 @@ impl I1 {
     #[inline]
     #[must_use]
     pub fn get(row: &[u8], x: usize) -> bool {
+        // SHIFT: `x % 8 < 8`.
         row.get(x / 8).is_some_and(|b| b & (0x80 >> (x % 8)) != 0)
     }
 
@@ -293,6 +307,7 @@ impl I1 {
             crate::warn!(target: "twine::core", "I1::set: x = {} out of range", x);
             return;
         };
+        // SHIFT: `x % 8 < 8`.
         let mask = 0x80u8 >> (x % 8);
         if v {
             *b |= mask;
@@ -313,18 +328,26 @@ impl I1 {
 #[inline]
 #[must_use]
 pub fn unpack_bits(row: &[u8], bpp: u8, x: usize) -> u8 {
-    match bpp {
-        1 | 2 | 4 => {
-            let per_byte = 8 / usize::from(bpp);
-            let Some(&byte) = row.get(x / per_byte) else {
-                return 0;
-            };
-            let shift = 8 - usize::from(bpp) * (x % per_byte + 1);
-            (byte >> shift) & ((1u8 << bpp) - 1)
-        }
-        8 => row.get(x).copied().unwrap_or(0),
-        _ => 0,
-    }
+    // Per depth: log2 of the pixels per byte, the mask of a pixel's index within its byte,
+    // log2 of the depth and the mask of one pixel's value. Pixel `i` of a byte (MSB first)
+    // sits `(per_byte − 1 − i) · bpp` bits up; `idx_mask ^ i` is `per_byte − 1 − i` because
+    // `i ≤ idx_mask` and `idx_mask` is all ones.
+    let (per_byte_log2, idx_mask, bpp_log2, value_mask): (u32, usize, u32, u8) = match bpp {
+        1 => (3, 7, 0, 0x1),
+        2 => (2, 3, 1, 0x3),
+        4 => (1, 1, 2, 0xF),
+        8 => return row.get(x).copied().unwrap_or(0),
+        _ => return 0,
+    };
+    // SHIFT: `per_byte_log2` is 1, 2 or 3 (the match above).
+    let Some(&byte) = row.get(x >> per_byte_log2) else {
+        return 0;
+    };
+    // SHIFT: `idx_mask ^ (x & idx_mask) ≤ idx_mask ≤ 7` and `bpp_log2 ≤ 2`, so the amount
+    // is `(per_byte − 1 − i) · bpp ≤ 8 − bpp ≤ 7`.
+    let shift = (idx_mask ^ (x & idx_mask)) << bpp_log2;
+    // SHIFT: `shift ≤ 7` (above).
+    (byte >> shift) & value_mask
 }
 
 /// Expands a `bpp`-bit alpha to 8 bits (1 → 0/255, 2 → ×85, 4 → ×17, 8 → unchanged).
@@ -339,8 +362,10 @@ pub const fn expand_alpha(v: u8, bpp: u8) -> u8 {
                 0
             }
         }
-        2 => (v & 0x3) * 85,
-        4 => (v & 0xF) * 17,
+        // SAFE-ARITH: `v & 0x3 ≤ 3` and `3 · 85 = 255`.
+        2 => (v & 0x3).wrapping_mul(85),
+        // SAFE-ARITH: `v & 0xF ≤ 15` and `15 · 17 = 255`.
+        4 => (v & 0xF).wrapping_mul(17),
         _ => v,
     }
 }

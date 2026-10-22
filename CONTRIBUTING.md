@@ -35,7 +35,9 @@ Every PR must meet this **Definition of Done**:
    `cargo xtask ci --quick` while iterating.
 2. **Tests cover the change.** New behaviour has tests; bug fixes add a regression test named
    `regression_<short_description>` that fails without the fix.
-3. **Public API is documented.** Every public item has rustdoc (the build denies missing docs).
+3. **Public API is documented.** Every public item has rustdoc (the build denies missing docs);
+   a public function returning `Result` has an `# Errors` section and one that can panic a
+   `# Panics` section (clippy `missing_errors_doc` / `missing_panics_doc`, enforced by CI).
    Explain *what* and *why*, document panics and errors, and add a short example (doctest) for
    types and functions a user will call directly.
 4. **Visual changes are reviewed.** Golden images are the hashes in each crate's committed
@@ -82,10 +84,12 @@ These keep Twine usable on small, battery-powered devices. CI or review will rej
   Use `debug_assert!` for internal invariants.
 - **Keep the safety profile clean.** Under the `safety` feature the library crates deny
   `clippy::{indexing_slicing, unwrap_used, expect_used, panic, unreachable,
-  arithmetic_side_effects}`; crates with remaining sites carry a tracked allow-list whose counts
-  CI ratchets (`cargo xtask safety-lints`). Write new code so that it adds no site: iterators or
+  arithmetic_side_effects}` (since R5.S14 every profile crate is clean of indexing and overflow
+  sites; the only listed lint is twine-reactive's two deliberate `panic!` sites), and CI
+  ratchets the counts (`cargo xtask safety-lints`). Write new code so that it adds no site: iterators or
   `get` instead of indexing, explicit `saturating_*`/`wrapping_*`/`checked_*` arithmetic, no
-  `unwrap`. An API that panics by contract gets a `Result` form and is removed from the profile
+  `unwrap`; a `wrapping_*` operation that relies on a range argument, or a checked access whose
+  fallback is never taken, carries a `// SAFE-ARITH: …` / `// SAFE-INDEX: …` proof. An API that panics by contract gets a `Result` form and is removed from the profile
   (`#[cfg(not(feature = "safety"))]`); a panic that must stay carries a `// PANIC: …`
   justification. After changing a panic site, run `cargo xtask panics` (the inventory
   `docs/safety/panics.md`, checked by CI). See `docs/safety/profile.md` § 4 and § 7.
@@ -93,6 +97,14 @@ These keep Twine usable on small, battery-powered devices. CI or review will rej
   iterative unless it must recurse; a recursive one is bounded by `Limits::max_tree_depth`,
   keeps per-level work in `#[inline(never)]` helpers, and gets a scene in
   `twine-engine/tests/stack_depth.rs` (`cargo xtask stack-budget`, `docs/safety/profile.md` § 10).
+- **No process-wide mutable state in library crates** outside the partition slots (feature
+  `partitions`, `docs/design/adr-001-partitioned-runtimes.md`): state that belongs to a UI lives
+  in its reactive runtime (one slot per `Partition`), its engine, or a per-partition table
+  selected with `Partition::select` (like the seal records of `twine_core::alloc_guard`); a
+  growth point notes its owner's partition. The only process-wide objects are the ones listed
+  in ADR-001 § 1.1 (the waker pool, the interrupt probe, warn-once log flags) — a new one needs
+  the ADR updated and `docs/safety/profile.md` § 13.2 (N6). Partitioning must stay zero-cost
+  without the feature (const size asserts in both configurations).
 - **Respect the crate layering.** A crate may only depend on crates in lower layers
   (`cargo xtask layers`). In particular, `twine-engine` never depends on `twine-reactive`.
 - **Keep dependencies minimal.** Open an issue before adding a new external dependency. No_std

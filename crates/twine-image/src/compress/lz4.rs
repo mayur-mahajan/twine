@@ -5,6 +5,9 @@ use crate::Error;
 /// Decompresses an LZ4 block into `output` and returns the number of bytes written. Corrupt
 /// input or a too small `output` is an error (never a panic).
 ///
+/// # Errors
+/// [`Error::Decode`] for corrupt input or an `output` too small for the data.
+///
 /// ```
 /// use twine_image::lz4_decompress;
 /// let mut out = [0u8; 4];

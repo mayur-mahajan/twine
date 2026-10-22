@@ -71,16 +71,25 @@ pub trait DcsInterface {
     type Error: core::fmt::Debug;
 
     /// Sends command `cmd` followed by its parameter bytes.
+    ///
+    /// # Errors
+    /// The bus error (`Self::Error`) when the transfer fails.
     fn command(&mut self, cmd: u8, params: &[u8]) -> Result<(), Self::Error>;
 
     /// Sends pixel data (the controller must be in memory-write mode, e.g. after `RAMWR`).
     ///
     /// Implementations send the whole slice in one bus transaction where the bus allows it, so
     /// a DMA-capable HAL can transfer the chunk in one go.
+    ///
+    /// # Errors
+    /// The bus error (`Self::Error`) when the transfer fails.
     fn write_pixels(&mut self, data: &[u8]) -> Result<(), Self::Error>;
 
     /// Sends every byte of `bytes` as a command byte (controllers such as the SSD1306 take
     /// their parameters as command bytes). Default: one [`command`](Self::command) per byte.
+    ///
+    /// # Errors
+    /// The first bus error (`Self::Error`); the bytes after it are not sent.
     fn command_bytes(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
         for &b in bytes {
             self.command(b, &[])?;

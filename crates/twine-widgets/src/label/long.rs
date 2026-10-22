@@ -114,19 +114,22 @@ impl ScrollState {
 /// Width of the gap between the two copies of a circular scroll: `LV_LABEL_WAIT_CHAR_COUNT`
 /// space widths.
 pub(super) fn gap_width(font: &'static Font) -> i32 {
-    font.advance_px(' ', Some(' ')) * LABEL_WAIT_CHAR_COUNT
+    font.advance_px(' ', Some(' '))
+        .saturating_mul(LABEL_WAIT_CHAR_COUNT)
 }
 
 /// The duration of an offset animation over `dist` pixels: the `AnimDuration` style when set,
 /// else LVGL's default speed (`lv_anim_resolve_speed` of `LV_LABEL_DEF_SCROLL_SPEED`: 10 px/s
 /// resolution, clamped to 300 … 10 000 ms).
 fn anim_duration(cx: &WidgetCx<'_>, dist: i32) -> Duration {
+    /// The default speed in 10 px/s units, as LVGL (`(LABEL_DEF_SCROLL_SPEED + 5) / 10 = 4`).
+    const SPEED: u64 = (LABEL_DEF_SCROLL_SPEED as u64 + 5) / 10;
     let styled = cx.style(Part::Main, PropId::AnimDuration).as_i32().unwrap_or(0);
     if styled > 0 {
         return Duration::ms(u64::from(styled.unsigned_abs()));
     }
-    let speed = u64::from((LABEL_DEF_SCROLL_SPEED + 5) / 10); // in 10 px/s units, as LVGL
-    let ms = u64::from(dist.unsigned_abs()) * 100 / speed;
+    // SAFE-ARITH: `dist < 2^32`, so `100 · dist < 2^39`.
+    let ms = u64::from(dist.unsigned_abs()).wrapping_mul(100) / SPEED;
     Duration::ms(ms.clamp(300, 10_000))
 }
 
@@ -158,8 +161,8 @@ impl Label {
             LongMode::Scroll if laid_out => {
                 let mut hor = false;
                 if size.w > cw {
-                    let (start, end) = (0, cw - size.w);
-                    let t = anim_duration(cx, end - start);
+                    let (start, end) = (0, cw.saturating_sub(size.w));
+                    let t = anim_duration(cx, end);
                     let a = Anim::new(start, end)
                         .duration(t)
                         .easing(Easing::Linear)
@@ -175,8 +178,8 @@ impl Label {
                     ScrollState::clear(&mut self.scroll.x, &mut self.scroll.ofs.x, cx);
                 }
                 if size.h > ch && !hor {
-                    let (start, end) = (0, ch - size.h - font_h);
-                    let t = anim_duration(cx, end - start);
+                    let (start, end) = (0, ch.saturating_sub(size.h).saturating_sub(font_h));
+                    let t = anim_duration(cx, end);
                     let a = Anim::new(start, end)
                         .duration(t)
                         .easing(Easing::Linear)
@@ -194,8 +197,8 @@ impl Label {
             LongMode::ScrollCircular if laid_out => {
                 let mut hor = false;
                 if size.w > cw {
-                    let (start, end) = (0, -size.w - gap_width(d.font));
-                    let t = anim_duration(cx, end - start);
+                    let (start, end) = (0, 0i32.saturating_sub(size.w).saturating_sub(gap_width(d.font)));
+                    let t = anim_duration(cx, end);
                     let a = Anim::new(start, end)
                         .duration(t)
                         .easing(Easing::Linear)
@@ -208,8 +211,8 @@ impl Label {
                     ScrollState::clear(&mut self.scroll.x, &mut self.scroll.ofs.x, cx);
                 }
                 if size.h > ch && !hor {
-                    let (start, end) = (0, -size.h - font_h);
-                    let t = anim_duration(cx, end - start);
+                    let (start, end) = (0, 0i32.saturating_sub(size.h).saturating_sub(font_h));
+                    let t = anim_duration(cx, end);
                     let a = Anim::new(start, end)
                         .duration(t)
                         .easing(Easing::Linear)
@@ -225,8 +228,15 @@ impl Label {
                 self.dot = DotState::default();
                 if size.h > ch && size.h > font_h && text.chars().count() > LABEL_DOT_NUM {
                     // LVGL rounds the height down to the last line that fits entirely.
-                    let step = font_h + d.line_space;
-                    let lines = if step > 0 { (ch + d.line_space) / step } else { 1 }.max(1);
+                    let step = font_h.saturating_add(d.line_space);
+                    // `step > 0` (the `if`): the `checked_div` fallback is never taken.
+                    let fit = ch.saturating_add(d.line_space);
+                    let lines = if step > 0 {
+                        fit.checked_div(step).unwrap_or(1)
+                    } else {
+                        1
+                    }
+                    .max(1);
                     let lines = u16::try_from(lines).unwrap_or(u16::MAX);
                     self.dot.lines = Some(lines);
                     self.dot.end = layout.ellipsize(usize::from(lines)).map(|e| e.keep.end);

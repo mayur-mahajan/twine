@@ -1,0 +1,15 @@
+# Tour the four tabs (bar at the bottom, 120 px per tab) and take a shot of each.
+wait 1200
+shot dashboard
+tap 180 298
+wait 600
+shot controls
+tap 300 298
+wait 600
+shot tasks
+tap 420 298
+wait 600
+shot settings
+tap 414 58
+wait 600
+shot settings_dark

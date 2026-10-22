@@ -48,7 +48,24 @@ fn throw_decay(x: i32, t_ms: i64) -> i32 {
     if t_ms >= THROW_DECAY_MS {
         return 0;
     }
-    (i64::from(x) * (512 - (512 * t_ms) / THROW_DECAY_MS) / 512) as i32
+    // SAFE-ARITH: `0 < t_ms < THROW_DECAY_MS` (returned above), so the factor is in `1..=512`
+    // and `|x · factor| < 2^41`; the result's magnitude is at most `|x|`.
+    let factor = 512i64.wrapping_sub(512i64.wrapping_mul(t_ms) / THROW_DECAY_MS);
+    (i64::from(x).wrapping_mul(factor) / 512) as i32
+}
+
+/// `v` reduced to `keep` percent (`keep` in `0..=100`), rounded towards zero: the decay of a
+/// throw per read.
+fn keep_percent(v: i32, keep: i32) -> i32 {
+    // SAFE-ARITH: `|v · keep| ≤ 100 · 2^31` fits in `i64`; the result's magnitude is at most
+    // `|v|`.
+    (i64::from(v).wrapping_mul(i64::from(keep)) / 100) as i32
+}
+
+/// The percentage of a throw kept per read: `100 − scroll_throw`, below 100 (`scroll_throw`
+/// is non-zero), so a throw always decays to 0.
+fn throw_keep(t: &Timing) -> i32 {
+    i32::from(100u8.saturating_sub(t.scroll_throw.get()))
 }
 
 /// LVGL `elastic_diff`: the part of `diff` applied to `obj` given the room at the start and
@@ -67,16 +84,17 @@ pub(crate) fn elastic_diff(e: &Engine, obj: NodeId, diff: i32, start: i32, end: 
         return if ended <= 0 {
             0
         } else if ended < diff.abs() {
-            ended * diff.signum()
+            // SAFE-ARITH: `|signum| ≤ 1`.
+            ended.wrapping_mul(diff.signum())
         } else {
             diff
         };
     }
     let slow = |d: i32| {
         let d = if d < 0 {
-            d - SCROLL_ELASTIC_FACTOR / 2
+            d.saturating_sub(SCROLL_ELASTIC_FACTOR / 2)
         } else {
-            d + SCROLL_ELASTIC_FACTOR / 2
+            d.saturating_add(SCROLL_ELASTIC_FACTOR / 2)
         };
         d / SCROLL_ELASTIC_FACTOR
     };
@@ -101,13 +119,17 @@ impl PointerProc {
     /// the last [`VECT_HIST_SIZE`] movements, each decayed by its age).
     pub(crate) fn record_vect(&mut self, now: Instant) {
         let i = usize::from(self.vect_hist_index) % VECT_HIST_SIZE;
-        self.vect_hist[i] = (self.vect, now);
-        self.vect_hist_index = ((i + 1) % VECT_HIST_SIZE) as u8;
+        // SAFE-INDEX: `i < VECT_HIST_SIZE`, the array's length; the fallback is never taken.
+        if let Some(slot) = self.vect_hist.get_mut(i) {
+            *slot = (self.vect, now);
+        }
+        // SAFE-ARITH: `i < VECT_HIST_SIZE` (8).
+        self.vect_hist_index = (i.wrapping_add(1) % VECT_HIST_SIZE) as u8;
         let mut v = Point::ZERO;
         for &(p, at) in &self.vect_hist {
             let t = now.saturating_duration_since(at).as_millis() as i64;
-            v.x += throw_decay(p.x, t);
-            v.y += throw_decay(p.y, t);
+            v.x = v.x.saturating_add(throw_decay(p.x, t));
+            v.y = v.y.saturating_add(throw_decay(p.y, t));
         }
         self.scroll_throw_vect = v;
         self.scroll_throw_vect_ori = v;
@@ -185,6 +207,7 @@ impl PointerProc {
     /// is used and the direction is locked.
     fn find_scroll_obj(&mut self, e: &mut Engine, id: InputId, t: &Timing) -> Option<NodeId> {
         let lim = t.scroll_limit;
+        let neg_lim = lim.saturating_neg();
         let mut candidate: Option<(NodeId, Sides)> = None;
         self.scroll_sum += self.vect;
         let sum = self.scroll_sum;
@@ -220,10 +243,10 @@ impl PointerProc {
             };
             let (sl, sr) = room(Axis::X);
             let (st, sb) = room(Axis::Y);
-            if (st > 0 || sb > 0) && ((up_en && sum.y >= lim) || (down_en && sum.y <= -lim)) {
+            if (st > 0 || sb > 0) && ((up_en && sum.y >= lim) || (down_en && sum.y <= neg_lim)) {
                 candidate = Some((o, Sides::VERTICAL));
             }
-            if (sl > 0 || sr > 0) && ((left_en && sum.x >= lim) || (right_en && sum.x <= -lim)) {
+            if (sl > 0 || sr > 0) && ((left_en && sum.x >= lim) || (right_en && sum.x <= neg_lim)) {
                 candidate = Some((o, Sides::HORIZONTAL));
             }
             up_en &= st > 0;
@@ -231,9 +254,9 @@ impl PointerProc {
             left_en &= sl > 0;
             right_en &= sr > 0;
             if (left_en && sum.x >= lim)
-                || (right_en && sum.x <= -lim)
+                || (right_en && sum.x <= neg_lim)
                 || (up_en && sum.y >= lim)
-                || (down_en && sum.y <= -lim)
+                || (down_en && sum.y <= neg_lim)
             {
                 break;
             }
@@ -258,20 +281,20 @@ impl PointerProc {
         if e.has_flag(obj, ObjFlags::SCROLL_ONE) {
             let c = e.coords(obj);
             // LVGL areas are inclusive: `x2` / `y2` are the last pixel.
-            let (x2, y2) = (c.x1 - 1, c.y1 - 1);
+            let (x2, y2) = (c.x1.saturating_sub(1), c.y1.saturating_sub(1));
             match e.scroll_snap_y(obj) {
                 ScrollSnap::Start => {
-                    a.y1 = e.find_snap_point_y(obj, c.y0 + 1, COORD_MAX, 0);
-                    a.y2 = e.find_snap_point_y(obj, COORD_MIN, c.y0 - 1, 0);
+                    a.y1 = e.find_snap_point_y(obj, c.y0.saturating_add(1), COORD_MAX, 0);
+                    a.y2 = e.find_snap_point_y(obj, COORD_MIN, c.y0.saturating_sub(1), 0);
                 }
                 ScrollSnap::End => {
                     a.y1 = e.find_snap_point_y(obj, y2, COORD_MAX, 0);
                     a.y2 = e.find_snap_point_y(obj, COORD_MIN, y2, 0);
                 }
                 ScrollSnap::Center => {
-                    let mid = c.y0 + c.height() / 2;
-                    a.y1 = e.find_snap_point_y(obj, mid + 1, COORD_MAX, 0);
-                    a.y2 = e.find_snap_point_y(obj, COORD_MIN, mid - 1, 0);
+                    let mid = c.y0.saturating_add(c.height() / 2);
+                    a.y1 = e.find_snap_point_y(obj, mid.saturating_add(1), COORD_MAX, 0);
+                    a.y2 = e.find_snap_point_y(obj, COORD_MIN, mid.saturating_sub(1), 0);
                 }
                 ScrollSnap::None => {}
             }
@@ -285,9 +308,9 @@ impl PointerProc {
                     a.x2 = e.find_snap_point_x(obj, COORD_MIN, x2, 0);
                 }
                 ScrollSnap::Center => {
-                    let mid = c.x0 + c.width() / 2;
-                    a.x1 = e.find_snap_point_x(obj, mid + 1, COORD_MAX, 0);
-                    a.x2 = e.find_snap_point_x(obj, COORD_MIN, mid - 1, 0);
+                    let mid = c.x0.saturating_add(c.width() / 2);
+                    a.x1 = e.find_snap_point_x(obj, mid.saturating_add(1), COORD_MAX, 0);
+                    a.x2 = e.find_snap_point_x(obj, COORD_MIN, mid.saturating_sub(1), 0);
                 }
                 ScrollSnap::None => {}
             }
@@ -318,21 +341,19 @@ impl PointerProc {
     /// LVGL `scroll_limit_diff`: keeps `scroll_sum + diff` inside the scroll limits.
     fn scroll_limit_diff(&self, dx: Option<&mut i32>, dy: Option<&mut i32>) {
         let a = self.scroll_area;
+        let limit = |d: &mut i32, sum: i32, lo: i32, hi: i32| {
+            if sum.saturating_add(*d) < lo {
+                *d = lo.saturating_sub(sum);
+            }
+            if sum.saturating_add(*d) > hi {
+                *d = hi.saturating_sub(sum);
+            }
+        };
         if let Some(dy) = dy {
-            if self.scroll_sum.y + *dy < a.y1 {
-                *dy = a.y1 - self.scroll_sum.y;
-            }
-            if self.scroll_sum.y + *dy > a.y2 {
-                *dy = a.y2 - self.scroll_sum.y;
-            }
+            limit(dy, self.scroll_sum.y, a.y1, a.y2);
         }
         if let Some(dx) = dx {
-            if self.scroll_sum.x + *dx < a.x1 {
-                *dx = a.x1 - self.scroll_sum.x;
-            }
-            if self.scroll_sum.x + *dx > a.x2 {
-                *dx = a.x2 - self.scroll_sum.x;
-            }
+            limit(dx, self.scroll_sum.x, a.x1, a.x2);
         }
     }
 
@@ -345,11 +366,11 @@ impl PointerProc {
         } else {
             return 0;
         };
-        let keep = 100 - i32::from(t.scroll_throw.min(100));
+        let keep = throw_keep(t);
         let mut sum = 0i32;
         while v != 0 {
             sum = sum.saturating_add(v);
-            v = v * keep / 100;
+            v = keep_percent(v, keep);
         }
         sum
     }
@@ -374,12 +395,12 @@ impl PointerProc {
         if !e.has_flag(obj, ObjFlags::SCROLL_MOMENTUM) {
             self.scroll_throw_vect = Point::ZERO;
         }
-        let keep = 100 - i32::from(t.scroll_throw.min(100));
+        let keep = throw_keep(t);
         let (align_x, align_y) = (e.scroll_snap_x(obj), e.scroll_snap_y(obj));
         if self.scroll_dir == Sides::VERTICAL {
             self.scroll_throw_vect.x = 0;
             if align_y == ScrollSnap::None {
-                let v = self.scroll_throw_vect.y * keep / 100;
+                let v = keep_percent(self.scroll_throw_vect.y, keep);
                 let (st, sb) = (e.scroll_top(obj), e.scroll_bottom(obj));
                 self.scroll_throw_vect.y = elastic_diff(e, obj, v, st, sb, Axis::Y);
                 e.scroll_by_raw(obj, 0, self.scroll_throw_vect.y);
@@ -389,12 +410,12 @@ impl PointerProc {
                 self.scroll_limit_diff(None, Some(&mut dy));
                 let y = e.find_snap_point_y(obj, COORD_MIN, COORD_MAX, dy);
                 let y = if y == COORD_MAX { 0 } else { y };
-                e.scroll_by(obj, 0, dy + y, true);
+                e.scroll_by(obj, 0, dy.saturating_add(y), true);
             }
         } else if self.scroll_dir == Sides::HORIZONTAL {
             self.scroll_throw_vect.y = 0;
             if align_x == ScrollSnap::None {
-                let v = self.scroll_throw_vect.x * keep / 100;
+                let v = keep_percent(self.scroll_throw_vect.x, keep);
                 let (sl, sr) = (e.scroll_left(obj), e.scroll_right(obj));
                 self.scroll_throw_vect.x = elastic_diff(e, obj, v, sl, sr, Axis::X);
                 e.scroll_by_raw(obj, self.scroll_throw_vect.x, 0);
@@ -404,7 +425,7 @@ impl PointerProc {
                 self.scroll_limit_diff(Some(&mut dx), None);
                 let x = e.find_snap_point_x(obj, COORD_MIN, COORD_MAX, dx);
                 let x = if x == COORD_MAX { 0 } else { x };
-                e.scroll_by(obj, dx + x, 0, true);
+                e.scroll_by(obj, dx.saturating_add(x), 0, true);
             }
         }
         if e.input_reset_pending(id) {
@@ -424,7 +445,7 @@ impl PointerProc {
                 if st < 0 {
                     e.scroll_by(obj, 0, st, true);
                 } else if sb < 0 {
-                    e.scroll_by(obj, 0, -sb, true);
+                    e.scroll_by(obj, 0, sb.saturating_neg(), true);
                 }
             }
         }
@@ -434,7 +455,7 @@ impl PointerProc {
                 if sl < 0 {
                     e.scroll_by(obj, sl, 0, true);
                 } else if sr < 0 {
-                    e.scroll_by(obj, -sr, 0, true);
+                    e.scroll_by(obj, sr.saturating_neg(), 0, true);
                 }
             }
         }
@@ -458,7 +479,11 @@ impl Engine {
     pub(crate) fn set_indev_scroll(&mut self, id: InputId, v: Option<(NodeId, Sides)>) {
         let old = self.indev_scrolls.iter().position(|(i, _, _)| *i == id);
         match (old, v) {
-            (Some(i), Some((n, d))) => self.indev_scrolls[i] = (id, n, d),
+            (Some(i), Some((n, d))) => {
+                if let Some(e) = self.indev_scrolls.get_mut(i) {
+                    *e = (id, n, d);
+                }
+            }
             (Some(i), None) => {
                 self.indev_scrolls.swap_remove(i);
             }

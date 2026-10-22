@@ -372,7 +372,10 @@ fn lerp(from: i32, to: i32, t: u8) -> i32 {
         0 => from,
         255 => to,
         _ => {
-            let v = i64::from(from) + (((i64::from(to) - i64::from(from)) * i64::from(t)) >> 8);
+            // SAFE-ARITH: `|to − from| < 2^32` and `t < 2^8`, so every step is below 2^41 in
+            // magnitude.
+            let d = i64::from(to).wrapping_sub(i64::from(from));
+            let v = i64::from(from).wrapping_add(d.wrapping_mul(i64::from(t)) >> 8);
             v as i32 // between `from` and `to`, so in range
         }
     }

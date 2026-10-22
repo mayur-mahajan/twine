@@ -150,6 +150,7 @@ fn lists(cx: Scope) -> impl View {
                 |i| *i,
                 |_, i| {
                     let i = i.get_untracked();
+                    // DIV: `ICONS` is a non-empty constant table.
                     list_button(ICONS[i as usize % ICONS.len()], format!("Item {}", i + 1))
                 },
             ),

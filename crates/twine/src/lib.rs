@@ -88,6 +88,8 @@
 //! - `no-panic-runtime`: reactive failures that can be skipped (a write to a disposed signal, a
 //!   creation in a disposed scope or a full arena, a memo cycle) raise a fault instead of
 //!   panicking (`reactive` crate docs § Failures); implied by `safety`.
+//! - `partitions`: up to four [partitioned runtimes](#partitioned-runtimes) instead of one
+//!   (not in `default` or `full`, not implied by `safety`; zero cost without it).
 //!
 //! Firmware that offers alternatives as its own cargo features (one display of several, at
 //! most one touch controller) checks their combinations with [`feature_rules!`].
@@ -157,6 +159,36 @@
 //! [`core::SAFETY_PROFILE`] tells code whether it is built in the profile. Further run-time
 //! guarantees of the profile (wide arena generations, bounded time, …) are listed with their
 //! status in `docs/safety/profile.md`.
+//!
+//! ## Partitioned runtimes
+//!
+//! With the `partitions` feature an image runs up to four **partitions**
+//! ([`core::Partition`]): each is one reactive runtime, claimed once with
+//! [`Runtime::take_partition`](reactive::Runtime::take_partition), and every `Ui` built on its
+//! token. Partitions share no state — arenas, effect queue and loop cut, limits, faults, seal
+//! domain, step budget, heartbeat, frame observer, fail-safe screen — so a safety-critical
+//! display next to a non-critical one stays free from interference: an effect loop, an
+//! exhausted bound, a reactive misuse, a slow update or a display fault in one never changes
+//! what the other shows or when ([`view::Ui::partition`]). Partitions may run in one
+//! super-loop (critical first), on two cores or in two RTOS tasks. Data crosses them only
+//! through [`Latest`](reactive::Latest), [`Channel`](reactive::Channel) and
+//! [`Outbox`](reactive::Outbox); a `Channel`/`Latest` has one consuming partition
+//! ([`FaultKind::PartitionViolation`](core::fault::FaultKind::PartitionViolation)). What a
+//! partition cannot contain (panics, memory corruption, the shared heap, CPU time, shared
+//! hardware) is listed in `docs/safety/profile.md` § 13 as assumptions of use. Example:
+//! `cargo xtask sim partitions`.
+//!
+//! ```
+//! use twine::core::Partition;
+//! use twine::reactive::Runtime;
+//!
+//! let critical = Runtime::take().unwrap(); // partition 0
+//! if let Some(p) = Partition::new(1) {
+//!     // `partitions`: a second, independent runtime for the non-critical display
+//!     let other = Runtime::take_partition(p).unwrap();
+//!     assert_ne!(critical, other);
+//! }
+//! ```
 //!
 //! ## Bring-up
 //!

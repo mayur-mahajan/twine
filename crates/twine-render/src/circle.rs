@@ -21,6 +21,11 @@ use crate::caches::CacheStats;
 /// Largest radius the cache stores; larger radii are computed per row.
 pub const MAX_CACHED_RADIUS: i32 = 256;
 
+/// Largest radius drawn exactly (2^22 px); larger radii are clamped to it (every radius of
+/// the renderer goes through [`eff_radius`](crate::rrect::eff_radius) or this clamp). It keeps
+/// the coverage arithmetic in range: `(8r)² · 2^10 < 2^64` and `256 · (r + 1) < 2^31`.
+pub(crate) const MAX_RADIUS: i32 = 1 << 22;
+
 /// Arena bytes reserved per cache entry (an entry of radius `r` takes about `6·r + 2·r` bytes;
 /// radius 64 fits `circle_cache_entries` times, one radius-256 entry fits in 4 entries' space).
 pub(crate) const ARENA_BYTES_PER_ENTRY: usize = 576;
@@ -31,15 +36,23 @@ const HDR: usize = 6;
 /// The x-intersections (1/256 px from the quarter's outer edge) of the 4 sub-rows of row `py`.
 #[inline]
 pub(crate) fn row_edges(r: i32, py: i32) -> [i32; 4] {
-    let r8 = 8 * i64::from(r);
+    let r = r.clamp(0, MAX_RADIUS);
+    let py = py.clamp(0, r);
+    // SAFE-ARITH: `0 ≤ py ≤ r ≤ 2^22` (clamped above) and `k < 4`: `r8, ys8 ≤ 2^25 + 7`, so
+    // `|dy8| ≤ 2^26`, the squares are below 2^52 and `inner · 2^10 < 2^62`; `256 · r ≤ 2^30`
+    // and the root `√(inner · 2^10) ≤ 2^31` is at most `256 · r` (`inner ≤ r8²`).
+    let r8 = 8i64.wrapping_mul(i64::from(r));
+    let r256 = 256i32.wrapping_mul(r);
     core::array::from_fn(|k| {
-        let ys8 = 8 * i64::from(py) + 2 * k as i64 + 1;
-        let dy8 = r8 - ys8;
-        let inner = r8 * r8 - dy8 * dy8; // (r² − (r − ys)²) · 64
+        let ys8 = 8i64
+            .wrapping_mul(i64::from(py))
+            .wrapping_add((k as i64).wrapping_mul(2).wrapping_add(1));
+        let dy8 = r8.wrapping_sub(ys8);
+        let inner = r8.wrapping_mul(r8).wrapping_sub(dy8.wrapping_mul(dy8)); // (r² − (r − ys)²) · 64
         if inner <= 0 {
-            256 * r
+            r256
         } else {
-            (256 * i64::from(r) - i64::from(isqrt64((inner as u64) << 10))) as i32
+            r256.wrapping_sub(isqrt64((inner as u64) << 10) as i32)
         }
     })
 }
@@ -47,8 +60,12 @@ pub(crate) fn row_edges(r: i32, py: i32) -> [i32; 4] {
 /// Coverage of pixel `px` given the sub-row edges.
 #[inline(always)]
 pub(crate) fn edge_cov(e: &[i32; 4], px: i32) -> u8 {
-    let edge = 256 * (px + 1);
-    let sum: i32 = e.iter().map(|&x| (edge - x).clamp(0, 256)).sum();
+    // SAFE-ARITH: `0 ≤ px < r ≤ MAX_RADIUS` and the edges are in `0..=256 · r` (`row_edges`),
+    // so `edge ≤ 2^30`, `|edge − x| ≤ 2^30` and the four clamped terms sum to at most 1024.
+    let edge = 256i32.wrapping_mul(px.wrapping_add(1));
+    let sum = e
+        .iter()
+        .fold(0i32, |s, &x| s.wrapping_add(edge.wrapping_sub(x).clamp(0, 256)));
     (sum / 4).min(255) as u8
 }
 
@@ -59,7 +76,8 @@ pub(crate) fn edge_bounds(e: &[i32; 4], r: i32) -> (i32, i32) {
     let aa_start = (min >> 8).clamp(0, r);
     let mut full = aa_start;
     while full < r && edge_cov(e, full) < 255 {
-        full += 1;
+        // SAFE-ARITH: `full < r` (the loop condition).
+        full = full.wrapping_add(1);
     }
     (aa_start, full)
 }
@@ -100,7 +118,13 @@ impl CircleRow<'_> {
             255
         } else {
             match &self.aa {
-                RowAa::Table(t) => t[(px - self.aa_start) as usize],
+                // SAFE-ARITH: `aa_start ≤ px` (the branch above), so the offset is not negative.
+                // SAFE-INDEX: `px < full_from` and the table holds the `full_from − aa_start`
+                // values of `[aa_start, full_from)`; the fallback is never taken.
+                RowAa::Table(t) => t
+                    .get(px.wrapping_sub(self.aa_start) as usize)
+                    .copied()
+                    .unwrap_or(0),
                 RowAa::Edges(e) => edge_cov(e, px),
             }
         }
@@ -144,14 +168,33 @@ impl<'c> Quarter<'c> {
                 if py < 0 || py >= r {
                     return CircleRow::FULL;
                 }
-                let h = py as usize * HDR;
-                let rd = |i: usize| i32::from(u16::from_le_bytes([bytes[h + i], bytes[h + i + 1]]));
-                let (aa_start, full_from, off) = (rd(0), rd(2), rd(4) as usize);
-                let data = r as usize * HDR + off;
+                // The entry layout written by `CircleCache::ensure`: `r` headers of `HDR` bytes,
+                // then the anti-aliased bytes of every row.
+                // SAFE-ARITH: `0 ≤ py < r ≤ MAX_CACHED_RADIUS = 256`, so the header offsets
+                // stay below `256 · HDR` and the row data below the entry size (`u16`
+                // offsets plus `u16` lengths).
+                let h = (py as usize).wrapping_mul(HDR);
+                let header = bytes
+                    .get(h..h.wrapping_add(HDR))
+                    .and_then(|b| b.first_chunk::<HDR>());
+                // SAFE-INDEX: `py < r`, so header `py` exists; the fallback is never taken.
+                let Some(&[a0, a1, f0, f1, o0, o1]) = header else {
+                    return CircleRow::FULL;
+                };
+                let (aa_start, full_from) = (u16::from_le_bytes([a0, a1]), u16::from_le_bytes([f0, f1]));
+                let data = (r as usize)
+                    .wrapping_mul(HDR)
+                    .wrapping_add(usize::from(u16::from_le_bytes([o0, o1])));
+                let len = usize::from(full_from.saturating_sub(aa_start));
+                // SAFE-INDEX: the row's bytes were written at `data` (`ensure`); the fallback is
+                // never taken.
+                let Some(table) = bytes.get(data..data.wrapping_add(len)) else {
+                    return CircleRow::FULL;
+                };
                 CircleRow {
-                    aa_start,
-                    full_from,
-                    aa: RowAa::Table(&bytes[data..data + (full_from - aa_start) as usize]),
+                    aa_start: i32::from(aa_start),
+                    full_from: i32::from(full_from),
+                    aa: RowAa::Table(table),
                 }
             }
             Quarter::Computed { r } => {
@@ -215,7 +258,11 @@ impl CircleCache {
 
     /// Reserved bytes.
     pub(crate) fn bytes_reserved(&self) -> usize {
-        self.arena.capacity() + self.entries.capacity() * core::mem::size_of::<Entry>()
+        self.arena.capacity().saturating_add(
+            self.entries
+                .capacity()
+                .saturating_mul(core::mem::size_of::<Entry>()),
+        )
     }
 
     /// Hit/miss counters.
@@ -225,18 +272,12 @@ impl CircleCache {
 
     /// Exact arena bytes needed for radius `r`.
     fn entry_size(r: i32) -> usize {
-        let aa: usize = (0..r)
-            .map(|py| {
-                let e = row_edges(r, py);
-                let (a, f) = edge_bounds(&e, r);
-                (f - a) as usize
-            })
-            .sum();
-        r as usize * HDR + aa
-    }
-
-    fn find(&self, r: i32) -> Option<usize> {
-        self.entries.iter().position(|e| i32::from(e.r) == r)
+        let aa = (0..r).fold(0usize, |sum, py| {
+            let e = row_edges(r, py);
+            let (a, f) = edge_bounds(&e, r);
+            sum.saturating_add(crate::num::span(a, f))
+        });
+        crate::num::span(0, r).saturating_mul(HDR).saturating_add(aa)
     }
 
     fn evict_lru(&mut self) {
@@ -244,13 +285,15 @@ impl CircleCache {
             return;
         };
         let e = self.entries.swap_remove(i);
-        let end = e.off + e.len;
-        let tail = self.arena.len() - end;
-        self.arena.copy_within(end.., e.off);
-        self.arena.truncate(e.off + tail);
+        // Entries are packed in the arena (`off + len ≤ arena.len()`): the saturating
+        // operations are exact.
+        let end = e.off.saturating_add(e.len).min(self.arena.len());
+        let tail = self.arena.len().saturating_sub(end);
+        self.arena.copy_within(end.., e.off.min(end));
+        self.arena.truncate(e.off.saturating_add(tail));
         for other in &mut self.entries {
             if other.off > e.off {
-                other.off -= e.len;
+                other.off = other.off.saturating_sub(e.len);
             }
         }
     }
@@ -265,8 +308,8 @@ impl CircleCache {
             return;
         }
         self.tick = self.tick.wrapping_add(1);
-        if let Some(i) = self.find(r) {
-            self.entries[i].last_use = self.tick;
+        if let Some(e) = self.entries.iter_mut().find(|e| i32::from(e.r) == r) {
+            e.last_use = self.tick;
             self.stats.hits = self.stats.hits.saturating_add(1);
             return;
         }
@@ -278,7 +321,9 @@ impl CircleCache {
         if size > self.arena.capacity() {
             return;
         }
-        while self.entries.len() >= self.max_entries || self.arena.capacity() - self.arena.len() < size {
+        while self.entries.len() >= self.max_entries
+            || self.arena.capacity().saturating_sub(self.arena.len()) < size
+        {
             if self.entries.is_empty() {
                 return;
             }
@@ -286,21 +331,28 @@ impl CircleCache {
         }
         let off = self.arena.len();
         // Headers first, then the AA bytes (within the reserved capacity: no allocation).
-        self.arena.resize(off + r as usize * HDR, 0);
+        // SAFE-ARITH: `r ≤ MAX_CACHED_RADIUS` and the entry fits the arena (`size`, checked
+        // above), so every offset below is at most `off + size ≤ capacity`.
+        self.arena
+            .resize(off.wrapping_add((r as usize).wrapping_mul(HDR)), 0);
         let mut data_off = 0usize;
         for py in 0..r {
             let e = row_edges(r, py);
             let (a, f) = edge_bounds(&e, r);
-            let h = off + py as usize * HDR;
-            self.arena[h..h + 2].copy_from_slice(&(a as u16).to_le_bytes());
-            self.arena[h + 2..h + 4].copy_from_slice(&(f as u16).to_le_bytes());
-            self.arena[h + 4..h + 6].copy_from_slice(&(data_off as u16).to_le_bytes());
+            let h = off.wrapping_add((py as usize).wrapping_mul(HDR));
+            let [h0, h1, h2] = [a as u16, f as u16, data_off as u16].map(u16::to_le_bytes);
+            // SAFE-INDEX: header `py < r` lies in the `r · HDR` bytes resized above; the
+            // fallback is never taken.
+            if let Some(header) = self.arena.get_mut(h..h.wrapping_add(HDR)) {
+                header.copy_from_slice(&[h0[0], h0[1], h1[0], h1[1], h2[0], h2[1]]);
+            }
             for px in a..f {
                 self.arena.push(edge_cov(&e, px));
             }
-            data_off += (f - a) as usize;
+            // SAFE-ARITH: `a ≤ f ≤ r`, and the row's bytes are part of `size`.
+            data_off = data_off.wrapping_add(crate::num::span(a, f));
         }
-        debug_assert_eq!(self.arena.len() - off, size);
+        debug_assert_eq!(self.arena.len(), off.saturating_add(size));
         self.entries.push(Entry {
             r: r as u16,
             off,
@@ -319,14 +371,13 @@ impl CircleCache {
         if self.fresh {
             return Quarter::Computed { r };
         }
-        match self.find(r) {
-            Some(i) => {
-                let e = self.entries[i];
-                Quarter::Cached {
-                    r,
-                    bytes: &self.arena[e.off..e.off + e.len],
-                }
-            }
+        let cached = self
+            .entries
+            .iter()
+            .find(|e| i32::from(e.r) == r)
+            .and_then(|e| self.arena.get(e.off..e.off.saturating_add(e.len)));
+        match cached {
+            Some(bytes) => Quarter::Cached { r, bytes },
             None => Quarter::Computed { r },
         }
     }

@@ -28,9 +28,13 @@ pub const fn isqrt64(x: u64) -> u32 {
         one >>= 2;
     }
     while one != 0 {
-        if op >= res + one {
-            op -= res + one;
-            res = (res >> 1) + one;
+        // SAFE-ARITH: with `one = 4^k` (`k ≤ 31`), `res = q · 2^(k+1)` where `q < 2^(32−k)` is
+        // the root's bits found so far, so `res < 2^33` and `res + one < 2^63`; the
+        // subtraction is guarded by the comparison.
+        let next = res.wrapping_add(one);
+        if op >= next {
+            op = op.wrapping_sub(next);
+            res = (res >> 1).wrapping_add(one);
         } else {
             res >>= 1;
         }

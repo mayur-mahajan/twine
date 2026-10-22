@@ -187,10 +187,10 @@ macro_rules! define_props {
             /// The property with id `v` (`None` for 0 and ids past [`PROP_COUNT`]).
             #[must_use]
             pub const fn from_u8(v: u8) -> ::core::option::Option<$crate::PropId> {
-                if v == 0 || v as usize > PROP_COUNT {
-                    ::core::option::Option::None
-                } else {
-                    ::core::option::Option::Some(Self::ALL[v as usize - 1])
+                // `v = 0` wraps to `usize::MAX`, past the table like ids above `PROP_COUNT`.
+                match Self::ALL.split_at_checked((v as usize).wrapping_sub(1)) {
+                    ::core::option::Option::Some((_, [id, ..])) => ::core::option::Option::Some(*id),
+                    _ => ::core::option::Option::None,
                 }
             }
         }
@@ -326,7 +326,13 @@ impl PropId {
     #[inline]
     #[must_use]
     pub const fn meta(self) -> &'static PropMeta {
-        &PROP_META[self as usize - 1]
+        let [first, ..] = &PROP_META;
+        // SAFE-INDEX: ids are `1..=PROP_COUNT` (the discriminants), so the index is below the
+        // table's length; the fallback is never taken.
+        match PROP_META.split_at_checked((self as usize).wrapping_sub(1)) {
+            Some((_, [meta, ..])) => meta,
+            _ => first,
+        }
     }
 
     /// Lookup group: `id >> 4` (see [`Style::has_group`](crate::Style::has_group)).
@@ -340,6 +346,7 @@ impl PropId {
     #[inline]
     #[must_use]
     pub const fn group_bit(self) -> u16 {
+        // SHIFT: `group()` is a `u8` shifted right by 4, so `≤ 15`, on a `u16`.
         1 << self.group()
     }
 
@@ -347,7 +354,12 @@ impl PropId {
     #[inline]
     #[must_use]
     pub const fn names(self) -> &'static PropNames {
-        &PROP_NAMES[self as usize - 1]
+        let [first, ..] = &PROP_NAMES;
+        // SAFE-INDEX: ids are `1..=PROP_COUNT`; the fallback is never taken.
+        match PROP_NAMES.split_at_checked((self as usize).wrapping_sub(1)) {
+            Some((_, [names, ..])) => names,
+            _ => first,
+        }
     }
 
     /// Property name (`"BgColor"`).

@@ -251,7 +251,9 @@ impl RenderCaches {
         } else {
             self.layer_buf_bytes()
         };
-        self.scratch_bytes() + self.cache_bytes() + layer
+        self.scratch_bytes()
+            .saturating_add(self.cache_bytes())
+            .saturating_add(layer)
     }
 
     /// Heap bytes of the per-span scratch buffers (coverage, mask, ARGB samples and 16-bit
@@ -264,17 +266,21 @@ impl RenderCaches {
     /// ```
     #[must_use]
     pub fn scratch_bytes(&self) -> usize {
-        self.cov.capacity()
-            + self.mask.capacity()
-            + self.span.capacity()
-            + self.acc.capacity() * core::mem::size_of::<u16>()
+        self.cov
+            .capacity()
+            .saturating_add(self.mask.capacity())
+            .saturating_add(self.span.capacity())
+            .saturating_add(self.acc.capacity().saturating_mul(core::mem::size_of::<u16>()))
     }
 
     /// Heap bytes of the quarter-circle, shadow and gradient caches (their fixed arenas).
     /// Allocates nothing; never panics.
     #[must_use]
     pub fn cache_bytes(&self) -> usize {
-        self.circle.bytes_reserved() + self.shadow.bytes_reserved() + self.gradient.bytes_reserved()
+        self.circle
+            .bytes_reserved()
+            .saturating_add(self.shadow.bytes_reserved())
+            .saturating_add(self.gradient.bytes_reserved())
     }
 
     /// Size of the layer buffer in bytes, wherever it lives (0 while a layer is being drawn,
@@ -298,7 +304,8 @@ impl RenderCaches {
     /// [`build_color_map`]: crate::build_color_map
     pub fn gradient_color_map(&mut self, g: &Gradient) -> &[u32] {
         let i = self.gradient.lookup(g);
-        self.gradient.map(i)
+        // `lookup` returns a cached index: the empty fallback is never returned.
+        self.gradient.map(i).map_or(&[], |m| m.as_slice())
     }
 
     /// Takes the extension scratch state of type `T` out of the caches, if it is stored there.

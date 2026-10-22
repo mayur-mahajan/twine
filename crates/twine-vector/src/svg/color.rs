@@ -164,28 +164,30 @@ pub(crate) fn parse_color(s: &str) -> Option<Color> {
     if let Some(h) = s.strip_prefix('#') {
         let d = |c: u8| (c as char).to_digit(16);
         let b = h.as_bytes();
-        return match b.len() {
-            3 => {
-                let (r, g, bl) = (d(b[0])?, d(b[1])?, d(b[2])?);
-                Some(Color::new((r * 17) as u8, (g * 17) as u8, (bl * 17) as u8))
+        return match *b {
+            [r, g, bl] => {
+                // SAFE-ARITH: hex digits are at most 15, and `15 · 17 = 255`.
+                let x = |c: u8| d(c).map(|v| v.wrapping_mul(17) as u8);
+                Some(Color::new(x(r)?, x(g)?, x(bl)?))
             }
-            6 => u32::from_str_radix(h, 16).ok().map(Color::hex),
+            [_, _, _, _, _, _] => u32::from_str_radix(h, 16).ok().map(Color::hex),
             _ => None,
         };
     }
     let lower = s.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("rgb("));
     if lower {
-        let inner = s[4..].strip_suffix(')')?;
+        let inner = s.get(4..)?.strip_suffix(')')?;
         let mut c = Cursor::new(inner);
         let mut ch = [0u8; 3];
         for (i, v) in ch.iter_mut().enumerate() {
             let n = c.number()?;
             let pct = c.eat(b'%');
             let raw = i64::from(n.raw());
+            // SAFE-ARITH: an `i32` times 255 (or plus 2^15) fits in `i64`.
             let val = if pct {
-                raw * 255 / (100 << 16)
+                raw.wrapping_mul(255) / (100 << 16)
             } else {
-                (raw + 32_768) >> 16
+                raw.wrapping_add(32_768) >> 16
             };
             *v = val.clamp(0, 255) as u8;
             if i < 2 && !c.eat(b',') {
@@ -202,11 +204,13 @@ pub(crate) fn parse_color(s: &str) -> Option<Color> {
     for (d, c) in buf.iter_mut().zip(s.bytes()) {
         *d = c.to_ascii_lowercase();
     }
-    let key = core::str::from_utf8(&buf[..s.len()]).ok()?;
+    // `s.len() ≤ 20` (checked above): the `?` is never taken for the slice.
+    let key = core::str::from_utf8(buf.get(..s.len())?).ok()?;
     NAMED
         .binary_search_by(|(n, _)| (*n).cmp(key))
         .ok()
-        .map(|i| Color::hex(NAMED[i].1))
+        .and_then(|i| NAMED.get(i))
+        .map(|&(_, v)| Color::hex(v))
 }
 
 #[cfg(test)]

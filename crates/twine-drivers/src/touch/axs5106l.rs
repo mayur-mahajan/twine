@@ -125,6 +125,9 @@ impl<I2C, IRQ, RST> Axs5106l<I2C, IRQ, RST> {
 impl<I2C, IRQ, RST: OutputPin> Axs5106l<I2C, IRQ, RST> {
     /// Pulses `RST` low for 10 ms and waits 300 ms for the controller to boot (the vendor
     /// Arduino library's wait); no-op without a reset pin.
+    ///
+    /// # Errors
+    /// The reset pin error.
     pub fn reset(&mut self, delay: &mut impl DelayNs) -> Result<(), RST::Error> {
         if let Some(rst) = self.rst.as_mut() {
             rst.set_low()?;
@@ -144,6 +147,9 @@ impl<I2C: I2c, IRQ, RST> Axs5106l<I2C, IRQ, RST> {
     }
 
     /// Reads the 3 ID bytes (register `0x08`).
+    ///
+    /// # Errors
+    /// The I²C bus error.
     pub fn read_id(&mut self) -> Result<[u8; 3], I2C::Error> {
         let mut id = [0u8; 3];
         self.read_reg(REG_ID, &mut id)?;
@@ -151,6 +157,9 @@ impl<I2C: I2c, IRQ, RST> Axs5106l<I2C, IRQ, RST> {
     }
 
     /// Reads the first touch point in raw panel coordinates (`None`: no finger).
+    ///
+    /// # Errors
+    /// The I²C bus error.
     pub fn read_raw(&mut self) -> Result<Option<(u16, u16)>, I2C::Error> {
         let mut b = [0u8; REPORT_LEN];
         self.read_reg(REG_TOUCH_DATA, &mut b)?;

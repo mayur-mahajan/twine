@@ -21,6 +21,9 @@ macro_rules! spi_panel {
         $crate::panel_macros::spi_panel!(@aliases $alias, $async_alias, $model);
 
         #[doc = concat!("Resets and initializes a ", $model, " variant `spec` on 4-wire SPI (blocking).")]
+        #[doc = ""]
+        #[doc = "# Errors"]
+        #[doc = "[`DcsError::Interface`](crate::mipi_dcs::DcsError::Interface) when the SPI bus or the DC pin fails; [`DcsError::ResetPin`](crate::mipi_dcs::DcsError::ResetPin) when the reset pin fails."]
         pub fn new<SPI, DC, RST>(
             spi: SPI,
             dc: DC,
@@ -47,6 +50,9 @@ macro_rules! spi_panel {
         }
 
         #[doc = concat!("Resets and initializes a ", $model, " variant `spec` on 4-wire SPI (async, feature `async`).")]
+        #[doc = ""]
+        #[doc = "# Errors"]
+        #[doc = "[`DcsError::Interface`](crate::mipi_dcs::DcsError::Interface) when the SPI bus or the DC pin fails; [`DcsError::ResetPin`](crate::mipi_dcs::DcsError::ResetPin) when the reset pin fails."]
         #[cfg(feature = "async")]
         pub async fn new_async<SPI, DC, RST>(
             spi: SPI,
@@ -78,6 +84,9 @@ macro_rules! spi_panel {
         $crate::panel_macros::spi_panel!(@aliases $alias, $async_alias, $model);
 
         #[doc = concat!("Resets and initializes a ", $model, " on 4-wire SPI (blocking).")]
+        #[doc = ""]
+        #[doc = "# Errors"]
+        #[doc = "[`DcsError::Interface`](crate::mipi_dcs::DcsError::Interface) when the SPI bus or the DC pin fails; [`DcsError::ResetPin`](crate::mipi_dcs::DcsError::ResetPin) when the reset pin fails."]
         pub fn new<SPI, DC, RST>(
             spi: SPI,
             dc: DC,
@@ -103,6 +112,9 @@ macro_rules! spi_panel {
         }
 
         #[doc = concat!("Resets and initializes a ", $model, " on 4-wire SPI (async, feature `async`).")]
+        #[doc = ""]
+        #[doc = "# Errors"]
+        #[doc = "[`DcsError::Interface`](crate::mipi_dcs::DcsError::Interface) when the SPI bus or the DC pin fails; [`DcsError::ResetPin`](crate::mipi_dcs::DcsError::ResetPin) when the reset pin fails."]
         #[cfg(feature = "async")]
         pub async fn new_async<SPI, DC, RST>(
             spi: SPI,
@@ -149,6 +161,9 @@ macro_rules! qspi_panel {
             $crate::mipi_dcs::AsyncMipiDcs<$crate::interface::QspiInterface<B>, RST>;
 
         #[doc = concat!("Resets and initializes a ", $model, " panel `spec` on quad SPI (blocking).")]
+        #[doc = ""]
+        #[doc = "# Errors"]
+        #[doc = "[`DcsError::Interface`](crate::mipi_dcs::DcsError::Interface) when the bus fails; [`DcsError::ResetPin`](crate::mipi_dcs::DcsError::ResetPin) when the reset pin fails."]
         pub fn new<B, RST>(
             bus: B,
             rst: ::core::option::Option<RST>,
@@ -164,6 +179,9 @@ macro_rules! qspi_panel {
         }
 
         #[doc = concat!("Resets and initializes a ", $model, " panel `spec` on quad SPI (async, feature `async`).")]
+        #[doc = ""]
+        #[doc = "# Errors"]
+        #[doc = "[`DcsError::Interface`](crate::mipi_dcs::DcsError::Interface) when the bus fails; [`DcsError::ResetPin`](crate::mipi_dcs::DcsError::ResetPin) when the reset pin fails."]
         #[cfg(feature = "async")]
         pub async fn new_async<B, RST>(
             bus: B,

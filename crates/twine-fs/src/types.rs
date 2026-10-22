@@ -44,6 +44,9 @@ impl SeekFrom {
     /// The absolute position this target resolves to for a file of `len` bytes whose cursor
     /// is at `pos`; [`Error::InvalidSeek`] before the start or on overflow.
     ///
+    /// # Errors
+    /// [`Error::InvalidSeek`] for a position before the start of the file or past `u64::MAX`.
+    ///
     /// ```
     /// use twine_fs::{Error, SeekFrom};
     /// assert_eq!(SeekFrom::End(-2).resolve(3, 10), Ok(8));
@@ -140,22 +143,55 @@ pub enum Error {
 /// Implementations must never panic on bad paths or handles; they return an [`Error`].
 pub trait FileSystem {
     /// Opens `path` in `mode`.
+    ///
+    /// # Errors
+    /// [`Error::NotFound`] for a missing file opened for reading, [`Error::IsADirectory`],
+    /// [`Error::PermissionDenied`] for a mode the file system does not allow,
+    /// [`Error::TooManyOpenFiles`], [`Error::InvalidPath`], [`Error::Io`].
     fn open(&mut self, path: &str, mode: OpenMode) -> Result<FileHandle, Error>;
     /// Reads up to `buf.len()` bytes at the cursor; returns the number read (0 at the end).
+    ///
+    /// # Errors
+    /// the file system's error: typically [`Error::BadHandle`] for a handle that is not open,
+    /// [`Error::Io`] for a device failure.
     fn read(&mut self, f: FileHandle, buf: &mut [u8]) -> Result<usize, Error>;
     /// Writes `buf` at the cursor (at the end for [`OpenMode::Append`]); returns the number of
     /// bytes written.
+    ///
+    /// # Errors
+    /// the file system's error: typically [`Error::BadHandle`] for a handle that is not open,
+    /// [`Error::Io`] for a device failure, [`Error::PermissionDenied`] for a file opened read-only.
     fn write(&mut self, f: FileHandle, buf: &[u8]) -> Result<usize, Error>;
     /// Moves the cursor; returns the new absolute position. Seeking past the end is allowed
     /// (a later write fills the gap with zeros where the file system supports it).
+    ///
+    /// # Errors
+    /// [`Error::InvalidSeek`] for a position before the start; the file system's error: typically
+    /// [`Error::BadHandle`] for a handle that is not open, [`Error::Io`] for a device failure.
     fn seek(&mut self, f: FileHandle, pos: SeekFrom) -> Result<u64, Error>;
     /// The cursor position.
+    ///
+    /// # Errors
+    /// the file system's error: typically [`Error::BadHandle`] for a handle that is not open,
+    /// [`Error::Io`] for a device failure.
     fn tell(&mut self, f: FileHandle) -> Result<u64, Error>;
     /// Closes the file (flushing written data).
+    ///
+    /// # Errors
+    /// the file system's error: typically [`Error::BadHandle`] for a handle that is not open,
+    /// [`Error::Io`] for a device failure (written data may be lost). The handle is closed either
+    /// way.
     fn close(&mut self, f: FileHandle) -> Result<(), Error>;
     /// Calls `out` once for every entry of the directory `path` (not for `.` and `..`).
+    ///
+    /// # Errors
+    /// [`Error::NotFound`], [`Error::NotADirectory`], [`Error::InvalidPath`], [`Error::Io`],
+    /// [`Error::Unsupported`] for file systems without directories.
     fn read_dir(&mut self, path: &str, out: &mut dyn FnMut(DirEntry<'_>)) -> Result<(), Error>;
     /// Metadata of `path`.
+    ///
+    /// # Errors
+    /// [`Error::NotFound`], [`Error::InvalidPath`], [`Error::Io`].
     fn metadata(&mut self, path: &str) -> Result<Metadata, Error>;
 }
 

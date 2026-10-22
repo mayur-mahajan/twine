@@ -141,6 +141,10 @@ impl ImageCache {
     /// Returns the cached pixels of `key`, or runs `decode` (which fills the buffer it gets
     /// and returns the header) and caches the result, evicting least recently used entries
     /// as needed. Cache hits do not allocate.
+    ///
+    /// # Errors
+    /// The error of `decode`; nothing is cached then. An image larger than the cache budget is not
+    /// an error: it is decoded on every call (logged once).
     pub fn get_or_decode(
         &mut self,
         key: SourceKey,
@@ -148,16 +152,18 @@ impl ImageCache {
     ) -> Result<CachedImage<'_>, Error> {
         self.transient = None;
         self.clock = self.clock.wrapping_add(1);
+        let clock = self.clock;
         if let Some(i) = self.entries.iter().position(|e| e.key == key) {
-            self.stats.hits += 1;
-            let e = &mut self.entries[i];
-            e.last_use = self.clock;
+            self.stats.hits = self.stats.hits.saturating_add(1);
+            // `i` was just found: the fallback is never taken.
+            let e = self.entries.get_mut(i).ok_or(Error::CacheFull)?;
+            e.last_use = clock;
             return Ok(CachedImage {
                 header: e.header,
                 data: &e.data,
             });
         }
-        self.stats.misses += 1;
+        self.stats.misses = self.stats.misses.saturating_add(1);
         let mut data = Vec::new();
         let header = decode(&mut data)?;
         let size = data.len();
@@ -177,13 +183,18 @@ impl ImageCache {
                 data: &e.data,
             });
         }
-        while self.used + size > self.budget || self.entries.len() >= self.max_entries {
+        // `used` is the sum of the cached sizes, each within the budget: the saturating sums
+        // are exact.
+        while self.used.saturating_add(size) > self.budget || self.entries.len() >= self.max_entries {
+            if self.entries.is_empty() {
+                break;
+            }
             self.evict_lru();
         }
-        self.used += size;
+        self.used = self.used.saturating_add(size);
         self.stats.bytes_used = self.used;
         self.entries.push(entry);
-        let e = &self.entries[self.entries.len() - 1];
+        let e = self.entries.last().ok_or(Error::CacheFull)?;
         Ok(CachedImage {
             header: e.header,
             data: &e.data,
@@ -214,13 +225,17 @@ impl ImageCache {
 
     fn evict_lru(&mut self) {
         let clock = self.clock;
-        let Some(i) = (0..self.entries.len()).max_by_key(|&i| clock.wrapping_sub(self.entries[i].last_use))
+        let Some((i, _)) = self
+            .entries
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, e)| clock.wrapping_sub(e.last_use))
         else {
             return;
         };
         let e = self.entries.swap_remove(i);
-        self.used -= e.data.len();
-        self.stats.evictions += 1;
+        self.used = self.used.saturating_sub(e.data.len());
+        self.stats.evictions = self.stats.evictions.saturating_add(1);
         self.stats.bytes_used = self.used;
         twine_core::debug!(target: "twine::image", "image cache: evicted {} bytes", e.data.len());
     }
@@ -235,7 +250,7 @@ impl ImageCache {
     pub fn invalidate(&mut self, key: &SourceKey) {
         if let Some(i) = self.entries.iter().position(|e| &e.key == key) {
             let e = self.entries.swap_remove(i);
-            self.used -= e.data.len();
+            self.used = self.used.saturating_sub(e.data.len());
             self.stats.bytes_used = self.used;
         }
     }
@@ -283,13 +298,15 @@ impl ImageCache {
     /// ```
     #[must_use]
     pub fn bytes_reserved(&self) -> usize {
-        self.entries.capacity() * core::mem::size_of::<Entry>()
-            + self
-                .entries
-                .iter()
-                .chain(&self.transient)
-                .map(|e| e.data.capacity())
-                .sum::<usize>()
+        self.entries
+            .capacity()
+            .saturating_mul(core::mem::size_of::<Entry>())
+            .saturating_add(
+                self.entries
+                    .iter()
+                    .chain(&self.transient)
+                    .fold(0usize, |s, e| s.saturating_add(e.data.capacity())),
+            )
     }
 }
 
@@ -335,8 +352,12 @@ impl ImageHeaderCache {
             return;
         }
         if let Err(e) = self.entries.push((key, header)) {
-            self.entries[self.next] = e;
-            self.next = (self.next + 1) % HEADER_CACHE_ENTRIES;
+            // `next < HEADER_CACHE_ENTRIES` (kept by the modulo below): the slot exists.
+            if let Some(slot) = self.entries.get_mut(self.next) {
+                *slot = e;
+            }
+            // SAFE-ARITH: `next < HEADER_CACHE_ENTRIES = 8`.
+            self.next = self.next.wrapping_add(1) % HEADER_CACHE_ENTRIES;
         }
     }
 

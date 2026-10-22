@@ -139,10 +139,14 @@ fn draw_char(
         }
         let b = Rect::from_xywh(pen_x, line_top, font.placeholder_width(), font.ascent());
         if b.intersects(&clip) && !b.is_empty() {
-            p.fill(Rect::new(b.x0, b.y0, b.x1, b.y0 + 1), color, opa);
-            p.fill(Rect::new(b.x0, b.y1 - 1, b.x1, b.y1), color, opa);
-            p.fill(Rect::new(b.x0, b.y0 + 1, b.x0 + 1, b.y1 - 1), color, opa);
-            p.fill(Rect::new(b.x1 - 1, b.y0 + 1, b.x1, b.y1 - 1), color, opa);
+            // SAFE-ARITH: `b` is not empty (`x0 < x1`, `y0 < y1`), so each `± 1` stays
+            // inside `x0..=x1` / `y0..=y1`.
+            let (x0i, x1i) = (b.x0.wrapping_add(1), b.x1.wrapping_sub(1));
+            let (y0i, y1i) = (b.y0.wrapping_add(1), b.y1.wrapping_sub(1));
+            p.fill(Rect::new(b.x0, b.y0, b.x1, y0i), color, opa);
+            p.fill(Rect::new(b.x0, y1i, b.x1, b.y1), color, opa);
+            p.fill(Rect::new(b.x0, y0i, x0i, y1i), color, opa);
+            p.fill(Rect::new(x1i, y0i, b.x1, y1i), color, opa);
         }
         return;
     };
@@ -155,8 +159,11 @@ fn draw_char(
             return;
         };
         let (w, h) = (i32::from(img.w), i32::from(img.h));
-        let gy = line_top + font.ascent() - h - i32::from(info.ofs_y);
-        let area = Rect::from_xywh(pen_x + i32::from(info.ofs_x), gy, w, h);
+        let gy = line_top
+            .saturating_add(font.ascent())
+            .saturating_sub(h)
+            .saturating_sub(i32::from(info.ofs_y));
+        let area = Rect::from_xywh(pen_x.saturating_add(i32::from(info.ofs_x)), gy, w, h);
         if area.intersects(&clip) {
             cache.count_render();
             let dsc = ImageDsc {
@@ -170,12 +177,16 @@ fn draw_char(
     let (bw, bh) = (i32::from(info.box_w), i32::from(info.box_h));
     let (w_px, h_px) = match gfont.subpx {
         Subpx::None => (bw, bh),
-        Subpx::Hor => ((bw + 2) / 3, bh),
-        Subpx::Ver => (bw, (bh + 2) / 3),
+        // SAFE-ARITH: `bw`, `bh` are `u16`s.
+        Subpx::Hor => (bw.wrapping_add(2) / 3, bh),
+        Subpx::Ver => (bw, bh.wrapping_add(2) / 3),
     };
-    let gx = pen_x + i32::from(info.ofs_x);
+    let gx = pen_x.saturating_add(i32::from(info.ofs_x));
     // LVGL: y = line top + ascent (of the drawing font) − box height − ofs_y.
-    let gy = line_top + font.ascent() - h_px - i32::from(info.ofs_y);
+    let gy = line_top
+        .saturating_add(font.ascent())
+        .saturating_sub(h_px)
+        .saturating_sub(i32::from(info.ofs_y));
     let area = Rect::from_xywh(gx, gy, w_px, h_px);
     if !area.intersects(&clip) {
         return;
@@ -185,7 +196,7 @@ fn draw_char(
     match gfont.subpx {
         Subpx::None => {
             provider.render_rows(&info, cache, &mut |y, row| {
-                let gy = area.y0 + y as i32;
+                let gy = area.y0.saturating_add(y as i32);
                 if gy >= clip.y0 && gy < clip.y1 {
                     p.glyph_a8(Rect::from_xywh(area.x0, gy, w_px, 1), row, row.len(), color, opa);
                 }
@@ -193,12 +204,15 @@ fn draw_char(
         }
         Subpx::Hor => {
             let mut lcd = core::mem::take(&mut cache.lcd_row);
-            lcd.resize(3 * w_px as usize, 0);
+            // SAFE-ARITH: `w_px ≤ (2^16 + 1) / 3`.
+            lcd.resize((w_px as usize).wrapping_mul(3), 0);
             provider.render_rows(&info, cache, &mut |y, row| {
-                let gy = area.y0 + y as i32;
+                let gy = area.y0.saturating_add(y as i32);
                 if gy >= clip.y0 && gy < clip.y1 {
                     lcd.fill(0);
-                    lcd[..row.len()].copy_from_slice(row);
+                    for (d, s) in lcd.iter_mut().zip(row) {
+                        *d = *s;
+                    }
                     p.glyph_lcd(
                         Rect::from_xywh(area.x0, gy, w_px, 1),
                         &lcd,
@@ -213,16 +227,21 @@ fn draw_char(
         }
         Subpx::Ver => {
             let mut lcd = core::mem::take(&mut cache.lcd_row);
-            lcd.resize(3 * w_px as usize, 0);
+            // SAFE-ARITH: `w_px` is a `u16`.
+            lcd.resize((w_px as usize).wrapping_mul(3), 0);
             lcd.fill(0);
             let rows = bh as usize;
             provider.render_rows(&info, cache, &mut |y, row| {
                 let t = y % 3;
-                for (x, v) in row.iter().enumerate() {
-                    lcd[x * 3 + t] = *v;
+                // Sub-pixel `t` of pixel `x` is byte `3x + t`.
+                for (px, v) in lcd.chunks_exact_mut(3).zip(row) {
+                    if let Some(c) = px.get_mut(t) {
+                        *c = *v;
+                    }
                 }
-                if t == 2 || y + 1 == rows {
-                    let gy = area.y0 + (y / 3) as i32;
+                // SAFE-ARITH: `y < rows`.
+                if t == 2 || y.wrapping_add(1) == rows {
+                    let gy = area.y0.saturating_add((y / 3) as i32);
                     if gy >= clip.y0 && gy < clip.y1 {
                         p.glyph_lcd(
                             Rect::from_xywh(area.x0, gy, w_px, 1),
@@ -302,13 +321,13 @@ fn draw_clipped(p: &mut Painter<'_>, area: Rect, text: &str, dsc: &TextDsc, cach
     let align = dsc.align.resolve(base);
     #[cfg(feature = "bidi")]
     let mut bidi = crate::bidi::BidiLine::default();
-    let mut y = area.y0 + dsc.ofs.y;
+    let mut y = area.y0.saturating_add(dsc.ofs.y);
     for (k, line) in layout.lines().enumerate() {
         if k >= max_lines {
             break;
         }
-        if y + font_lh <= clip.y0 {
-            y += step;
+        if y.saturating_add(font_lh) <= clip.y0 {
+            y = y.saturating_add(step);
             continue;
         }
         if y >= clip.y1 {
@@ -320,7 +339,7 @@ fn draw_clipped(p: &mut Painter<'_>, area: Rect, text: &str, dsc: &TextDsc, cach
             // Aligned as if the kept text plus "..." were the line.
             let kept = layout.line_width(range.clone());
             if kept > 0 {
-                kept + ls + layout.dots_width()
+                kept.saturating_add(ls).saturating_add(layout.dots_width())
             } else {
                 layout.dots_width()
             }
@@ -331,7 +350,10 @@ fn draw_clipped(p: &mut Painter<'_>, area: Rect, text: &str, dsc: &TextDsc, cach
             range: range.clone(),
             width,
         };
-        let x0 = area.x0 + dsc.ofs.x + layout.line_x(&line_obj, area.width(), align);
+        let x0 =
+            area.x0
+                .saturating_add(dsc.ofs.x)
+                .saturating_add(layout.line_x(&line_obj, area.width(), align));
         let mut pen = Pen::default();
         let end = range.end;
         let line_text = crate::layout::sub(text, range.clone());
@@ -353,17 +375,23 @@ fn draw_clipped(p: &mut Painter<'_>, area: Rect, text: &str, dsc: &TextDsc, cach
         if visual {
             bidi.reorder(line_text, base);
         }
-        let logical = (!visual).then(|| line_text.char_indices().map(|(i, c)| (range.start + i, c, false)));
+        // SAFE-ARITH: byte offsets inside `text` (`range.start + i ≤ text.len()`; "..." adds
+        // at most 3 bytes past the line's end), below `isize::MAX`.
+        let logical = (!visual).then(|| {
+            line_text
+                .char_indices()
+                .map(|(i, c)| (range.start.wrapping_add(i), c, false))
+        });
         #[cfg(feature = "bidi")]
         let reordered = visual.then(|| {
             bidi.visual_chars(line_text)
-                .map(|(i, c)| (range.start + i, c, false))
+                .map(|(i, c)| (range.start.wrapping_add(i), c, false))
         });
         #[cfg(not(feature = "bidi"))]
         let reordered: Option<core::iter::Empty<(usize, char, bool)>> = None;
         let dot_chars = || {
             dots.into_iter()
-                .flat_map(|_| DOTS.char_indices().map(|(i, c)| (end + i, c, true)))
+                .flat_map(|_| DOTS.char_indices().map(|(i, c)| (end.wrapping_add(i), c, true)))
         };
         let dots_first = visual && base == TextDir::Rtl;
         let mut it = dots_first
@@ -375,24 +403,26 @@ fn draw_clipped(p: &mut Painter<'_>, area: Rect, text: &str, dsc: &TextDsc, cach
             .chain((!dots_first).then(dot_chars).into_iter().flatten())
             .peekable();
         while let Some((b, c, is_dot)) = it.next() {
-            let next = if visual || is_dot || b + c.len_utf8() < end {
+            // SAFE-ARITH: a byte offset inside `text` plus one character's length.
+            let after = b.wrapping_add(c.len_utf8());
+            let next = if visual || is_dot || after < end {
                 it.peek().map(|&(_, n, _)| n)
             } else if dots.is_some() {
                 Some('.')
             } else {
-                layout.char_at_byte(b + c.len_utf8())
+                layout.char_at_byte(after)
             };
             let a = font.advance_px(c, next);
-            let pen_x = x0 + pen.x;
+            let pen_x = x0.saturating_add(pen.x);
             // Skip glyphs entirely right of the clip (they cannot come back into view).
-            if ls >= 0 && pen_x - font_lh > clip.x1 {
+            if ls >= 0 && pen_x.saturating_sub(font_lh) > clip.x1 {
                 break;
             }
             let selected = !is_dot && sel.as_ref().is_some_and(|s| s.contains(&b));
             if selected && a > 0 {
                 p.fill(Rect::from_xywh(pen_x, y, a, font_lh), dsc.sel_bg_color, dsc.opa);
             }
-            if pen_x + a + font_lh >= clip.x0 {
+            if pen_x.saturating_add(a).saturating_add(font_lh) >= clip.x0 {
                 let color = if selected { dsc.sel_color } else { dsc.color };
                 draw_char(p, font, c, next, pen_x, y, color, dsc.opa, dsc.subpx_order, cache);
             }
@@ -401,14 +431,20 @@ fn draw_clipped(p: &mut Painter<'_>, area: Rect, text: &str, dsc: &TextDsc, cach
         let w = pen.width(ls);
         if w > 0 {
             if dsc.decor.contains(TextDecor::UNDERLINE) {
-                let uy = y + font.ascent() - i32::from(font.underline_position);
-                p.fill(Rect::new(x0, uy, x0 + w, uy + thick), dsc.color, dsc.opa);
+                let uy = y
+                    .saturating_add(font.ascent())
+                    .saturating_sub(i32::from(font.underline_position));
+                let rect = Rect::new(x0, uy, x0.saturating_add(w), uy.saturating_add(thick));
+                p.fill(rect, dsc.color, dsc.opa);
             }
             if dsc.decor.contains(TextDecor::STRIKETHROUGH) {
-                let sy = y + font.ascent() * 2 / 3 + i32::from(font.underline_thickness) / 2;
-                p.fill(Rect::new(x0, sy, x0 + w, sy + thick), dsc.color, dsc.opa);
+                let sy = y
+                    .saturating_add(font.ascent().saturating_mul(2) / 3)
+                    .saturating_add(i32::from(font.underline_thickness) / 2);
+                let rect = Rect::new(x0, sy, x0.saturating_add(w), sy.saturating_add(thick));
+                p.fill(rect, dsc.color, dsc.opa);
             }
         }
-        y += step;
+        y = y.saturating_add(step);
     }
 }

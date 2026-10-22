@@ -42,10 +42,20 @@ macro_rules! symbols {
             )+
         }
 
-        /// The glyph of every variant (indexed by discriminant).
-        const GLYPHS: &[&str] = &[$($cp),+];
-        /// The name of every variant (indexed by discriminant; only linked when used).
-        const NAMES: &[&str] = &[$($name),+];
+        /// The glyph of `s`: one arm per variant (compiled to a table lookup, without a
+        /// bounds check).
+        const fn glyph(s: Symbol) -> &'static str {
+            match s {
+                $(Symbol::$variant => $cp,)+
+            }
+        }
+
+        /// The name of `s` (only linked when used).
+        const fn symbol_name(s: Symbol) -> &'static str {
+            match s {
+                $(Symbol::$variant => $name,)+
+            }
+        }
 
         impl Symbol {
             /// Every symbol, in declaration order (ascending code point, except
@@ -60,7 +70,7 @@ macro_rules! symbols {
             /// ```
             #[must_use]
             pub const fn from_char(c: char) -> Option<Symbol> {
-                // `GLYPHS` literals are one `char` each (checked by a unit test).
+                // The glyph literals are one `char` each (checked by a unit test).
                 $(
                     if c == const { first_char($cp) } {
                         return Some(Symbol::$variant);
@@ -76,10 +86,11 @@ macro_rules! symbols {
 const fn first_char(s: &str) -> char {
     let b = s.as_bytes();
     // Symbols are BMP characters (1 to 3 UTF-8 bytes).
-    let cp = match b.len() {
-        1 => b[0] as u32,
-        2 => ((b[0] as u32 & 0x1F) << 6) | (b[1] as u32 & 0x3F),
-        _ => ((b[0] as u32 & 0x0F) << 12) | ((b[1] as u32 & 0x3F) << 6) | (b[2] as u32 & 0x3F),
+    let cp = match *b {
+        [a] => a as u32,
+        [a, b] => ((a as u32 & 0x1F) << 6) | (b as u32 & 0x3F),
+        [a, b, c, ..] => ((a as u32 & 0x0F) << 12) | ((b as u32 & 0x3F) << 6) | (c as u32 & 0x3F),
+        [] => 0,
     };
     match char::from_u32(cp) {
         Some(c) => c,
@@ -225,7 +236,7 @@ impl Symbol {
     #[must_use]
     #[inline]
     pub const fn as_str(self) -> &'static str {
-        GLYPHS[self as usize]
+        glyph(self)
     }
 
     /// The glyph's code point.
@@ -246,7 +257,7 @@ impl Symbol {
     /// ```
     #[must_use]
     pub const fn name(self) -> &'static str {
-        NAMES[self as usize]
+        symbol_name(self)
     }
 
     /// `true` for the Font Awesome glyphs merged into the built-in fonts from the symbol font
@@ -320,8 +331,6 @@ mod tests {
     #[test]
     fn table_is_consistent() {
         assert_eq!(Symbol::ALL.len(), 62);
-        assert_eq!(GLYPHS.len(), Symbol::ALL.len());
-        assert_eq!(NAMES.len(), Symbol::ALL.len());
         for (i, &s) in Symbol::ALL.iter().enumerate() {
             assert_eq!(s as usize, i);
             // One character per glyph; `as_char` agrees with `as_str`.

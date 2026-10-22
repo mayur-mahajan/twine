@@ -75,12 +75,10 @@ pub struct Line {
 
 /// The bounding box of `pts` (relative), `None` when empty.
 fn bbox(pts: &[Point]) -> Option<Rect> {
-    let first = pts.first()?;
-    let mut r = Rect::new(first.x, first.y, first.x + 1, first.y + 1);
-    for p in &pts[1..] {
-        r = r.union(&Rect::new(p.x, p.y, p.x + 1, p.y + 1));
-    }
-    Some(r)
+    // The pixel of each point (saturating at the coordinate range's end).
+    let px = |p: &Point| Rect::new(p.x, p.y, p.x.saturating_add(1), p.y.saturating_add(1));
+    let (first, rest) = pts.split_first()?;
+    Some(rest.iter().fold(px(first), |r, p| r.union(&px(p))))
 }
 
 impl Line {
@@ -171,12 +169,18 @@ impl Line {
         let b = bbox(self.points())?;
         let b = if self.y_invert {
             let h = c.height();
-            Rect::new(b.x0, h - (b.y1 - 1), b.x1, h - b.y0 + 1)
+            let flip = |y: i32| h.saturating_sub(y);
+            Rect::new(
+                b.x0,
+                flip(b.y1.saturating_sub(1)),
+                b.x1,
+                flip(b.y0).saturating_add(1),
+            )
         } else {
             b
         };
         let w = m.style_i32(Part::Main, PropId::LineWidth).max(1);
-        Some(b.translate(c.x0, c.y0).expand(w / 2 + 1))
+        Some(b.translate(c.x0, c.y0).expand((w / 2).saturating_add(1)))
     }
 
     fn content(&self) -> Size {
@@ -248,11 +252,11 @@ impl Widget for Line {
         let h = c.height();
         let mut dsc = cx.line_dsc(Part::Main);
         let map = |p: Point| {
-            let y = if self.y_invert { h - p.y } else { p.y };
-            Point::new(c.x0 + p.x, c.y0 + y)
+            let y = if self.y_invert { h.saturating_sub(p.y) } else { p.y };
+            Point::new(c.x0.saturating_add(p.x), c.y0.saturating_add(y))
         };
-        for seg in pts.windows(2) {
-            cx.painter().line(map(seg[0]), map(seg[1]), &dsc);
+        for (a, b) in pts.iter().zip(pts.iter().skip(1)) {
+            cx.painter().line(map(*a), map(*b), &dsc);
             // Only the first segment gets a rounded start (LVGL).
             dsc.round_start = false;
         }

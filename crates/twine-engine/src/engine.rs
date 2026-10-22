@@ -332,6 +332,48 @@ impl Engine {
         Ok(())
     }
 
+    /// Puts the engine into partition `p` (ADR-001): from now on every growth point of the
+    /// engine — its node arena, animation and timer tables, node-local styles, scratch
+    /// buffers and its widgets' buffers ([`WidgetCx::partition`](crate::WidgetCx::partition))
+    /// — notes allocations after a seal in `p`'s seal domain
+    /// ([`twine_core::alloc_guard`]), and [`raise_alloc_after_seal`](Self::raise_alloc_after_seal)
+    /// reports `p`'s growth only. An engine starts in
+    /// [`Partition::MAIN`](twine_core::Partition::MAIN); `AppConfig::apply_limits(rt, engine)`
+    /// sets the partition of the `Ui`'s runtime token, right after the engine is created and
+    /// before any display or node. Call it before the start-up allocations it should
+    /// attribute (growth before the call stays in the previous partition's domain).
+    /// Idempotent; allocates nothing; never panics.
+    ///
+    /// ```
+    /// use twine_core::Partition;
+    /// use twine_engine::{Engine, EngineConfig};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// assert_eq!(e.partition(), Partition::MAIN);
+    /// let last = Partition::ALL[Partition::COUNT - 1];
+    /// e.set_partition(last);
+    /// assert_eq!(e.partition(), last);
+    /// ```
+    pub fn set_partition(&mut self, p: twine_core::Partition) {
+        self.tree.set_partition(p);
+        self.anim.timeline.set_partition(p);
+        self.anim.timers.set_partition(p);
+    }
+
+    /// The partition the engine belongs to ([`set_partition`](Self::set_partition)): whose
+    /// seal domain its growth is noted in. Free; never panics.
+    ///
+    /// ```
+    /// use twine_engine::{Engine, EngineConfig};
+    /// let e = Engine::new(EngineConfig::default()).unwrap();
+    /// assert_eq!(e.partition(), twine_core::Partition::MAIN);
+    /// ```
+    #[must_use]
+    #[inline]
+    pub fn partition(&self) -> twine_core::Partition {
+        self.tree.partition()
+    }
+
     /// The depth of the deepest node (a screen or layer is level 0). O(nodes).
     fn tree_height(&self) -> usize {
         self.tree
@@ -510,8 +552,9 @@ impl Engine {
     /// Schedules a full redraw of every display.
     pub fn invalidate_all(&mut self) {
         for i in 0..self.displays.len() {
-            let (id, area) = (self.displays[i].id, self.displays[i].area());
-            self.invalidate_area(id, area, InvalidateReason::Explicit);
+            if let Some((id, area)) = self.displays.get(i).map(|d| (d.id, d.area())) {
+                self.invalidate_area(id, area, InvalidateReason::Explicit);
+            }
         }
     }
 
@@ -553,9 +596,9 @@ impl Engine {
         let due = self
             .last_perf_log
             .is_none_or(|t| now.saturating_duration_since(t) >= self.config.perf_log_period);
-        if due && !self.displays.is_empty() {
+        if let (true, Some(first)) = (due, self.displays.first()) {
             if self.last_perf_log.is_some() {
-                let s = self.displays[0].refresher.stats;
+                let s = first.refresher.stats;
                 twine_core::info!(
                     target: "twine::perf",
                     "fps={} cpu={}% render={}us flush={}us wait={}us px/frame={} mem={}/{}",

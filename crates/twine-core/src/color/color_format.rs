@@ -159,7 +159,8 @@ impl ColorFormat {
     /// Bytes per row of the main plane, rounded up to whole bytes (saturating).
     #[must_use]
     pub const fn stride(self, width: u32) -> u32 {
-        let bits = width as u64 * self.bpp() as u64;
+        // SAFE-ARITH: a `u32` times a `u8` is below 2^40, far inside `u64`.
+        let bits = (width as u64).wrapping_mul(self.bpp() as u64);
         let bytes = bits.div_ceil(8);
         if bytes > u32::MAX as u64 {
             u32::MAX
@@ -183,7 +184,8 @@ impl ColorFormat {
 
     /// Total bytes of a `w × h` image whose main-plane rows are `stride` bytes apart:
     /// palette (`palette_len · 4`, indexed formats) + `stride · h` + the `w · h` alpha plane
-    /// of `Rgb565A8` (its stride is always `w`, LVGL 9 convention).
+    /// of `Rgb565A8` (its stride is always `w`, LVGL 9 convention). Saturates at `usize::MAX`
+    /// (reachable on 32-bit targets only, for images near 65 535 × 65 535).
     ///
     /// ```
     /// use twine_core::ColorFormat;
@@ -193,9 +195,12 @@ impl ColorFormat {
     #[must_use]
     pub const fn data_size(self, w: u16, h: u16, stride: u16) -> usize {
         let (w, h, stride) = (w as usize, h as usize, stride as usize);
-        let mut total = self.palette_len() * 4 + stride * h;
+        let mut total = self
+            .palette_len()
+            .saturating_mul(4)
+            .saturating_add(stride.saturating_mul(h));
         if matches!(self, ColorFormat::Rgb565A8) {
-            total += w * h;
+            total = total.saturating_add(w.saturating_mul(h));
         }
         total
     }
@@ -204,9 +209,11 @@ impl ColorFormat {
     /// plane of `Rgb565A8`), saturating.
     #[must_use]
     pub const fn buf_size(self, w: u32, h: u32) -> u32 {
-        let mut total = self.palette_len() as u64 * 4 + self.stride(w) as u64 * h as u64;
+        let mut total = (self.palette_len() as u64)
+            .saturating_mul(4)
+            .saturating_add((self.stride(w) as u64).saturating_mul(h as u64));
         if matches!(self, ColorFormat::Rgb565A8) {
-            total += w as u64 * h as u64;
+            total = total.saturating_add((w as u64).saturating_mul(h as u64));
         }
         if total > u32::MAX as u64 {
             u32::MAX
@@ -218,12 +225,12 @@ impl ColorFormat {
     /// The format with LVGL discriminant `v`, if supported.
     #[must_use]
     pub const fn from_u8(v: u8) -> Option<ColorFormat> {
-        let mut i = 0;
-        while i < Self::ALL.len() {
-            if Self::ALL[i] as u8 == v {
-                return Some(Self::ALL[i]);
+        let mut rest: &[ColorFormat] = &Self::ALL;
+        while let [f, tail @ ..] = rest {
+            if *f as u8 == v {
+                return Some(*f);
             }
-            i += 1;
+            rest = tail;
         }
         None
     }
@@ -269,6 +276,13 @@ impl TryFrom<u8> for ColorFormat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regression_buf_size_saturates() {
+        // The main plane plus the `Rgb565A8` alpha plane overflowed `u64` before saturating.
+        assert_eq!(ColorFormat::Rgb565A8.buf_size(u32::MAX, u32::MAX), u32::MAX);
+        assert_eq!(ColorFormat::Rgb565A8.data_size(3, 2, 8), 8 * 2 + 3 * 2);
+    }
 
     #[test]
     fn color_format_stride_and_buf_size_table() {

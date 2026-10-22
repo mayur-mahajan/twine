@@ -15,7 +15,7 @@ use twine_render::{BlendMode, RectDsc, transformed_area};
 use twine_style::{Part, PropId, TextAlign};
 use twine_text::{Symbol, TextLayout};
 
-use crate::log_set;
+use crate::{fmt_node_id, log_set, util};
 
 /// `AnimProp::Custom` id animating the scale ([`Image::set_scale`]). `AnimProp::Value`
 /// animates the rotation (0.1°).
@@ -167,9 +167,9 @@ fn draw_missing(cx: &mut DrawCx<'_, '_>, area: Rect) {
     dsc.color = Color::hex(0x0060_6060);
     dsc.align = TextAlign::Center;
     let h = i32::from(dsc.font.line_height);
-    let y = area.y0 + (area.height() - h) / 2;
+    let y = area.y0.saturating_add(area.height().saturating_sub(h) / 2);
     cx.draw_text(
-        Rect::new(area.x0, y, area.x1, y + h),
+        Rect::new(area.x0, y, area.x1, y.saturating_add(h)),
         Symbol::Image.as_str(),
         &dsc,
     );
@@ -177,19 +177,24 @@ fn draw_missing(cx: &mut DrawCx<'_, '_>, area: Rect) {
 
 /// LVGL `lv_area_align` of a `size` box inside `base` for the inner alignments.
 fn align_in(base: Rect, size: Size, align: ImageAlign, ofs: Point) -> Rect {
-    let (bw, bh) = (base.width(), base.height());
+    // The free space on each axis (saturating), placed at the start, middle or end.
+    let (dx, dy) = (
+        base.width().saturating_sub(size.w),
+        base.height().saturating_sub(size.h),
+    );
     let (x, y) = match align {
-        ImageAlign::TopMid => ((bw - size.w) / 2, 0),
-        ImageAlign::TopRight => (bw - size.w, 0),
-        ImageAlign::BottomLeft => (0, bh - size.h),
-        ImageAlign::BottomMid => ((bw - size.w) / 2, bh - size.h),
-        ImageAlign::BottomRight => (bw - size.w, bh - size.h),
-        ImageAlign::LeftMid => (0, (bh - size.h) / 2),
-        ImageAlign::RightMid => (bw - size.w, (bh - size.h) / 2),
-        ImageAlign::Center => ((bw - size.w) / 2, (bh - size.h) / 2),
+        ImageAlign::TopMid => (dx / 2, 0),
+        ImageAlign::TopRight => (dx, 0),
+        ImageAlign::BottomLeft => (0, dy),
+        ImageAlign::BottomMid => (dx / 2, dy),
+        ImageAlign::BottomRight => (dx, dy),
+        ImageAlign::LeftMid => (0, dy / 2),
+        ImageAlign::RightMid => (dx, dy / 2),
+        ImageAlign::Center => (dx / 2, dy / 2),
         _ => (0, 0),
     };
-    Rect::from_xywh(base.x0 + x + ofs.x, base.y0 + y + ofs.y, size.w, size.h)
+    let at = |o: i32, d: i32, f: i32| o.saturating_add(d).saturating_add(f);
+    Rect::from_xywh(at(base.x0, x, ofs.x), at(base.y0, y, ofs.y), size.w, size.h)
 }
 
 impl Image {
@@ -307,7 +312,12 @@ impl Image {
         }
         let (w, h) = (coords.width(), coords.height());
         let a = self.transformed_bounds(w, h);
-        let s = (-a.x0).max(-a.y0).max(a.x1 - w).max(a.y1 - h).max(0);
+        let s =
+            a.x0.saturating_neg()
+                .max(a.y0.saturating_neg())
+                .max(a.x1.saturating_sub(w))
+                .max(a.y1.saturating_sub(h))
+                .max(0);
         u16::try_from(s).unwrap_or(u16::MAX)
     }
 
@@ -315,7 +325,9 @@ impl Image {
     fn invalidate_transformed(&self, cx: &mut WidgetCx<'_>) {
         let c = cx.coords();
         let a = self.transformed_bounds(c.width(), c.height());
-        let r = Rect::new(c.x0 + a.x0 - 1, c.y0 + a.y0 - 1, c.x0 + a.x1 + 1, c.y0 + a.y1 + 1);
+        let lo = |o: i32, v: i32| o.saturating_add(v).saturating_sub(1);
+        let hi = |o: i32, v: i32| o.saturating_add(v).saturating_add(1);
+        let r = Rect::new(lo(c.x0, a.x0), lo(c.y0, a.y0), hi(c.x0, a.x1), hi(c.y0, a.y1));
         cx.invalidate_area(r);
     }
 
@@ -333,7 +345,10 @@ impl Image {
         use twine_core::Transform;
         use twine_vector::DrawParams;
         let natural = Rect::from_xywh(area.x0, area.y0, self.size.w, self.size.h);
-        let pivot = Point::new(area.x0 + dsc.pivot.x, area.y0 + dsc.pivot.y);
+        let pivot = Point::new(
+            area.x0.saturating_add(dsc.pivot.x),
+            area.y0.saturating_add(dsc.pivot.y),
+        );
         let transformed =
             dsc.angle.as_deci_deg() != 0 || dsc.scale_x != Scale::ONE || dsc.scale_y != Scale::ONE;
         let r = cx.with_clip(clip, |cx| {
@@ -365,7 +380,10 @@ impl Image {
             }
         });
         if let Some(Err(e)) = r {
-            if !WARN_DRAW.swap(true, Ordering::Relaxed) {
+            // Load + store, not `swap`: thumbv6m has no compare-and-swap (CLAUDE.md); a race
+            // only repeats the warning.
+            if !WARN_DRAW.load(Ordering::Relaxed) {
+                WARN_DRAW.store(true, Ordering::Relaxed);
                 twine_core::warn!(target: "twine::image", "svg image not drawn: {}", e);
             }
         }
@@ -462,7 +480,7 @@ impl Image {
         self.update_transform(cx, |s| s.rotation = angle);
     }
 
-    /// Sets both scales (256 = 1×; 0 counts as 1/256). Ignored while the inner alignment
+    /// Sets both scales (256 = 1×; 0 counts as 1/256 and logs a warning). Ignored while the inner alignment
     /// scales the image itself. Idempotent.
     pub fn set_scale(&mut self, cx: &mut WidgetCx<'_>, s: Scale) {
         if self.align.transforms() {
@@ -488,6 +506,10 @@ impl Image {
     }
 
     fn set_scale_xy(&mut self, cx: &mut WidgetCx<'_>, x: Scale, y: Scale) {
+        // A zero scale is taken as 1/256 (the transform must stay invertible; P7).
+        if x.raw_256() == 0 || y.raw_256() == 0 {
+            twine_core::warn!(target: "twine::engine", "image#{}: zero scale, using 1/256", fmt_node_id(cx.node()));
+        }
         let (x, y) = (
             Scale::from_raw_256(x.raw_256().max(1)),
             Scale::from_raw_256(y.raw_256().max(1)),
@@ -585,8 +607,13 @@ impl Image {
         let c = cx.coords();
         let (iw, ih) = (self.size.w, self.size.h);
         let (sx, sy) = if iw > 0 && ih > 0 {
-            let sx = c.width() * 256 / iw;
-            let sy = c.height() * 256 / ih;
+            // The scale in 1/256 (`len · 256 / natural`): `len < 2^31` keeps the product below
+            // 2^39 in `i64`; the natural size is positive (the `if`), so the fallback is never
+            // taken.
+            let ratio = |len: i32, natural: i32| {
+                util::sat_i32((i64::from(len) << 8).checked_div(i64::from(natural)).unwrap_or(0))
+            };
+            let (sx, sy) = (ratio(c.width(), iw), ratio(c.height(), ih));
             match self.align {
                 ImageAlign::Stretch => (sx, sy),
                 ImageAlign::Contain => (sx.min(sy), sx.min(sy)),
@@ -638,7 +665,7 @@ impl Image {
             }
         } else {
             let t = self.transformed_bounds(c.width(), c.height());
-            Rect::new(c.x0 + t.x0, c.y0 + t.y0, c.x0 + t.x1, c.y0 + t.y1)
+            t.translate(c.x0, c.y0)
         };
         match img.intersection(&c) {
             Some(i) => i.contains_rect(&area),
@@ -738,28 +765,55 @@ impl Widget for Image {
         let size = self.size;
         let (area, clip) = match self.align {
             ImageAlign::Contain | ImageAlign::Cover => {
-                let s = i32::from(self.scale_x.raw_256());
-                let ox = (c.width() - size.w * s / 256) / 2 + self.offset.x;
-                let oy = (c.height() - size.h * s / 256) / 2 + self.offset.y;
+                let s = i64::from(self.scale_x.raw_256());
+                // The scaled image centered: `|len| < 2^31` and `s < 2^16` keep the product
+                // below 2^47.
+                // SAFE-ARITH: see above.
+                let scaled = |len: i32| util::sat_i32(i64::from(len).wrapping_mul(s) / 256);
+                let center = |avail: i32, len: i32, ofs: i32| {
+                    (avail.saturating_sub(scaled(len)) / 2).saturating_add(ofs)
+                };
+                let ox = center(c.width(), size.w, self.offset.x);
+                let oy = center(c.height(), size.h, self.offset.y);
                 // Clipped to the widget (the scaled image of `Cover` is larger).
                 let Some(clip) = cx.clip().intersection(&c) else {
                     return;
                 };
-                (Rect::from_xywh(c.x0 + ox, c.y0 + oy, size.w, size.h), clip)
+                let (x, y) = (c.x0.saturating_add(ox), c.y0.saturating_add(oy));
+                (Rect::from_xywh(x, y, size.w, size.h), clip)
             }
             ImageAlign::Tile => {
                 // Start one image before the clip so the tiles line up with the offset.
                 let Some(clip) = cx.clip().intersection(&c) else {
                     return;
                 };
-                let (x0, y0) = (c.x0 + self.offset.x, c.y0 + self.offset.y);
-                let sx = x0 + (clip.x0 - x0).div_euclid(size.w) * size.w;
-                let sy = y0 + (clip.y0 - y0).div_euclid(size.h) * size.h;
+                let (x0, y0) = (
+                    c.x0.saturating_add(self.offset.x),
+                    c.y0.saturating_add(self.offset.y),
+                );
+                // The tile grid's line at or before `clip` (`origin + ⌊(clip − origin) / len⌋ ·
+                // len` in `i64`: every term is below 2^34). `len != 0` (returned at the top of
+                // `draw`), so the fallback is never taken.
+                let grid = |origin: i32, clip: i32, len: i32| {
+                    let (o, l) = (i64::from(origin), i64::from(len));
+                    // SAFE-ARITH: see above.
+                    let d = i64::from(clip).wrapping_sub(o);
+                    let tiles = d.checked_div_euclid(l).unwrap_or(0);
+                    // SAFE-ARITH: `|tiles · len| ≤ |d| + |len| < 2^34`.
+                    util::sat_i32(o.wrapping_add(tiles.wrapping_mul(l)))
+                };
+                let sx = grid(x0, clip.x0, size.w);
+                let sy = grid(y0, clip.y0, size.h);
                 dsc.tile = true;
                 (Rect::new(sx, sy, clip.x1, clip.y1), clip)
             }
             ImageAlign::Stretch | ImageAlign::AutoTransform => (
-                Rect::from_xywh(c.x0 + self.offset.x, c.y0 + self.offset.y, size.w, size.h),
+                Rect::from_xywh(
+                    c.x0.saturating_add(self.offset.x),
+                    c.y0.saturating_add(self.offset.y),
+                    size.w,
+                    size.h,
+                ),
                 cx.clip(),
             ),
             a => (align_in(c, size, a, self.offset), cx.clip()),

@@ -14,11 +14,17 @@ use crate::{
 pub trait FileSource {
     /// Replaces the contents of `out` with the file at `path`; [`Error::NotFound`] when it
     /// does not exist.
+    ///
+    /// # Errors
+    /// [`Error::NotFound`] when the file does not exist or cannot be read.
     fn read_all(&mut self, path: &str, out: &mut Vec<u8>) -> Result<(), Error>;
 
     /// Replaces the contents of `out` with at most the first `max` bytes of the file at
     /// `path` (fewer for shorter files), used to probe headers without reading whole files.
     /// The default reads the whole file and truncates it; file systems override it.
+    ///
+    /// # Errors
+    /// [`Error::NotFound`] when the file does not exist or cannot be read.
     fn read_prefix(&mut self, path: &str, max: usize, out: &mut Vec<u8>) -> Result<(), Error> {
         self.read_all(path, out)?;
         out.truncate(max);
@@ -70,6 +76,11 @@ fn read_file<'f>(fs: Option<&mut (dyn FileSource + 'f)>, path: &str) -> Result<V
 /// - compressed static images are decompressed into the cache;
 /// - encoded bytes and files are decoded through the registry into the cache;
 /// - symbols and SVG are not images here ([`Error::UnsupportedSource`]; the engine draws them).
+///
+/// # Errors
+/// [`Error::UnsupportedSource`] for symbols and SVG; [`Error::NotFound`] for a file source without
+/// a file system or a missing file; the decoder's error for invalid data ([`Error::InvalidHeader`],
+/// [`Error::Decode`], [`Error::SizeMismatch`]). `f` is not called on error.
 ///
 /// ```
 /// use twine_core::ColorFormat;
@@ -136,6 +147,10 @@ fn decompress(img: &Image, out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
 
 /// The header of `src` without decoding pixels (probing encoded data and files, cached in
 /// the header cache). The `COMPRESSED` flag is cleared: the header describes the pixels.
+///
+/// # Errors
+/// [`Error::InvalidHeader`] for data no decoder recognises; [`Error::NotFound`] for a file source
+/// without a file system or a missing file; [`Error::UnsupportedSource`] for symbols and SVG.
 ///
 /// ```
 /// use twine_core::ColorFormat;

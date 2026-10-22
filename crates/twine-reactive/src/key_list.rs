@@ -10,6 +10,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use twine_core::Partition;
 use twine_core::alloc_guard::AllocSite;
 
 use crate::runtime::NodeKey;
@@ -71,8 +72,9 @@ impl KeyList {
         self.as_slice().contains(&k)
     }
 
-    /// Appends `k` unless it is already present.
-    pub(crate) fn insert(&mut self, k: NodeKey) {
+    /// Appends `k` unless it is already present; a spill or growth after a seal is noted in
+    /// partition `part`'s seal domain (the list's runtime).
+    pub(crate) fn insert(&mut self, part: Partition, k: NodeKey) {
         if self.contains(k) {
             return;
         }
@@ -83,14 +85,14 @@ impl KeyList {
                     // `len < INLINE` here.
                     *len = len.saturating_add(1);
                 } else {
-                    twine_core::alloc_guard::grew(AllocSite::ReactiveEdges);
+                    twine_core::alloc_guard::grew(part, AllocSite::ReactiveEdges);
                     let mut v = Vec::with_capacity(INLINE * 2);
                     v.extend_from_slice(buf);
                     v.push(k);
                     *self = KeyList::Heap(Box::new(v));
                 }
             }
-            KeyList::Heap(v) => twine_core::alloc_guard::push(v, k, AllocSite::ReactiveEdges),
+            KeyList::Heap(v) => twine_core::alloc_guard::push(part, v, k, AllocSite::ReactiveEdges),
         }
     }
 
@@ -102,12 +104,15 @@ impl KeyList {
                     return;
                 };
                 if let Some(i) = live.iter().position(|&x| x == k) {
-                    // Shift the keys after `i` down by one; the removed key ends up last.
-                    if let Some(tail) = live.get_mut(i..) {
-                        tail.rotate_left(1);
-                    }
-                    if let Some(last) = live.last_mut() {
-                        *last = NodeKey::DANGLING;
+                    // Shift the keys after `i` down by one (at most two moves: a plain loop,
+                    // not a general rotation) and clear the freed last entry.
+                    let mut rest = live.iter_mut().skip(i);
+                    if let Some(mut hole) = rest.next() {
+                        for next in rest {
+                            *hole = *next;
+                            hole = next;
+                        }
+                        *hole = NodeKey::DANGLING;
                     }
                     *len = len.saturating_sub(1);
                 }
@@ -140,8 +145,8 @@ mod tests {
     fn insert_dedupes_and_spills_in_order() {
         let mut l = KeyList::new();
         for i in 0..5 {
-            l.insert(k(i));
-            l.insert(k(i));
+            l.insert(Partition::MAIN, k(i));
+            l.insert(Partition::MAIN, k(i));
         }
         assert_eq!(l.len(), 5);
         assert!(matches!(l, KeyList::Heap(_)));
@@ -153,13 +158,13 @@ mod tests {
     fn remove_keeps_order_inline_and_heap() {
         let mut l = KeyList::new();
         for i in 0..3 {
-            l.insert(k(i));
+            l.insert(Partition::MAIN, k(i));
         }
         l.remove(k(0));
         l.remove(k(9));
         assert_eq!(l.as_slice(), &[k(1), k(2)]);
         for i in 3..6 {
-            l.insert(k(i));
+            l.insert(Partition::MAIN, k(i));
         }
         l.remove(k(3));
         assert_eq!(l.as_slice(), &[k(1), k(2), k(4), k(5)]);

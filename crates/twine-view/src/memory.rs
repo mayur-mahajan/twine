@@ -14,9 +14,10 @@ use crate::ui::UiCore;
 /// overhead), except the counts documented as such in the parts. See [`EngineMemory`] and
 /// [`RuntimeMemory`] for what each part includes and leaves out.
 ///
-/// **Shared parts:** the reactive runtime is per context and shared by every `Ui` on it
-/// (R3.S08 multi-UI), and the waker pool is process-wide, so with several UIs those two
-/// fields are the same in every report; do not add them up across UIs.
+/// **Shared parts:** the reactive runtime is per partition and context and shared by every
+/// `Ui` on it (R3.S08 multi-UI; with the `partitions` feature each partition's `Ui`s report
+/// their own runtime), and the waker pool is process-wide, so with several UIs on one runtime
+/// those two fields are the same in every report; do not add them up across such UIs.
 ///
 /// ```
 /// use twine_core::ColorFormat;
@@ -140,7 +141,8 @@ impl UiCore {
 /// `AsyncUi::seal`): checks [`Limits::heap_budget`](twine_core::Limits::heap_budget) against
 /// [`MemoryReport::heap_bytes`] (a `Capacity` fault with code
 /// [`CapacityFault::HeapBudget`](twine_core::fault::CapacityFault::HeapBudget) when it is
-/// exceeded), logs the heap in use, then [`alloc_guard::seal`](twine_core::alloc_guard::seal)s.
+/// exceeded), logs the heap in use, then [`alloc_guard::seal`](twine_core::alloc_guard::seal)s
+/// the engine's partition (the UI's: other partitions keep their own seal state).
 pub(crate) fn seal(engine: &mut Engine, report: &MemoryReport) {
     let heap = report.heap_bytes();
     if let Some(budget) = engine.limits().heap_budget.filter(|&b| heap > b) {
@@ -155,10 +157,11 @@ pub(crate) fn seal(engine: &mut Engine, report: &MemoryReport) {
                 .code(twine_core::fault::CapacityFault::HeapBudget.code()),
         );
     }
-    twine_core::alloc_guard::seal();
+    twine_core::alloc_guard::seal(engine.partition());
     twine_core::info!(
         target: "twine::view",
-        "sealed: {} heap bytes, {} static bytes",
+        "sealed {}: {} heap bytes, {} static bytes",
+        engine.partition(),
         heap,
         report.static_bytes()
     );
@@ -176,7 +179,9 @@ impl UiCore {
     /// [`CapacityFault::HeapBudget`](twine_core::fault::CapacityFault::HeapBudget) when
     /// exceeded). Returns the memory report at sealing time (evidence of the fixed memory).
     ///
-    /// The seal is process-wide without `std` (per thread with it); end it with
+    /// The seal covers the UI's [`Partition`](twine_core::Partition) (its runtime's and
+    /// engine's growth; other partitions seal on their own, ADR-001 § 5.3), process-wide
+    /// without `std` (per thread with it); end it with
     /// [`alloc_guard::unseal`](twine_core::alloc_guard::unseal) before a planned
     /// reconfiguration. Never panics; O(nodes) once (the report).
     ///
@@ -192,9 +197,9 @@ impl UiCore {
     /// let display = engine.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::Rgb565), 32 * 2 * 4).unwrap();
     /// let core = UiCore::mount(Runtime::take().unwrap(), &mut engine, display, |_| label("hi")).unwrap();
     /// let report = core.seal(&mut engine);
-    /// assert!(alloc_guard::is_sealed());
+    /// assert!(alloc_guard::is_sealed(core.partition()));
     /// assert!(report.heap_bytes() > 0);
-    /// alloc_guard::unseal();
+    /// alloc_guard::unseal(core.partition());
     /// # core.dispose(&mut engine);
     /// ```
     pub fn seal(&self, engine: &mut Engine) -> MemoryReport {

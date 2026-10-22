@@ -23,3 +23,7 @@ twine-style = { path = "../../crates/twine-style", features = ["std"] }
 # `cargo xtask snapshots`: the golden-image manifest format and the run records (one
 # definition, shared with the snapshot assertions). No harness features: core + hal + png only.
 twine-testing = { path = "../../crates/twine-testing", default-features = false }
+# `cargo xtask shifts` (and the R5.S10 division audit): AST scan of the library sources. The same
+# `syn` 2 as `twine-macros`; `span-locations` gives the line of each site.
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }

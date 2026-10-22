@@ -52,22 +52,33 @@ pub fn format_value(
     step: u32,
 ) -> (&str, usize) {
     let dc = usize::from(digit_count.clamp(1, SPINBOX_MAX_DIGITS));
+    // The text has at most 12 bytes (a sign, 10 digits, a decimal point), so every byte fits
+    // `buf`; `put` would drop a 17th one.
     let mut n = 0;
+    let mut put = |b: u8| {
+        if let Some(slot) = buf.get_mut(n) {
+            *slot = b;
+            n = n.saturating_add(1);
+        }
+    };
     let mut cur_shift_left = 0;
     if signed {
-        buf[n] = if value >= 0 { b'+' } else { b'-' };
-        n += 1;
+        put(if value >= 0 { b'+' } else { b'-' });
     } else {
         cur_shift_left = 1;
     }
-    // The digits of |value|, least significant first.
+    // The digits of |value|, least significant first (a `u32` has at most 10).
     let mut digits = [b'0'; 10];
     let mut v = value.unsigned_abs();
-    let mut len = 0;
-    while v > 0 || len == 0 {
-        digits[len] = b'0' + (v % 10) as u8;
+    let mut len = 0usize;
+    for d in &mut digits {
+        // SAFE-ARITH: `v % 10 ≤ 9`, so the digit is at most `b'9'`.
+        *d = b'0'.wrapping_add((v % 10) as u8);
         v /= 10;
-        len += 1;
+        len = len.saturating_add(1);
+        if v == 0 {
+            break;
+        }
     }
     let total = dc.max(len);
     let int_digits = if dec_point_pos == 0 {
@@ -75,18 +86,13 @@ pub fn format_value(
     } else {
         usize::from(dec_point_pos)
     };
-    for i in 0..total {
+    // `i` counts the digits from the left, `from_right` from the right.
+    for (i, from_right) in (0..total).rev().enumerate() {
         if dec_point_pos != 0 && i == int_digits {
-            buf[n] = b'.';
-            n += 1;
+            put(b'.');
         }
-        let from_right = total - 1 - i;
-        buf[n] = if from_right < len {
-            digits[from_right]
-        } else {
-            b'0'
-        };
-        n += 1;
+        // Digits past `len` are the leading zeros (`digits` starts as all `b'0'`).
+        put(digits.get(from_right).copied().unwrap_or(b'0'));
     }
     // The cursor on the digit of `step` (LVGL: `cur_pos = digit_count`, one left per decade).
     let mut cur = dc;
@@ -96,10 +102,11 @@ pub fn format_value(
         cur = cur.saturating_sub(1);
     }
     if dec_point_pos != 0 && cur > int_digits {
-        cur += 1;
+        cur = cur.saturating_add(1);
     }
     cur = cur.saturating_sub(cur_shift_left);
-    (core::str::from_utf8(&buf[..n]).unwrap_or("0"), cur)
+    let text = buf.get(..n).unwrap_or_default();
+    (core::str::from_utf8(text).unwrap_or("0"), cur)
 }
 
 /// A numeric editor (LVGL `lv_spinbox`): a one-line [`Textarea`] showing an integer with a
@@ -254,10 +261,10 @@ impl Spinbox {
         }
         log_set(SPINBOX_CLASS.name, cx.node(), "digit_format");
         if count < SPINBOX_MAX_DIGITS {
-            let max = pow10(u32::from(count)) - 1;
+            let max = pow10(u32::from(count)).saturating_sub(1);
             let (lo, hi) = self.range;
             self.range = (
-                i32::try_from(i64::from(lo).max(-max)).unwrap_or(lo),
+                i32::try_from(i64::from(lo).max(max.saturating_neg())).unwrap_or(lo),
                 i32::try_from(i64::from(hi).min(max)).unwrap_or(hi),
             );
             self.value = self.value.clamp(self.range.0, self.range.1.max(self.range.0));
@@ -320,7 +327,7 @@ impl Spinbox {
     /// `lv_spinbox_step_prev`).
     pub fn step_prev(&mut self, cx: &mut WidgetCx<'_>) {
         let limit = i64::from(self.range.1.max(self.range.0.saturating_abs()));
-        let new = i64::from(self.step) * 10;
+        let new = i64::from(self.step).saturating_mul(10);
         if new <= limit {
             self.set_step(cx, u32::try_from(new).unwrap_or(self.step));
         }
@@ -330,13 +337,14 @@ impl Spinbox {
     /// −3 + 10 = 3; at the maximum it wraps with rollover, else clamps). Sends
     /// `ValueChanged` when the value changes.
     pub fn increment(&mut self, cx: &mut WidgetCx<'_>) {
+        // In `i64`: a `u32` step and `i32` values sum to less than 2^34 (exact).
         let (step, value) = (i64::from(self.step), i64::from(self.value));
         let mut v = value;
-        if value < 0 && value + step > 0 {
-            v = -(step + value);
+        if value < 0 && value.saturating_add(step) > 0 {
+            v = step.saturating_add(value).saturating_neg();
         }
-        if v + step <= i64::from(self.range.1) {
-            v += step;
+        if v.saturating_add(step) <= i64::from(self.range.1) {
+            v = v.saturating_add(step);
         } else if self.rollover && self.value == self.range.1 {
             v = i64::from(self.range.0);
         } else {
@@ -348,13 +356,14 @@ impl Spinbox {
     /// Subtracts the step (LVGL `lv_spinbox_decrement`, mirrored). Sends `ValueChanged` when
     /// the value changes.
     pub fn decrement(&mut self, cx: &mut WidgetCx<'_>) {
+        // In `i64`: a `u32` step and `i32` values sum to less than 2^34 (exact).
         let (step, value) = (i64::from(self.step), i64::from(self.value));
         let mut v = value;
-        if value > 0 && value - step < 0 {
-            v = step - value;
+        if value > 0 && value.saturating_sub(step) < 0 {
+            v = step.saturating_sub(value);
         }
-        if v - step >= i64::from(self.range.0) {
-            v -= step;
+        if v.saturating_sub(step) >= i64::from(self.range.0) {
+            v = v.saturating_sub(step);
         } else if self.rollover && self.value == self.range.0 {
             v = i64::from(self.range.1);
         } else {
@@ -401,13 +410,15 @@ impl Spinbox {
         let mut wcx = cx.widget_cx();
         if encoder && editing {
             if self.digit_count > 1 {
-                let top = pow10(u32::from(self.digit_count) - 1);
+                // `digit_count ≥ 2` here.
+                let top = pow10(u32::from(self.digit_count.saturating_sub(1)));
                 if self.digit_step_dir == Side::Right {
                     if self.step > 1 {
                         self.step_next(&mut wcx);
                     } else {
                         // Restart from the most significant digit.
-                        self.step = u32::try_from(pow10(u32::from(self.digit_count) - 2)).unwrap_or(1);
+                        let digits = u32::from(self.digit_count.saturating_sub(2));
+                        self.step = u32::try_from(pow10(digits)).unwrap_or(1);
                         self.step_prev_forced(&mut wcx);
                     }
                 } else if i64::from(self.step) < top {
@@ -434,12 +445,13 @@ impl Spinbox {
         }
         let mut cp = self.ta.cursor_pos();
         if cp > usize::from(self.dec_point_pos) && self.dec_point_pos != 0 {
-            cp -= 1;
+            cp = cp.saturating_sub(1);
         }
-        let mut p = usize::from(self.digit_count) - 1;
+        // `digit_count ≥ 1` (clamped by the setter).
+        let mut p = usize::from(self.digit_count.saturating_sub(1));
         p = p.saturating_sub(cp);
         if self.range.0 < 0 {
-            p += 1;
+            p = p.saturating_add(1);
         }
         let step = u32::try_from(pow10(u32::try_from(p).unwrap_or(0))).unwrap_or(1);
         self.step = step;
@@ -448,7 +460,7 @@ impl Spinbox {
 
     fn step_prev_forced(&mut self, cx: &mut WidgetCx<'_>) {
         let limit = i64::from(self.range.1.max(self.range.0.saturating_abs()));
-        let new = i64::from(self.step) * 10;
+        let new = i64::from(self.step).saturating_mul(10);
         if new <= limit {
             self.step = u32::try_from(new).unwrap_or(self.step);
         }

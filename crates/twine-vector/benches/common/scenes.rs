@@ -13,7 +13,8 @@ pub const H: i32 = 240;
 /// The SVG icon parsed by the `svg_parse_icon` scene.
 pub static ICON: &[u8] = include_bytes!("../../../../assets/images/svg/badge.svg");
 
-static STOPS: [GradStop; 2] = [
+/// Two-stop gradient used by the gradient scenes.
+pub static STOPS: [GradStop; 2] = [
     GradStop {
         color: Color::hex(0x00FF_E082),
         opa: twine_core::Opa::COVER,
@@ -31,6 +32,14 @@ pub struct Scene {
     pub name: &'static str,
     path: Path,
     dsc: VectorDsc,
+}
+
+impl Scene {
+    /// A scene named `name` drawing `path` with `dsc`.
+    #[allow(dead_code)] // used by the criterion bench only
+    pub fn new(name: &'static str, path: Path, dsc: VectorDsc) -> Self {
+        Self { name, path, dsc }
+    }
 }
 
 /// Every drawing scene.
@@ -109,10 +118,14 @@ impl Target {
     }
 
     pub fn draw(&mut self, s: &Scene) {
+        self.draw_with(|p| p.vector(black_box(&s.path), black_box(&s.dsc)));
+    }
+
+    /// Runs `f` on a painter over the whole buffer.
+    pub fn draw_with(&mut self, f: impl FnOnce(&mut Painter<'_>)) {
         let area = Rect::from_xywh(0, 0, W, H);
         let buf = DrawBuf::new_packed(&mut self.px, ColorFormat::Rgb565, area).expect("buffer");
-        let mut p = Painter::new(buf, &mut self.caches);
-        p.vector(black_box(&s.path), black_box(&s.dsc));
+        f(&mut Painter::new(buf, &mut self.caches));
     }
 }
 

@@ -29,6 +29,12 @@ use crate::geom::sat;
 /// One row = 256 sub-pixel units (24.8 fixed point).
 const ONE: i64 = 256;
 
+// Range argument of this module (SAFE-ARITH for the arithmetic below unless a line says
+// otherwise): edges come from 16.16 `Fx` coordinates rounded to 24.8 (`to8`), so every edge
+// coordinate is within `±2^23` (24.8, i.e. ±32_768 px). The processed columns lie between the
+// edges' extremes (`xs ≥ minx / 256`, `xe ≤ maxx / 256 + 1`), so the row width `w ≤ 2^16 + 2`
+// and every row-local x is within `±2^25`; sub-scanline y values are within `±2^24`.
+
 /// A non-horizontal edge in 24.8 fixed point, oriented top → bottom.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Edge {
@@ -50,7 +56,15 @@ impl Edge {
             i64::from(self.x1),
             i64::from(self.y1),
         );
-        x0 + ((y - y0) * (x1 - x0)).div_euclid(y1 - y0)
+        // `|y − y0|, |x1 − x0| ≤ 2^25` (module range argument): the product is below 2^50.
+        // Edges are non-horizontal and oriented top → bottom (`y0 < y1`, horizontal lines are
+        // skipped when the edges are built): the division's fallback is never taken.
+        let q = y
+            .wrapping_sub(y0)
+            .wrapping_mul(x1.wrapping_sub(x0))
+            .checked_div_euclid(y1.wrapping_sub(y0))
+            .unwrap_or(0);
+        x0.wrapping_add(q)
     }
 }
 
@@ -67,12 +81,16 @@ pub(crate) struct RasterScratch {
 
 impl RasterScratch {
     pub(crate) fn bytes_reserved(&self) -> usize {
-        self.edges.capacity() * core::mem::size_of::<Edge>()
-            + self.active.capacity() * 4
-            + self.acc.capacity() * 4
-            + self.acc16.capacity() * 2
-            + self.cov.capacity()
-            + self.cross.capacity() * 8
+        [
+            self.edges.capacity().saturating_mul(core::mem::size_of::<Edge>()),
+            self.active.capacity().saturating_mul(4),
+            self.acc.capacity().saturating_mul(4),
+            self.acc16.capacity().saturating_mul(2),
+            self.cov.capacity(),
+            self.cross.capacity().saturating_mul(8),
+        ]
+        .iter()
+        .fold(0usize, |s, &v| s.saturating_add(v))
     }
 
     /// Reserves room for `n` edges (edge list, active list, crossings).
@@ -84,10 +102,11 @@ impl RasterScratch {
 
     /// Grows the row buffers to at least `w` pixels (warm-up).
     pub(crate) fn reserve_width(&mut self, w: usize) {
-        if self.acc.len() < w + 2 {
-            self.acc.resize(w + 2, 0);
-            self.acc16.resize(w + 2, 0);
-            self.cov.resize(w + 2, 0);
+        let n = w.saturating_add(2);
+        if self.acc.len() < n {
+            self.acc.resize(n, 0);
+            self.acc16.resize(n, 0);
+            self.cov.resize(n, 0);
         }
     }
 }
@@ -95,7 +114,8 @@ impl RasterScratch {
 /// Converts a 16.16 coordinate to 24.8 (rounded).
 #[inline]
 fn to8(v: twine_core::Fx) -> i32 {
-    sat((i64::from(v.raw()) + 128) >> 8)
+    // An `i32` plus 128 fits in `i64`; the result is within `±2^23`.
+    sat(i64::from(v.raw()).wrapping_add(128) >> 8)
 }
 
 /// Rasterizes the closed polygon(s) given as `lines` into `p` with `rule`, painting with `src`.
@@ -144,33 +164,42 @@ pub(crate) fn fill_lines(
     if r.edges.is_empty() {
         return;
     }
+    // `maxx`, `maxy` are within `±2^23` (24.8): the rounding sums fit.
     let row0 = clip.y0.max(miny >> 8);
-    let row1 = clip.y1.min(sat((i64::from(maxy) + ONE - 1) >> 8));
+    let row1 = clip.y1.min(sat(i64::from(maxy).wrapping_add(ONE - 1) >> 8));
     let xs = clip.x0.max(minx >> 8);
-    let xe = clip.x1.min(sat((i64::from(maxx) + ONE - 1) >> 8));
+    let xe = clip.x1.min(sat(i64::from(maxx).wrapping_add(ONE - 1) >> 8));
     if row0 >= row1 || xs >= xe {
         return;
     }
-    let w = (xe - xs) as usize;
+    let w = crate::geom::span(xs, xe);
     r.reserve_width(w);
     r.edges.sort_unstable_by_key(|e| e.y0);
     r.active.clear();
-    let x_origin = i64::from(xs) * ONE;
-    let wlim = w as i64 * ONE;
+    // `|xs| ≤ 2^15 + 1` and `w ≤ 2^16 + 2`: products with 256 are below 2^25.
+    let x_origin = i64::from(xs).wrapping_mul(ONE);
+    let wlim = (w as i64).wrapping_mul(ONE);
     let mut next = 0usize;
     // Skip edges that end above the first row.
-    let top = i64::from(row0) * ONE;
+    let top = i64::from(row0).wrapping_mul(ONE);
     for y in row0..row1 {
-        let ry0 = i64::from(y) * ONE;
-        let ry1 = ry0 + ONE;
-        while next < r.edges.len() && i64::from(r.edges[next].y0) < ry1 {
-            if i64::from(r.edges[next].y1) > top {
-                r.active.push(next as u32);
+        // `row0 ≤ y < row1 ≤ 2^15 + 1`.
+        let ry0 = i64::from(y).wrapping_mul(ONE);
+        let ry1 = ry0.wrapping_add(ONE);
+        while let Some(e) = r.edges.get(next).filter(|e| i64::from(e.y0) < ry1) {
+            if i64::from(e.y1) > top {
+                // `next < edges.len() ≤ u32::MAX` for any path that fits memory… the index is
+                // kept as `u32` (half the memory); a larger index is skipped.
+                if let Ok(i) = u32::try_from(next) {
+                    r.active.push(i);
+                }
             }
-            next += 1;
+            // `next < edges.len()` (the edge exists).
+            next = next.wrapping_add(1);
         }
         let edges = &r.edges;
-        r.active.retain(|&i| i64::from(edges[i as usize].y1) > ry0);
+        r.active
+            .retain(|&i| edges.get(i as usize).is_some_and(|e| i64::from(e.y1) > ry0));
         if r.active.is_empty() {
             if next >= r.edges.len() {
                 break;
@@ -182,7 +211,9 @@ pub(crate) fn fill_lines(
             FillRule::EvenOdd => scan_row_even_odd(r, ry0, x_origin, wlim, w),
         };
         if let Some((a, b)) = span {
-            p.coverage_span_mode(y, xs + a as i32, &r.cov[a..b], src, mode);
+            // `a < b ≤ w`: the start column `xs + a` lies inside the clip.
+            let x = xs.saturating_add(i32::try_from(a).unwrap_or(i32::MAX));
+            p.coverage_span_mode(y, x, r.cov.get(a..b).unwrap_or_default(), src, mode);
         }
     }
 }
@@ -196,19 +227,22 @@ fn accumulate_row(
     wlim: i64,
     w: usize,
 ) -> Option<(usize, usize)> {
-    let ry1 = ry0 + ONE;
+    let ry1 = ry0.wrapping_add(ONE);
     let (mut minc, mut maxc) = (usize::MAX, 0usize);
-    let acc = &mut r.acc[..w + 2];
+    // `reserve_width(w)` sized the row buffers: the `?`s are never taken.
+    let acc = r.acc.get_mut(..w.saturating_add(2))?;
     for &i in &r.active {
-        let e = r.edges[i as usize];
+        let Some(e) = r.edges.get(i as usize) else {
+            continue;
+        };
         let top = i64::from(e.y0).max(ry0);
         let bot = i64::from(e.y1).min(ry1);
         if top >= bot {
             continue;
         }
-        let xa = e.x_at(top) - x_origin;
-        let xb = e.x_at(bot) - x_origin;
-        let (ya, yb) = (top - ry0, bot - ry0);
+        let xa = e.x_at(top).wrapping_sub(x_origin);
+        let xb = e.x_at(bot).wrapping_sub(x_origin);
+        let (ya, yb) = (top.wrapping_sub(ry0), bot.wrapping_sub(ry0));
         let dir = i64::from(e.dir);
         let (lo, hi) = add_segment(acc, xa, ya, xb, yb, dir, wlim);
         if lo <= hi {
@@ -221,16 +255,21 @@ fn accumulate_row(
     }
     // Prefix sum → coverage; continue past the last touched cell while the sum is not zero
     // (the shape extends beyond the clip's right edge).
+    // `|s| ≤ (w + 2) · 2^31 < 2^49` (`w ≤ 2^16 + 2`, cells are `i32`s).
     let mut s: i64 = 0;
     let mut end = minc;
     let mut c = minc;
-    while c < w {
-        s += i64::from(acc[c]);
-        acc[c] = 0;
+    let cells = acc.get_mut(minc..w).unwrap_or_default();
+    let covs = r.cov.get_mut(minc..w).unwrap_or_default();
+    for ((cell, out), k) in cells.iter_mut().zip(covs.iter_mut()).zip(minc..w) {
+        s = s.wrapping_add(i64::from(*cell));
+        *cell = 0;
         let v = s.unsigned_abs().min(65_536);
-        r.cov[c] = ((v * 255 + 32_768) >> 16) as u8;
-        c += 1;
-        if r.cov[c - 1] != 0 {
+        // `v ≤ 2^16`: `v · 255 + 2^15 < 2^24`.
+        *out = (v.wrapping_mul(255).wrapping_add(32_768) >> 16) as u8;
+        // `k < w`.
+        c = k.wrapping_add(1);
+        if *out != 0 {
             end = c;
         }
         if c > maxc && s == 0 {
@@ -239,40 +278,53 @@ fn accumulate_row(
     }
     // Clear the rest of the touched range (cells before `c` were cleared by the prefix sum).
     if c <= maxc {
-        acc[c..=maxc.min(w + 1)].fill(0);
+        if let Some(rest) = acc.get_mut(c..=maxc.min(w.saturating_add(1))) {
+            rest.fill(0);
+        }
     }
     (end > minc).then_some((minc, end))
 }
 
 /// Accumulates the row-local segment `(xa, ya) → (xb, yb)` (x relative to the clip origin,
-/// y in `0..=256`, `ya < yb`) with winding `dir`. Returns the touched cell range.
+/// within `±2^25`; y in `0..=256`, `ya < yb`) with winding `dir`. Returns the touched cell
+/// range.
 fn add_segment(acc: &mut [i32], xa: i64, ya: i64, xb: i64, yb: i64, dir: i64, wlim: i64) -> (usize, usize) {
     let mut lo = usize::MAX;
     let mut hi = 0usize;
+    // A cell receives `±256 · 256` per edge; summed over many overlapping edges it saturates
+    // (only reached by more than 2^15 edges crossing one cell in one row).
     let mut cell = |acc: &mut [i32], x0: i64, x1: i64, dy: i64| {
         // Piece fully inside one cell column (or left of the clip / right of it).
-        let d = dy * dir;
+        // `|dy| ≤ 256`, `|dir| = 1`: `|d| ≤ 256` and `d · 256 ≤ 2^16`.
+        let d = dy.wrapping_mul(dir);
         if d == 0 {
             return;
         }
         if x1 <= 0 && x0 <= 0 {
-            acc[0] += (d * ONE) as i32;
+            if let Some(first) = acc.first_mut() {
+                *first = first.saturating_add(d.wrapping_mul(ONE) as i32);
+            }
             lo = 0;
             return;
         }
         if x0 >= wlim && x1 >= wlim {
             return;
         }
+        // `0 ≤ min(x0, x1) < wlim`, so `c < w` and `c + 1 ≤ w < acc.len()`.
         let c = (x0.min(x1).max(0) >> 8) as usize;
-        let mx2 = x0 + x1 - 2 * (c as i64) * ONE; // 2 · mean x within the cell, 0..=512
-        let part = d * (2 * ONE - mx2) / 2;
-        acc[c] += part as i32;
-        acc[c + 1] += (d * ONE - part) as i32;
+        // 2 · mean x within the cell, `0..=512`.
+        let mx2 = x0.wrapping_add(x1).wrapping_sub((c as i64).wrapping_mul(2 * ONE));
+        let part = d.wrapping_mul((2 * ONE).wrapping_sub(mx2)) / 2;
+        // SAFE-INDEX: `c + 1 < acc.len()` (above); the fallback is never taken.
+        if let Some([a, b]) = acc.get_mut(c..).and_then(<[i32]>::first_chunk_mut::<2>) {
+            *a = a.saturating_add(part as i32);
+            *b = b.saturating_add(d.wrapping_mul(ONE).wrapping_sub(part) as i32);
+        }
         lo = lo.min(c);
-        hi = hi.max(c + 1);
+        hi = hi.max(c.wrapping_add(1));
     };
     if xa == xb {
-        cell(acc, xa, xa, yb - ya);
+        cell(acc, xa, xa, yb.wrapping_sub(ya));
         return (lo, hi);
     }
     // Walk left → right through the cell boundaries (and the clip's left border at 0).
@@ -281,7 +333,15 @@ fn add_segment(acc: &mut [i32], xa: i64, ya: i64, xb: i64, yb: i64, dir: i64, wl
     } else {
         (xb, yb, xa, ya)
     };
-    let y_at = |x: i64| -> i64 { yl + ((x - xl) * (yr - yl)).div_euclid(xr - xl) };
+    // `xa != xb` (returned above), so `xl < xr`: the division's fallback is never taken.
+    let y_at = |x: i64| -> i64 {
+        let q = x
+            .wrapping_sub(xl)
+            .wrapping_mul(yr.wrapping_sub(yl))
+            .checked_div_euclid(xr.wrapping_sub(xl))
+            .unwrap_or(0);
+        yl.wrapping_add(q)
+    };
     let mut x = xl;
     let mut y = yl;
     while x < xr {
@@ -290,10 +350,10 @@ fn add_segment(acc: &mut [i32], xa: i64, ya: i64, xb: i64, yb: i64, dir: i64, wl
         } else if x >= wlim {
             xr
         } else {
-            ((x >> 8) + 1).saturating_mul(ONE).min(xr)
+            ((x >> 8).wrapping_add(1)).saturating_mul(ONE).min(xr)
         };
         let ny = if nx == xr { yr } else { y_at(nx) };
-        cell(acc, x, nx, (ny - y).abs());
+        cell(acc, x, nx, ny.wrapping_sub(y).abs());
         x = nx;
         y = ny;
     }
@@ -308,26 +368,30 @@ fn scan_row_even_odd(
     wlim: i64,
     w: usize,
 ) -> Option<(usize, usize)> {
-    let acc = &mut r.acc16[..w + 2];
+    // `reserve_width(w)` sized the row buffers: the `?`s are never taken.
+    let acc = r.acc16.get_mut(..w.saturating_add(2))?;
     let (mut minx, mut maxx) = (i64::MAX, i64::MIN);
-    for k in 0..4 {
-        let ys = ry0 + 32 + 64 * k;
+    for k in 0..4i64 {
+        let ys = ry0.wrapping_add(32).wrapping_add(k.wrapping_mul(64));
         r.cross.clear();
         for &i in &r.active {
-            let e = r.edges[i as usize];
+            let Some(e) = r.edges.get(i as usize) else {
+                continue;
+            };
             if ys >= i64::from(e.y0) && ys < i64::from(e.y1) {
-                r.cross.push((sat(e.x_at(ys) - x_origin), e.dir));
+                r.cross.push((sat(e.x_at(ys).wrapping_sub(x_origin)), e.dir));
             }
         }
         r.cross.sort_unstable_by_key(|c| c.0);
         let mut parity = false;
-        for j in 0..r.cross.len().saturating_sub(1) {
+        for pair in r.cross.windows(2) {
+            let &[(xa, _), (xb, _)] = pair else { continue };
             parity = !parity;
             if !parity {
                 continue;
             }
-            let a = i64::from(r.cross[j].0).max(0);
-            let b = i64::from(r.cross[j + 1].0).min(wlim);
+            let a = i64::from(xa).max(0);
+            let b = i64::from(xb).min(wlim);
             if a >= b {
                 continue;
             }
@@ -339,27 +403,44 @@ fn scan_row_even_odd(
     if minx >= maxx {
         return None;
     }
-    let (a, b) = ((minx >> 8) as usize, (((maxx + ONE - 1) >> 8) as usize).min(w));
-    for (v, a) in r.cov[a..b].iter_mut().zip(&mut acc[a..b]) {
-        *v = (*a / 4).min(255) as u8;
-        *a = 0;
+    // `0 ≤ minx < maxx ≤ wlim < 2^25`.
+    let (a, b) = (
+        (minx >> 8) as usize,
+        ((maxx.wrapping_add(ONE - 1) >> 8) as usize).min(w),
+    );
+    let covs = r.cov.get_mut(a..b).unwrap_or_default();
+    for (v, c) in covs.iter_mut().zip(acc.get_mut(a..b).unwrap_or_default()) {
+        *v = (*c / 4).min(255) as u8;
+        *c = 0;
     }
     Some((a, b))
 }
 
-/// Adds the coverage of `[a, b)` (24.8, relative to the row start) to `acc`.
+/// Adds the coverage of `[a, b)` (24.8, relative to the row start; `0 ≤ a < b ≤ 256 ·
+/// acc.len()`) to `acc`. The spans of one sub-scanline are disjoint, so a cell gains at most
+/// `4 · 256` per row.
 #[inline]
 fn add_span(acc: &mut [u16], a: i64, b: i64) {
-    let (pa, pb) = ((a >> 8) as usize, ((b - 1) >> 8) as usize);
-    if pa == pb {
-        acc[pa] += (b - a) as u16;
+    // `0 ≤ a < b`, so `b − 1 ≥ 0`; the cell indices are below `acc.len()`.
+    let (pa, pb) = ((a >> 8) as usize, (b.wrapping_sub(1) >> 8) as usize);
+    // SAFE-INDEX: `pa ≤ pb < acc.len()`; the fallback is never taken.
+    let Some(cells) = acc.get_mut(pa..=pb) else {
         return;
+    };
+    // SAFE-ARITH: every value added is at most 256 and a cell receives at most 1024 per row
+    // (see above), far below `u16::MAX`; `b − a ≤ 256` for a single cell.
+    match cells {
+        [only] => *only = only.wrapping_add(b.wrapping_sub(a) as u16),
+        [first, middle @ .., last] => {
+            *first = first.wrapping_add((ONE as u16).wrapping_sub((a & 255) as u16));
+            for v in middle {
+                *v = v.wrapping_add(ONE as u16);
+            }
+            // `b − 256·pb ∈ 1..=256`.
+            *last = last.wrapping_add(b.wrapping_sub((pb as i64) << 8) as u16);
+        }
+        [] => {}
     }
-    acc[pa] += (ONE - (a & 255)) as u16;
-    for v in &mut acc[pa + 1..pb] {
-        *v += ONE as u16;
-    }
-    acc[pb] += (b - ((pb as i64) << 8)) as u16;
 }
 
 #[cfg(test)]

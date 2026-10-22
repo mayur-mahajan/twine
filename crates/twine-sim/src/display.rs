@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 use std::fmt;
+use std::num::NonZeroU32;
 use std::time::{Duration as StdDuration, Instant as StdInstant};
 
 use twine_core::{Color, ColorFormat, Rect, Rotation};
@@ -88,7 +89,7 @@ pub struct SimDisplay {
     info: DisplayInfo,
     stride: usize,
     panel: Vec<u8>,
-    bus_hz: Option<u32>,
+    bus_hz: Option<NonZeroU32>,
     mono: (Color, Color),
     in_flight: VecDeque<InFlight>,
     ready: VecDeque<DrawBufferMem>,
@@ -170,7 +171,7 @@ impl SimDisplay {
     /// Emulates a bus of `hz` bits per second (`None` or 0 = instant).
     #[must_use]
     pub fn with_bus_hz(mut self, hz: Option<u32>) -> Self {
-        self.bus_hz = hz.filter(|h| *h > 0);
+        self.bus_hz = hz.and_then(NonZeroU32::new);
         self
     }
 
@@ -281,10 +282,16 @@ fn copy_area(panel: &mut [u8], stride: usize, format: ColorFormat, area: Rect, s
             let dst = &mut panel[dst_row..dst_row + stride];
             for x in 0..area.width() as usize {
                 let v = twine_core::color::unpack_bits(row, bpp as u8, x);
+                // DIV: `bpp` is 1, 2 or 4 (`ColorFormat::bpp` not a multiple of 8).
                 let per_byte = 8 / bpp;
                 let xx = area.x0 as usize + x;
+                // DIV: `per_byte = 8 / bpp ∈ {8, 4, 2}`.
                 let shift = 8 - bpp * (xx % per_byte + 1);
+                // SHIFT: `bpp` is 1, 2 or 4 (`ColorFormat::bpp` not a multiple of 8), so `shift = 8
+                // − bpp·(xx % per_byte + 1)` is `0..=7` and `bpp ≤ 4` (`u16`).
                 let mask = (((1u16 << bpp) - 1) as u8) << shift;
+                // SHIFT: `shift ≤ 7`, as above.
+                // DIV: `per_byte ∈ {8, 4, 2}`, as above.
                 dst[xx / per_byte] = (dst[xx / per_byte] & !mask) | ((v << shift) & mask);
             }
         }
@@ -311,8 +318,8 @@ impl DisplayDriver for SimDisplay {
         let stat = FlushStat { area, bytes, started };
         self.last = Some(stat);
         self.flushes += 1;
-        let transfer = self.bus_hz.map_or(StdDuration::ZERO, |hz| {
-            StdDuration::from_nanos((bytes as u64 * 8).saturating_mul(1_000_000_000) / u64::from(hz))
+        let transfer = self.bus_hz.map_or(StdDuration::ZERO, |hz: NonZeroU32| {
+            StdDuration::from_nanos((bytes as u64 * 8).saturating_mul(1_000_000_000) / u64::from(hz.get()))
         });
         // A queued transfer starts when the previous one ends.
         let start = self.in_flight.back().map_or(started, |p| p.done_at.max(started));

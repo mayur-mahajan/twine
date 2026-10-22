@@ -8,7 +8,7 @@ use twine_style::{Length, PropId, StyleBuf, StyleProp, StyleValue};
 use crate::tree::{AlignTo, LayoutFlags, LayoutTree};
 
 /// One node of a [`ToyTree`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct ToyNode {
     parent: Option<usize>,
     children: Vec<usize>,
@@ -23,6 +23,9 @@ struct ToyNode {
 /// A small in-memory [`LayoutTree`]: nodes in a `Vec` (ids are indices, the root is
 /// [`ToyTree::ROOT`]), one [`StyleBuf`] per node with inheritance of inheritable properties,
 /// a fixed widget content size per node, and a counter of [`LayoutTree::set_coords`] calls.
+///
+/// Never panics: an id that is not in the tree addresses a detached node outside the tree
+/// (reads give its defaults, writes change nothing the layout sees).
 ///
 /// ```
 /// # #[cfg(feature = "toy")] {
@@ -40,6 +43,8 @@ struct ToyNode {
 #[derive(Clone, Debug)]
 pub struct ToyTree {
     nodes: Vec<ToyNode>,
+    /// What an unknown id addresses.
+    detached: ToyNode,
     set_coords_calls: usize,
 }
 
@@ -62,8 +67,19 @@ impl ToyTree {
         };
         Self {
             nodes: alloc::vec![root],
+            detached: ToyNode::default(),
             set_coords_calls: 0,
         }
+    }
+
+    /// The node `id` (the detached node for an unknown id).
+    fn node(&self, id: usize) -> &ToyNode {
+        self.nodes.get(id).unwrap_or(&self.detached)
+    }
+
+    /// The node `id`, mutably (the detached node for an unknown id).
+    fn node_mut(&mut self, id: usize) -> &mut ToyNode {
+        self.nodes.get_mut(id).unwrap_or(&mut self.detached)
     }
 
     /// Adds a child of `parent` (appended last) with the given style; returns its id.
@@ -79,44 +95,44 @@ impl ToyTree {
             align_to: None,
             scroll: Point::new(0, 0),
         });
-        self.nodes[parent].children.push(id);
+        self.node_mut(parent).children.push(id);
         id
     }
 
     /// Sets the widget content size of `id` (what [`LayoutTree::content_size`] returns).
     pub fn set_content_size(&mut self, id: usize, size: Size) {
-        self.nodes[id].content = size;
+        self.node_mut(id).content = size;
     }
 
     /// Sets the layout flags of `id`.
     pub fn set_flags(&mut self, id: usize, flags: LayoutFlags) {
-        self.nodes[id].flags = flags;
+        self.node_mut(id).flags = flags;
     }
 
     /// Sets or clears the `align_to` relation of `id`.
     pub fn set_align_to(&mut self, id: usize, a: Option<AlignTo<usize>>) {
-        self.nodes[id].align_to = a;
+        self.node_mut(id).align_to = a;
     }
 
     /// Sets the scroll offset of `id`'s content.
     pub fn set_scroll(&mut self, id: usize, p: Point) {
-        self.nodes[id].scroll = p;
+        self.node_mut(id).scroll = p;
     }
 
     /// The style of `id`, for changes.
     pub fn style_mut(&mut self, id: usize) -> &mut StyleBuf {
-        &mut self.nodes[id].style
+        &mut self.node_mut(id).style
     }
 
     /// Sets one style property of `id`.
     pub fn set_style(&mut self, id: usize, p: StyleProp) {
-        self.nodes[id].style.set(p);
+        self.node_mut(id).style.set(p);
     }
 
     /// The children of `id`.
     #[must_use]
     pub fn children_of(&self, id: usize) -> &[usize] {
-        &self.nodes[id].children
+        &self.node(id).children
     }
 
     /// Number of nodes (including the root).
@@ -145,11 +161,7 @@ impl ToyTree {
     /// Lays out the whole tree, placing the root in a screen of its own `Width`/`Height`
     /// (`Px` values; other lengths count as 0) at the origin.
     pub fn layout(&mut self) {
-        let px = |p| match self.nodes[Self::ROOT]
-            .style
-            .get(p)
-            .and_then(StyleValue::as_length)
-        {
+        let px = |p| match self.node(Self::ROOT).style.get(p).and_then(StyleValue::as_length) {
             Some(Length::Px(v)) => v,
             _ => 0,
         };
@@ -162,7 +174,7 @@ impl LayoutTree for ToyTree {
     type Id = usize;
 
     fn children(&self, id: usize, out: &mut dyn FnMut(usize)) {
-        for &c in &self.nodes[id].children {
+        for &c in &self.node(id).children {
             out(c);
         }
     }
@@ -171,28 +183,28 @@ impl LayoutTree for ToyTree {
         let meta = prop.meta();
         let mut n = Some(id);
         while let Some(i) = n {
-            if let Some(v) = self.nodes[i].style.get(prop) {
+            if let Some(v) = self.node(i).style.get(prop) {
                 return v;
             }
             if !meta.inherited {
                 break;
             }
-            n = self.nodes[i].parent;
+            n = self.node(i).parent;
         }
         meta.default
     }
 
     fn content_size(&self, id: usize) -> Size {
-        self.nodes[id].content
+        self.node(id).content
     }
 
     fn flags(&self, id: usize) -> LayoutFlags {
-        self.nodes[id].flags
+        self.node(id).flags
     }
 
     fn set_coords(&mut self, id: usize, r: Rect) {
-        self.set_coords_calls += 1;
-        self.nodes[id].coords = r;
+        self.set_coords_calls = self.set_coords_calls.saturating_add(1);
+        self.node_mut(id).coords = r;
     }
 
     fn slot(&self, id: usize) -> u32 {
@@ -200,14 +212,14 @@ impl LayoutTree for ToyTree {
     }
 
     fn coords(&self, id: usize) -> Rect {
-        self.nodes[id].coords
+        self.node(id).coords
     }
 
     fn align_to(&self, id: usize) -> Option<AlignTo<usize>> {
-        self.nodes[id].align_to
+        self.node(id).align_to
     }
 
     fn scroll(&self, id: usize) -> Point {
-        self.nodes[id].scroll
+        self.node(id).scroll
     }
 }

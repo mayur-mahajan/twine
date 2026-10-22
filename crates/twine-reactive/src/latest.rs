@@ -4,7 +4,7 @@ use core::cell::RefCell;
 
 use critical_section::Mutex;
 
-use crate::channel::{Source, UiWaker};
+use crate::channel::{Owner, Source, UiWaker};
 
 /// The value and how many times it was set (wrapping).
 struct Slot<T> {
@@ -34,6 +34,13 @@ struct Slot<T> {
 /// Only `critical-section` is used (no atomics read-modify-write, no compare-and-swap: works on
 /// thumbv6m); setting and reading allocate nothing.
 ///
+/// **Partitions** (feature `partitions`): the first partition that registers a handler for it
+/// (`Scope::{on_message, on_latest, watch}`) becomes its only consumer, **permanently** — the
+/// record is never released, also when that partition's handlers are disposed; a registration
+/// from another partition is refused with a `warn!` and a `FaultKind::PartitionViolation`
+/// fault. Producers in any partition or context are unaffected. Fan out to several partitions
+/// with one cell per consumer.
+///
 /// ```
 /// use twine_reactive::Latest;
 ///
@@ -48,6 +55,7 @@ struct Slot<T> {
 pub struct Latest<T> {
     slot: Mutex<RefCell<Slot<T>>>,
     waker: UiWaker,
+    owner: Owner,
 }
 
 impl<T: Default> Default for Latest<T> {
@@ -79,6 +87,7 @@ impl<T> Latest<T> {
                 version: 0,
             })),
             waker: UiWaker::new(),
+            owner: Owner::new(),
         }
     }
 
@@ -205,5 +214,9 @@ impl<T> Source for Latest<T> {
 
     fn ui_waker(&self) -> &UiWaker {
         &self.waker
+    }
+
+    fn owner(&self) -> &Owner {
+        &self.owner
     }
 }

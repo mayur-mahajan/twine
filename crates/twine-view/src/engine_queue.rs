@@ -200,24 +200,27 @@ pub(crate) struct EngineQueue {
     /// Something to do at the next update (commands or dropped commands to report).
     pending: Cell<bool>,
     waker: Cell<Option<&'static UiWaker>>,
+    /// The partition of the queue's `Ui` (its seal domain).
+    part: twine_core::Partition,
 }
 
-/// `capacity` empty slots (one allocation, noted for the allocation guard).
-fn slots(capacity: usize) -> Box<[Option<EngineCmd>]> {
-    twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::EngineQueue);
+/// `capacity` empty slots (one allocation, noted for the allocation guard of `part`).
+fn slots(capacity: usize, part: twine_core::Partition) -> Box<[Option<EngineCmd>]> {
+    twine_core::alloc_guard::note(part, twine_core::alloc_guard::AllocSite::EngineQueue);
     (0..capacity).map(|_| None).collect()
 }
 
 impl EngineQueue {
-    /// An empty queue of `capacity` slots.
-    pub(crate) fn new(capacity: usize) -> Rc<EngineQueue> {
+    /// An empty queue of `capacity` slots for a `Ui` of partition `part`.
+    pub(crate) fn new(capacity: usize, part: twine_core::Partition) -> Rc<EngineQueue> {
         Rc::new(EngineQueue {
-            slots: RefCell::new(slots(capacity)),
+            slots: RefCell::new(slots(capacity, part)),
             head: Cell::new(0),
             len: Cell::new(0),
             dropped: Cell::new(0),
             pending: Cell::new(false),
             waker: Cell::new(None),
+            part,
         })
     }
 
@@ -252,7 +255,7 @@ impl EngineQueue {
     /// the queued commands; commands beyond the new capacity are dropped and reported like a
     /// full queue.
     pub(crate) fn set_capacity(&self, capacity: usize) {
-        let mut new = slots(capacity);
+        let mut new = slots(capacity, self.part);
         let mut kept = 0;
         while let Some(cmd) = self.pop() {
             if let Some(slot) = new.get_mut(kept) {
@@ -370,7 +373,7 @@ mod tests {
 
     #[test]
     fn ring_wraps_and_counts_overflow() {
-        let q = EngineQueue::new(3);
+        let q = EngineQueue::new(3, twine_core::Partition::MAIN);
         assert!(!q.is_pending());
         for _ in 0..4 {
             q.push(stop());
@@ -389,7 +392,7 @@ mod tests {
 
     #[test]
     fn set_capacity_keeps_queued_commands() {
-        let q = EngineQueue::new(2);
+        let q = EngineQueue::new(2, twine_core::Partition::MAIN);
         q.push(stop());
         q.push(stop());
         q.set_capacity(4);
@@ -402,7 +405,7 @@ mod tests {
 
     #[test]
     fn zero_capacity_drops_and_reports() {
-        let q = EngineQueue::new(0);
+        let q = EngineQueue::new(0, twine_core::Partition::MAIN);
         q.push(stop());
         assert_eq!((q.len(), q.dropped.get()), (0, 1));
         assert!(q.is_pending());

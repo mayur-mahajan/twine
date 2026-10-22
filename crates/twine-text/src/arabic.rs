@@ -104,21 +104,28 @@ pub static AP_CHARS_MAP: [ApChar; 52] = [
 ];
 
 impl ApChar {
+    /// The base letter's code point (`BASE + offset`).
+    const fn base(self) -> u32 {
+        // SAFE-ARITH: `BASE` is U+0622 and `offset` a `u8`.
+        BASE.wrapping_add(self.offset as u32)
+    }
+
     /// The form `end + ofs`.
     const fn form(self, ofs: i8) -> u32 {
-        (self.end as i32 + ofs as i32) as u32
+        // SAFE-ARITH: a `u16` plus an `i8` fits in `i32`.
+        (self.end as i32).wrapping_add(ofs as i32) as u32
     }
 }
 
-/// Index in [`AP_CHARS_MAP`] of `c`: the base letter or any of its presentation forms (LVGL
-/// `lv_ap_get_char_index`).
-fn index_of(c: char) -> Option<usize> {
+/// The entry of [`AP_CHARS_MAP`] for `c`: the base letter or any of its presentation forms
+/// (LVGL `lv_ap_get_char_index`).
+fn entry_of(c: char) -> Option<&'static ApChar> {
     let c = u32::from(c);
     if c < BASE {
         return None;
     }
-    AP_CHARS_MAP.iter().position(|a| {
-        c == u32::from(a.offset) + BASE
+    AP_CHARS_MAP.iter().find(|a| {
+        c == a.base()
             || c == u32::from(a.end)
             || c == a.form(a.beginning)
             || c == a.form(a.middle)
@@ -134,11 +141,11 @@ pub const fn is_arabic_vowel(c: char) -> bool {
 
 /// The lam-alef ligature for lam (at `cur`) followed by an alef variant (at `next`)
 /// (LVGL `lv_text_lam_alef`): isolated form; +1 gives the final form.
-fn lam_alef(cur: usize, next: Option<usize>) -> Option<u32> {
-    if AP_CHARS_MAP[cur].offset != 34 {
+fn lam_alef(cur: ApChar, next: Option<&ApChar>) -> Option<u32> {
+    if cur.offset != 34 {
         return None;
     }
-    match u32::from(AP_CHARS_MAP[next?].offset) + BASE {
+    match next?.base() {
         0x0622 => Some(0xFEF5),
         0x0623 => Some(0xFEF7),
         0x0625 => Some(0xFEF9),
@@ -168,7 +175,7 @@ pub fn needs_shaping(text: &str) -> bool {
 // `String` when the text changes, then draw it with bidi reordering.
 pub fn shape_into(src: &str, out: &mut String) {
     let mut chars = src.chars().peekable();
-    let mut prev: Option<usize> = None;
+    let mut prev: Option<&ApChar> = None;
     let mut first = true;
     while let Some(c) = chars.next() {
         let is_first = core::mem::replace(&mut first, false);
@@ -177,7 +184,7 @@ pub fn shape_into(src: &str, out: &mut String) {
             out.push(c);
             continue;
         }
-        let Some(cur) = index_of(c) else {
+        let Some(cur) = entry_of(c) else {
             out.push(c);
             prev = None;
             continue;
@@ -188,11 +195,12 @@ pub fn shape_into(src: &str, out: &mut String) {
         if n.is_some_and(is_arabic_vowel) {
             n = ahead.next();
         }
-        let next = n.and_then(index_of);
-        let joins_prev = !is_first && prev.is_some_and(|p| AP_CHARS_MAP[p].joins_next);
-        let joins_next = next.is_some_and(|n| AP_CHARS_MAP[n].joins_previous);
-        if let Some(lig) = lam_alef(cur, next) {
-            let lig = if joins_prev { lig + 1 } else { lig };
+        let next = n.and_then(entry_of);
+        let joins_prev = !is_first && prev.is_some_and(|p| p.joins_next);
+        let joins_next = next.is_some_and(|n| n.joins_previous);
+        if let Some(lig) = lam_alef(*cur, next) {
+            // SAFE-ARITH: the ligatures are below U+FEFC.
+            let lig = if joins_prev { lig.wrapping_add(1) } else { lig };
             out.push(char::from_u32(lig).unwrap_or(c));
             // The ligature replaces lam and the alef; a vowel between them follows the
             // ligature. (LVGL skips exactly one character here, which would duplicate the
@@ -205,7 +213,7 @@ pub fn shape_into(src: &str, out: &mut String) {
             prev = None;
             continue;
         }
-        let a = &AP_CHARS_MAP[cur];
+        let a = cur;
         let form = match (joins_prev, joins_next) {
             (true, true) => a.form(a.middle),
             (false, true) => a.form(a.beginning),
@@ -290,7 +298,7 @@ mod tests {
     #[test]
     fn table_matches_unicode_forms() {
         // Spot checks against the Unicode presentation forms: isolated / initial / medial.
-        let beh = &AP_CHARS_MAP[index_of('ب').unwrap()];
+        let beh = entry_of('ب').unwrap();
         assert_eq!(
             [
                 beh.form(beh.isolated),
@@ -300,8 +308,11 @@ mod tests {
             ],
             [0xFE8F, 0xFE91, 0xFE92, 0xFE90]
         );
-        let yeh = &AP_CHARS_MAP[index_of('ی').unwrap()];
+        let yeh = entry_of('ی').unwrap();
         assert_eq!(yeh.form(yeh.isolated), 0xFBFC);
-        assert_eq!(index_of('\u{FE92}'), index_of('ب'), "presentation forms map back");
+        assert!(
+            core::ptr::eq(entry_of('\u{FE92}').unwrap(), entry_of('ب').unwrap()),
+            "presentation forms map back"
+        );
     }
 }

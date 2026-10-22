@@ -15,7 +15,7 @@ use twine_engine::{
 use twine_style::{COORD_MAX, Length, Part, PropId, TextAlign};
 use twine_text::{LongMode, TextDir, TextDrawFlags, TextFlags, TextLayout};
 
-use crate::log_set;
+use crate::{log_set, util};
 pub use long::{ANIM_OFS_X, ANIM_OFS_Y, LABEL_DEF_SCROLL_SPEED, LABEL_SCROLL_DELAY};
 use long::{DotState, ScrollState};
 
@@ -155,8 +155,9 @@ struct Mask {
 }
 
 impl Mask {
-    /// Rebuilds `shown` from `text` (reusing its capacity).
-    fn update(&mut self, text: &str) {
+    /// Rebuilds `shown` from `text` (reusing its capacity); growth is noted in partition
+    /// `part`'s seal domain (the label's engine).
+    fn update(&mut self, text: &str, part: twine_core::Partition) {
         self.shown.clear();
         let cap = self.shown.capacity();
         for (i, c) in text.chars().enumerate() {
@@ -167,7 +168,7 @@ impl Mask {
             }
         }
         if self.shown.capacity() != cap {
-            twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
+            twine_core::alloc_guard::grew(part, twine_core::alloc_guard::AllocSite::Text);
         }
     }
 }
@@ -292,7 +293,7 @@ impl Label {
                 m.bullet.clear();
                 m.bullet.push_str(b);
                 m.reveal = reveal;
-                m.update(self.text.as_str());
+                m.update(self.text.as_str(), cx.partition());
             }
             None => self.mask = None,
         }
@@ -480,12 +481,12 @@ impl Label {
     /// character boundaries). Idempotent; an empty range clears the selection.
     pub fn set_selection(&mut self, cx: &mut WidgetCx<'_>, start: usize, end: usize) {
         let t = self.shown_text();
+        // Rounded down to a character boundary (0 always is one).
         let fb = |i: usize| {
-            let mut i = i.min(t.len());
-            while !t.is_char_boundary(i) {
-                i -= 1;
-            }
-            i
+            (0..=i.min(t.len()))
+                .rev()
+                .find(|&i| t.is_char_boundary(i))
+                .unwrap_or(0)
         };
         let (a, b) = (fb(start.min(end)), fb(start.max(end)));
         let sel = (a != b).then_some((a, b));
@@ -583,8 +584,9 @@ impl Label {
 
     /// After a text change: redraw, relayout when content-sized, refresh the long mode.
     fn text_changed(&mut self, cx: &mut WidgetCx<'_>) {
+        let part = cx.partition();
         if let Some(m) = &mut self.mask {
-            m.update(self.text.as_str());
+            m.update(self.text.as_str(), part);
         }
         #[cfg(feature = "arabic-shaping")]
         {
@@ -594,7 +596,7 @@ impl Label {
                 let cap = self.shaped_text.capacity();
                 twine_text::shape_into(self.text.as_str(), &mut self.shaped_text);
                 if self.shaped_text.capacity() != cap {
-                    twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
+                    twine_core::alloc_guard::grew(part, twine_core::alloc_guard::AllocSite::Text);
                 }
             }
         }
@@ -680,7 +682,12 @@ impl Widget for Label {
         let mut size = layout.measure();
         if self.max_lines > 0 {
             let n = i32::from(self.max_lines);
-            size.h = size.h.min(i32::from(font.line_height) * n + line_space * (n - 1));
+            // `n ≥ 1` lines and `n − 1` line spaces (saturating).
+            let lines = i32::from(font.line_height).saturating_mul(n);
+            // SAFE-ARITH: `n ≥ 1` (`max_lines > 0`).
+            size.h = size
+                .h
+                .min(lines.saturating_add(line_space.saturating_mul(n.wrapping_sub(1))));
         }
         if let Some(Length::Px(mh)) = cx.style(m, PropId::MaxHeight).as_length() {
             size.h = size.h.min(mh);
@@ -737,12 +744,20 @@ impl Widget for Label {
                 // The second copy, one gap after the first (LVGL `draw_main`).
                 if size.w > content.width() {
                     let mut d2 = dsc;
-                    d2.ofs = Point::new(ofs.x + size.w + long::gap_width(dsc.font), ofs.y);
+                    let x = ofs
+                        .x
+                        .saturating_add(size.w)
+                        .saturating_add(long::gap_width(dsc.font));
+                    d2.ofs = Point::new(x, ofs.y);
                     cx.draw_text(area, text, &d2);
                 }
                 if size.h > content.height() {
                     let mut d2 = dsc;
-                    d2.ofs = Point::new(ofs.x, ofs.y + size.h + i32::from(dsc.font.line_height));
+                    let y = ofs
+                        .y
+                        .saturating_add(size.h)
+                        .saturating_add(i32::from(dsc.font.line_height));
+                    d2.ofs = Point::new(ofs.x, y);
                     cx.draw_text(area, text, &d2);
                 }
             }
@@ -792,23 +807,25 @@ impl Label {
         let m = Part::Main;
         let pad = cx.padding(m);
         let border = cx.style_i32(m, PropId::BorderWidth).max(0);
-        let spaces = pad.left + pad.right + 2 * border;
+        let spaces = pad.horizontal().saturating_add(border.saturating_mul(2));
         let grow = cx.style_i32(m, PropId::FlexGrow) > 0;
         let w = match cx.style(m, PropId::Width).as_length() {
             _ if grow => cx.content_area().width(),
-            Some(Length::Px(w)) => w - spaces,
+            Some(Length::Px(w)) => w.saturating_sub(spaces),
             Some(Length::Pct(p)) => {
                 let parent = cx
                     .engine()
                     .tree()
                     .parent(cx.node())
                     .map_or(0, |p| cx.engine().content_area(p).width());
-                (i64::from(parent) * i64::from(p) / 100) as i32 - spaces
+                // SAFE-ARITH: the product of two `i32`s fits `i64`.
+                let share = util::sat_i32(i64::from(parent).wrapping_mul(i64::from(p)) / 100);
+                share.saturating_sub(spaces)
             }
             _ => COORD_MAX,
         };
         let max = match cx.style(m, PropId::MaxWidth).as_length() {
-            Some(Length::Px(v)) if v < COORD_MAX => v - spaces,
+            Some(Length::Px(v)) if v < COORD_MAX => v.saturating_sub(spaces),
             _ => COORD_MAX,
         };
         w.min(max).max(0)

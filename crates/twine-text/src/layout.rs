@@ -98,7 +98,8 @@ pub struct TextLayout<'a> {
 pub(crate) fn floor_boundary(s: &str, i: usize) -> usize {
     let mut i = i.min(s.len());
     while !s.is_char_boundary(i) {
-        i -= 1;
+        // SAFE-ARITH: `is_char_boundary(0)` is `true`, so `i ≥ 1` here.
+        i = i.wrapping_sub(1);
     }
     i
 }
@@ -123,19 +124,19 @@ pub(crate) struct Pen {
 }
 
 impl Pen {
-    /// Advances by a glyph of advance `a`.
+    /// Advances by a glyph of advance `a` (saturating: the letter space is any `i32`).
     #[inline]
     pub fn add(&mut self, a: i32, ls: i32) {
         if a > 0 {
-            self.x += a + ls;
+            self.x = self.x.saturating_add(a.saturating_add(ls));
             self.any = true;
         }
     }
 
-    /// The width so far (the last letter space excluded).
+    /// The width so far (the last letter space excluded; saturating).
     #[inline]
     pub fn width(self, ls: i32) -> i32 {
-        if self.any { self.x - ls } else { 0 }
+        if self.any { self.x.saturating_sub(ls) } else { 0 }
     }
 }
 
@@ -162,7 +163,9 @@ impl<'a> TextLayout<'a> {
     /// Advance of the char `c` that starts at byte `b`, kerned with the following char.
     #[inline]
     pub(crate) fn adv(&self, c: char, b: usize) -> i32 {
-        self.font.advance_px(c, self.char_at_byte(b + c.len_utf8()))
+        // SAFE-ARITH: `b` is a byte offset inside `text` (below `isize::MAX`).
+        self.font
+            .advance_px(c, self.char_at_byte(b.wrapping_add(c.len_utf8())))
     }
 
     /// The lines (always at least one; an empty text is one empty line).
@@ -183,7 +186,8 @@ impl<'a> TextLayout<'a> {
         let e = floor_boundary(self.text, range.end).max(s);
         let mut pen = Pen::default();
         for (i, c) in sub(self.text, s..e).char_indices() {
-            pen.add(self.adv(c, s + i), self.letter_space);
+            // SAFE-ARITH: a byte offset inside `text`.
+            pen.add(self.adv(c, s.wrapping_add(i)), self.letter_space);
         }
         pen.width(self.letter_space)
     }
@@ -195,13 +199,14 @@ impl<'a> TextLayout<'a> {
         let mut n = 0i32;
         let mut w = 0;
         for l in self.lines() {
-            n += 1;
+            n = n.saturating_add(1);
             w = w.max(l.width);
         }
-        Size::new(
-            w,
-            n * i32::from(self.font.line_height) + (n - 1) * self.line_space,
-        )
+        // `n ≥ 1`; saturating: the line space is any `i32`.
+        let h = n
+            .saturating_mul(i32::from(self.font.line_height))
+            .saturating_add(n.saturating_sub(1).saturating_mul(self.line_space));
+        Size::new(w, h)
     }
 
     /// Number of lines (≥ 1).
@@ -213,7 +218,7 @@ impl<'a> TextLayout<'a> {
     /// Distance between the tops of two lines: `line_height + line_space`.
     #[must_use]
     pub fn line_height(&self) -> i32 {
-        i32::from(self.font.line_height) + self.line_space
+        i32::from(self.font.line_height).saturating_add(self.line_space)
     }
 
     /// Computes the line starting at byte `s`; returns it and the start of the next line.
@@ -226,8 +231,10 @@ impl<'a> TextLayout<'a> {
         let mut w_ns = 0; // width through the last non-space char
         let mut last_break: Option<(usize, i32)> = None;
         let mut iter = sub(text, s..text.len()).char_indices().peekable();
+        // SAFE-ARITH: the byte offsets below are inside `text` or at most 2 bytes past a
+        // character in it (`≤ text.len() + 2`, far below `usize::MAX`).
         while let Some((i, c)) = iter.next() {
-            let b = s + i;
+            let b = s.wrapping_add(i);
             let len = c.len_utf8();
             if c == '\n' || c == '\r' {
                 let nl = if c == '\r' && iter.peek().is_some_and(|&(_, n)| n == '\n') {
@@ -240,7 +247,7 @@ impl<'a> TextLayout<'a> {
                         range: s..b,
                         width: w_ns,
                     },
-                    b + nl,
+                    b.wrapping_add(nl),
                 );
             }
             if b > s && (break_all || is_wide(c)) {
@@ -270,15 +277,16 @@ impl<'a> TextLayout<'a> {
                 }
                 // A single character wider than the line: it gets a line of its own; a newline
                 // right after it ends this line.
-                let mut next = b + len;
-                match self.char_at_byte(next) {
-                    Some('\r') if self.char_at_byte(next + 1) == Some('\n') => next += 2,
-                    Some('\n' | '\r') => next += 1,
-                    _ => {}
-                }
+                // SAFE-ARITH: byte offsets inside `text` (see above).
+                let end = b.wrapping_add(len);
+                let next = match self.char_at_byte(end) {
+                    Some('\r') if self.char_at_byte(end.wrapping_add(1)) == Some('\n') => end.wrapping_add(2),
+                    Some('\n' | '\r') => end.wrapping_add(1),
+                    _ => end,
+                };
                 return (
                     Line {
-                        range: s..b + len,
+                        range: s..end,
                         width: wc,
                     },
                     next,
@@ -289,7 +297,8 @@ impl<'a> TextLayout<'a> {
                 w_ns = wc;
             }
             if BREAK_CHARS.contains(&c) || is_wide(c) {
-                last_break = Some((b + len, w_ns));
+                // SAFE-ARITH: a byte offset inside `text` (see above).
+                last_break = Some((b.wrapping_add(len), w_ns));
             }
         }
         (

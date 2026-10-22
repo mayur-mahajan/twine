@@ -4,7 +4,8 @@
 //! nothing: everything it needs was sized from [`Limits`](crate::Limits) and reserved while
 //! the `Ui` was built. Sealing makes that claim checkable at run time:
 //!
-//! 1. The application builds its UI, then calls `Ui::seal()` (or [`seal`] directly).
+//! 1. The application builds its UI, then calls `Ui::seal()` (or [`seal`] directly), which
+//!    seals the UI's [`Partition`].
 //! 2. From then on, every **growth point** of Twine that is about to allocate — a vector at
 //!    capacity, a new reactive node, a new widget — calls [`note`] (or [`grew`]), which counts
 //!    the allocation and remembers its [`AllocSite`].
@@ -47,29 +48,42 @@
 //! allocation with a counting global allocator and also checks this guard, so a test proves
 //! the claim for the scenario it runs.
 //!
-//! # Scope of the seal
+//! # Scope of the seal: one domain per partition
 //!
-//! The seal is process-wide without `std` (one product, one start-up), and per thread with
-//! `std` (like the reactive runtime: tests and host tools run independent UIs on their
-//! threads). The state uses plain atomic loads and stores (no compare-and-swap, so it works
-//! on `thumbv6m`); growth points are reached from the UI context only, so the
-//! read-modify-write of the counter is not contended.
+//! Each [`Partition`] has its own seal record (ADR-001 § 5.3): sealing one partition does
+//! not seal another, and growth in partition B after partition A sealed is B's evidence, never
+//! A's. Every growth point therefore names its owner's partition: the reactive runtime its
+//! slot, the engine the partition it was given (`Engine::set_partition`, applied by
+//! `AppConfig::apply_limits`), which it hands to its tree, animation and timer tables and
+//! widgets, and the view layer the partition of its `Runtime` token. Without the
+//! `partitions` feature there is one record and `Partition` is zero-sized.
+//!
+//! The records live in a process-wide table without `std` (one product, one start-up) and in
+//! a per-thread table with `std` (like the reactive runtime: tests and host tools run
+//! independent UIs on their threads). They use plain atomic loads and stores (no
+//! compare-and-swap, so they work on `thumbv6m`); a partition's growth points are reached
+//! from that partition's context only, so the read-modify-write of its counter is not
+//! contended — two partitions on two cores touch two records.
 //!
 //! ```
+//! use twine_core::Partition;
 //! use twine_core::alloc_guard::{self, AllocSite};
 //!
-//! alloc_guard::seal();
+//! let p = Partition::MAIN;
+//! alloc_guard::seal(p);
 //! let mut v: Vec<u32> = Vec::with_capacity(1);
-//! alloc_guard::push(&mut v, 1, AllocSite::EngineScratch); // within capacity: nothing
-//! alloc_guard::push(&mut v, 2, AllocSite::EngineScratch); // grows: counted
-//! let report = alloc_guard::take().unwrap();
+//! alloc_guard::push(p, &mut v, 1, AllocSite::EngineScratch); // within capacity: nothing
+//! alloc_guard::push(p, &mut v, 2, AllocSite::EngineScratch); // grows: counted
+//! let report = alloc_guard::take(p).unwrap();
 //! assert_eq!((report.count, report.last), (1, AllocSite::EngineScratch));
-//! assert_eq!(alloc_guard::take(), None); // taken
-//! alloc_guard::unseal();
+//! assert_eq!(alloc_guard::take(p), None); // taken
+//! alloc_guard::unseal(p);
 //! ```
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+
+use crate::Partition;
 
 /// A growth point of Twine: where an allocation after [`seal`] happened (the `code` of a
 /// [`FaultKind::AllocAfterSeal`](crate::fault::FaultKind::AllocAfterSeal) record).
@@ -250,46 +264,86 @@ pub struct AllocReport {
     pub last: AllocSite,
 }
 
+/// One partition's seal record.
+#[derive(Clone, Copy)]
+struct State {
+    sealed: bool,
+    /// Allocations noted since the last [`take`].
+    pending: u32,
+    /// The code of the last site noted.
+    last: u32,
+    /// Allocations noted since the last [`seal`].
+    total: u32,
+}
+
+impl State {
+    const NEW: State = State {
+        sealed: false,
+        pending: 0,
+        last: 0,
+        total: 0,
+    };
+}
+
 #[cfg(any(feature = "std", test))]
 mod imp {
     use core::cell::Cell;
+    use core::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
-    /// `(sealed, pending count, last site code, total since seal)`.
-    #[derive(Clone, Copy)]
-    pub(super) struct State {
-        pub(super) sealed: bool,
-        pub(super) pending: u32,
-        pub(super) last: u32,
-        pub(super) total: u32,
-    }
+    use super::State;
+    use crate::Partition;
 
     std::thread_local! {
-        static STATE: Cell<State> = const {
-            Cell::new(State { sealed: false, pending: 0, last: 0, total: 0 })
-        };
+        /// One seal record per partition (per thread: tests and host tools run independent
+        /// UIs on their threads).
+        static STATES: [Cell<State>; Partition::COUNT] =
+            const { [const { Cell::new(State::NEW) }; Partition::COUNT] };
+    }
+
+    /// Whether any record of any thread was ever sealed (set by `update`, never cleared). A
+    /// process-wide pre-check: until something is sealed — every run that does not test the
+    /// seal — a growth point's check is this one load instead of a thread-local lookup (a
+    /// call on some hosts), as cheap as the `static` records without `std`. Only ever stored
+    /// `true` (no read-modify-write).
+    static EVER_SEALED: AtomicBool = AtomicBool::new(false);
+
+    #[inline]
+    pub(super) fn sealed(p: Partition) -> bool {
+        EVER_SEALED.load(Relaxed) && sealed_record(p)
+    }
+
+    /// The thread-local half of [`sealed`]: out of line, so that the thread-local address
+    /// is not computed (a call on some hosts) ahead of the pre-check.
+    #[inline(never)]
+    fn sealed_record(p: Partition) -> bool {
+        STATES.try_with(|s| p.select(s).get().sealed).unwrap_or(false)
     }
 
     #[inline]
-    pub(super) fn sealed() -> bool {
-        STATE.try_with(|s| s.get().sealed).unwrap_or(false)
+    pub(super) fn pending(p: Partition) -> u32 {
+        // Allocations are only noted in a sealed record.
+        if EVER_SEALED.load(Relaxed) {
+            pending_record(p)
+        } else {
+            0
+        }
     }
 
-    #[inline]
-    pub(super) fn pending() -> u32 {
-        STATE.try_with(|s| s.get().pending).unwrap_or(0)
+    /// The thread-local half of [`pending`] (out of line, like [`sealed_record`]).
+    #[inline(never)]
+    fn pending_record(p: Partition) -> u32 {
+        STATES.try_with(|s| p.select(s).get().pending).unwrap_or(0)
     }
 
-    /// Runs `f` on the thread's state (during thread teardown, when the slot is gone, on a
-    /// cleared copy that is then dropped).
-    pub(super) fn update<R>(f: impl FnOnce(&mut State) -> R) -> R {
-        let mut v = STATE.try_with(Cell::get).unwrap_or(State {
-            sealed: false,
-            pending: 0,
-            last: 0,
-            total: 0,
-        });
+    /// Runs `f` on the partition's record of this thread (during thread teardown, when the
+    /// slot is gone, on a cleared copy that is then dropped).
+    pub(super) fn update<R>(p: Partition, f: impl FnOnce(&mut State) -> R) -> R {
+        let mut v = STATES.try_with(|s| p.select(s).get()).unwrap_or(State::NEW);
         let r = f(&mut v);
-        let _ = STATE.try_with(|s| s.set(v));
+        if v.sealed {
+            EVER_SEALED.store(true, Relaxed);
+        }
+        let _ = STATES.try_with(|s| p.select(s).set(v));
         r
     }
 }
@@ -298,220 +352,243 @@ mod imp {
 mod imp {
     use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 
-    static SEALED: AtomicBool = AtomicBool::new(false);
-    static PENDING: AtomicU32 = AtomicU32::new(0);
-    static LAST: AtomicU32 = AtomicU32::new(0);
-    static TOTAL: AtomicU32 = AtomicU32::new(0);
+    use super::State;
+    use crate::Partition;
 
-    /// A copy of the state (loaded field by field; see the module docs on contention).
-    #[derive(Clone, Copy)]
-    pub(super) struct State {
-        pub(super) sealed: bool,
-        pub(super) pending: u32,
-        pub(super) last: u32,
-        pub(super) total: u32,
+    /// One partition's record in atomics (load/store only: no compare-and-swap, so it works
+    /// on `thumbv6m`). Each partition's growth points run in that partition's context only,
+    /// so the read-modify-write of `update` is not contended (see the module docs).
+    struct Slot {
+        sealed: AtomicBool,
+        pending: AtomicU32,
+        last: AtomicU32,
+        total: AtomicU32,
+    }
+
+    impl Slot {
+        const fn new() -> Self {
+            Slot {
+                sealed: AtomicBool::new(false),
+                pending: AtomicU32::new(0),
+                last: AtomicU32::new(0),
+                total: AtomicU32::new(0),
+            }
+        }
+    }
+
+    static STATES: [Slot; Partition::COUNT] = [const { Slot::new() }; Partition::COUNT];
+
+    #[inline]
+    pub(super) fn sealed(p: Partition) -> bool {
+        p.select(&STATES).sealed.load(Relaxed)
     }
 
     #[inline]
-    pub(super) fn sealed() -> bool {
-        SEALED.load(Relaxed)
+    pub(super) fn pending(p: Partition) -> u32 {
+        p.select(&STATES).pending.load(Relaxed)
     }
 
-    #[inline]
-    pub(super) fn pending() -> u32 {
-        PENDING.load(Relaxed)
-    }
-
-    /// Runs `f` on the process-wide state.
-    pub(super) fn update<R>(f: impl FnOnce(&mut State) -> R) -> R {
+    /// Runs `f` on the partition's record.
+    pub(super) fn update<R>(p: Partition, f: impl FnOnce(&mut State) -> R) -> R {
+        let slot = p.select(&STATES);
         let mut v = State {
-            sealed: SEALED.load(Relaxed),
-            pending: PENDING.load(Relaxed),
-            last: LAST.load(Relaxed),
-            total: TOTAL.load(Relaxed),
+            sealed: slot.sealed.load(Relaxed),
+            pending: slot.pending.load(Relaxed),
+            last: slot.last.load(Relaxed),
+            total: slot.total.load(Relaxed),
         };
         let r = f(&mut v);
-        SEALED.store(v.sealed, Relaxed);
-        PENDING.store(v.pending, Relaxed);
-        LAST.store(v.last, Relaxed);
-        TOTAL.store(v.total, Relaxed);
+        slot.sealed.store(v.sealed, Relaxed);
+        slot.pending.store(v.pending, Relaxed);
+        slot.last.store(v.last, Relaxed);
+        slot.total.store(v.total, Relaxed);
         r
     }
 }
 
-/// Seals Twine: from now on every growth point that allocates is noted (see the
-/// [module docs](self)). Clears the counts of an earlier seal. Idempotent apart from that.
-/// Usually called through `Ui::seal`, which also checks the heap budget. Never panics.
+/// Seals partition `p`: from now on every growth point of `p` that allocates is noted (see
+/// the [module docs](self)). Clears the counts of an earlier seal of `p`. Idempotent apart
+/// from that; other partitions are unaffected. Usually called through `Ui::seal`, which also
+/// checks the heap budget and seals its own partition. Never panics.
 ///
 /// ```
-/// use twine_core::alloc_guard;
-/// alloc_guard::seal();
-/// assert!(alloc_guard::is_sealed());
-/// alloc_guard::unseal();
+/// use twine_core::{Partition, alloc_guard};
+/// alloc_guard::seal(Partition::MAIN);
+/// assert!(alloc_guard::is_sealed(Partition::MAIN));
+/// alloc_guard::unseal(Partition::MAIN);
 /// ```
-pub fn seal() {
-    imp::update(|s| {
-        *s = imp::State {
+pub fn seal(p: Partition) {
+    imp::update(p, |s| {
+        *s = State {
             sealed: true,
-            pending: 0,
-            last: 0,
-            total: 0,
+            ..State::NEW
         };
     });
 }
 
-/// Ends the seal (e.g. before a planned reconfiguration, or at the end of a test). The counts
-/// stay readable ([`total`]). Never panics.
+/// Ends the seal of partition `p` (e.g. before a planned reconfiguration, or at the end of a
+/// test). The counts stay readable ([`total`]). Never panics.
 ///
 /// ```
-/// use twine_core::alloc_guard;
-/// alloc_guard::seal();
-/// alloc_guard::unseal();
-/// assert!(!alloc_guard::is_sealed());
+/// use twine_core::{Partition, alloc_guard};
+/// alloc_guard::seal(Partition::MAIN);
+/// alloc_guard::unseal(Partition::MAIN);
+/// assert!(!alloc_guard::is_sealed(Partition::MAIN));
 /// ```
-pub fn unseal() {
-    imp::update(|s| s.sealed = false);
+pub fn unseal(p: Partition) {
+    imp::update(p, |s| s.sealed = false);
 }
 
-/// Whether Twine is sealed (one load).
+/// Whether partition `p` is sealed (one load).
 ///
 /// ```
-/// use twine_core::alloc_guard;
-/// assert!(!alloc_guard::is_sealed());
+/// use twine_core::{Partition, alloc_guard};
+/// assert!(!alloc_guard::is_sealed(Partition::MAIN));
 /// ```
 #[inline]
 #[must_use]
-pub fn is_sealed() -> bool {
-    imp::sealed()
+pub fn is_sealed(p: Partition) -> bool {
+    imp::sealed(p)
 }
 
-/// Notes that the growth point `site` allocates now — when sealed (one load otherwise). For
-/// operations that always allocate (creating a node boxes its value). Never panics.
+/// Notes that the growth point `site` of partition `p` allocates now — when `p` is sealed
+/// (one load otherwise). For operations that always allocate (creating a node boxes its
+/// value). Never panics.
 ///
 /// ```
+/// use twine_core::Partition;
 /// use twine_core::alloc_guard::{self, AllocSite};
-/// alloc_guard::note(AllocSite::Widget); // not sealed: nothing
-/// assert_eq!(alloc_guard::take(), None);
+/// alloc_guard::note(Partition::MAIN, AllocSite::Widget); // not sealed: nothing
+/// assert_eq!(alloc_guard::take(Partition::MAIN), None);
 /// ```
 #[inline]
-pub fn note(site: AllocSite) {
-    if is_sealed() {
-        record(site);
+pub fn note(p: Partition, site: AllocSite) {
+    if is_sealed(p) {
+        record(p, site);
     }
 }
 
-/// Notes that the growth point `site` allocated (its storage just grew) — when sealed. For
-/// the cold branch of a growth point that already knows it grows. Never panics.
+/// Notes that the growth point `site` of partition `p` allocated (its storage just grew) —
+/// when `p` is sealed. For the cold branch of a growth point that already knows it grows.
+/// Never panics.
 ///
 /// ```
+/// use twine_core::Partition;
 /// use twine_core::alloc_guard::{self, AllocSite};
-/// alloc_guard::seal();
-/// alloc_guard::grew(AllocSite::ArenaSlots);
-/// assert_eq!(alloc_guard::take().map(|r| r.last), Some(AllocSite::ArenaSlots));
-/// alloc_guard::unseal();
+/// alloc_guard::seal(Partition::MAIN);
+/// alloc_guard::grew(Partition::MAIN, AllocSite::ArenaSlots);
+/// assert_eq!(alloc_guard::take(Partition::MAIN).map(|r| r.last), Some(AllocSite::ArenaSlots));
+/// alloc_guard::unseal(Partition::MAIN);
 /// ```
 #[cold]
 #[inline(never)]
-pub fn grew(site: AllocSite) {
-    if is_sealed() {
-        record(site);
+pub fn grew(p: Partition, site: AllocSite) {
+    if is_sealed(p) {
+        record(p, site);
     }
 }
 
-/// Counts one allocation at `site` (sealed).
+/// Counts one allocation at `site` in partition `p` (sealed).
 #[cold]
 #[inline(never)]
-fn record(site: AllocSite) {
-    imp::update(|s| {
+fn record(p: Partition, site: AllocSite) {
+    imp::update(p, |s| {
         s.pending = s.pending.saturating_add(1);
         s.total = s.total.saturating_add(1);
         s.last = site.code();
     });
-    crate::warn!(target: "twine::alloc", "allocation after seal at {}", site.name());
+    crate::warn!(target: "twine::alloc", "allocation after seal at {} ({})", site.name(), p);
 }
 
-/// Notes `site` when a container of length `len` and capacity `cap` is about to grow by one
-/// (`len == cap`): the check a growth point makes before a push. Inline; the noting is cold.
+/// Notes `site` of partition `p` when a container of length `len` and capacity `cap` is about
+/// to grow by one (`len == cap`): the check a growth point makes before a push. Inline; the
+/// noting is cold.
 ///
 /// ```
+/// use twine_core::Partition;
 /// use twine_core::alloc_guard::{self, AllocSite};
 /// let v: Vec<u8> = Vec::with_capacity(2);
-/// alloc_guard::before_push(v.len(), v.capacity(), AllocSite::EngineScratch);
+/// alloc_guard::before_push(Partition::MAIN, v.len(), v.capacity(), AllocSite::EngineScratch);
 /// ```
 #[inline]
-pub fn before_push(len: usize, cap: usize, site: AllocSite) {
+pub fn before_push(p: Partition, len: usize, cap: usize, site: AllocSite) {
     if len == cap {
-        grew(site);
+        grew(p, site);
     }
 }
 
-/// `v.push(value)`, noting `site` when the push grows the vector (see [`before_push`]).
+/// `v.push(value)`, noting `site` of partition `p` when the push grows the vector (see
+/// [`before_push`]).
 ///
 /// ```
+/// use twine_core::Partition;
 /// use twine_core::alloc_guard::{self, AllocSite};
 /// let mut v = Vec::new();
-/// alloc_guard::push(&mut v, 1u8, AllocSite::EngineScratch);
+/// alloc_guard::push(Partition::MAIN, &mut v, 1u8, AllocSite::EngineScratch);
 /// assert_eq!(v, [1]);
 /// ```
 #[inline]
-pub fn push<T>(v: &mut Vec<T>, value: T, site: AllocSite) {
-    before_push(v.len(), v.capacity(), site);
+pub fn push<T>(p: Partition, v: &mut Vec<T>, value: T, site: AllocSite) {
+    before_push(p, v.len(), v.capacity(), site);
     v.push(value);
 }
 
-/// `q.push_back(value)`, noting `site` when the push grows the queue.
+/// `q.push_back(value)`, noting `site` of partition `p` when the push grows the queue.
 ///
 /// ```
 /// use std::collections::VecDeque;
+/// use twine_core::Partition;
 /// use twine_core::alloc_guard::{self, AllocSite};
 /// let mut q = VecDeque::new();
-/// alloc_guard::push_back(&mut q, 1u8, AllocSite::EffectQueue);
+/// alloc_guard::push_back(Partition::MAIN, &mut q, 1u8, AllocSite::EffectQueue);
 /// assert_eq!(q.front(), Some(&1));
 /// ```
 #[inline]
-pub fn push_back<T>(q: &mut VecDeque<T>, value: T, site: AllocSite) {
-    before_push(q.len(), q.capacity(), site);
+pub fn push_back<T>(p: Partition, q: &mut VecDeque<T>, value: T, site: AllocSite) {
+    before_push(p, q.len(), q.capacity(), site);
     q.push_back(value);
 }
 
-/// Reserves room for `additional` more elements, noting `site` when that allocates.
+/// Reserves room for `additional` more elements, noting `site` of partition `p` when that
+/// allocates.
 ///
 /// ```
+/// use twine_core::Partition;
 /// use twine_core::alloc_guard::{self, AllocSite};
 /// let mut v: Vec<u8> = Vec::new();
-/// alloc_guard::reserve(&mut v, 4, AllocSite::EngineScratch);
+/// alloc_guard::reserve(Partition::MAIN, &mut v, 4, AllocSite::EngineScratch);
 /// assert!(v.capacity() >= 4);
 /// ```
 #[inline]
-pub fn reserve<T>(v: &mut Vec<T>, additional: usize, site: AllocSite) {
+pub fn reserve<T>(p: Partition, v: &mut Vec<T>, additional: usize, site: AllocSite) {
     if v.capacity().saturating_sub(v.len()) < additional {
-        grew(site);
+        grew(p, site);
         v.reserve(additional);
     }
 }
 
-/// The allocations noted since the last call (or since [`seal`]), clearing them; `None` when
-/// there were none. The `Ui` calls it at each update and raises
-/// [`FaultKind::AllocAfterSeal`](crate::fault::FaultKind::AllocAfterSeal). Never panics.
+/// The allocations noted in partition `p` since the last call (or since [`seal`]), clearing
+/// them; `None` when there were none. Each `Ui` calls it for its partition at every update and
+/// raises [`FaultKind::AllocAfterSeal`](crate::fault::FaultKind::AllocAfterSeal). Never panics.
 ///
 /// ```
-/// use twine_core::alloc_guard;
-/// assert_eq!(alloc_guard::take(), None);
+/// use twine_core::{Partition, alloc_guard};
+/// assert_eq!(alloc_guard::take(Partition::MAIN), None);
 /// ```
 #[inline]
-pub fn take() -> Option<AllocReport> {
+pub fn take(p: Partition) -> Option<AllocReport> {
     // Called at every update: one load when nothing was noted.
-    if imp::pending() == 0 {
+    if imp::pending(p) == 0 {
         return None;
     }
-    take_noted()
+    take_noted(p)
 }
 
 /// The cold half of [`take`].
 #[cold]
 #[inline(never)]
-fn take_noted() -> Option<AllocReport> {
-    let (count, last) = imp::update(|s| (core::mem::take(&mut s.pending), s.last));
+fn take_noted(p: Partition) -> Option<AllocReport> {
+    let (count, last) = imp::update(p, |s| (core::mem::take(&mut s.pending), s.last));
     if count == 0 {
         None
     } else {
@@ -519,66 +596,87 @@ fn take_noted() -> Option<AllocReport> {
     }
 }
 
-/// Allocations noted since the last [`seal`] (not cleared by [`take`]; saturating).
+/// Allocations noted in partition `p` since its last [`seal`] (not cleared by [`take`];
+/// saturating).
 ///
 /// ```
-/// use twine_core::alloc_guard;
-/// alloc_guard::seal();
-/// assert_eq!(alloc_guard::total(), 0);
-/// alloc_guard::unseal();
+/// use twine_core::{Partition, alloc_guard};
+/// alloc_guard::seal(Partition::MAIN);
+/// assert_eq!(alloc_guard::total(Partition::MAIN), 0);
+/// alloc_guard::unseal(Partition::MAIN);
 /// ```
 #[must_use]
-pub fn total() -> u32 {
-    imp::update(|s| s.total)
+pub fn total(p: Partition) -> u32 {
+    imp::update(p, |s| s.total)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const M: Partition = Partition::MAIN;
+
     #[test]
     fn seal_counts_growth_only_while_sealed() {
         let mut v: Vec<u8> = Vec::new();
-        push(&mut v, 1, AllocSite::EngineScratch);
-        assert_eq!(take(), None, "not sealed");
-        seal();
+        push(M, &mut v, 1, AllocSite::EngineScratch);
+        assert_eq!(take(M), None, "not sealed");
+        seal(M);
         v.reserve_exact(1);
         let cap = v.capacity();
         while v.len() < cap {
-            push(&mut v, 0, AllocSite::EngineScratch);
+            push(M, &mut v, 0, AllocSite::EngineScratch);
         }
-        assert_eq!(take(), None, "within capacity");
-        push(&mut v, 2, AllocSite::EngineScratch);
-        note(AllocSite::Widget);
+        assert_eq!(take(M), None, "within capacity");
+        push(M, &mut v, 2, AllocSite::EngineScratch);
+        note(M, AllocSite::Widget);
         assert_eq!(
-            take(),
+            take(M),
             Some(AllocReport {
                 count: 2,
                 last: AllocSite::Widget
             })
         );
-        assert_eq!(total(), 2);
+        assert_eq!(total(M), 2);
         let mut q = VecDeque::new();
-        push_back(&mut q, 1u8, AllocSite::EffectQueue);
+        push_back(M, &mut q, 1u8, AllocSite::EffectQueue);
         let mut r: Vec<u8> = Vec::new();
-        reserve(&mut r, 3, AllocSite::DeleteScratch);
-        reserve(&mut r, 3, AllocSite::DeleteScratch); // fits: not noted
+        reserve(M, &mut r, 3, AllocSite::DeleteScratch);
+        reserve(M, &mut r, 3, AllocSite::DeleteScratch); // fits: not noted
         assert_eq!(
-            take().map(|r| (r.count, r.last)),
+            take(M).map(|r| (r.count, r.last)),
             Some((2, AllocSite::DeleteScratch))
         );
-        unseal();
-        note(AllocSite::Widget);
-        assert_eq!(take(), None);
-        assert_eq!(total(), 4);
-        seal();
-        assert_eq!(total(), 0, "a new seal clears the counts");
-        unseal();
+        unseal(M);
+        note(M, AllocSite::Widget);
+        assert_eq!(take(M), None);
+        assert_eq!(total(M), 4);
+        seal(M);
+        assert_eq!(total(M), 0, "a new seal clears the counts");
+        unseal(M);
         for code in 0..64 {
             if let Some(s) = AllocSite::from_code(code) {
                 assert_eq!(s.code(), code);
                 assert!(!s.name().is_empty());
             }
         }
+    }
+
+    #[cfg(feature = "partitions")]
+    #[test]
+    fn partitions_have_separate_seal_domains() {
+        let [a, b, ..] = Partition::ALL;
+        seal(a);
+        assert!(is_sealed(a) && !is_sealed(b));
+        note(b, AllocSite::Widget); // b is not sealed: not noted anywhere
+        assert_eq!(take(a), None);
+        seal(b);
+        note(b, AllocSite::Widget);
+        assert_eq!(take(a), None, "b's growth is never a's evidence");
+        assert_eq!(total(a), 0);
+        assert_eq!(take(b).map(|r| r.last), Some(AllocSite::Widget));
+        unseal(b);
+        assert!(is_sealed(a));
+        unseal(a);
     }
 }

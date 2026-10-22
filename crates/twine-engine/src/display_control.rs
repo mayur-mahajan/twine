@@ -570,7 +570,11 @@ impl Engine {
         }
         if let (Some(level), Some(res)) = (requests.brightness, responses.brightness) {
             match res {
-                Ok(()) => self.displays[d].control.brightness = Some(level),
+                Ok(()) => {
+                    if let Some(disp) = self.displays.get_mut(d) {
+                        disp.control.brightness = Some(level);
+                    }
+                }
                 Err(e) => {
                     let f = if e.is_unsupported() {
                         DisplayControlFault::BrightnessUnsupported
@@ -594,10 +598,11 @@ impl Engine {
                     Duration::ZERO
                 }
             };
-            let disp = &mut self.displays[d];
-            disp.control.asleep = sleep;
-            disp.control.ready_at = (settle > Duration::ZERO).then(|| now + settle);
-            twine_core::info!(target: "twine::engine", "display {} {}", disp.id, if sleep { "asleep" } else { "awake" });
+            if let Some(disp) = self.displays.get_mut(d) {
+                disp.control.asleep = sleep;
+                disp.control.ready_at = (settle > Duration::ZERO).then(|| now + settle);
+                twine_core::info!(target: "twine::engine", "display {} {}", disp.id, if sleep { "asleep" } else { "awake" });
+            }
         }
         revert
     }
@@ -606,7 +611,9 @@ impl Engine {
     #[cold]
     #[inline(never)]
     fn control_fault(&mut self, d: usize, f: DisplayControlFault, e: ControlError<DriverErrorCode>) {
-        let id = self.displays[d].id;
+        let Some(id) = self.displays.get(d).map(|x| x.id) else {
+            return;
+        };
         match e {
             ControlError::Unsupported => {
                 twine_core::warn!(target: "twine::engine", "display {}: {:?} (driver)", id, f);
@@ -630,15 +637,15 @@ impl Engine {
         rotation: Rotation,
         res: Result<DisplayInfo, ControlError<DriverErrorCode>>,
     ) -> Option<Rotation> {
-        let old = self.displays[d].info;
-        let base_old = self.displays[d].control.base;
+        let disp = self.displays.get(d)?;
+        let (old, base_old, id) = (disp.info, disp.control.base, disp.id);
         let (info, base, hw) = match res {
             Ok(i) if i.rotation == rotation => {
                 let base = if i.hw_rotation { i.rotation } else { Rotation::Deg0 };
                 (i, base, true)
             }
             Ok(i) => {
-                twine_core::error!(target: "twine::engine", "display {}: driver rotated to {:?}, not {:?}", self.displays[d].id, i.rotation, rotation);
+                twine_core::error!(target: "twine::engine", "display {}: driver rotated to {:?}, not {:?}", id, i.rotation, rotation);
                 self.control_fault(
                     d,
                     DisplayControlFault::RotationFailed,
@@ -665,14 +672,17 @@ impl Engine {
             }
         };
         let revert = hw.then_some(old.rotation);
-        let chunked = !matches!(self.displays[d].backend, Backend::Framebuffer(_));
+        let chunked = !self
+            .displays
+            .get(d)
+            .is_some_and(|x| matches!(x.backend, Backend::Framebuffer(_)));
         if self.check_draw_format(&info, chunked).is_err() {
             self.control_fault(d, DisplayControlFault::RotationRefused, ControlError::Unsupported);
             return revert;
         }
         let delta = rotation.relative_to(base);
-        let refit = match &mut self.displays[d].refresher.strategy {
-            Strategy::Partial(p) => p.refit(&info, delta),
+        let refit = match self.displays.get_mut(d).map(|x| &mut x.refresher.strategy) {
+            Some(Strategy::Partial(p)) => p.refit(&info, delta),
             _ => Err(Refit::TooSmall),
         };
         if let Err(why) = refit {
@@ -681,12 +691,14 @@ impl Engine {
                 Refit::TooSmall => DisplayControlFault::RotationRefused,
             };
             if f == DisplayControlFault::RotationNotReserved {
-                twine_core::error!(target: "twine::engine", "display {}: software rotation needs `Engine::reserve_rotation` at start-up", self.displays[d].id);
+                twine_core::error!(target: "twine::engine", "display {}: software rotation needs `Engine::reserve_rotation` at start-up", id);
             }
             self.control_fault(d, f, ControlError::Unsupported);
             return revert;
         }
-        self.displays[d].control.base = base;
+        if let Some(disp) = self.displays.get_mut(d) {
+            disp.control.base = base;
+        }
         self.apply_geometry(d, info);
         None
     }
@@ -695,10 +707,12 @@ impl Engine {
     /// the new size and are laid out again, the whole display is redrawn and its input
     /// devices are fitted to it again.
     fn apply_geometry(&mut self, d: usize, info: DisplayInfo) {
-        if self.displays[d].screen_load.is_some() {
+        if self.displays.get(d).is_some_and(|x| x.screen_load.is_some()) {
             self.finish_screen_anim_at(d);
         }
-        let disp = &mut self.displays[d];
+        let Some(disp) = self.displays.get_mut(d) else {
+            return;
+        };
         let id = disp.id;
         disp.info = info;
         let area = info.area();
@@ -711,10 +725,11 @@ impl Engine {
             self.mark_layout(r, LayoutDirty::CHILDREN);
         }
         let mut i = 0;
-        while let Some(&s) = self.displays[d].screens.get(i) {
+        while let Some(&s) = self.displays.get(d).and_then(|x| x.screens.get(i)) {
             self.place(s, area);
             self.mark_layout(s, LayoutDirty::CHILDREN);
-            i += 1;
+            // SAFE-ARITH: `i` indexes `screens` (a `Vec`), so `i + 1 ≤ isize::MAX`.
+            i = i.wrapping_add(1);
         }
         self.invalidate_area(id, area, InvalidateReason::Explicit);
         self.refit_inputs(id, &info);
@@ -736,7 +751,7 @@ impl Engine {
     #[inline]
     pub(crate) fn apply_display_requests(&mut self, now: Instant) {
         for d in 0..self.displays.len() {
-            if self.displays[d].control.pending() {
+            if self.displays.get(d).is_some_and(|x| x.control.pending()) {
                 self.apply_requests_of(d, now);
             }
         }
@@ -745,7 +760,9 @@ impl Engine {
     #[cold]
     #[inline(never)]
     fn apply_requests_of(&mut self, d: usize, now: Instant) {
-        let disp = &mut self.displays[d];
+        let Some(disp) = self.displays.get_mut(d) else {
+            return;
+        };
         if matches!(disp.backend, Backend::External(()))
             || disp.control.ready_at.is_some_and(|t| now < t)
             || (disp.refresher.job.is_some() && !disp.control.asleep)
@@ -780,9 +797,10 @@ impl Engine {
             }
             Backend::External(()) => return,
         }
-        if let Some(r) = self.complete_display_requests(self.displays[d].id, req, resp, now) {
+        let id = disp.id;
+        if let Some(r) = self.complete_display_requests(id, req, resp, now) {
             // A hardware rotation was refused: turn the panel back.
-            if let Backend::Flush(b) = &mut self.displays[d].backend {
+            if let Some(Backend::Flush(b)) = self.displays.get_mut(d).map(|x| &mut x.backend) {
                 if let Err(e) = b.set_rotation(r) {
                     self.control_fault(d, DisplayControlFault::RotationFailed, e);
                 }
@@ -800,7 +818,7 @@ impl Engine {
         now: Instant,
     ) -> Option<crate::refresh::DisplayOutcome> {
         use crate::refresh::DisplayOutcome as Out;
-        let disp = &mut self.displays[d];
+        let disp = self.displays.get_mut(d)?;
         let c = &mut disp.control;
         if let Some(t) = c.ready_at {
             if now < t {

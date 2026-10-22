@@ -81,13 +81,15 @@ impl Opa {
     #[must_use]
     pub const fn pct(p: u8) -> Opa {
         let p = if p > 100 { 100 } else { p as u32 };
-        Opa(((p * 255 + 50) / 100) as u8)
+        // SAFE-ARITH: `p ≤ 100`, so `p · 255 + 50 ≤ 25_550`.
+        Opa((p.wrapping_mul(255).wrapping_add(50) / 100) as u8)
     }
 
     /// Combined opacity `udiv255(a · b)`; `COVER.mul(x) == x` exactly.
     #[must_use]
     pub const fn mul(self, other: Opa) -> Opa {
-        Opa(udiv255(self.0 as u32 * other.0 as u32) as u8)
+        // SAFE-ARITH: a product of two `u8`s is at most `255 · 255`.
+        Opa(udiv255((self.0 as u32).wrapping_mul(other.0 as u32)) as u8)
     }
 
     /// `<= MIN`: drawing can be skipped.
@@ -105,7 +107,7 @@ impl Opa {
     /// `255 − self`.
     #[must_use]
     pub const fn inverse(self) -> Opa {
-        Opa(255 - self.0)
+        Opa(!self.0)
     }
 }
 

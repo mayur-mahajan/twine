@@ -31,33 +31,39 @@ use crate::tree::{
 #[must_use]
 pub const fn align_offset(anchor: Anchor, rect: Rect, child: Size) -> Point {
     let r = rect;
-    let (pw, ph) = (r.x1 - r.x0, r.y1 - r.y0);
+    // Saturating: rectangles and sizes are any `i32`s.
+    let (pw, ph) = (r.x1.saturating_sub(r.x0), r.y1.saturating_sub(r.y0));
     let (w, h) = (child.w, child.h);
     let (x0, y0) = (r.x0, r.y0);
-    let mid_x = x0 + pw / 2 - w / 2;
-    let mid_y = y0 + ph / 2 - h / 2;
+    let mid_x = x0.saturating_add(pw / 2).saturating_sub(w / 2);
+    let mid_y = y0.saturating_add(ph / 2).saturating_sub(h / 2);
+    // The child's start when its far edge touches the far edge of `rect`, and when it sits
+    // before `rect`.
+    let far_x = x0.saturating_add(pw).saturating_sub(w);
+    let far_y = y0.saturating_add(ph).saturating_sub(h);
+    let (before_x, before_y) = (x0.saturating_sub(w), y0.saturating_sub(h));
     let (x, y) = match anchor {
         Anchor::Inside(Align::Default | Align::TopLeft) => (x0, y0),
         Anchor::Inside(Align::TopMid) => (mid_x, y0),
-        Anchor::Inside(Align::TopRight) => (x0 + pw - w, y0),
-        Anchor::Inside(Align::BottomLeft) => (x0, y0 + ph - h),
-        Anchor::Inside(Align::BottomMid) => (mid_x, y0 + ph - h),
-        Anchor::Inside(Align::BottomRight) => (x0 + pw - w, y0 + ph - h),
+        Anchor::Inside(Align::TopRight) => (far_x, y0),
+        Anchor::Inside(Align::BottomLeft) => (x0, far_y),
+        Anchor::Inside(Align::BottomMid) => (mid_x, far_y),
+        Anchor::Inside(Align::BottomRight) => (far_x, far_y),
         Anchor::Inside(Align::LeftMid) => (x0, mid_y),
-        Anchor::Inside(Align::RightMid) => (x0 + pw - w, mid_y),
+        Anchor::Inside(Align::RightMid) => (far_x, mid_y),
         Anchor::Inside(Align::Center) => (mid_x, mid_y),
-        Anchor::AboveLeft => (x0, y0 - h),
-        Anchor::AboveMid => (mid_x, y0 - h),
-        Anchor::AboveRight => (x0 + pw - w, y0 - h),
+        Anchor::AboveLeft => (x0, before_y),
+        Anchor::AboveMid => (mid_x, before_y),
+        Anchor::AboveRight => (far_x, before_y),
         Anchor::BelowLeft => (x0, r.y1),
         Anchor::BelowMid => (mid_x, r.y1),
-        Anchor::BelowRight => (x0 + pw - w, r.y1),
-        Anchor::LeftTop => (x0 - w, y0),
-        Anchor::LeftMid => (x0 - w, mid_y),
-        Anchor::LeftBottom => (x0 - w, y0 + ph - h),
+        Anchor::BelowRight => (far_x, r.y1),
+        Anchor::LeftTop => (before_x, y0),
+        Anchor::LeftMid => (before_x, mid_y),
+        Anchor::LeftBottom => (before_x, far_y),
         Anchor::RightTop => (r.x1, y0),
         Anchor::RightMid => (r.x1, mid_y),
-        Anchor::RightBottom => (r.x1, y0 + ph - h),
+        Anchor::RightBottom => (r.x1, far_y),
     };
     Point::new(x, y)
 }
@@ -103,7 +109,7 @@ fn pos_of<T: LayoutTree + ?Sized>(t: &T, id: T::Id, axis: Axis, parent: Size, si
         Axis::Y => PropId::Y,
     };
     match length(t, id, prop) {
-        Length::Pct(_) if sized[axis.index()] => 0,
+        Length::Pct(_) if axis.pick(sized) => 0,
         l => offset_len(l, axis.of(parent)),
     }
 }
@@ -129,17 +135,19 @@ pub(crate) fn abs_rect<T: LayoutTree + ?Sized>(
     };
     let psize = raw_size(content);
     let (tx, ty) = translate(t, id, size);
-    let x = pos_of(t, id, Axis::X, psize, sized) + tx;
-    let y = pos_of(t, id, Axis::Y, psize, sized) + ty;
+    let x = pos_of(t, id, Axis::X, psize, sized).saturating_add(tx);
+    let y = pos_of(t, id, Axis::Y, psize, sized).saturating_add(ty);
     let align = resolve_align(style_enum::<T, Align>(t, id, PropId::Align), rtl);
     let base = align_offset(Anchor::Inside(align), Rect::new(0, 0, psize.w, psize.h), size);
     // LVGL negates the x offset in right-to-left parents except for left-anchored results.
     let dx = if rtl && !matches!(align, Align::TopLeft | Align::LeftMid | Align::BottomLeft) {
-        -x
+        x.saturating_neg()
     } else {
         x
     };
-    Rect::from_xywh(origin.x0 + base.x + dx, origin.y0 + base.y + y, size.w, size.h)
+    let x0 = origin.x0.saturating_add(base.x).saturating_add(dx);
+    let y0 = origin.y0.saturating_add(base.y).saturating_add(y);
+    Rect::from_xywh(x0, y0, size.w, size.h)
 }
 
 /// The rectangle of a node aligned to another one (LVGL `lv_obj_align_to`).
@@ -156,7 +164,9 @@ pub(crate) fn align_to_rect<T: LayoutTree + ?Sized>(t: &T, id: T::Id, size: Size
     };
     let p = align_offset(anchor, reference, size);
     let (tx, ty) = translate(t, id, size);
-    Rect::from_xywh(p.x + a.x + tx, p.y + a.y + ty, size.w, size.h)
+    let x0 = p.x.saturating_add(a.x).saturating_add(tx);
+    let y0 = p.y.saturating_add(a.y).saturating_add(ty);
+    Rect::from_xywh(x0, y0, size.w, size.h)
 }
 
 /// How far a child positioned by its own styles reaches from the parent's content start on
@@ -171,8 +181,7 @@ fn abs_extent<T: LayoutTree + ?Sized>(
     sized: [bool; 2],
     rtl: bool,
 ) -> Option<i32> {
-    let a = axis.index();
-    if it.ignore[a] {
+    if axis.pick(it.ignore) {
         return None;
     }
     let align = style_enum::<T, Align>(t, it.id, PropId::Align);
@@ -199,13 +208,18 @@ fn abs_extent<T: LayoutTree + ?Sized>(
         } else {
             end(it.margin, axis)
         };
-        Some(pos_of(t, it.id, axis, avail, sized) + tr + sz + end_margin)
+        Some(
+            pos_of(t, it.id, axis, avail, sized)
+                .saturating_add(tr)
+                .saturating_add(sz)
+                .saturating_add(end_margin),
+        )
     } else {
         let prop = match axis {
             Axis::X => PropId::X,
             Axis::Y => PropId::Y,
         };
-        (length(t, it.id, prop) == Length::Px(0)).then(|| sz + sum(it.margin, axis))
+        (length(t, it.id, prop) == Length::Px(0)).then(|| sz.saturating_add(sum(it.margin, axis)))
     }
 }
 

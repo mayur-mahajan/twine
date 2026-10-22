@@ -106,6 +106,10 @@ impl Engine {
 
     /// Creates an empty focus group (wrapping, not editing, [`RefocusPolicy::Prev`]).
     ///
+    /// # Errors
+    /// [`EngineError::TooManyGroups`] when [`MAX_GROUPS`] groups exist (a capacity fault is
+    /// raised).
+    ///
     /// ```
     /// use twine_engine::{Engine, EngineConfig, Obj, State};
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
@@ -124,7 +128,7 @@ impl Engine {
             Some(i) => i,
             None if self.groups.len() < MAX_GROUPS => {
                 self.groups.push(None);
-                self.groups.len() - 1
+                self.groups.len().saturating_sub(1)
             }
             None => {
                 twine_core::warn!(target: "twine::input", "create_group: more than {} groups", MAX_GROUPS);
@@ -132,8 +136,12 @@ impl Engine {
                 return Err(EngineError::TooManyGroups);
             }
         };
-        twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::FocusGroup);
-        self.groups[idx] = Some(Group::new());
+        twine_core::alloc_guard::note(self.partition(), twine_core::alloc_guard::AllocSite::FocusGroup);
+        // SAFE-INDEX: `idx` is a free slot found above or the one just pushed; the fallback is
+        // never taken.
+        if let Some(slot) = self.groups.get_mut(idx) {
+            *slot = Some(Group::new());
+        }
         let g = GroupId(idx as u8);
         twine_core::debug!(target: "twine::input", "group {} created", g);
         Ok(g)
@@ -196,10 +204,12 @@ impl Engine {
             return;
         }
         self.group_remove(id);
+        let part = self.partition();
         let Some(group) = self.group_mut(g) else {
             return;
         };
         twine_core::alloc_guard::push(
+            part,
             &mut group.nodes,
             id,
             twine_core::alloc_guard::AllocSite::FocusGroup,
@@ -480,7 +490,7 @@ impl Engine {
         let begin = || if forward { Some(0) } else { len.checked_sub(1) };
         let step = |i: usize| -> Option<usize> {
             if forward {
-                (i + 1 < len).then_some(i + 1)
+                i.checked_add(1).filter(|&j| j < len)
             } else {
                 i.checked_sub(1)
             }
@@ -518,14 +528,15 @@ impl Engine {
             let Some(i) = next else {
                 continue;
             };
-            if self.focusable(gr.nodes[i]) {
+            // SAFE-INDEX: `begin` and `step` stay inside `0..len`; the fallback is never taken.
+            if gr.nodes.get(i).is_some_and(|&n| self.focusable(n)) {
                 break;
             }
         }
         if next == current {
             return false;
         }
-        let Some(new) = next.map(|i| gr.nodes[i]) else {
+        let Some(&new) = next.and_then(|i| gr.nodes.get(i)) else {
             return false;
         };
         let old = gr.focused;

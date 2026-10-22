@@ -26,7 +26,7 @@ pub(crate) fn parse_path_data(d: &str, path: &mut Path) -> bool {
         }
         let Some(ch) = c.peek() else { return true };
         if ch.is_ascii_alphabetic() {
-            c.pos += 1;
+            c.bump(1);
             cmd = ch;
         } else if cmd == 0 || matches!(cmd, b'Z' | b'z') {
             // Numbers without a command (or after Z) are an error.

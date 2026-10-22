@@ -176,7 +176,8 @@ impl Tabview {
         let label = e.create(btn, Box::new(Label::new(""))).ok()?;
         e.with_widget_mut(label, |l: &mut Label, cx| l.set_text(cx, name));
         e.align(label, Align::Center, 0, 0);
-        let idx = tab_buttons(e, self.tab_bar).count() as u32 - 1;
+        // The tab just added is the last one (at least one exists).
+        let idx = (tab_buttons(e, self.tab_bar).count() as u32).saturating_sub(1);
         if idx == self.tab_cur {
             self.set_active(cx, idx, false);
         }
@@ -209,18 +210,23 @@ impl Tabview {
         e.update_layout();
         let c = self.content;
         let ca = e.content_area(c);
+        // The page's offset: `idx` pages of `gap + size` (saturated to `i32`).
+        // SAFE-ARITH: `idx < 2^32` and `|gap + size| < 2^31`: the product is below 2^63.
+        let page = |gap: i32, size: i32| {
+            util::sat_i32(i64::from(idx).wrapping_mul(i64::from(gap.saturating_add(size))))
+        };
         if self.bar_is_ver() {
             let gap = e.style_i32(c, Part::Main, PropId::ColumnGap);
-            let x = idx as i32 * (gap + ca.width());
+            let x = page(gap, ca.width());
             let rtl = util::is_rtl(&cx.measure());
             let e = cx.engine_mut();
-            e.scroll_to_x(c, if rtl { -x } else { x }, anim);
+            e.scroll_to_x(c, if rtl { x.saturating_neg() } else { x }, anim);
         } else {
             let gap = e.style_i32(c, Part::Main, PropId::RowGap);
-            e.scroll_to_y(c, idx as i32 * (gap + ca.height()), anim);
+            e.scroll_to_y(c, page(gap, ca.height()), anim);
         }
         let e = cx.engine_mut();
-        let mut i = 0;
+        let mut i = 0u32;
         let mut child = e
             .tree()
             .node(self.tab_bar)
@@ -228,7 +234,7 @@ impl Tabview {
         while let Some(b) = child {
             if is_tab_button(e, b) {
                 e.set_state(b, State::CHECKED, i == idx);
-                i += 1;
+                i = i.saturating_add(1);
             }
             child = e.tree().node(b).and_then(twine_engine::Node::next_sibling);
         }
@@ -330,16 +336,20 @@ impl Tabview {
         let c = self.content;
         let p = e.scroll_end(c);
         let ca = e.content_area(c);
+        // The page nearest to the scroll end (`size ≥ 1`, so the fallbacks are never taken).
+        let nearest = |pos: i32, size: i32| pos.saturating_add(size / 2).checked_div(size).unwrap_or(0);
         let t = if self.bar_is_ver() {
             let w = ca.width().max(1);
             if util::is_rtl(&cx.measure()) {
-                -(p.x - w / 2) / w
+                p.x.saturating_sub(w / 2)
+                    .saturating_neg()
+                    .checked_div(w)
+                    .unwrap_or(0)
             } else {
-                (p.x + w / 2) / w
+                nearest(p.x, w)
             }
         } else {
-            let h = ca.height().max(1);
-            (p.y + h / 2) / h
+            nearest(p.y, ca.height().max(1))
         };
         let t = t.max(0) as u32;
         let new_tab = t != self.tab_cur;

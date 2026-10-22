@@ -201,7 +201,7 @@ pub(crate) struct Timing {
     pub(crate) multi_click: Duration,
     pub(crate) multi_click_distance: i32,
     pub(crate) scroll_limit: i32,
-    pub(crate) scroll_throw: u8,
+    pub(crate) scroll_throw: core::num::NonZeroU8,
     pub(crate) gesture_limit: i32,
     pub(crate) gesture_min_velocity: i32,
 }
@@ -286,6 +286,9 @@ fn data_active(d: &InputData) -> bool {
 /// Counts short clicks into single / double / triple clicks (LVGL `indev_proc_short_click`).
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ClickCounter {
+    /// The position of the last click in its single / double / triple cycle (`1..=3`; `0`
+    /// before the first click). It cycles instead of counting, so a long streak of clicks
+    /// cannot overflow it.
     count: u8,
     last_time: Option<Instant>,
     last_point: Point,
@@ -295,19 +298,24 @@ impl ClickCounter {
     /// Registers a short click at `now` (at `point` for pointers) and returns which multi-click
     /// event it is.
     pub(crate) fn click(&mut self, now: Instant, point: Option<Point>, t: &Timing) -> EventCode {
-        self.count = self.count.wrapping_add(1);
+        self.count = match self.count {
+            1 => 2,
+            2 => 3,
+            _ => 1,
+        };
         let in_time = self
             .last_time
             .is_some_and(|l| now.saturating_duration_since(l) <= t.multi_click);
         if !in_time {
             self.count = 1;
         } else if let Some(p) = point {
+            // SAFE-ARITH: differences of two `i32`s fit in `i64`; the squares saturate.
             let (dx, dy) = (
-                i64::from(self.last_point.x) - i64::from(p.x),
-                i64::from(self.last_point.y) - i64::from(p.y),
+                i64::from(self.last_point.x).wrapping_sub(i64::from(p.x)),
+                i64::from(self.last_point.y).wrapping_sub(i64::from(p.y)),
             );
             let d = i64::from(t.multi_click_distance);
-            if dx * dx + dy * dy > d * d {
+            if dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy)) > d.saturating_mul(d) {
                 self.count = 1;
             }
         }
@@ -315,10 +323,10 @@ impl ClickCounter {
         if let Some(p) = point {
             self.last_point = p;
         }
-        match (self.count - 1) % 3 {
-            0 => EventCode::SingleClicked,
-            1 => EventCode::DoubleClicked,
-            _ => EventCode::TripleClicked,
+        match self.count {
+            2 => EventCode::DoubleClicked,
+            3 => EventCode::TripleClicked,
+            _ => EventCode::SingleClicked,
         }
     }
 }
@@ -353,6 +361,10 @@ impl Engine {
     /// ([`InputDevice::fit_to_display`] with its [`DisplayInfo`](twine_hal::DisplayInfo)): touch
     /// drivers derive their coordinate transform from the display's rotation and size there, so
     /// pointer coordinates arrive in logical screen coordinates without application code.
+    ///
+    /// # Errors
+    /// [`EngineError::TooManyInputs`] when [`MAX_INPUTS`] devices are registered;
+    /// [`EngineError::DisplayNotFound`] for an unknown `display`.
     ///
     /// ```
     /// use twine_core::Point;
@@ -398,7 +410,7 @@ impl Engine {
             Some(i) => i,
             None if self.inputs.len() < MAX_INPUTS => {
                 self.inputs.push(None);
-                self.inputs.len() - 1
+                self.inputs.len().saturating_sub(1)
             }
             None => {
                 twine_core::warn!(target: "twine::input", "add_input: more than {} input devices", MAX_INPUTS);
@@ -420,7 +432,12 @@ impl Engine {
             dev.poll_hint(),
             display
         );
-        self.inputs[idx] = Some(InputState {
+        // SAFE-INDEX: `idx` is a free slot found above or the one just pushed; the fallback is
+        // never taken.
+        let Some(slot) = self.inputs.get_mut(idx) else {
+            return Err(EngineError::TooManyInputs);
+        };
+        *slot = Some(InputState {
             id,
             serial: self.input_serial,
             kind,
@@ -669,7 +686,7 @@ impl Engine {
         let t = self.input_timing();
         let period = self.config.read_period;
         for idx in 0..self.inputs.len() {
-            let Some(st) = self.inputs[idx].as_mut() else {
+            let Some(st) = self.inputs.get_mut(idx).and_then(Option::as_mut) else {
                 continue;
             };
             if !st.enabled {
@@ -693,7 +710,12 @@ impl Engine {
             let serial = st.serial;
             let mut more = false;
             for _ in 0..MAX_KEYPAD_READS {
-                let Some(st) = self.inputs[idx].as_mut().filter(|s| s.serial == serial) else {
+                let Some(st) = self
+                    .inputs
+                    .get_mut(idx)
+                    .and_then(Option::as_mut)
+                    .filter(|s| s.serial == serial)
+                else {
                     break;
                 };
                 let (data, health) = st.driver.sample();
@@ -719,7 +741,12 @@ impl Engine {
                     break;
                 }
             }
-            let Some(st) = self.inputs[idx].as_mut().filter(|s| s.serial == serial) else {
+            let Some(st) = self
+                .inputs
+                .get_mut(idx)
+                .and_then(Option::as_mut)
+                .filter(|s| s.serial == serial)
+            else {
                 continue;
             };
             let active = st.proc.as_ref().is_some_and(Proc::is_active);
@@ -758,7 +785,11 @@ impl Engine {
         health: DeviceHealth,
         data: InputData,
     ) -> Option<InputData> {
-        let st = self.inputs[idx].as_mut().filter(|s| s.serial == serial)?;
+        let st = self
+            .inputs
+            .get_mut(idx)
+            .and_then(Option::as_mut)
+            .filter(|s| s.serial == serial)?;
         let prev = st.health;
         if health != prev {
             st.health = health;
@@ -791,7 +822,11 @@ impl Engine {
                 self.raise_fault(FaultRecord::new(FaultKind::InputDevice).input(id).code(code));
             }
         }
-        let st = self.inputs[idx].as_mut().filter(|s| s.serial == serial)?;
+        let st = self
+            .inputs
+            .get_mut(idx)
+            .and_then(Option::as_mut)
+            .filter(|s| s.serial == serial)?;
         let data = if health == DeviceHealth::Failed {
             released(data, st.last_data)
         } else {
@@ -809,7 +844,7 @@ impl Engine {
     /// processes the released sample), and a keypad holding `Enter` or an encoder holding its
     /// button sends `PressLost` to the focused node now.
     fn release_failed(&mut self, idx: usize) {
-        let Some(st) = self.inputs[idx].as_mut() else {
+        let Some(st) = self.inputs.get_mut(idx).and_then(Option::as_mut) else {
             return;
         };
         st.wait_release = true;
@@ -828,7 +863,7 @@ impl Engine {
 
     /// Runs the processor of slot `idx` on one sample.
     fn process_input(&mut self, idx: usize, serial: u32, data: InputData, now: Instant) {
-        let Some(st) = self.inputs[idx].as_mut() else {
+        let Some(st) = self.inputs.get_mut(idx).and_then(Option::as_mut) else {
             return;
         };
         let Some(mut proc) = st.proc.take() else {
@@ -852,7 +887,12 @@ impl Engine {
         } else {
             twine_core::warn!(target: "twine::input", "input {}: {:?} device returned {:?}", id, kind, data);
         }
-        if let Some(st) = self.inputs[idx].as_mut().filter(|s| s.serial == serial) {
+        if let Some(st) = self
+            .inputs
+            .get_mut(idx)
+            .and_then(Option::as_mut)
+            .filter(|s| s.serial == serial)
+        {
             st.apply_pending(&mut proc);
             let scroll = proc.scroll_obj();
             st.proc = Some(proc);

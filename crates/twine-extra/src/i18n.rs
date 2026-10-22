@@ -253,6 +253,9 @@ pub fn provide_i18n(cx: Scope, table: &'static Translations, initial: &str) -> I
 ///
 /// Never panics.
 ///
+/// # Errors
+/// [`MissingContext`] naming `I18n` when no ancestor provides one.
+///
 /// ```
 /// use twine_extra::i18n::use_i18n;
 ///

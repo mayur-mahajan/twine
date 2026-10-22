@@ -108,7 +108,7 @@ fn screen() -> Rect {
     Rect::from_xywh(0, 0, W, H)
 }
 
-/// A checkerboard of `size`-pixel squares in two grays.
+/// A checkerboard of `size`-pixel squares in two grays (a `size` below 1 is taken as 1).
 /// ```
 /// use twine_core::{ColorFormat, Rect};
 /// use twine_testing::{RenderHarness, gallery::checkerboard};
@@ -117,6 +117,7 @@ fn screen() -> Rect {
 /// h.paint(|p| checkerboard(p, Rect::from_xywh(0, 0, 32, 32), 8));
 /// ```
 pub fn checkerboard(p: &mut Painter<'_>, area: Rect, size: i32) {
+    let size = size.max(1);
     p.fill(area, Color::hex(0xDDDDDD), Opa::COVER);
     let mut y = area.y0;
     while y < area.y1 {
@@ -635,6 +636,7 @@ pub fn gradient_image(size: u16) -> Vec<u8> {
     let mut v = Vec::with_capacity(usize::from(size) * usize::from(size) * 4);
     for y in 0..s {
         for x in 0..s {
+            // DIV: `s ≥ 1` inside the loops over `0..s`.
             let c = Color::lerp(
                 Color::lerp(Color::RED, Color::BLUE, (x * 1024 / s) as u16),
                 Color::GREEN,
@@ -752,6 +754,7 @@ pub fn page_arcs(p: &mut Painter<'_>, frame: u32) {
 fn star(c: Point, r_out: i32, r_in: i32, n: i32) -> Vec<Point> {
     (0..2 * n)
         .map(|i| {
+            // DIV: `n ≥ 1` inside the map over `0..2n`.
             let a = Angle::deci_deg(-900 + i * 1800 / n);
             let r = if i % 2 == 0 { r_out } else { r_in };
             Point::new(

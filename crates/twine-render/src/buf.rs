@@ -52,10 +52,11 @@ pub struct DrawBuf<'a> {
     area: Rect,
 }
 
-/// Bytes needed for `width` pixels of `format` (rounded up to whole bytes).
+/// Bytes needed for `width` pixels of `format` (rounded up to whole bytes; saturates at
+/// `usize::MAX / 8`, which no buffer reaches).
 #[inline]
 pub(crate) const fn row_bytes(format: ColorFormat, width: usize) -> usize {
-    (width * format.bpp() as usize).div_ceil(8)
+    width.saturating_mul(format.bpp() as usize).div_ceil(8)
 }
 
 impl<'a> DrawBuf<'a> {
@@ -66,6 +67,14 @@ impl<'a> DrawBuf<'a> {
     /// [`is_format_enabled`](crate::is_format_enabled): drawing never meets a disabled format),
     /// [`RenderError::InvalidArea`] for an empty area, a stride shorter than a row, or an `I1`
     /// area whose `x0`/`x1` are not multiples of 8, and [`RenderError::BufferTooSmall`].
+    ///
+    /// # Errors
+    /// [`RenderError::UnsupportedFormat`] for formats that cannot be drawn into;
+    /// [`RenderError::FormatDisabled`] for draw formats whose renderer is not compiled in (see
+    /// [`is_format_enabled`](crate::is_format_enabled): drawing never meets a disabled format);
+    /// [`RenderError::InvalidArea`] for an empty area, a stride shorter than a row, or an `I1` area
+    /// whose `x0`/`x1` are not multiples of 8; [`RenderError::BufferTooSmall`] when `data` cannot
+    /// hold the area.
     pub fn new(
         data: &'a mut [u8],
         format: ColorFormat,
@@ -85,7 +94,11 @@ impl<'a> DrawBuf<'a> {
         if stride < row {
             return Err(RenderError::InvalidArea);
         }
-        let needed = stride * (area.height() as usize - 1) + row;
+        // `area` is not empty, so the height is at least 1. Saturates for impossible sizes
+        // (the buffer is then too small).
+        let needed = stride
+            .saturating_mul(crate::num::span(area.y0, area.y1).saturating_sub(1))
+            .saturating_add(row);
         if data.len() < needed {
             return Err(RenderError::BufferTooSmall {
                 needed,
@@ -101,6 +114,9 @@ impl<'a> DrawBuf<'a> {
     }
 
     /// Like [`new`](Self::new) with `stride = width · bpp / 8` (rows packed).
+    ///
+    /// # Errors
+    /// As [`new`](Self::new).
     pub fn new_packed(data: &'a mut [u8], format: ColorFormat, area: Rect) -> Result<Self, RenderError> {
         let stride = row_bytes(format, area.width().max(0) as usize);
         Self::new(data, format, stride, area)
@@ -135,36 +151,46 @@ impl<'a> DrawBuf<'a> {
         self.data
     }
 
-    /// Byte range of pixels `[x0, x1)` of row `y` (absolute coordinates).
+    /// Byte range of pixels `[x0, x1)` of row `y` (absolute coordinates). Outside the area
+    /// the range is empty (`0..0`) after a `debug_assert!`.
     #[inline]
     fn range(&self, y: i32, x0: i32, x1: i32) -> core::ops::Range<usize> {
-        debug_assert!(
-            y >= self.area.y0 && y < self.area.y1 && x0 >= self.area.x0 && x1 <= self.area.x1 && x0 <= x1,
-            "row {y} [{x0}, {x1}) outside {}",
-            self.area
-        );
+        let a = self.area;
+        let inside = y >= a.y0 && y < a.y1 && x0 >= a.x0 && x1 <= a.x1 && x0 <= x1;
+        debug_assert!(inside, "row {y} [{x0}, {x1}) outside {a}");
+        if !inside {
+            return 0..0;
+        }
         let bpp = self.format.bpp() as usize;
-        let start = (y - self.area.y0) as usize * self.stride;
-        let bx0 = (x0 - self.area.x0) as usize * bpp / 8;
-        let bx1 = ((x1 - self.area.x0) as usize * bpp).div_ceil(8);
-        start + bx0..start + bx1
+        // Inside the area every offset is below `data.len()` (checked by `new`): the
+        // saturating operations are exact, and cost nothing measurable once per row.
+        let start = crate::num::span(a.y0, y).saturating_mul(self.stride);
+        let bx0 = crate::num::span(a.x0, x0).saturating_mul(bpp) / 8;
+        let bx1 = crate::num::span(a.x0, x1).saturating_mul(bpp).div_ceil(8);
+        start.saturating_add(bx0)..start.saturating_add(bx1)
     }
 
     /// Bytes of pixels `[x0, x1)` of row `y`, in absolute coordinates that must lie inside
-    /// [`area`](Self::area) (checked with `debug_assert!`). For `I1` the bytes containing the
-    /// pixels are returned (`x0` rounded down, `x1` up to a multiple of 8).
+    /// [`area`](Self::area). For `I1` the bytes containing the pixels are returned (`x0`
+    /// rounded down, `x1` up to a multiple of 8).
+    ///
+    /// Never panics: coordinates outside the area (a caller bug, reported by a
+    /// `debug_assert!` in debug builds) give an empty slice, so nothing is drawn.
     #[inline]
     pub fn row_mut(&mut self, y: i32, x0: i32, x1: i32) -> &mut [u8] {
         let r = self.range(y, x0, x1);
-        &mut self.data[r]
+        // SAFE-INDEX: `new` checked that every row of the area fits `data`; the empty
+        // fallback is never taken for coordinates inside the area.
+        self.data.get_mut(r).unwrap_or_default()
     }
 
-    /// Shared version of [`row_mut`](Self::row_mut).
+    /// Shared version of [`row_mut`](Self::row_mut) (outside the area: an empty slice).
     #[inline]
     #[must_use]
     pub fn row(&self, y: i32, x0: i32, x1: i32) -> &[u8] {
         let r = self.range(y, x0, x1);
-        &self.data[r]
+        // SAFE-INDEX: as in `row_mut`.
+        self.data.get(r).unwrap_or_default()
     }
 
     /// Fills the whole buffer with `color` (opaque). Formats whose `color-*` feature is disabled
@@ -233,6 +259,11 @@ mod tests {
         b.row_mut(51, 101, 103).fill(7);
         assert_eq!(b.row(51, 100, 104), &[0, 0, 0, 7, 7, 7, 7, 7, 7, 0, 0, 0]);
         assert!(d[..12].iter().all(|&v| v == 0));
+        let mut b = DrawBuf::new_packed(&mut d, ColorFormat::Rgb888, Rect::from_xywh(100, 50, 4, 3)).unwrap();
+        // Outside the area: empty (debug builds assert).
+        if !cfg!(debug_assertions) {
+            assert!(b.row_mut(53, 100, 101).is_empty());
+        }
         assert_eq!(&d[12..24], &[0, 0, 0, 7, 7, 7, 7, 7, 7, 0, 0, 0]);
     }
 

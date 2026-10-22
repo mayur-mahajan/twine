@@ -87,6 +87,11 @@ impl RenderHarness {
     }
 
     /// Draws with a painter over the whole buffer.
+    ///
+    /// # Panics
+    /// If the harness's colour format cannot be drawn into or its renderer is not compiled in, or
+    /// for an `I1` harness whose width is not a multiple of 8 (see
+    /// [`DrawBuf::new`](twine_render::DrawBuf::new)).
     pub fn paint<R>(&mut self, f: impl FnOnce(&mut Painter<'_>) -> R) -> R {
         let area = self.area();
         let buf = DrawBuf::new_packed(&mut self.data, self.format, area).expect("valid harness buffer");
@@ -97,6 +102,11 @@ impl RenderHarness {
     /// Draws in horizontal strips of `rows` rows, each into a separate strip buffer that starts
     /// with the current content and is copied back — like the engine's partial buffers. Used to
     /// prove that chunked rendering is pixel-identical to a full render.
+    ///
+    /// # Panics
+    /// If the harness's colour format cannot be drawn into or its renderer is not compiled in, or
+    /// for an `I1` harness whose width is not a multiple of 8 (see
+    /// [`DrawBuf::new`](twine_render::DrawBuf::new)).
     pub fn paint_chunked(&mut self, rows: u16, mut f: impl FnMut(&mut Painter<'_>)) {
         let stride = self.format.stride(u32::from(self.w)) as usize;
         let rows = rows.max(1);

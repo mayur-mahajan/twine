@@ -379,7 +379,7 @@ pub(crate) fn bind_str(
         bind_effect(
             scope,
             node,
-            move || src.eval(),
+            move || src.eval(scope.partition()),
             move |e, n, v: TextValue| match v {
                 TextValue::Static(s) => set(e, n, TextRef::Static(s)),
                 TextValue::Owned(s) => set(e, n, TextRef::Borrowed(&s)),
@@ -407,9 +407,10 @@ enum TextValue {
 }
 
 impl DynText {
-    /// Evaluates the text (the signal reads are tracked by the running binding).
+    /// Evaluates the text (the signal reads are tracked by the running binding); growth of
+    /// the format buffer is noted in partition `part`'s seal domain (the binding's).
     #[inline(never)]
-    fn eval(&self) -> TextValue {
+    fn eval(&self, part: twine_core::Partition) -> TextValue {
         match self {
             DynText::StaticFn(f) => TextValue::Static(f()),
             DynText::Fn(f) => TextValue::Owned(f()),
@@ -420,7 +421,7 @@ impl DynText {
                     let cap = b.capacity();
                     w(&mut *b);
                     if b.capacity() != cap {
-                        twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
+                        twine_core::alloc_guard::grew(part, twine_core::alloc_guard::AllocSite::Text);
                     }
                 }
                 TextValue::Scratch(scratch.clone())

@@ -161,6 +161,9 @@ fn encode(img: &RgbaImage, fmt: ImageFormat) -> Result<Vec<u8>> {
 }
 
 /// The spinner as an endlessly looping 8-frame GIF (80 ms per frame).
+///
+/// # Errors
+/// The GIF encoder's error (not expected for in-memory output).
 pub fn spinner_gif() -> Result<Vec<u8>> {
     let mut out = Vec::new();
     {
@@ -179,6 +182,9 @@ pub fn spinner_gif() -> Result<Vec<u8>> {
 }
 
 /// Every generated asset: `(file name, bytes)`.
+///
+/// # Errors
+/// An encoder's error (not expected for in-memory output).
 pub fn all() -> Result<Vec<(&'static str, Vec<u8>)>> {
     let photo = photo();
     let logo = logo();
@@ -202,6 +208,9 @@ pub fn all() -> Result<Vec<(&'static str, Vec<u8>)>> {
 }
 
 /// Writes every asset into `dir` (with `check`, only compares); returns the stale files.
+///
+/// # Errors
+/// The errors of [`all`], or an I/O error reading or writing `dir`.
 pub fn write_all(dir: &Path, check: bool) -> Result<Vec<PathBuf>> {
     let mut stale = Vec::new();
     for (name, bytes) in all()? {

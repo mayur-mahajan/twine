@@ -199,7 +199,10 @@ fn buttonmatrix_view(btns: Vec<Btn>, row_lens: Vec<usize>) -> WidgetView<ButtonM
                             let cap = buf.capacity();
                             t.write_to(&mut *buf);
                             if buf.capacity() != cap {
-                                twine_core::alloc_guard::grew(twine_core::alloc_guard::AllocSite::Text);
+                                twine_core::alloc_guard::grew(
+                                    wcx.partition(),
+                                    twine_core::alloc_guard::AllocSite::Text,
+                                );
                             }
                             m.set_btn_text(wcx, *i, &buf);
                         }

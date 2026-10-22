@@ -19,7 +19,7 @@ struct Entry {
 /// parsed every frame).
 #[derive(Default)]
 pub(crate) struct SvgCache {
-    entries: heapless::Vec<Entry, SVG_CACHE_ENTRIES>,
+    slots: [Option<Entry>; SVG_CACHE_ENTRIES],
     clock: u32,
     parses: u32,
 }
@@ -27,9 +27,19 @@ pub(crate) struct SvgCache {
 impl core::fmt::Debug for SvgCache {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SvgCache")
-            .field("entries", &self.entries.len())
+            .field("entries", &self.slots.iter().flatten().count())
             .field("parses", &self.parses)
             .finish_non_exhaustive()
+    }
+}
+
+/// How strongly a cache slot is chosen for `key` at `clock`: the slot holding `key` first,
+/// then an empty slot, then the least recently used one.
+fn slot_rank(slot: Option<&Entry>, key: (usize, usize), clock: u32) -> u64 {
+    match slot {
+        Some(e) if e.key == key => u64::MAX,
+        None => u64::MAX - 1,
+        Some(e) => u64::from(clock.wrapping_sub(e.last_use)),
     }
 }
 
@@ -38,34 +48,37 @@ impl SvgCache {
     pub(crate) fn get(&mut self, bytes: &'static [u8]) -> Result<&SvgDocument, SvgError> {
         let key = (bytes.as_ptr() as usize, bytes.len());
         self.clock = self.clock.wrapping_add(1);
-        let i = if let Some(i) = self.entries.iter().position(|e| e.key == key) {
-            i
-        } else {
-            self.parses += 1;
-            let doc = parse_svg(bytes).map(Box::new);
-            match &doc {
-                Ok(d) => twine_core::debug!(target: "twine::image", "svg parsed: {} items", d.scene.len()),
-                Err(e) => twine_core::warn!(target: "twine::image", "svg: {}", e),
-            }
-            let entry = Entry {
-                key,
-                last_use: self.clock,
-                doc,
-            };
-            if self.entries.is_full() {
-                let clock = self.clock;
-                let lru = (0..self.entries.len())
-                    .max_by_key(|&i| clock.wrapping_sub(self.entries[i].last_use))
-                    .unwrap_or(0);
-                self.entries[lru] = entry;
-                lru
+        let clock = self.clock;
+        // The slot for `key` (no index: the array has a first slot, the rest compete with it).
+        let [first, rest @ ..] = &mut self.slots;
+        let slot = rest.iter_mut().fold(first, |best, s| {
+            if slot_rank(s.as_ref(), key, clock) > slot_rank(best.as_ref(), key, clock) {
+                s
             } else {
-                let _ = self.entries.push(entry);
-                self.entries.len() - 1
+                best
+            }
+        });
+        // Taken out and put back (a few bytes): the hit, or a new parse replacing the slot.
+        let entry = match slot.take() {
+            Some(e) if e.key == key => e,
+            _ => {
+                self.parses = self.parses.saturating_add(1);
+                let doc = parse_svg(bytes).map(Box::new);
+                match &doc {
+                    Ok(d) => {
+                        twine_core::debug!(target: "twine::image", "svg parsed: {} items", d.scene.len());
+                    }
+                    Err(e) => twine_core::warn!(target: "twine::image", "svg: {}", e),
+                }
+                Entry {
+                    key,
+                    last_use: clock,
+                    doc,
+                }
             }
         };
-        let e = &mut self.entries[i];
-        e.last_use = self.clock;
+        let e = slot.insert(entry);
+        e.last_use = clock;
         match &e.doc {
             Ok(d) => Ok(d),
             Err(err) => Err(*err),

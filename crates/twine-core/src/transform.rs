@@ -1,23 +1,33 @@
 //! 2-D affine transforms in 16.16 fixed point.
 
+use core::num::{NonZeroI128, NonZeroU128};
+
 use crate::geometry::{Point, Rect, sat_i32};
 use crate::math::{Angle, Fx, Scale, cos_fx, sin_fx};
 
 /// `(v · 2^16) / den` rounded half away from zero, in `i128`, saturated to `i32`.
-fn div_i128(num: i128, den: i128) -> i32 {
-    let (n, d) = (num.unsigned_abs(), den.unsigned_abs());
-    let q = (n + d / 2) / d;
+fn div_i128(num: i128, den: NonZeroI128) -> i32 {
+    let n = num.unsigned_abs();
+    let d: NonZeroU128 = den.unsigned_abs();
+    // SAFE-ARITH: `n ≤ 2^127` and `d / 2 < 2^127`, so the sum is below 2^128.
+    let q = n.wrapping_add(d.get() / 2) / d;
     let q = i128::try_from(q).unwrap_or(i128::MAX);
-    let q = if (num < 0) == (den < 0) { q } else { -q };
+    // SAFE-ARITH: `0 ≤ q ≤ i128::MAX`, whose negation fits.
+    let q = if (num < 0) == (den.get() < 0) {
+        q
+    } else {
+        q.wrapping_neg()
+    };
     i32::try_from(q).unwrap_or(if q > 0 { i32::MAX } else { i32::MIN })
 }
 
-/// `v >> 16` rounded half away from zero, saturated to `i32`.
+/// `v >> 16` rounded half away from zero, saturated to `i32` (the intermediate steps saturate
+/// too, which gives the same result: anything near the `i64` range saturates the `i32`).
 const fn round16(v: i64) -> i32 {
     sat_i32(if v >= 0 {
-        (v + 0x8000) >> 16
+        v.saturating_add(0x8000) >> 16
     } else {
-        -((-v + 0x8000) >> 16)
+        (v.saturating_neg().saturating_add(0x8000) >> 16).saturating_neg()
     })
 }
 
@@ -118,9 +128,16 @@ impl Transform {
                 // Same rounding as `Fx::div`, without its zero-division warning.
                 let n = (s.0 as i64) << 16;
                 let d = c.0 as i64;
-                let q = (n.unsigned_abs() + d.unsigned_abs() / 2) / d.unsigned_abs();
-                let q = q as i64;
-                Fx(sat_i32(if (n < 0) == (d < 0) { q } else { -q }))
+                let d_abs = d.unsigned_abs();
+                // SAFE-ARITH: `|n| ≤ 2^47` and `|d| < 2^31`, so the sum is below 2^48; the
+                // quotient is below 2^48 too, so its negation fits.
+                let num = n.unsigned_abs().wrapping_add(d_abs / 2);
+                // `c.0 != 0` (the `if` above): the fallback is never taken.
+                let q = match num.checked_div(d_abs) {
+                    Some(q) => q as i64,
+                    None => 0,
+                };
+                Fx(sat_i32(if (n < 0) == (d < 0) { q } else { q.wrapping_neg() }))
             }
         }
         Transform {
@@ -130,20 +147,27 @@ impl Transform {
         }
     }
 
-    /// Composition: apply `self`, then `next`.
+    /// Composition: apply `self`, then `next`. Never panics: coefficients beyond the 16.16
+    /// range saturate.
     #[must_use]
     pub const fn then(self, next: Transform) -> Self {
         const fn m(p: Fx, q: Fx) -> i64 {
-            p.0 as i64 * q.0 as i64
+            // SAFE-ARITH: a product of two `i32`s is at most 2^62 in magnitude.
+            (p.0 as i64).wrapping_mul(q.0 as i64)
+        }
+        // Two products can reach 2^63: the sums saturate, which `round16` saturates to the same
+        // `i32` as the exact value.
+        const fn sum(a: i64, b: i64, c: i64) -> i64 {
+            a.saturating_add(b).saturating_add(c)
         }
         let (s, n) = (self, next);
         Transform {
-            a: Fx(round16(m(n.a, s.a) + m(n.c, s.b))),
-            b: Fx(round16(m(n.b, s.a) + m(n.d, s.b))),
-            c: Fx(round16(m(n.a, s.c) + m(n.c, s.d))),
-            d: Fx(round16(m(n.b, s.c) + m(n.d, s.d))),
-            tx: Fx(round16(m(n.a, s.tx) + m(n.c, s.ty) + ((n.tx.0 as i64) << 16))),
-            ty: Fx(round16(m(n.b, s.tx) + m(n.d, s.ty) + ((n.ty.0 as i64) << 16))),
+            a: Fx(round16(sum(m(n.a, s.a), m(n.c, s.b), 0))),
+            b: Fx(round16(sum(m(n.b, s.a), m(n.d, s.b), 0))),
+            c: Fx(round16(sum(m(n.a, s.c), m(n.c, s.d), 0))),
+            d: Fx(round16(sum(m(n.b, s.c), m(n.d, s.d), 0))),
+            tx: Fx(round16(sum(m(n.a, s.tx), m(n.c, s.ty), (n.tx.0 as i64) << 16))),
+            ty: Fx(round16(sum(m(n.b, s.tx), m(n.d, s.ty), (n.ty.0 as i64) << 16))),
         }
     }
 
@@ -169,39 +193,55 @@ impl Transform {
     /// The inverse transform, or `None` when the determinant is below 1/65536 in magnitude.
     #[must_use]
     pub fn invert(&self) -> Option<Transform> {
+        // SAFE-ARITH: every coefficient is an `i32` widened to `i128`: the products below are
+        // at most 2^62, their differences 2^63 and the `2^32`-scaled values 2^63 in magnitude
+        // (`<< 16` of a difference stays below 2^80), far inside `i128`.
         let w = |v: Fx| i128::from(v.0);
+        let mul = |p: i128, q: i128| p.wrapping_mul(q);
         // Determinant in 32.32 fixed point.
-        let det = w(self.a) * w(self.d) - w(self.b) * w(self.c);
-        if det.abs() < (1 << 16) {
+        let det = mul(w(self.a), w(self.d)).wrapping_sub(mul(w(self.b), w(self.c)));
+        if det.unsigned_abs() < (1 << 16) {
             return None;
         }
+        let det = NonZeroI128::new(det)?;
         let s16 = 1i128 << 32;
         Some(Transform {
-            a: Fx(div_i128(w(self.d) * s16, det)),
-            b: Fx(div_i128(-w(self.b) * s16, det)),
-            c: Fx(div_i128(-w(self.c) * s16, det)),
-            d: Fx(div_i128(w(self.a) * s16, det)),
+            a: Fx(div_i128(mul(w(self.d), s16), det)),
+            b: Fx(div_i128(mul(w(self.b).wrapping_neg(), s16), det)),
+            c: Fx(div_i128(mul(w(self.c).wrapping_neg(), s16), det)),
+            d: Fx(div_i128(mul(w(self.a), s16), det)),
             tx: Fx(div_i128(
-                (w(self.c) * w(self.ty) - w(self.d) * w(self.tx)) << 16,
+                mul(w(self.c), w(self.ty)).wrapping_sub(mul(w(self.d), w(self.tx))) << 16,
                 det,
             )),
             ty: Fx(div_i128(
-                (w(self.b) * w(self.tx) - w(self.a) * w(self.ty)) << 16,
+                mul(w(self.b), w(self.tx)).wrapping_sub(mul(w(self.a), w(self.ty))) << 16,
                 det,
             )),
         })
     }
 
-    /// Maps a fixed-point coordinate.
+    /// Maps a fixed-point coordinate (saturating; never panics).
     #[must_use]
     pub const fn map(&self, x: Fx, y: Fx) -> (Fx, Fx) {
         let (x, y) = (x.0 as i64, y.0 as i64);
+        // SAFE-ARITH: products of two `i32`s are at most 2^62 in magnitude; their sums can
+        // reach 2^63 and saturate, which `round16` saturates to the same `i32`.
+        let (ax, cy) = (
+            (self.a.0 as i64).wrapping_mul(x),
+            (self.c.0 as i64).wrapping_mul(y),
+        );
+        // SAFE-ARITH: as above.
+        let (bx, dy) = (
+            (self.b.0 as i64).wrapping_mul(x),
+            (self.d.0 as i64).wrapping_mul(y),
+        );
         (
             Fx(round16(
-                self.a.0 as i64 * x + self.c.0 as i64 * y + ((self.tx.0 as i64) << 16),
+                ax.saturating_add(cy).saturating_add((self.tx.0 as i64) << 16),
             )),
             Fx(round16(
-                self.b.0 as i64 * x + self.d.0 as i64 * y + ((self.ty.0 as i64) << 16),
+                bx.saturating_add(dy).saturating_add((self.ty.0 as i64) << 16),
             )),
         )
     }
@@ -209,9 +249,20 @@ impl Transform {
     /// Maps an integer coordinate exactly (no 16-bit range limit), in 16.16.
     const fn map_raw(&self, p: Point) -> (i64, i64) {
         let (x, y) = (p.x as i64, p.y as i64);
+        // SAFE-ARITH: products of two `i32`s are at most 2^62 in magnitude; their sums can
+        // reach 2^63 and saturate (every caller saturates the result to `i32`).
+        let (ax, cy) = (
+            (self.a.0 as i64).wrapping_mul(x),
+            (self.c.0 as i64).wrapping_mul(y),
+        );
+        // SAFE-ARITH: as above.
+        let (bx, dy) = (
+            (self.b.0 as i64).wrapping_mul(x),
+            (self.d.0 as i64).wrapping_mul(y),
+        );
         (
-            self.a.0 as i64 * x + self.c.0 as i64 * y + self.tx.0 as i64,
-            self.b.0 as i64 * x + self.d.0 as i64 * y + self.ty.0 as i64,
+            ax.saturating_add(cy).saturating_add(self.tx.0 as i64),
+            bx.saturating_add(dy).saturating_add(self.ty.0 as i64),
         )
     }
 
@@ -237,8 +288,8 @@ impl Transform {
         Rect::new(
             sat_i32(x0 >> 16),
             sat_i32(y0 >> 16),
-            sat_i32((x1 + 0xFFFF) >> 16),
-            sat_i32((y1 + 0xFFFF) >> 16),
+            sat_i32(x1.saturating_add(0xFFFF) >> 16),
+            sat_i32(y1.saturating_add(0xFFFF) >> 16),
         )
     }
 
@@ -258,6 +309,21 @@ impl Transform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regression_extreme_transforms_saturate() {
+        // Two products of `i32::MIN` coefficients reached 2^63 in `then` and `map`.
+        let m = Fx::from_raw(i32::MIN);
+        let t = Transform::scale(m, m).then(Transform::scale(m, m));
+        assert_eq!((t.a, t.d), (Fx::MAX, Fx::MAX));
+        let big = Transform {
+            a: m,
+            c: m,
+            ..Transform::IDENTITY
+        };
+        assert_eq!(big.map(m, m).0, Fx::MAX);
+        assert_eq!(big.map_point(Point::new(i32::MIN, i32::MIN)).x, i32::MAX);
+    }
 
     #[test]
     fn rotate_90_maps_axes() {

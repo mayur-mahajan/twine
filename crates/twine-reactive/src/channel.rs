@@ -20,6 +20,7 @@ use core::task::{RawWaker, RawWakerVTable, Waker};
 
 use critical_section::Mutex;
 use portable_atomic::{AtomicBool, Ordering};
+use twine_core::Partition;
 use twine_core::fault::FaultKind;
 use twine_core::log::{debug, error, warn};
 
@@ -318,7 +319,24 @@ impl UiWaker {
     /// ```
     #[must_use]
     pub fn lease() -> WakerLease {
-        WakerLease::acquire()
+        WakerLease::acquire(Partition::MAIN)
+    }
+
+    /// [`lease`](Self::lease) for an owner in partition `p`: a heap waker allocated after
+    /// `p` was sealed is noted in `p`'s seal domain (the `Ui` of a partition leases its waker
+    /// this way). The pool itself is process-wide and shared by every partition (ADR-001 N6):
+    /// give a critical partition a dedicated `static` waker (`UiBuilder::waker`) so the pool
+    /// cannot affect it. Callable from any context; never panics.
+    ///
+    /// ```
+    /// use twine_core::Partition;
+    /// use twine_reactive::UiWaker;
+    /// let lease = UiWaker::lease_in(Partition::MAIN);
+    /// assert!(!lease.get().is_set());
+    /// ```
+    #[must_use]
+    pub fn lease_in(p: Partition) -> WakerLease {
+        WakerLease::acquire(p)
     }
 }
 
@@ -500,12 +518,14 @@ impl WakerLease {
     /// Size in bytes of one heap-allocated waker of the pool.
     pub const HEAP_WAKER_BYTES: usize = core::mem::size_of::<HeapWaker>();
 
-    fn acquire() -> WakerLease {
+    fn acquire(p: Partition) -> WakerLease {
         let got = critical_section::with(|cs| {
             let used = POOL_USED.borrow(cs);
             let bits = used.get();
             let free = bits.trailing_ones() as usize;
             if free < Self::STATIC_SLOTS {
+                // SHIFT: `free < STATIC_SLOTS ≤ 8` (checked above; const assertion on the `u8`
+                // bitmap).
                 used.set(bits | (1 << free));
                 // `free < STATIC_SLOTS <= 8`: fits a `u8`.
                 return Acquired::Slot(Slot::Static(free as u8));
@@ -528,7 +548,7 @@ impl WakerLease {
         let slot = match got {
             Acquired::Slot(Slot::Shared) => return Self::shared(),
             Acquired::Slot(slot) => slot,
-            Acquired::Allocate => Self::allocate(),
+            Acquired::Allocate => Self::allocate(p),
         };
         let waker = match slot {
             // `i < STATIC_SLOTS` (a bit of `POOL_USED`); the shared waker is the safe fallback.
@@ -543,8 +563,8 @@ impl WakerLease {
     /// A new heap waker (cold: only beyond the static slots, once per waker).
     #[cold]
     #[inline(never)]
-    fn allocate() -> Slot {
-        twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::Waker);
+    fn allocate(p: Partition) -> Slot {
+        twine_core::alloc_guard::note(p, twine_core::alloc_guard::AllocSite::Waker);
         debug!(
             target: "twine::reactive",
             "waker pool: {} static slots leased; allocating a waker",
@@ -601,6 +621,7 @@ impl Drop for WakerLease {
         critical_section::with(|cs| match self.slot {
             Slot::Static(i) => {
                 let used = POOL_USED.borrow(cs);
+                // SHIFT: `Slot::Static(i)` is only made with `i < STATIC_SLOTS ≤ 8` (`acquire`).
                 used.set(used.get() & !(1 << i));
             }
             Slot::Heap(h) => {
@@ -631,6 +652,13 @@ impl Drop for WakerLease {
 /// `Channel<T, N>` is `Sync` whenever `T` is `Send` (it is built from `critical_section::Mutex`
 /// and `portable-atomic`, no compare-and-swap, so it works on thumbv6m), so it can live in a
 /// `static`, or be owned by the application's ports (see [`Scope::on_message`] § Ports).
+///
+/// **Partitions** (feature `partitions`): the first partition that registers a handler for it
+/// (`Scope::{on_message, on_latest, watch}`) becomes its only consumer, **permanently** — the
+/// record is never released, also when that partition's handlers are disposed; a registration
+/// from another partition is refused with a `warn!` and a `FaultKind::PartitionViolation`
+/// fault. Producers in any partition or context are unaffected. Fan out to several partitions
+/// with one cell per consumer.
 /// Sending, receiving and draining allocate nothing.
 ///
 /// ```
@@ -644,6 +672,7 @@ impl Drop for WakerLease {
 pub struct Channel<T, const N: usize> {
     queue: Queue<T, N>,
     waker: UiWaker,
+    owner: Owner,
 }
 
 impl<T, const N: usize> Default for Channel<T, N> {
@@ -671,6 +700,7 @@ impl<T, const N: usize> Channel<T, N> {
         Channel {
             queue: Queue::new(Overflow::DropNewest),
             waker: UiWaker::new(),
+            owner: Owner::new(),
         }
     }
 
@@ -794,6 +824,57 @@ pub(crate) trait Source {
     fn pending(&self) -> bool;
     /// The waker the source signals; the routing points it at the UI's waker.
     fn ui_waker(&self) -> &UiWaker;
+    /// The source's consuming partition (ADR-001 § 5.5).
+    fn owner(&self) -> &Owner;
+}
+
+/// The consuming partition of a [`Channel`] or [`Latest`] (ADR-001 § 5.5): recorded by the
+/// first registration (`on_message`, `on_latest`, `watch`) and never released; a registration
+/// from another partition is refused. A source has one task-waker slot (and a `Channel` one
+/// queue), so two partitions consuming one source would share them. Checked at registration
+/// only: sending, setting and draining never look at it. Zero-sized without the `partitions`
+/// feature (one partition: nothing to check).
+pub(crate) struct Owner {
+    /// `0`: no consumer yet; `1 + index` of the consuming partition.
+    #[cfg(feature = "partitions")]
+    cell: portable_atomic::AtomicU8,
+}
+
+impl Owner {
+    pub(crate) const fn new() -> Self {
+        Owner {
+            #[cfg(feature = "partitions")]
+            cell: portable_atomic::AtomicU8::new(0),
+        }
+    }
+
+    /// Records `p` as the consumer if there is none yet; `Some(owner)` if another partition
+    /// consumes the source. One critical section with `partitions` (registration time only:
+    /// the check and the claim are one step for two partitions on two cores, without
+    /// compare-and-swap); nothing without it (one partition: every registration is the
+    /// owner's).
+    #[inline]
+    pub(crate) fn conflict(&self, p: Partition) -> Option<Partition> {
+        #[cfg(feature = "partitions")]
+        {
+            let mine = p.index().saturating_add(1);
+            let held = critical_section::with(|_| {
+                let held = self.cell.load(Ordering::Relaxed);
+                if held == 0 {
+                    self.cell.store(mine, Ordering::Relaxed);
+                    mine
+                } else {
+                    held
+                }
+            });
+            (held != mine).then(|| Partition::new(held.saturating_sub(1)).unwrap_or(Partition::MAIN))
+        }
+        #[cfg(not(feature = "partitions"))]
+        {
+            let _ = (self, p);
+            None
+        }
+    }
 }
 
 impl<T, const N: usize> Source for Channel<T, N> {
@@ -804,14 +885,33 @@ impl<T, const N: usize> Source for Channel<T, N> {
     fn ui_waker(&self) -> &UiWaker {
         &self.waker
     }
+
+    fn owner(&self) -> &Owner {
+        &self.owner
+    }
+}
+
+/// Reports a registration of partition `part` refused because `owner` consumes the source:
+/// `warn!` and a [`FaultKind::PartitionViolation`] fault in `part`'s runtime (cold:
+/// registration time only, never a panic).
+#[cold]
+#[inline(never)]
+fn refused_by_owner(part: Partition, owner: Partition) {
+    warn!(
+        target: "twine::reactive",
+        "handler of {} refused: the source is consumed by {} (one consumer per Channel/Latest)",
+        part,
+        owner
+    );
+    crate::global::record_fault(part, FaultKind::PartitionViolation, 1);
 }
 
 /// Reports `dropped` values lost by a full channel (cold: only when a channel overflowed).
 #[cold]
 #[inline(never)]
-fn report_overflow(dropped: u32) {
+fn report_overflow(part: Partition, dropped: u32) {
     warn!(target: "twine::reactive", "channel dropped {} messages", dropped);
-    crate::global::record_fault(FaultKind::ChannelOverflow, dropped);
+    crate::global::record_fault(part, FaultKind::ChannelOverflow, dropped);
 }
 
 /// Drains up to `max` messages; returns how many were handled.
@@ -847,9 +947,9 @@ pub(crate) fn take_scope_channel(inner: &mut Inner, s: ScopeKey) -> Option<Chann
 /// Undoes the wake-up routing of a removed registration (the runtime must not be borrowed):
 /// a channel still handled elsewhere wakes the UI of its remaining handler, any other channel
 /// stops waking the UI of the removed one. Drops the registration.
-pub(crate) fn release_channel(reg: ChannelReg) {
+pub(crate) fn release_channel(part: Partition, reg: ChannelReg) {
     if let Some(w) = reg.waker {
-        let other = with_runtime(|rt| {
+        let other = with_runtime(part, |rt| {
             rt.inner
                 .borrow()
                 .channels
@@ -919,10 +1019,11 @@ impl Scope {
         ch: &'static Channel<T, N>,
         mut f: impl FnMut(T) + 'static,
     ) {
+        let part = self.partition();
         let drain: DrainFn = Box::new(move |max: usize| {
             let dropped = ch.take_dropped();
             if dropped > 0 {
-                report_overflow(dropped);
+                report_overflow(part, dropped);
             }
             for n in 0..max {
                 let Some(v) = ch.try_recv() else {
@@ -1014,18 +1115,28 @@ impl Scope {
 
     /// Adds a registration of this scope for `src` and routes `src`'s waker to the root's.
     fn register_source(self, src: &'static dyn Source, drain: DrainFn) {
+        /// Why a registration was refused (the handler is dropped outside the borrow, R1).
+        enum Refused {
+            Disposed(DrainFn),
+            Owned(DrainFn, Partition),
+        }
         let scope = self.key();
+        let part = self.partition();
         let mut waker = None;
-        let rejected = with_runtime(|rt| {
+        let refused = with_runtime(part, |rt| {
             let mut inner = rt.inner.borrow_mut();
             let Some(root) = inner.root_of(scope) else {
-                return Some(drain);
+                return Some(Refused::Disposed(drain));
             };
+            // One consuming partition per source (ADR-001 § 5.5): registration time only.
+            if let Some(owner) = src.owner().conflict(part) {
+                return Some(Refused::Owned(drain, owner));
+            }
             waker = inner.root_waker(root);
             let id = inner.next_channel_id;
             inner.next_channel_id = id.wrapping_add(1);
             // The handler was boxed by the caller: a registration always allocated.
-            twine_core::alloc_guard::note(twine_core::alloc_guard::AllocSite::ChannelHandler);
+            twine_core::alloc_guard::note(part, twine_core::alloc_guard::AllocSite::ChannelHandler);
             let reg = ChannelReg {
                 id,
                 scope,
@@ -1035,17 +1146,27 @@ impl Scope {
                 drain: Some(drain),
             };
             twine_core::alloc_guard::push(
+                part,
                 &mut inner.channels,
                 reg,
                 twine_core::alloc_guard::AllocSite::ChannelHandler,
             );
             None
         });
-        if let Some(d) = rejected {
-            warn!(target: "twine::reactive", "message handler on disposed scope {:?}; ignored", scope);
-            drop(d);
-        } else if let Some(w) = waker {
-            src.ui_waker().register(&w.task_waker());
+        match refused {
+            Some(Refused::Disposed(d)) => {
+                warn!(target: "twine::reactive", "message handler on disposed scope {:?}; ignored", scope);
+                drop(d);
+            }
+            Some(Refused::Owned(d, owner)) => {
+                drop(d);
+                refused_by_owner(part, owner);
+            }
+            None => {
+                if let Some(w) = waker {
+                    src.ui_waker().register(&w.task_waker());
+                }
+            }
         }
     }
 
@@ -1070,7 +1191,8 @@ impl Scope {
     /// ```
     pub fn set_ui_waker(self, waker: &'static UiWaker) {
         let root = self.key();
-        let targets = with_runtime(|rt| {
+        let part = self.partition();
+        let targets = with_runtime(part, |rt| {
             let mut inner = rt.inner.borrow_mut();
             match inner.scopes.get(root) {
                 Some(d) if d.parent.is_none() => {}
@@ -1080,6 +1202,7 @@ impl Scope {
             match inner.root_wakers.iter_mut().find(|(k, _)| *k == root) {
                 Some(e) => e.1 = waker,
                 None => twine_core::alloc_guard::push(
+                    part,
                     &mut inner.root_wakers,
                     (root, waker),
                     twine_core::alloc_guard::AllocSite::ReactiveScope,
@@ -1110,7 +1233,7 @@ impl Scope {
     /// has none or the scope is dead.
     #[must_use]
     pub fn ui_waker(self) -> Option<&'static UiWaker> {
-        with_runtime(|rt| {
+        with_runtime(self.partition(), |rt| {
             let inner = rt.inner.borrow();
             inner.root_of(self.key()).and_then(|r| inner.root_waker(r))
         })
@@ -1146,7 +1269,7 @@ impl Runtime {
     /// assert_eq!(last.get(), 2);
     /// ```
     pub fn drain_channels(self, max_per_channel: usize) -> usize {
-        drain_channels(None, max_per_channel)
+        drain_channels(self.partition(), None, max_per_channel)
     }
 
     /// Whether any channel with an `on_message` registration (of any root) has queued
@@ -1159,7 +1282,9 @@ impl Runtime {
     /// ```
     #[must_use]
     pub fn any_channel_pending(self) -> bool {
-        with_runtime(|rt| rt.inner.borrow().channels.iter().any(|r| r.chan.pending()))
+        with_runtime(self.partition(), |rt| {
+            rt.inner.borrow().channels.iter().any(|r| r.chan.pending())
+        })
     }
 }
 
@@ -1189,8 +1314,8 @@ impl Scope {
     /// assert_eq!(got_b.get(), 2);
     /// ```
     pub fn drain_channels(self, max_per_channel: usize) -> usize {
-        match with_runtime(|rt| rt.inner.borrow().root_of(self.key())) {
-            Some(root) => drain_channels(Some(root), max_per_channel),
+        match with_runtime(self.partition(), |rt| rt.inner.borrow().root_of(self.key())) {
+            Some(root) => drain_channels(self.partition(), Some(root), max_per_channel),
             None => 0,
         }
     }
@@ -1211,7 +1336,7 @@ impl Scope {
     /// ```
     #[must_use]
     pub fn any_channel_pending(self) -> bool {
-        with_runtime(|rt| {
+        with_runtime(self.partition(), |rt| {
             let inner = rt.inner.borrow();
             let Some(root) = inner.root_of(self.key()) else {
                 return false;
@@ -1223,9 +1348,9 @@ impl Scope {
 
 /// See [`Runtime::drain_channels`] (`root: None`) and [`Scope::drain_channels`] (`Some`: only
 /// the registrations of that root).
-fn drain_channels(root: Option<ScopeKey>, max_per_channel: usize) -> usize {
-    batch(|| {
-        with_runtime(|rt| {
+fn drain_channels(part: Partition, root: Option<ScopeKey>, max_per_channel: usize) -> usize {
+    batch(part, || {
+        with_runtime(part, |rt| {
             let Some(last_id) = rt.inner.borrow().channels.last().map(|r| r.id) else {
                 return 0;
             };

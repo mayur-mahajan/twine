@@ -267,6 +267,7 @@ impl State {
             let mut value = 0u16;
             for (i, n) in DATA_PINS.iter().enumerate() {
                 if self.pins.get(n) == Some(&true) {
+                    // SHIFT: `i < DATA_PINS.len() = 16`, on a `u16`.
                     value |= 1 << i;
                 }
             }
@@ -456,6 +457,9 @@ async fn maybe_yield(rec: &Recorder) {
 /// Runs a future to completion by polling it in a loop (the mocks never block).
 ///
 /// Panics if the future is still pending after 1000 polls (a test bug).
+///
+/// # Panics
+/// If the future is still pending after 1000 polls (a test bug).
 pub fn block_on<F: Future>(fut: F) -> F::Output {
     let mut fut = core::pin::pin!(fut);
     let mut cx = Context::from_waker(Waker::noop());

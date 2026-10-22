@@ -81,15 +81,20 @@ impl<const N: usize> RectSet<N> {
             return AddResult::AlreadyCovered;
         }
         // Drop stored rectangles covered by `r` (stable order).
-        let mut w = 0;
+        let mut kept = 0;
         for i in 0..self.len {
-            if !r.contains_rect(&self.rects[i]) {
-                self.rects[w] = self.rects[i];
-                w += 1;
+            let Some(&e) = self.rects.get(i) else { break };
+            if r.contains_rect(&e) {
+                continue;
             }
+            if let Some(slot) = self.rects.get_mut(kept) {
+                *slot = e;
+            }
+            // SAFE-ARITH: `kept ≤ i < len ≤ N`.
+            kept = kept.wrapping_add(1);
         }
-        self.len = w;
-        if self.len == N {
+        self.len = kept;
+        if self.len >= N {
             let bbox = self.as_slice().iter().fold(r, |acc, e| acc.union(e));
             crate::debug!(
                 target: "twine::refresh",
@@ -97,13 +102,20 @@ impl<const N: usize> RectSet<N> {
                 N,
                 bbox
             );
-            self.rects[0] = bbox;
+            // `N ≥ 1` (asserted at compile time): the first slot exists.
+            if let Some(first) = self.rects.first_mut() {
+                *first = bbox;
+            }
             self.len = 1;
             self.overflowed = true;
             return AddResult::Overflowed;
         }
-        self.rects[self.len] = r;
-        self.len += 1;
+        // SAFE-INDEX: `len < N` (checked above); the fallback is never taken.
+        if let Some(slot) = self.rects.get_mut(self.len) {
+            *slot = r;
+            // SAFE-ARITH: `len < N`.
+            self.len = self.len.wrapping_add(1);
+        }
         AddResult::Added
     }
 
@@ -113,31 +125,42 @@ impl<const N: usize> RectSet<N> {
         let mut changed = true;
         while changed {
             changed = false;
+            // SAFE-INDEX: `i < j < len ≤ N` in the loops below; the `get` fallbacks are never
+            // taken. SAFE-ARITH: the indices stay below `len ≤ N`, and `len ≥ 1` when it is
+            // decremented (`j < len`).
             let mut i = 0;
             while i < self.len {
-                let mut j = i + 1;
+                let mut j = i.wrapping_add(1);
                 while j < self.len {
-                    let (a, b) = (self.rects[i], self.rects[j]);
+                    let (Some(&a), Some(&b)) = (self.rects.get(i), self.rects.get(j)) else {
+                        break;
+                    };
                     if a.touches_or_overlaps(&b) {
                         let u = a.union(&b);
-                        if u.area() < a.area() + b.area() {
-                            self.rects[i] = u;
-                            self.len -= 1;
-                            self.rects[j] = self.rects[self.len];
+                        if u.area() < a.area().saturating_add(b.area()) {
+                            self.len = self.len.wrapping_sub(1);
+                            let last = self.rects.get(self.len).copied().unwrap_or(u);
+                            if let Some(slot) = self.rects.get_mut(i) {
+                                *slot = u;
+                            }
+                            if let Some(slot) = self.rects.get_mut(j) {
+                                *slot = last;
+                            }
                             changed = true;
-                            j = i + 1;
+                            j = i.wrapping_add(1);
                             continue;
                         }
                     }
-                    j += 1;
+                    j = j.wrapping_add(1);
                 }
-                i += 1;
+                i = i.wrapping_add(1);
             }
         }
     }
 
     fn as_slice(&self) -> &[Rect] {
-        &self.rects[..self.len]
+        // SAFE-INDEX: `len ≤ N` (every write keeps it so); the fallback is never taken.
+        self.rects.get(..self.len).unwrap_or(&[])
     }
 
     /// The stored rectangles.
@@ -169,10 +192,12 @@ impl<const N: usize> RectSet<N> {
         self.as_slice().iter().fold(Rect::ZERO, |acc, r| acc.union(r))
     }
 
-    /// Sum of the stored areas (overlaps counted twice).
+    /// Sum of the stored areas (overlaps counted twice), saturating at `u64::MAX`.
     #[must_use]
     pub fn total_area(&self) -> u64 {
-        self.as_slice().iter().map(Rect::area).sum()
+        self.as_slice()
+            .iter()
+            .fold(0, |sum: u64, r| sum.saturating_add(r.area()))
     }
 
     /// Whether an overflow happened since the last [`clear`](RectSet::clear).
@@ -185,6 +210,18 @@ impl<const N: usize> RectSet<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regression_merge_and_total_area_of_huge_rects() {
+        // Two areas near 2^64 overflowed their sum.
+        let all = Rect::new(i32::MIN, i32::MIN, i32::MAX, i32::MAX);
+        let mut s: RectSet<4> = RectSet::new(all);
+        s.add(Rect::new(i32::MIN, i32::MIN, i32::MAX - 1, i32::MAX));
+        s.add(Rect::new(i32::MIN + 1, i32::MIN, i32::MAX, i32::MAX));
+        assert_eq!(s.total_area(), u64::MAX);
+        s.merge();
+        assert_eq!(s.len(), 1);
+    }
     use alloc::vec::Vec;
 
     const SCREEN: Rect = Rect::new(0, 0, 320, 240);

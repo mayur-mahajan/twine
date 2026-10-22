@@ -18,7 +18,12 @@ mod read {
     use super::{KIND, NodeHandle, ReactiveError, with_value};
 
     /// Borrows the value and calls `f` (tracked when `track`).
-    #[inline]
+    ///
+    /// Always inlined into the handle method (`get`, `with`, …), so a read is the runtime
+    /// lookup plus the borrow at the call site, with no call layer of its own (a signal read
+    /// is the hottest operation of a binding; R5 phase gate, performance fix). The lookup
+    /// itself, `RuntimeState::read_node`, stays out of line and shared.
+    #[inline(always)]
     pub(super) fn try_with<T: 'static, R>(
         h: NodeHandle<T>,
         track: bool,
@@ -28,8 +33,8 @@ mod read {
         with_value::<T, R>(&rc, KIND, f)
     }
 
-    /// [`try_with`], failing out of line (see [`ReactiveError::fail`]).
-    #[inline]
+    /// [`try_with`], failing out of line (see [`ReactiveError::fail`]); inlined like it.
+    #[inline(always)]
     #[track_caller]
     pub(super) fn with<T: 'static, R>(h: NodeHandle<T>, track: bool, f: impl FnOnce(&T) -> R) -> R {
         match try_with(h, track, f) {
@@ -51,7 +56,7 @@ mod write {
         let rc = h.try_value(false, KIND)?;
         with_value_mut::<T, ()>(&rc, KIND, f)?;
         drop(rc);
-        with_runtime(|rt| rt.notify(h.key));
+        with_runtime(h.part, |rt| rt.notify(h.key));
         Ok(())
     }
 
@@ -60,7 +65,7 @@ mod write {
         let old = with_value_mut::<T, T>(&rc, KIND, |v| core::mem::replace(v, value))?;
         drop(rc);
         drop(old); // user `Drop` runs without the cell borrowed
-        with_runtime(|rt| rt.notify(h.key));
+        with_runtime(h.part, |rt| rt.notify(h.key));
         Ok(())
     }
 
@@ -79,7 +84,7 @@ mod write {
         drop(rc);
         if let Some(old) = old {
             drop(old);
-            with_runtime(|rt| rt.notify(h.key));
+            with_runtime(h.part, |rt| rt.notify(h.key));
         }
         Ok(())
     }
@@ -109,6 +114,13 @@ macro_rules! handle_impls {
             }
         }
         impl<T> Eq for $name<T> {}
+        impl<T> $name<T> {
+            /// The partition whose runtime holds the node (for `runtime()`).
+            #[inline]
+            pub(crate) fn node_part(&self) -> twine_core::Partition {
+                self.h.part
+            }
+        }
         impl<T> Hash for $name<T> {
             fn hash<H: Hasher>(&self, state: &mut H) {
                 self.h.hash(state);
@@ -468,8 +480,8 @@ impl<T: 'static> Signal<T> {
 
 /// The scope owning node `h`, or `Disposed(kind)` if the node is dead.
 pub(crate) fn owner_scope<T>(h: NodeHandle<T>, kind: HandleKind) -> Result<Scope, ReactiveError> {
-    with_runtime(|rt| rt.node_scope(h.key))
-        .map(Scope::from_key)
+    with_runtime(h.part, |rt| rt.node_scope(h.key))
+        .map(|k| Scope::from_key(k, h.part))
         .ok_or(ReactiveError::Disposed(kind))
 }
 
@@ -485,7 +497,7 @@ pub(crate) fn map_in_owner<T, U: PartialEq + 'static>(
         Ok(cx) => cx.memo(f),
         Err(e) => {
             h.skip(e);
-            Memo::from_handle(NodeHandle::dead(Location::caller()))
+            Memo::from_handle(NodeHandle::dead(h.part, Location::caller()))
         }
     }
 }

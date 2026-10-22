@@ -464,6 +464,37 @@ fn virtual_list_scroll_recycles() {
     assert!(t.find_all(by_class("label")).len() <= 10);
 }
 
+/// A row height below 1 px (a divisor of the visible-row lookup) is logged and taken as 1 px:
+/// no division by zero, the list still builds and scrolls (R5.S10).
+/// req: SAF-033
+#[test]
+fn regression_virtual_list_zero_row_height_is_one_px() {
+    for height in [0, -5] {
+        let (mut t, logs) = capture_logs(|| {
+            let mut t = TestUi::new(200, 240).mount(move |_cx| {
+                let rows: Vec<u32> = (0..1_000).collect();
+                virtual_list(rows, |i| *i, height, |_cx, i| label(text!("Row {}", i.get())))
+                    .size(200, 240)
+                    .test_id("vl")
+            });
+            t.run_until_idle();
+            t
+        });
+        assert!(
+            logs.iter()
+                .any(|l| l.message.contains("row height") && l.message.contains("1 px")),
+            "{logs:?}"
+        );
+        // One row per pixel of the viewport (plus one) exists.
+        let n = t.find_all(by_class("label")).len();
+        assert!(n > 0 && n <= 241, "{n} rows");
+        let vl = t.find(by_id("vl")).id();
+        t.engine_mut().scroll_to_y(vl, 500, false);
+        t.run_until_idle();
+        assert!(!t.find_all(by_class("label")).is_empty());
+    }
+}
+
 #[test]
 fn virtual_list_memory_constant() {
     let mut t = TestUi::new(200, 240).mount(big_list);

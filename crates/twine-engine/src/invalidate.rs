@@ -170,7 +170,9 @@ impl Engine {
 
     pub(crate) fn add_dirty(&mut self, d: usize, area: Rect, reason: InvalidateReason) {
         let max = self.config.max_dirty_areas;
-        self.displays[d].refresher.add_dirty(area, max);
+        if let Some(disp) = self.displays.get_mut(d) {
+            disp.refresher.add_dirty(area, max);
+        }
         #[cfg(feature = "debug-checks")]
         self.invalidations.push((area, reason));
         #[cfg(not(feature = "debug-checks"))]
@@ -232,10 +234,10 @@ impl Engine {
         };
         let w = |s: BorderSide| if side.contains(s) { b } else { 0 };
         Insets::new(
-            m.pad.left + w(BorderSide::LEFT),
-            m.pad.top + w(BorderSide::TOP),
-            m.pad.right + w(BorderSide::RIGHT),
-            m.pad.bottom + w(BorderSide::BOTTOM),
+            m.pad.left.saturating_add(w(BorderSide::LEFT)),
+            m.pad.top.saturating_add(w(BorderSide::TOP)),
+            m.pad.right.saturating_add(w(BorderSide::RIGHT)),
+            m.pad.bottom.saturating_add(w(BorderSide::BOTTOM)),
         )
     }
 
@@ -262,7 +264,7 @@ impl Engine {
         } else {
             self.invalidate(id, crate::InvalidateReason::Layout);
         }
-        let (dx, dy) = (rect.x0 - old.x0, rect.y0 - old.y0);
+        let (dx, dy) = (rect.x0.saturating_sub(old.x0), rect.y0.saturating_sub(old.y0));
         if dx != 0 || dy != 0 {
             let mut cur = self.tree.node(id).and_then(crate::Node::first_child);
             while let Some(c) = cur {
@@ -411,7 +413,7 @@ impl Engine {
         }
         let ow = self.style_i32(id, m, PropId::OutlineWidth);
         if ow > 0 && !self.style_opa(id, m, PropId::OutlineOpacity).is_transparent() {
-            ext = ext.max(ow + self.style_i32(id, m, PropId::OutlineOffset).max(0));
+            ext = ext.max(ow.saturating_add(self.style_i32(id, m, PropId::OutlineOffset).max(0)));
         }
         let c = n.coords;
         let tw = length_px(self.style_prop(id, m, PropId::TransformWidth), c.width());
@@ -430,11 +432,13 @@ impl Engine {
         if let Some(t) = self.layer_transform(id).filter(|_| with_transform) {
             let base = c.expand(ext);
             let b = transformed_bounds(base, &t);
-            let grow = (base.x0 - b.x0)
-                .max(base.y0 - b.y0)
-                .max(b.x1 - base.x1)
-                .max(b.y1 - base.y1);
-            ext += grow.max(0);
+            let grow = base
+                .x0
+                .saturating_sub(b.x0)
+                .max(base.y0.saturating_sub(b.y0))
+                .max(b.x1.saturating_sub(base.x1))
+                .max(b.y1.saturating_sub(base.y1));
+            ext = ext.saturating_add(grow.max(0));
         }
         ext.clamp(0, i32::from(u16::MAX)) as u16
     }

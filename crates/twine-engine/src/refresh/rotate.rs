@@ -7,7 +7,9 @@ use twine_core::Rotation;
 /// are logged.
 pub(crate) fn rotate_chunk(src: &[u8], dst: &mut [u8], w: usize, h: usize, bpp: usize, rotation: Rotation) {
     let dst_w = if rotation.swaps_axes() { h } else { w };
-    if let Err(e) = twine_render::rotate_buffer(src, w * bpp, dst, dst_w * bpp, w, h, rotation, bpp) {
+    // A row that does not fit `usize` is refused by `rotate_buffer` (its rows exceed `src`).
+    let (src_stride, dst_stride) = (w.saturating_mul(bpp), dst_w.saturating_mul(bpp));
+    if let Err(e) = twine_render::rotate_buffer(src, src_stride, dst, dst_stride, w, h, rotation, bpp) {
         twine_core::error!(target: "twine::refresh", "software rotation failed: {:?}", e);
     }
 }

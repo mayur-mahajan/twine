@@ -66,7 +66,9 @@ struct DragClock {
 
 impl DragClock {
     fn now_ms(&self) -> i64 {
-        self.wraps * i64::from(CLOCK_WRAP) + i64::from(self.last)
+        self.wraps
+            .saturating_mul(i64::from(CLOCK_WRAP))
+            .saturating_add(i64::from(self.last))
     }
 
     fn start(&mut self, cx: &mut WidgetCx<'_>) {
@@ -90,7 +92,7 @@ impl DragClock {
 
     fn tick(&mut self, v: i32) {
         if v < self.last {
-            self.wraps += 1;
+            self.wraps = self.wraps.saturating_add(1);
         }
         self.last = v;
     }
@@ -163,6 +165,9 @@ impl Default for Arc {
 }
 
 /// LVGL `lv_map`: maps `x` from `min_in..=max_in` to `min_out..=max_out` (clamped).
+///
+/// Exact for every `i32` range whose other span is an angle (below 2^14): the product of the
+/// spans stays below 2^46 in [`twine_core::math::map`].
 fn map(x: i32, min_in: i32, max_in: i32, min_out: i32, max_out: i32) -> i32 {
     if max_in >= min_in && x >= max_in {
         return max_out;
@@ -176,20 +181,24 @@ fn map(x: i32, min_in: i32, max_in: i32, min_out: i32, max_out: i32) -> i32 {
     if max_in <= min_in && x >= min_in {
         return min_out;
     }
-    let delta_in = i64::from(max_in) - i64::from(min_in);
-    let delta_out = i64::from(max_out) - i64::from(min_out);
-    ((i64::from(x) - i64::from(min_in)) * delta_out / delta_in + i64::from(min_out)) as i32
+    // `max_in != min_in` here (equal bounds return above), where the core `map` computes the
+    // same truncated `(x − min_in)·Δout / Δin + min_out` without overflow.
+    twine_core::math::map(x, min_in, max_in, min_out, max_out)
 }
 
-/// `0 ..= 360°`: "start = 0, end = 360 means a full circle" (LVGL `lv_arc_set_angles`).
-fn norm_incl(mut a: i32) -> i32 {
-    while a > TURN {
-        a -= TURN;
+/// `0 ..= 360°`: "start = 0, end = 360 means a full circle" (LVGL `lv_arc_set_angles`):
+/// angles above 360° step down by whole turns into `(0, 360°]`, negative ones up into
+/// `[0, 360°)`.
+fn norm_incl(a: i32) -> i32 {
+    if a > TURN {
+        // SAFE-ARITH: `a > 3600`, so `a − 1` does not overflow and the remainder is in
+        // `0..3600`.
+        (a.wrapping_sub(1) % TURN).wrapping_add(1)
+    } else if a < 0 {
+        a.rem_euclid(TURN)
+    } else {
+        a
     }
-    while a < 0 {
-        a += TURN;
-    }
-    a
 }
 
 /// `0 .. 360°`.
@@ -201,33 +210,46 @@ fn norm(a: i32) -> i32 {
 /// `r` and width `w` around `c` (LVGL `lv_draw_arc_get_area`), one pixel larger for
 /// anti-aliasing.
 pub(crate) fn arc_segment_area(c: Point, r: i32, w: i32, start: i32, end: i32, rounded: bool) -> Rect {
-    let outer = Rect::new(c.x - r, c.y - r, c.x + r, c.y + r).expand(1);
+    let outer = Rect::new(
+        c.x.saturating_sub(r),
+        c.y.saturating_sub(r),
+        c.x.saturating_add(r),
+        c.y.saturating_add(r),
+    )
+    .expand(1);
     let s = norm(start);
-    let mut e = norm(end);
-    if e <= s {
-        e += TURN;
-    }
-    if r <= w || e - s >= TURN || start == end + TURN || end == start + TURN {
+    let e = norm(end);
+    // SAFE-ARITH: `s, e ∈ 0..3600` (normalized): the unwrapped end is below 7200 and the
+    // sweep `e − s` is in `0..7200`.
+    let e = if e <= s { e.wrapping_add(TURN) } else { e };
+    let full = e.wrapping_sub(s) >= TURN
+        || end.checked_add(TURN) == Some(start)
+        || start.checked_add(TURN) == Some(end);
+    if r <= w || full {
         return outer;
     }
-    let ri = r - w;
+    let ri = r.saturating_sub(w);
     let mut b: Option<Rect> = None;
     let mut add = |a: i32, rad: i32| {
-        let x = c.x + ((i64::from(rad) * i64::from(cos(Angle::deci_deg(a)))) >> 15) as i32;
-        let y = c.y + ((i64::from(rad) * i64::from(sin(Angle::deci_deg(a)))) >> 15) as i32;
-        let p = Rect::new(x - 1, y - 1, x + 2, y + 2);
+        let x = c.x.saturating_add(util::trig_scale(rad, cos(Angle::deci_deg(a))));
+        let y = c.y.saturating_add(util::trig_scale(rad, sin(Angle::deci_deg(a))));
+        let p = Rect::new(
+            x.saturating_sub(1),
+            y.saturating_sub(1),
+            x.saturating_add(2),
+            y.saturating_add(2),
+        );
         b = Some(b.map_or(p, |b| b.union(&p)));
     };
     for a in [s, e] {
         add(a, r);
         add(a, ri);
     }
-    let mut q = (s / 900 + 1) * 900;
-    while q < e {
+    // The quarter points (multiples of 90°) strictly inside the sweep `s .. e` (`e < 7200`).
+    for q in (900..e).step_by(900).skip_while(|&q| q <= s) {
         add(q, r);
-        q += 900;
     }
-    let extra = if rounded { w / 2 + 1 } else { 0 };
+    let extra = if rounded { (w / 2).saturating_add(1) } else { 0 };
     b.map_or(outer, |b| b.expand(extra).intersection(&outer).unwrap_or(b))
 }
 
@@ -338,10 +360,16 @@ impl Arc {
     /// smaller).
     fn bg_end_unwrapped(&self) -> i32 {
         if self.bg_end < self.bg_start {
-            self.bg_end + TURN
+            // SAFE-ARITH: `bg_end ∈ 0..=3600` (normalized by `norm_incl`).
+            self.bg_end.wrapping_add(TURN)
         } else {
             self.bg_end
         }
+    }
+
+    /// The middle of the background arc (normalized angles: no overflow).
+    fn bg_mid(&self) -> i32 {
+        util::mid(self.bg_start, self.bg_end_unwrapped())
     }
 
     /// Sets the value, clamped to the range (LVGL `lv_arc_set_value`). Idempotent.
@@ -360,6 +388,25 @@ impl Arc {
     }
 
     /// Sets the range (LVGL `lv_arc_set_range`); the value is clamped into it. Idempotent.
+    ///
+    /// Any pair of `i32`s is a valid range, up to `i32::MIN ..= i32::MAX`: values map to
+    /// angles (and dragged angles back to values) in `i64`, exactly; the symmetrical mode's
+    /// middle is `(min + max) / 2` rounded toward zero. Never panics.
+    ///
+    /// ```
+    /// use twine_core::Angle;
+    /// use twine_testing::EngineHarness;
+    /// use twine_widgets::arc::{self, Arc};
+    ///
+    /// let mut h = EngineHarness::new(160, 160);
+    /// let screen = h.screen();
+    /// let a = arc::create(h.engine_mut(), screen).unwrap();
+    /// h.engine_mut().with_widget_mut(a, |w: &mut Arc, cx| {
+    ///     w.set_range(cx, i32::MIN, i32::MAX);
+    ///     w.set_value(cx, 0); // the middle: 135° + 270° / 2
+    /// });
+    /// assert_eq!(h.engine().widget::<Arc>(a).unwrap().angle_end(), Angle::deg(270));
+    /// ```
     pub fn set_range(&mut self, cx: &mut WidgetCx<'_>, min: i32, max: i32) {
         if self.min == min && self.max == max {
             return;
@@ -416,7 +463,7 @@ impl Arc {
         let bg_end = self.bg_end_unwrapped();
         match mode {
             ArcMode::Symmetrical => {
-                let mid = (self.bg_start + bg_end) / 2;
+                let mid = util::mid(self.bg_start, bg_end);
                 self.set_indic(cx, mid, mid);
             }
             ArcMode::Reverse => {
@@ -464,8 +511,8 @@ impl Arc {
         let bg_end = self.bg_end_unwrapped();
         let angle = match self.mode {
             ArcMode::Symmetrical => {
-                let mid = (self.bg_start + bg_end) / 2;
-                let range_mid = (self.min + self.max) / 2;
+                let mid = util::mid(self.bg_start, bg_end);
+                let range_mid = util::mid(self.min, self.max);
                 if value < range_mid {
                     let a = map(value, self.min, range_mid, self.bg_start, mid);
                     self.set_indic(cx, a, mid);
@@ -518,19 +565,20 @@ impl Arc {
         }
         let (old_start, old_end) = old;
         let (start, end) = new;
-        let wrap = |d: i32| if d < 0 { TURN + d } else { d };
-        let so = wrap(end - old_start);
-        let sn = wrap(end - start);
-        if (sn - so).abs() > TURN / 2 {
+        // Angles are normalized (`0..=3600`): every difference below is within ±7200.
+        let wrap = |d: i32| if d < 0 { TURN.saturating_add(d) } else { d };
+        let so = wrap(end.saturating_sub(old_start));
+        let sn = wrap(end.saturating_sub(start));
+        if sn.saturating_sub(so).saturating_abs() > TURN / 2 {
             cx.invalidate_for("arc.angles");
         } else if sn < so {
             self.inv_arc_area(cx, old_start, start, part);
         } else if so < sn {
             self.inv_arc_area(cx, start, old_start, part);
         }
-        let eo = wrap(old_end - old_start);
-        let en = wrap(end - old_start);
-        if (en - eo).abs() > TURN / 2 {
+        let eo = wrap(old_end.saturating_sub(old_start));
+        let en = wrap(end.saturating_sub(old_start));
+        if en.saturating_sub(eo).saturating_abs() > TURN / 2 {
             cx.invalidate_for("arc.angles");
         } else if en < eo {
             self.inv_arc_area(cx, end, old_end, part);
@@ -547,7 +595,7 @@ impl Arc {
         let m = cx.measure();
         let (c, mut r) = self.center(&m);
         if part == Part::Indicator {
-            r -= Self::indicator_max_pad(&m);
+            r = r.saturating_sub(Self::indicator_max_pad(&m));
         }
         if r <= 0 {
             cx.invalidate_for("arc.angles");
@@ -555,7 +603,11 @@ impl Arc {
         }
         let w = m.style_i32(part, PropId::ArcWidth);
         let rounded = m.style(part, PropId::ArcRounded).as_bool().unwrap_or(false);
-        let area = arc_segment_area(c, r, w, start + self.rotation, end + self.rotation, rounded);
+        let (start, end) = (
+            start.saturating_add(self.rotation),
+            end.saturating_add(self.rotation),
+        );
+        let area = arc_segment_area(c, r, w, start, end, rounded);
         cx.invalidate_area(area);
     }
 
@@ -564,8 +616,11 @@ impl Arc {
     pub fn center(&self, cx: &MeasureCx<'_>) -> (Point, i32) {
         let c = cx.coords();
         let pad = cx.padding(Part::Main);
-        let r = (c.width() - pad.left - pad.right).min(c.height() - pad.top - pad.bottom) / 2;
-        (Point::new(c.x0 + r + pad.left, c.y0 + r + pad.top), r)
+        let w = c.width().saturating_sub(pad.horizontal());
+        let h = c.height().saturating_sub(pad.vertical());
+        let r = w.min(h) / 2;
+        let at = |o: i32, p: i32| o.saturating_add(r).saturating_add(p);
+        (Point::new(at(c.x0, pad.left), at(c.y0, pad.top)), r)
     }
 
     fn indicator_max_pad(m: &MeasureCx<'_>) -> i32 {
@@ -573,30 +628,31 @@ impl Arc {
         p.left.max(p.right).max(p.top.max(p.bottom))
     }
 
-    /// The knob's angle (LVGL `get_angle`).
+    /// The knob's angle (LVGL `get_angle`). Every term is a normalized angle (`rotation <
+    /// 3600`, the others `≤ 7200`), so the sum stays below 2^14.
     fn knob_angle(&self) -> i32 {
-        let mut angle = self.rotation;
-        match self.mode {
-            ArcMode::Normal => angle += self.indic_end,
-            ArcMode::Reverse => angle += self.indic_start,
+        let along = match self.mode {
+            ArcMode::Normal => self.indic_end,
+            ArcMode::Reverse => self.indic_start,
             ArcMode::Symmetrical => {
-                let bg_end = self.bg_end_unwrapped();
                 let indic_end = if self.indic_end < self.indic_start {
-                    self.indic_end + TURN
+                    // SAFE-ARITH: `indic_end ∈ 0..=3600` (normalized).
+                    self.indic_end.wrapping_add(TURN)
                 } else {
                     self.indic_end
                 };
-                let mid = (self.bg_start + bg_end) / 2;
+                let mid = self.bg_mid();
                 if self.indic_start < mid {
-                    angle += self.indic_start;
+                    self.indic_start
                 } else if indic_end > mid {
-                    angle += self.indic_end;
+                    self.indic_end
                 } else {
-                    angle += mid;
+                    mid
                 }
             }
-        }
-        angle
+        };
+        // SAFE-ARITH: see above.
+        self.rotation.wrapping_add(along)
     }
 
     /// The knob's area (LVGL `get_knob_area`), centered on the indicator ring.
@@ -605,29 +661,31 @@ impl Arc {
         let (c, r) = self.center(cx);
         let w = cx.style_i32(Part::Indicator, PropId::ArcWidth);
         let half = w / 2;
-        let r = r - half - Self::indicator_max_pad(cx);
-        let a = Angle::deci_deg(self.knob_angle() + self.knob_offset);
-        let kx = ((i64::from(r) * i64::from(cos(a))) >> 15) as i32;
-        let ky = ((i64::from(r) * i64::from(sin(a))) >> 15) as i32;
+        let r = r.saturating_sub(half).saturating_sub(Self::indicator_max_pad(cx));
+        // SAFE-ARITH: `knob_angle() < 2^14` and the normalized offset is below 3600.
+        let a = Angle::deci_deg(self.knob_angle().wrapping_add(norm(self.knob_offset)));
+        let kx = util::trig_scale(r, cos(a));
+        let ky = util::trig_scale(r, sin(a));
+        let (kx, ky) = (c.x.saturating_add(kx), c.y.saturating_add(ky));
         let p = cx.padding(Part::Knob);
         // The ring's center line runs through pixel corners: an even-sized knob around
         // `center + (kx, ky)` sits exactly on it.
-        Rect::new(
-            c.x + kx - p.left - half,
-            c.y + ky - p.top - half,
-            c.x + kx + p.right + half,
-            c.y + ky + p.bottom + half,
-        )
+        let lo = |k: i32, pad: i32| k.saturating_sub(pad).saturating_sub(half);
+        let hi = |k: i32, pad: i32| k.saturating_add(pad).saturating_add(half);
+        Rect::new(lo(kx, p.left), lo(ky, p.top), hi(kx, p.right), hi(ky, p.bottom))
     }
 
     /// LVGL `knob_get_extra_size`: the knob's shadow or outline reach.
     fn knob_extra(m: &MeasureCx<'_>) -> i32 {
         let k = Part::Knob;
-        let shadow = m.style_i32(k, PropId::ShadowWidth)
-            + m.style_i32(k, PropId::ShadowSpread)
-            + m.style_i32(k, PropId::ShadowOffsetX).abs()
-            + m.style_i32(k, PropId::ShadowOffsetY).abs();
-        let outline = m.style_i32(k, PropId::OutlineWidth) + m.style_i32(k, PropId::OutlineOffset);
+        let shadow = m
+            .style_i32(k, PropId::ShadowWidth)
+            .saturating_add(m.style_i32(k, PropId::ShadowSpread))
+            .saturating_add(m.style_i32(k, PropId::ShadowOffsetX).saturating_abs())
+            .saturating_add(m.style_i32(k, PropId::ShadowOffsetY).saturating_abs());
+        let outline = m
+            .style_i32(k, PropId::OutlineWidth)
+            .saturating_add(m.style_i32(k, PropId::OutlineOffset));
         shadow.max(outline)
     }
 
@@ -647,7 +705,10 @@ impl Arc {
         if !visible || m.coords().is_empty() {
             return None;
         }
-        Some(self.knob_area(m).expand(Self::knob_extra(m).max(0) + 1))
+        Some(
+            self.knob_area(m)
+                .expand(Self::knob_extra(m).max(0).saturating_add(1)),
+        )
     }
 
     /// LVGL `lv_arc_angle_within_bg_bounds`: whether `angle` (relative to the background
@@ -657,20 +718,22 @@ impl Arc {
         if self.bg_end == self.bg_start {
             return None;
         }
-        let mut bounds = norm(self.bg_end - self.bg_start);
+        // SAFE-ARITH: both ends are normalized (`0..=3600`).
+        let mut bounds = norm(self.bg_end.wrapping_sub(self.bg_start));
         if bounds == 0 {
             bounds = TURN;
         }
         if angle <= bounds {
             return Some((angle < bounds / 2, true));
         }
-        if TURN - bounds <= tolerance {
+        // SAFE-ARITH: `bounds ∈ 1..=3600`.
+        if TURN.wrapping_sub(bounds) <= tolerance {
             return Some((true, true));
         }
-        if TURN - angle <= tolerance {
+        if TURN.saturating_sub(angle) <= tolerance {
             return Some((true, false));
         }
-        if angle <= bounds + tolerance {
+        if angle <= bounds.saturating_add(tolerance) {
             return Some((false, false));
         }
         None
@@ -700,19 +763,17 @@ impl Arc {
         let m = MeasureCx::new(cx.engine(), node);
         let (c, mut r) = self.center(&m);
         // Pixel centers relative to the center (a pixel corner).
-        let (px, py) = (2 * (pt.x - c.x) + 1, 2 * (pt.y - c.y) + 1);
+        let (px, py) = (util::center_offset2(pt.x, c.x), util::center_offset2(pt.y, c.y));
         if !self.dragging {
             let indic_w = m.style_i32(Part::Indicator, PropId::ArcWidth);
-            let mut ri = r - indic_w;
-            ri -= if m.flags().contains(ObjFlags::ADV_HITTEST) {
+            let ri = r.saturating_sub(indic_w);
+            let ri = ri.saturating_sub(if m.flags().contains(ObjFlags::ADV_HITTEST) {
                 indic_w
             } else {
                 (ri / 4).max(indic_w)
-            };
+            });
             let ri = ri.max(1);
-            if i64::from(px) * i64::from(px) + i64::from(py) * i64::from(py)
-                > 4 * i64::from(ri) * i64::from(ri)
-            {
+            if util::hyp2(px, py) > util::diam2(ri) {
                 self.dragging = true;
                 self.clock.start(&mut cx.widget_cx());
                 self.last_tick = self.clock.now_ms();
@@ -722,52 +783,73 @@ impl Arc {
             return;
         }
         let bg_end = self.bg_end_unwrapped();
-        let mut angle = norm(atan2(py, px).as_deci_deg() - self.rotation - self.bg_start);
+        // Angles below are normalized (`bg_start`, `bg_end ≤ 7200`, `last_angle` within the
+        // background arc, `rotation < 3600`): their sums and differences stay within ±2^15.
+        let rel = atan2(py, px)
+            .as_deci_deg()
+            .saturating_sub(self.rotation)
+            .saturating_sub(self.bg_start);
+        let mut angle = norm(rel);
         r = r.max(1);
-        let circumference = 2 * r * 314 / 100;
-        let tolerance = TURN * util::dpx(cx.engine(), node, 20) / circumference.max(1);
+        let circumference = util::circumference(r);
+        let tolerance = util::per_circumference(TURN, util::dpx(cx.engine(), node, 20), circumference);
         let min_close_prev = self.min_close;
         if !self.within_bg_bounds(angle, tolerance) {
             return;
         }
-        let deg_range = bg_end - self.bg_start;
-        let last_rel = self.last_angle - self.bg_start;
-        let delta = angle - last_rel;
+        let deg_range = bg_end.saturating_sub(self.bg_start);
+        let last_rel = self.last_angle.saturating_sub(self.bg_start);
+        let delta = angle.saturating_sub(last_rel);
         // No big jumps (more than 280°): prefer the end that was nearer on the last press.
-        if delta.abs() > 2800 {
+        if delta.saturating_abs() > 2800 {
             angle = if self.min_close { 0 } else { deg_range };
         } else if !self.inside {
-            angle = if self.min_close { -deg_range } else { deg_range };
+            angle = if self.min_close {
+                deg_range.saturating_neg()
+            } else {
+                deg_range
+            };
         }
         // No jump from one end to the other through the gap without releasing.
-        if min_close_prev && !self.min_close && !self.inside && delta.abs() > 2800 {
+        if min_close_prev && !self.min_close && !self.inside && delta.saturating_abs() > 2800 {
             angle = 0;
             self.min_close = min_close_prev;
-        } else if !min_close_prev && self.min_close && !self.inside && TURN - delta.abs() > 2800 {
+        } else if !min_close_prev
+            && self.min_close
+            && !self.inside
+            && TURN.saturating_sub(delta.saturating_abs()) > 2800
+        {
             angle = deg_range;
             self.min_close = min_close_prev;
         }
         // The change rate limit (0.1° per ms: chg_rate [°/s] · Δt [ms] / 100).
-        let mut delta = angle - last_rel;
+        let delta = angle.saturating_sub(last_rel);
         let now = self.clock.now_ms();
-        let dt = (now - self.last_tick).max(0);
-        let mut max_delta = (i64::from(self.chg_rate) * dt / 100).min(i64::from(i32::MAX)) as i32;
-        let steps = self.max - self.min;
-        if steps > 0 {
-            max_delta = max_delta.max(deg_range / steps);
-        }
-        delta = delta.clamp(-max_delta, max_delta);
-        angle = last_rel + delta;
+        let dt = now.saturating_sub(self.last_tick).max(0);
+        let max_delta = util::sat_i32(i64::from(self.chg_rate).saturating_mul(dt) / 100);
+        // The value range in `i64`: exact for every `min`/`max` (no `i32` overflow).
+        let steps = util::span(self.min, self.max);
+        // `deg_range / steps` (truncated, `0` for an empty range); `|steps| ≥ 1` when taken.
+        let per_step = |num: i64| num.checked_div(steps).unwrap_or(0);
+        let max_delta = if steps > 0 {
+            max_delta.max(util::sat_i32(per_step(i64::from(deg_range))))
+        } else {
+            max_delta
+        };
+        // `max_delta ≥ 0` (a non-negative rate and time), so the bounds are ordered.
+        let delta = delta.clamp(max_delta.saturating_neg(), max_delta);
+        angle = last_rel.saturating_add(delta);
         // Rounding for symmetry.
         if steps != 0 {
-            let round = (deg_range * 8) / steps;
-            angle += (round + 4) / 16;
+            // SAFE-ARITH: `|deg_range| < 2^15`.
+            let round = per_step(i64::from(deg_range).wrapping_mul(8));
+            angle = angle.saturating_add(util::sat_i32(round.saturating_add(4) / 16));
         }
-        angle += self.bg_start;
+        angle = angle.saturating_add(self.bg_start);
         let old = self.value;
         let mut v = map(angle, self.bg_start, bg_end, self.min, self.max);
         if self.mode == ArcMode::Reverse {
-            v = self.max - v + self.min;
+            v = util::reflect(v, self.min, self.max);
         }
         if Some(v) != self.value {
             self.last_tick = now;
@@ -784,7 +866,7 @@ impl Arc {
     /// Steps the value for a key (LVGL `LV_EVENT_KEY`).
     fn step(&mut self, cx: &mut EventCx<'_>, d: i32) {
         let old = self.value;
-        let v = self.value() + d;
+        let v = self.value().saturating_add(d);
         self.set_value(&mut cx.widget_cx(), v);
         if self.value != old {
             let node = cx.node();
@@ -797,8 +879,10 @@ impl Arc {
         let bg = m.padding(Part::Main);
         let bg_pad = bg.left.max(bg.right).max(bg.top.max(bg.bottom));
         let k = m.padding(Part::Knob);
-        let knob_pad = k.left.max(k.right).max(k.top.max(k.bottom)) + 2;
-        let knob = knob_pad - bg_pad + Self::knob_extra(m);
+        let knob_pad = k.left.max(k.right).max(k.top.max(k.bottom)).saturating_add(2);
+        let knob = knob_pad
+            .saturating_sub(bg_pad)
+            .saturating_add(Self::knob_extra(m));
         knob.max(util::part_ext_draw(m, Part::Indicator)).max(0)
     }
 
@@ -808,15 +892,23 @@ impl Arc {
         let (c, r) = self.center(&m);
         if r > 0 {
             let d = cx.arc_dsc(Part::Main);
-            let (s, e) = (self.bg_start + self.rotation, self.bg_end + self.rotation);
+            // SAFE-ARITH: normalized angles (`≤ 3600` each).
+            let (s, e) = (
+                self.bg_start.wrapping_add(self.rotation),
+                self.bg_end.wrapping_add(self.rotation),
+            );
             if s != e {
                 cx.painter().arc(c, r, Angle::deci_deg(s), Angle::deci_deg(e), &d);
             }
         }
-        let ir = r - Self::indicator_max_pad(&m);
+        let ir = r.saturating_sub(Self::indicator_max_pad(&m));
         if ir > 0 {
             let d = cx.arc_dsc(Part::Indicator);
-            let (s, e) = (self.indic_start + self.rotation, self.indic_end + self.rotation);
+            // SAFE-ARITH: normalized angles (`≤ 3600` each).
+            let (s, e) = (
+                self.indic_start.wrapping_add(self.rotation),
+                self.indic_end.wrapping_add(self.rotation),
+            );
             if s != e {
                 cx.painter()
                     .arc(c, ir, Angle::deci_deg(s), Angle::deci_deg(e), &d);
@@ -876,20 +968,23 @@ impl Widget for Arc {
         }
         let (c, r) = self.center(cx);
         let w = cx.style_i32(Part::Main, PropId::ArcWidth);
-        let (px, py) = (i64::from(2 * (p.x - c.x) + 1), i64::from(2 * (p.y - c.y) + 1));
-        let d2 = px * px + py * py;
-        let inner = i64::from((r - w - ext).max(0));
-        if d2 < 4 * inner * inner {
+        let (px, py) = (util::center_offset2(p.x, c.x), util::center_offset2(p.y, c.y));
+        let d2 = util::hyp2(px, py);
+        let inner = r.saturating_sub(w).saturating_sub(ext).max(0);
+        if d2 < util::diam2(inner) {
             return false;
         }
-        let angle = norm(atan2(py as i32, px as i32).as_deci_deg() - self.rotation - self.bg_start);
-        let circ = (2 * r * 314 / 100).max(1);
-        let tolerance = TURN * util::dpx(cx.engine(), cx.node(), 20) / circ;
+        let rel = atan2(py, px)
+            .as_deci_deg()
+            .saturating_sub(self.rotation)
+            .saturating_sub(self.bg_start);
+        let angle = norm(rel);
+        let circ = util::circumference(r);
+        let tolerance = util::per_circumference(TURN, util::dpx(cx.engine(), cx.node(), 20), circ);
         if self.bg_bounds(angle, tolerance).is_none() {
             return false;
         }
-        let outer = i64::from(r + ext);
-        d2 <= 4 * outer * outer
+        d2 <= util::diam2(r.saturating_add(ext))
     }
 
     fn event(&mut self, cx: &mut EventCx<'_>, ev: &Event) -> EventResult {

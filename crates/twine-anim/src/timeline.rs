@@ -6,7 +6,7 @@ use core::any::Any;
 use core::fmt;
 
 use twine_core::arena::next_generation;
-use twine_core::{Duration, Generation, Id, Instant};
+use twine_core::{Duration, Generation, Id, Instant, Partition};
 
 use crate::Anim;
 use crate::anim::{AnimCallbacks, AnimTarget, NodeKey, Phase, PropKey};
@@ -171,6 +171,8 @@ pub struct Timeline {
     epoch: u32,
     ticking: bool,
     added_while_ticking: bool,
+    /// The partition whose seal domain the table's growth is noted in.
+    part: Partition,
 }
 
 impl fmt::Debug for Timeline {
@@ -202,12 +204,34 @@ impl Timeline {
             epoch: 0,
             ticking: false,
             added_while_ticking: false,
+            part: Partition::MAIN,
         }
     }
 
     /// The largest number of animations a timeline can run at once (65 534: slot indices are
     /// `u16`, one value is reserved).
     pub const MAX_RUNNING: u16 = u16::MAX - 1;
+
+    /// Moves the table to partition `p`'s seal domain: growth of its storage after `p` was
+    /// sealed is noted there ([`twine_core::alloc_guard`]). The engine calls it from
+    /// `Engine::set_partition`; a table starts in [`Partition::MAIN`]. Never panics.
+    ///
+    /// ```
+    /// use twine_anim::Timeline;
+    /// use twine_core::Partition;
+    /// let mut t = Timeline::new();
+    /// t.set_partition(Partition::MAIN);
+    /// assert_eq!(t.partition(), Partition::MAIN);
+    /// ```
+    pub fn set_partition(&mut self, p: Partition) {
+        self.part = p;
+    }
+
+    /// The partition set with [`set_partition`](Self::set_partition).
+    #[must_use]
+    pub fn partition(&self) -> Partition {
+        self.part
+    }
 
     /// Sets how many animations may run at once (capped at [`MAX_RUNNING`](Self::MAX_RUNNING);
     /// at least 1). Starting one more returns [`AnimId::DANGLING`] (the caller reports it,
@@ -286,6 +310,7 @@ impl Timeline {
             && i < u16::MAX
         {
             twine_core::alloc_guard::before_push(
+                self.part,
                 self.slots.len(),
                 self.slots.capacity(),
                 twine_core::alloc_guard::AllocSite::Animation,
@@ -357,6 +382,7 @@ impl Timeline {
         if let Some(next) = next_generation(slot.generation) {
             slot.generation = next;
             twine_core::alloc_guard::push(
+                self.part,
                 &mut self.free,
                 index,
                 twine_core::alloc_guard::AllocSite::Animation,

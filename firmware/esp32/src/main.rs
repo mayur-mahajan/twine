@@ -197,7 +197,24 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     let builder = builder.buffers(BufferMode::partial_double_from(BUFS.take().expect("draw buffers already taken")));
     #[cfg(feature = "touch")]
     let builder = builder.input_wait(touch);
-    let ui = builder.app_config(config).with_embassy_platform().build(demo::app);
+    // `try_build`, not the panicking `build`: the form both profiles have (`safety` has no
+    // `build`). A UI that cannot be built (display, buffers or a widget rejected) stops here.
+    let ui = builder
+        .app_config(config)
+        .with_embassy_platform()
+        .try_build(demo::app)
+        .unwrap_or_else(|e| panic!("twine: cannot build the UI: {e}"));
+    // `perf-monitor` (opt-in): the on-screen performance overlay over the UI.
+    #[cfg(feature = "perf-monitor")]
+    let ui = {
+        let mut ui = ui;
+        if let Some(d) = ui.engine().default_display() {
+            if ui.engine_mut().set_perf_overlay(d, true).is_err() {
+                log::warn!("perf overlay: no room for it");
+            }
+        }
+        ui
+    };
     log::info!("twine: {} demo on {}x{}", demo::NAME, info.width, info.height);
     twine::embassy::run(ui).await
 }

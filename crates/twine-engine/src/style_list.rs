@@ -57,14 +57,16 @@ impl StyleList {
     /// Heap bytes of the entry vector (by capacity; the styles the entries point to are
     /// shared and not included).
     pub(crate) fn heap_bytes(&self) -> usize {
-        self.0.capacity() * core::mem::size_of::<StyleEntry>()
+        self.0
+            .capacity()
+            .saturating_mul(core::mem::size_of::<StyleEntry>())
     }
 
     /// Releases the unused capacity, keeping room for the local-style entry when there is
     /// none yet (local properties usually follow a node's creation).
     pub(crate) fn shrink_to_fit(&mut self) {
         let has_local = self.0.iter().any(|e| e.kind == EntryKind::Local);
-        let keep = self.0.len() + usize::from(!has_local);
+        let keep = self.0.len().saturating_add(usize::from(!has_local));
         self.0.shrink_to(keep);
     }
 
@@ -95,17 +97,20 @@ impl StyleList {
         })
     }
 
-    /// The local style of `sel`, created when missing. Always `Some`: the entry found or
-    /// inserted holds a shared buffer (`None` would only mean a broken invariant, and the
-    /// callers then skip the change instead of panicking).
-    pub(crate) fn local_mut(&mut self, sel: Selector) -> Option<&mut StyleBuf> {
+    /// The local style of `sel`, created when missing, in partition `part`'s seal domain (the
+    /// engine's: a style that grows after the engine's partition was sealed is noted there).
+    /// Always `Some`: the entry found or inserted holds a shared buffer (`None` would only
+    /// mean a broken invariant, and the callers then skip the change instead of panicking).
+    pub(crate) fn local_mut(&mut self, sel: Selector, part: twine_core::Partition) -> Option<&mut StyleBuf> {
         let pos = match self.0.iter().position(|e| {
             e.kind == EntryKind::Local && e.selector == sel && matches!(e.style, StyleRef::Shared(_))
         }) {
             Some(p) => p,
             None => self.insert(StyleEntry::new(sel, Rc::new(StyleBuf::new()), EntryKind::Local)),
         };
-        shared_mut(self.0.get_mut(pos))
+        let buf = shared_mut(self.0.get_mut(pos))?;
+        buf.set_partition(part);
+        Some(buf)
     }
 
     /// Removes and returns the entry at `i`.
@@ -117,7 +122,8 @@ impl StyleList {
     pub(crate) fn remove_where(&mut self, mut f: impl FnMut(&StyleEntry) -> bool) -> usize {
         let before = self.0.len();
         self.0.retain(|e| !f(e));
-        before - self.0.len()
+        // `retain` only removes: the length did not grow.
+        before.saturating_sub(self.0.len())
     }
 }
 
@@ -179,7 +185,9 @@ pub(crate) fn length_px(v: StyleValue, basis: i32) -> i32 {
     match v.as_length() {
         // The resolver converted `Dp`; a raw one counts at the reference DPI.
         Some(Length::Px(p) | Length::Dp(p)) => p,
-        Some(Length::Pct(p)) => (i64::from(basis) * i64::from(p) / 100) as i32,
+        // SAFE-ARITH: the product of two 32-bit values fits in `i64`; the result saturates.
+        Some(Length::Pct(p)) => (i64::from(basis).wrapping_mul(i64::from(p)) / 100)
+            .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
         Some(Length::Content) | None => v.as_i32().unwrap_or(0),
     }
 }
@@ -294,11 +302,12 @@ impl Engine {
                 self.refresh_style(id, selector.part, Some(pid));
             }
         }
+        let part = self.partition();
         let Some(n) = self.tree.node_mut(id) else { return };
         if n.styles.local(selector).and_then(|s| s.get(pid)) == Some(prop.value()) {
             return;
         }
-        if !n.styles.local_mut(selector).is_some_and(|s| s.set(prop)) {
+        if !n.styles.local_mut(selector, part).is_some_and(|s| s.set(prop)) {
             return;
         }
         twine_core::trace!(target: "twine::style", "{} local {:?} = {:?}", fmt_node_id(id), pid, prop.value());
@@ -333,6 +342,7 @@ impl Engine {
         t: impl Into<twine_style::TransitionValue>,
     ) {
         let t = t.into();
+        let part = self.partition();
         let Some(n) = self.tree.node_mut(id) else {
             warn_missing("set_local_transition", id);
             return;
@@ -340,7 +350,10 @@ impl Engine {
         if n.styles.local(selector).and_then(StyleBuf::get_transition) == Some(t.get()) {
             return;
         }
-        if n.styles.local_mut(selector).is_some_and(|s| s.set_transition(t)) {
+        if n.styles
+            .local_mut(selector, part)
+            .is_some_and(|s| s.set_transition(t))
+        {
             twine_core::trace!(target: "twine::style", "{} local transition for {:?}", fmt_node_id(id), selector);
             n.style_cache.invalidate();
         }
@@ -348,6 +361,7 @@ impl Engine {
 
     /// Removes a local property; returns whether it was set.
     pub fn remove_local_prop(&mut self, id: NodeId, prop: PropId, selector: Selector) -> bool {
+        let part = self.partition();
         let Some(n) = self.tree.node_mut(id) else {
             warn_missing("remove_local_prop", id);
             return false;
@@ -355,7 +369,7 @@ impl Engine {
         if n.styles.local(selector).and_then(|s| s.get(prop)).is_none() {
             return false;
         }
-        if let Some(s) = n.styles.local_mut(selector) {
+        if let Some(s) = n.styles.local_mut(selector, part) {
             s.remove(prop);
         }
         self.refresh_style(id, selector.part, Some(prop));
@@ -592,7 +606,8 @@ impl Engine {
         // repeats a link of this scan).
         let mut i = 0;
         while let Some((n, p)) = self.tree.style_link_at(i) {
-            i += 1;
+            // SAFE-ARITH: `i` indexes the style links (a `Vec`): below `isize::MAX`.
+            i = i.wrapping_add(1);
             if self.tree.style_chain_reaches(p, id) {
                 self.refresh_linked_style(n);
             }
@@ -742,7 +757,7 @@ mod tests {
         l.insert(StyleEntry::new(Selector::MAIN, &A, EntryKind::Normal));
         l.insert(StyleEntry::new(Selector::MAIN, &B, EntryKind::Normal));
         l.insert(StyleEntry::new(Selector::MAIN, &B, EntryKind::Theme));
-        l.local_mut(Selector::MAIN)
+        l.local_mut(Selector::MAIN, twine_core::Partition::MAIN)
             .unwrap()
             .set(StyleProp::Radius(twine_style::Radius::Px(3).into()));
         l.insert(StyleEntry::new(Selector::MAIN, &A, EntryKind::Transition));
@@ -781,7 +796,7 @@ mod tests {
         let mut e = Engine::new(EngineConfig::default()).unwrap();
         let n = e.create_root(Box::new(Obj)).unwrap();
         let list = &mut e.tree.node_mut(n).unwrap().styles;
-        list.local_mut(Selector::state(State::PRESSED))
+        list.local_mut(Selector::state(State::PRESSED), twine_core::Partition::MAIN)
             .unwrap()
             .set(StyleProp::BgColor(Color::GREEN.into()));
         list.insert(StyleEntry::new(Selector::MAIN, &BLUE, EntryKind::Normal));

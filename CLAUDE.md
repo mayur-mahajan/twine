@@ -10,12 +10,13 @@ API, `no_std` + `alloc`). Low compute/power is the top priority.
 - `docs/safety/profile.md` — the `safety` profile: excluded parts, feature propagation, the
   safety lints with their per-crate status table, release profile, panic-handler contract and
   no-reachable-panics rules (§ 7), bounded memory (§ 8), bounded time and the measured stack per
-  tree level (§ 10), display integrity (§ 11). `docs/safety/panics.md` — the generated panic inventory.
+  tree level (§ 10), display integrity (§ 11), partitioned runtimes (§ 13, feature
+  `partitions`, `docs/design/adr-001-partitioned-runtimes.md`). `docs/safety/panics.md` — the generated panic inventory.
 - `docs/safety/manual.md` — the safety manual (assumptions of use, configuration constraints,
   known limitations, evidence index); `docs/safety/requirements.md` — the SAF requirements,
   traced to tests in the generated `docs/safety/traceability.md`.
 - `docs/design/principles.md` — the design principles P1–P11 cited as `(Pn)` in the code
-  (reconstructed in R5.S08; P8 and P10 inferred, awaiting review).
+  (reconstructed in R5.S08, accepted by the user).
 - `docs/safety/coding-guidelines-deviations.md` — where the code deviates from the Safety-Critical
   Rust Consortium coding guidelines, with impact and the plan step that addresses each gap.
 - `README.md`, `CONTRIBUTING.md` — overview, Definition of Done, hard rules, code guidelines.
@@ -50,7 +51,8 @@ API, `no_std` + `alloc`). Low compute/power is the top priority.
   compare (or rewrite) the table in `docs/safety/profile.md`; a lint with no site left must move
   from the crate's allow-list to `deny`.
 - `cargo xtask panics [--check]` — write (or verify) the panic inventory `docs/safety/panics.md`;
-  every explicit panic site needs a `// PANIC: …` justification above it.
+  every explicit panic site needs a `// PANIC: …` justification above it, and every
+  `// SAFE-INDEX: …` / `// SAFE-ARITH: …` proof (listed as proven sites) a non-empty text.
 - `cargo xtask stack-budget [--update]` — measure (release build) the stack each recursive tree
   walk (draw, cover search, hit test, layout) costs per tree level and fail when the worst case
   at the reference depth exceeds the budget; `--update` rewrites the table in
@@ -67,6 +69,16 @@ API, `no_std` + `alloc`). Low compute/power is the top priority.
   pending entries.
 - `cargo xtask traceability [--check]` — write (or verify) `docs/safety/traceability.md` from
   `docs/safety/requirements.md` and the tests' `req:` / `fault:` doc lines.
+- `cargo xtask shifts [--check]` — write (or verify) the shift-amount inventory
+  `docs/safety/shifts.md`; every shift by a run-time amount in library code needs a
+  `// SHIFT: …` proof next to it (named constants are exempt: rustc checks them) (R5.S09, guideline G5; CI stage `shifts`).
+- `cargo xtask divisions [--check]` — write (or verify) the divisor inventory
+  `docs/safety/divisions.md`; every integer division or remainder by a run-time divisor in
+  library code (named constants are exempt: rustc checks them) must be non-zero by a `NonZero*` type, a `.max(1)`/`.clamp(1, ..)` guard or a
+  `// DIV: …` proof next to it (R5.S10, guideline G3; CI stage `divisions`).
+- `cargo xtask guidelines [--check]` — rewrite (or verify) the measured block (§ 1.1) of
+  `docs/safety/coding-guidelines-deviations.md`: recursion cycles, divisions, shifts, macros
+  (R5.S10; CI stage `guidelines`).
 - `cargo xtask coverage [--mcdc]` — line coverage with thresholds; `--mcdc`: MC/DC of core,
   reactive, engine, render, layout, style (nightly + llvm-tools; falls back to line coverage).
 - `cargo xtask fuzz <target>` — cargo-fuzz targets in `fuzz/` (decoders; `tree_ops`,

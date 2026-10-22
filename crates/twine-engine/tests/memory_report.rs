@@ -5,7 +5,7 @@ mod common;
 
 use common::{boxed, white_screen};
 use twine_core::{Color, ColorFormat, Instant, Opa, Rect};
-use twine_engine::{BufferMode, BufferSpec, Engine, EngineConfig, InvalidateReason, Obj};
+use twine_engine::{BufferMode, BufferSpec, Engine, EngineConfig, EngineMemory, InvalidateReason, Obj};
 use twine_hal::{DisplayDriver, DisplayInfo, DrawBufferMem};
 use twine_style::StyleProp;
 use twine_testing::alloc::{CountingAllocator, count_allocs};
@@ -181,4 +181,20 @@ fn static_layer_buffer_draws_layers_without_the_heap() {
     );
     // The group is half transparent: its overlap is not darker than either box alone.
     assert!(frames[0].iter().any(|b| *b != 0xFF));
+}
+
+#[test]
+fn regression_hand_built_memory_sums_saturate() {
+    // `heap_bytes` / `static_bytes` added the public fields with `+`: a hand-built value whose
+    // parts sum past `usize::MAX` overflowed (a panic with `overflow-checks`). They saturate.
+    let m = EngineMemory {
+        tree: usize::MAX,
+        glyph_cache: 1,
+        layer_buf: usize::MAX,
+        layer_buf_static: true,
+        draw_buffers_static: 1,
+        ..EngineMemory::default()
+    };
+    assert_eq!(m.heap_bytes(), usize::MAX);
+    assert_eq!(m.static_bytes(), usize::MAX);
 }

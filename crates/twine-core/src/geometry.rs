@@ -92,14 +92,14 @@ impl Neg for Point {
 impl AddAssign for Point {
     #[inline]
     fn add_assign(&mut self, o: Point) {
-        *self = *self + o;
+        *self = Add::add(*self, o);
     }
 }
 
 impl SubAssign for Point {
     #[inline]
     fn sub_assign(&mut self, o: Point) {
-        *self = *self - o;
+        *self = Sub::sub(*self, o);
     }
 }
 
@@ -141,7 +141,8 @@ impl Size {
         if self.is_empty() {
             0
         } else {
-            u64::from(self.w as u32) * u64::from(self.h as u32)
+            // SAFE-ARITH: a product of two `u32`s is below 2^64.
+            u64::from(self.w as u32).wrapping_mul(u64::from(self.h as u32))
         }
     }
 }
@@ -189,7 +190,8 @@ impl Rotation {
     /// ```
     #[must_use]
     pub const fn relative_to(self, base: Rotation) -> Rotation {
-        match (self.degrees() + 360 - base.degrees()) % 360 {
+        // SAFE-ARITH: both angles are at most 270, so the sum is in `90..=630`.
+        match self.degrees().wrapping_add(360).wrapping_sub(base.degrees()) % 360 {
             0 => Rotation::Deg0,
             90 => Rotation::Deg90,
             180 => Rotation::Deg180,
@@ -355,7 +357,11 @@ impl Rect {
         if self.is_empty() {
             0
         } else {
-            ((self.x1 as i64 - self.x0 as i64) as u64) * ((self.y1 as i64 - self.y0 as i64) as u64)
+            // SAFE-ARITH: not empty, so both spans are in `1..2^32` and their product is below
+            // 2^64.
+            let w = (self.x1 as i64).wrapping_sub(self.x0 as i64) as u64;
+            let h = (self.y1 as i64).wrapping_sub(self.y0 as i64) as u64;
+            w.wrapping_mul(h)
         }
     }
 
@@ -440,7 +446,8 @@ impl Rect {
     /// Clamps one axis after growing/shrinking: an inverted interval collapses to its center.
     const fn axis(lo: i64, hi: i64) -> (i32, i32) {
         if lo > hi {
-            let c = sat_i32((lo + hi).div_euclid(2));
+            // SAFE-ARITH: callers pass sums of two `i32`s (below 2^33 in magnitude).
+            let c = sat_i32(lo.wrapping_add(hi).div_euclid(2));
             (c, c)
         } else {
             (sat_i32(lo), sat_i32(hi))
@@ -457,8 +464,16 @@ impl Rect {
     /// Shrinks by the given insets (negative insets grow). Clamped to empty at the center.
     #[must_use]
     pub const fn inset(&self, i: Insets) -> Rect {
-        let (x0, x1) = Self::axis(self.x0 as i64 + i.left as i64, self.x1 as i64 - i.right as i64);
-        let (y0, y1) = Self::axis(self.y0 as i64 + i.top as i64, self.y1 as i64 - i.bottom as i64);
+        // SAFE-ARITH: sums and differences of two `i32`s fit in `i64`.
+        let (x0, x1) = Self::axis(
+            (self.x0 as i64).wrapping_add(i.left as i64),
+            (self.x1 as i64).wrapping_sub(i.right as i64),
+        );
+        // SAFE-ARITH: as above.
+        let (y0, y1) = Self::axis(
+            (self.y0 as i64).wrapping_add(i.top as i64),
+            (self.y1 as i64).wrapping_sub(i.bottom as i64),
+        );
         Rect::new(x0, y0, x1, y1)
     }
 
@@ -476,9 +491,10 @@ impl Rect {
     /// Center point, rounded towards negative infinity.
     #[must_use]
     pub const fn center(&self) -> Point {
+        // SAFE-ARITH: sums of two `i32`s fit in `i64`.
         Point::new(
-            sat_i32((self.x0 as i64 + self.x1 as i64).div_euclid(2)),
-            sat_i32((self.y0 as i64 + self.y1 as i64).div_euclid(2)),
+            sat_i32((self.x0 as i64).wrapping_add(self.x1 as i64).div_euclid(2)),
+            sat_i32((self.y0 as i64).wrapping_add(self.y1 as i64).div_euclid(2)),
         )
     }
 
@@ -497,10 +513,20 @@ impl Rect {
     #[must_use]
     pub const fn round_out(&self, align: u8) -> Rect {
         const fn down(v: i32, a: i64) -> i32 {
-            sat_i32((v as i64).div_euclid(a) * a)
+            // DIV: `a = align ≥ 2` (the only caller returns early for `align <= 1`).
+            // SAFE-ARITH: `|v div a · a| ≤ |v| + a < 2^32`.
+            sat_i32((v as i64).div_euclid(a).wrapping_mul(a))
         }
         const fn up(v: i32, a: i64) -> i32 {
-            sat_i32((v as i64 + a - 1).div_euclid(a) * a)
+            // SAFE-ARITH: `|v| < 2^31` and `a ≤ 255`, so every step stays below 2^33.
+            // DIV: `a = align ≥ 2` (the only caller returns early for `align <= 1`).
+            sat_i32(
+                (v as i64)
+                    .wrapping_add(a)
+                    .wrapping_sub(1)
+                    .div_euclid(a)
+                    .wrapping_mul(a),
+            )
         }
         if align <= 1 {
             return *self;
@@ -630,9 +656,13 @@ pub struct SmallRects {
 
 impl SmallRects {
     fn push(&mut self, r: Rect) {
-        if !r.is_empty() && usize::from(self.len) < self.rects.len() {
-            self.rects[usize::from(self.len)] = r;
-            self.len += 1;
+        if r.is_empty() {
+            return;
+        }
+        if let Some(slot) = self.rects.get_mut(usize::from(self.len)) {
+            *slot = r;
+            // SAFE-ARITH: a slot below the array's length (4) existed, so `len < 4`.
+            self.len = self.len.wrapping_add(1);
         }
     }
 }
@@ -641,16 +671,17 @@ impl Iterator for SmallRects {
     type Item = Rect;
 
     fn next(&mut self) -> Option<Rect> {
-        if self.pos < self.len {
-            self.pos += 1;
-            Some(self.rects[usize::from(self.pos - 1)])
-        } else {
-            None
+        if self.pos >= self.len {
+            return None;
         }
+        let r = self.rects.get(usize::from(self.pos)).copied();
+        // SAFE-ARITH: `pos < len ≤ 4`.
+        self.pos = self.pos.wrapping_add(1);
+        r
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let n = usize::from(self.len - self.pos);
+        let n = usize::from(self.len.saturating_sub(self.pos));
         (n, Some(n))
     }
 }

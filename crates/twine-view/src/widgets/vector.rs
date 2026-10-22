@@ -31,7 +31,9 @@ use crate::view::View;
 /// fn gauge(cx: Scope) -> impl View {
 ///     let r = cx.signal(10);
 ///     vector_canvas(move |scene| {
-///         let (path, dsc) = scene.path_mut();
+///         let Some((path, dsc)) = scene.path_mut() else {
+///             return; // out of memory: draw nothing
+///         };
 ///         path.circle(FxPoint::from_int(50, 50), Fx::from_int(r.get()));
 ///         *dsc = VectorDsc::fill(Color::BLUE);
 ///     })

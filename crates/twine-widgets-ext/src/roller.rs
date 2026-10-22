@@ -3,6 +3,7 @@
 use alloc::boxed::Box;
 use alloc::string::String;
 use core::cell::Cell;
+use core::num::NonZeroU32;
 
 use twine_anim::{Anim, AnimId};
 use twine_core::{Duration, Point, Rect, Size};
@@ -182,10 +183,20 @@ impl Roller {
     /// The index of the selected option (LVGL `lv_roller_get_selected`).
     #[must_use]
     pub fn selected(&self) -> u16 {
-        if self.real_cnt == 0 {
-            return 0;
-        }
-        (self.sel % u32::from(self.real_cnt)) as u16
+        self.option_of(self.sel)
+    }
+
+    /// The option shown in virtual row `row` (`row` modulo the option count; 0 without
+    /// options).
+    fn option_of(&self, row: u32) -> u16 {
+        // The remainder is below `real_cnt ≤ u16::MAX`.
+        // DIV: `real` is a `NonZeroU32` (`Roller::real`).
+        self.real().map_or(0, |real| (row % real) as u16)
+    }
+
+    /// The number of options, `None` without options.
+    fn real(&self) -> Option<NonZeroU32> {
+        NonZeroU32::new(u32::from(self.real_cnt))
     }
 
     /// Writes the selected option into `buf` (cleared first; LVGL
@@ -222,8 +233,10 @@ impl Roller {
         self.rows_drawn.get()
     }
 
+    /// The rows of the virtual column: `real_cnt · pages` (below 2^20: at most `u16::MAX`
+    /// options on at most 15 pages).
     fn total_rows(&self) -> u32 {
-        u32::from(self.real_cnt) * u32::from(self.pages)
+        u32::from(self.real_cnt).saturating_mul(u32::from(self.pages))
     }
 
     // ---- Setters --------------------------------------------------------------------------
@@ -312,13 +325,14 @@ impl Roller {
             let m = cx.measure();
             let font_h = i32::from(m.font(Part::Main).line_height);
             let ls = m.style_i32(Part::Main, PropId::LetterSpacing);
-            let normal_h = (i32::from(self.real_cnt) * (font_h + ls)).max(1);
-            let mut pages = (EXTRA_INF_SIZE / normal_h).clamp(3, 15);
-            if pages & 1 == 0 {
-                pages += 1;
-            }
+            let normal_h = i32::from(self.real_cnt)
+                .saturating_mul(font_h.saturating_add(ls))
+                .max(1);
+            // `normal_h ≥ 1`: the fallback is never taken. An even count becomes the next odd
+            // one (`| 1`, at most 15).
+            let pages = EXTRA_INF_SIZE.checked_div(normal_h).unwrap_or(0).clamp(3, 15) | 1;
             self.pages = pages as u16;
-            self.sel = u32::from(self.pages / 2) * u32::from(self.real_cnt);
+            self.sel = u32::from(self.pages / 2).saturating_mul(u32::from(self.real_cnt));
             twine_core::debug!(
                 target: "twine::engine",
                 "roller#{}: {} virtual pages",
@@ -355,20 +369,24 @@ impl Roller {
     fn target_row(&self, idx: u16) -> u32 {
         let total = self.total_rows();
         let mut sel = u32::from(idx);
-        if self.mode == RollerMode::Infinite {
-            let real = u32::from(self.real_cnt);
-            let page = self.sel / real;
-            if sel < real {
-                let act = self.sel - page * real;
+        // `real_cnt != 0`: the only caller, `set_selected`, returns for 0.
+        if let (RollerMode::Infinite, Some(real)) = (self.mode, self.real()) {
+            if sel < real.get() {
+                // The option shown now, and the start of its page (`page · real = sel − act`).
+                // DIV: `real` is a `NonZeroU32` (`Roller::real`).
+                let act = self.sel % real;
+                let page_start = i64::from(self.sel.saturating_sub(act));
+                let half = real.get() / 2;
+                let real = i64::from(real.get());
                 let mut s = i64::from(sel);
-                if (i64::from(act) - s).unsigned_abs() > u64::from(real / 2) {
-                    if act > sel {
-                        s += i64::from(real);
+                if act.abs_diff(sel) > half {
+                    s = if act > sel {
+                        s.saturating_add(real)
                     } else {
-                        s -= i64::from(real);
-                    }
+                        s.saturating_sub(real)
+                    };
                 }
-                sel = u32::try_from(s + i64::from(real * page)).unwrap_or(0);
+                sel = u32::try_from(s.saturating_add(page_start)).unwrap_or(0);
             }
         }
         sel.min(total.saturating_sub(1))
@@ -395,7 +413,10 @@ impl Roller {
         let font_h = i32::from(m.font(Part::Main).line_height);
         let ls = m.style_i32(Part::Main, PropId::LineSpacing);
         let border = m.style_i32(Part::Main, PropId::BorderWidth);
-        (font_h + ls) * i32::from(rows) + 2 * border
+        font_h
+            .saturating_add(ls)
+            .saturating_mul(i32::from(rows))
+            .saturating_add(border.saturating_mul(2))
     }
 
     /// Redraw, and relayout a content-sized roller.
@@ -415,15 +436,18 @@ impl Roller {
     fn unit(m: &MeasureCx<'_>) -> (i32, i32) {
         let font_h = i32::from(m.font(Part::Main).line_height);
         let ls = m.style_i32(Part::Main, PropId::LineSpacing);
-        (font_h, font_h + ls)
+        (font_h, font_h.saturating_add(ls))
     }
 
     /// The column offset that puts row `sel` in the middle (LVGL `refr_position`).
     fn row_offset(m: &MeasureCx<'_>, sel: u32) -> i32 {
         let (font_h, unit) = Self::unit(m);
         let h = m.content_area().height();
-        let mid_y1 = h / 2 - font_h / 2;
-        mid_y1 - i32::try_from(sel).unwrap_or(i32::MAX / unit.max(1)) * unit
+        let mid_y1 = (h / 2).saturating_sub(font_h / 2);
+        // SAFE-ARITH: `sel < 2^32` and `|unit| ≤ 2^31`: the product is below 2^63 and the
+        // difference is taken saturating.
+        let ofs = i64::from(sel).wrapping_mul(i64::from(unit));
+        util::sat_i32(i64::from(mid_y1).saturating_sub(ofs))
     }
 
     /// The selection band (LVGL `get_sel_area`), absolute.
@@ -432,10 +456,11 @@ impl Roller {
         let font_main_h = i32::from(m.font(Part::Main).line_height);
         let font_sel_h = i32::from(m.font(Part::Selected).line_height);
         let ls = m.style_i32(Part::Main, PropId::LineSpacing);
-        let d = (font_sel_h + font_main_h) / 2 + ls;
-        let y1 = c.y0 + c.height() / 2 - d / 2;
+        // SAFE-ARITH: two line heights (`u16`s) sum below 2^17.
+        let d = (font_sel_h.wrapping_add(font_main_h) / 2).saturating_add(ls);
+        let y1 = c.y0.saturating_add(c.height() / 2).saturating_sub(d / 2);
         // LVGL's inclusive `y2 = y1 + d`.
-        Rect::new(c.x0, y1, c.x1, y1 + d + 1)
+        Rect::new(c.x0, y1, c.x1, y1.saturating_add(d).saturating_add(1))
     }
 
     /// The area a move redraws: the roller inside its border (not its outline or shadow).
@@ -501,18 +526,25 @@ impl Roller {
         if self.mode != RollerMode::Infinite || self.real_cnt == 0 {
             return;
         }
-        let real = u32::from(self.real_cnt);
-        let mid = u32::from(self.pages / 2) * real;
-        self.sel = self.sel % real + mid;
-        self.sel_orig = self.sel_orig % real + mid;
+        let Some(real) = self.real() else {
+            return;
+        };
+        // The middle page's first row (`< 2^20`, as every row of the column).
+        let mid = u32::from(self.pages / 2).saturating_mul(real.get());
+        // DIV: `real` is a `NonZeroU32` (`Roller::real`).
+        self.sel = (self.sel % real).saturating_add(mid);
+        // DIV: as above.
+        self.sel_orig = (self.sel_orig % real).saturating_add(mid);
         let y = Self::row_offset(&cx.measure(), self.sel);
         self.set_offset(cx, y);
     }
 
     /// Moves the selection by `delta` rows (keys, rotary), keeping the confirmed row.
     fn step(&mut self, cx: &mut WidgetCx<'_>, delta: i32) {
-        let last = i64::from(self.total_rows()) - 1;
-        let new = (i64::from(self.sel) + i64::from(delta)).clamp(0, last.max(0));
+        let last = i64::from(self.total_rows()).saturating_sub(1);
+        let new = i64::from(self.sel)
+            .saturating_add(i64::from(delta))
+            .clamp(0, last.max(0));
         if new != i64::from(self.sel) {
             self.sel = new as u32;
             self.refr_position(cx, true);
@@ -534,7 +566,7 @@ impl Roller {
         let before = if matches!(kind, Some(InputKind::Pointer | InputKind::Button)) {
             self.sel_at_press
         } else {
-            (self.sel_orig % u32::from(self.real_cnt.max(1))) as u16
+            self.option_of(self.sel_orig)
         };
         if matches!(kind, Some(InputKind::Encoder | InputKind::Keypad)) {
             self.sel_orig = self.sel;
@@ -551,34 +583,46 @@ impl Roller {
             let m = cx.measure();
             let (font_h, unit) = Self::unit(&m);
             let c = m.content_area();
-            let top = c.y0 + self.offset_y;
+            let top = i64::from(c.y0).saturating_add(i64::from(self.offset_y));
             let total = i64::from(self.total_rows());
+            let unit_div = i64::from(unit.max(1));
             let row = if self.moved {
                 // Snap to the row at the middle after the throw (LVGL: the geometric sum of
                 // the last vector with the scroll throw decay).
-                let throw = i64::from(cx.engine().config().scroll_throw.min(99));
+                let keep = 100i64.saturating_sub(i64::from(cx.engine().config().scroll_throw.get().min(99)));
                 let mut sum = 0i64;
                 let mut v = i64::from(self.last_dy);
                 while v != 0 {
-                    sum += v;
-                    v = v * (100 - throw) / 100;
+                    // SAFE-ARITH: `keep ∈ 1..=99`, so `|v|` shrinks every step from at most
+                    // 2^32 and the sum stays below `100 · 2^32 < 2^39`.
+                    sum = sum.wrapping_add(v);
+                    v = v.wrapping_mul(keep) / 100;
                 }
                 let coords = m.coords();
-                let mid = coords.y0 + (coords.height() - 1) / 2;
-                (i64::from(mid) - (i64::from(top) + sum)) / i64::from(unit.max(1))
+                let mid =
+                    i64::from(coords.y0).saturating_add(i64::from(coords.height().saturating_sub(1) / 2));
+                // `unit_div ≥ 1`: the fallback is never taken.
+                mid.saturating_sub(top.saturating_add(sum))
+                    .checked_div(unit_div)
+                    .unwrap_or(0)
             } else if let Some(p) = p {
                 // The clicked row (LVGL `lv_label_get_letter_on`: a row reaches down to its
                 // line height; the line space belongs to the next one).
-                let y = i64::from(p.y - top);
+                let y = i64::from(p.y).saturating_sub(top);
                 if y <= i64::from(font_h) {
                     0
                 } else {
-                    (y - i64::from(font_h) + i64::from(unit) - 1) / i64::from(unit.max(1))
+                    let past = y
+                        .saturating_sub(i64::from(font_h))
+                        .saturating_add(i64::from(unit))
+                        .saturating_sub(1);
+                    // `unit_div ≥ 1`: the fallback is never taken.
+                    past.checked_div(unit_div).unwrap_or(0)
                 }
             } else {
                 i64::from(self.sel)
             };
-            let row = row.clamp(0, (total - 1).max(0)) as u32;
+            let row = row.clamp(0, total.saturating_sub(1).max(0)) as u32;
             self.sel = row;
             self.sel_orig = row;
             self.refr_position(cx, true);
@@ -597,8 +641,8 @@ impl Roller {
             a => a,
         };
         let x = match align {
-            TextAlign::Center => (cw - w) / 2,
-            TextAlign::Right => cw - w,
+            TextAlign::Center => cw.saturating_sub(w) / 2,
+            TextAlign::Right => cw.saturating_sub(w),
             _ => 0,
         };
         (x, w, align)
@@ -618,24 +662,40 @@ impl Roller {
         dsc: &twine_text::TextDsc,
     ) {
         let total = i64::from(self.total_rows());
-        if total == 0 || unit <= 0 {
+        let (Some(real), true) = (self.real(), unit > 0) else {
             return;
-        }
-        let first = (i64::from(clip.y0 - top - font_h) / i64::from(unit)).max(0);
-        let last = (i64::from(clip.y1 - 1 - top) / i64::from(unit)).min(total - 1);
+        };
+        let (top64, unit64) = (i64::from(top), i64::from(unit));
+        // SAFE-ARITH: sums of three `i32`s stay below 2^34 in magnitude.
+        let first_px = i64::from(clip.y0)
+            .wrapping_sub(top64)
+            .wrapping_sub(i64::from(font_h));
+        // SAFE-ARITH: as above.
+        let last_px = i64::from(clip.y1).wrapping_sub(1).wrapping_sub(top64);
+        // `unit > 0` (returned above): the fallbacks are never taken.
+        let first = first_px.checked_div(unit64).unwrap_or(0).max(0);
+        let last = last_px
+            .checked_div(unit64)
+            .unwrap_or(-1)
+            .min(total.saturating_sub(1));
         if first > last {
             return;
         }
-        let real = i64::from(self.real_cnt);
         // Walk the options from the first visible row (one scan of the options per pass).
-        // Rows past the last option start over (the virtual pages).
-        let mut it = self.options.iter().cycle().skip((first % real) as usize);
-        for r in first..=last {
+        // Rows past the last option start over (the virtual pages). `first < total < 2^20`.
+        // DIV: `real` is a `NonZeroU32` (`Roller::real`).
+        let skip = (first as u32) % real;
+        let mut it = self.options.iter().cycle().skip(skip as usize);
+        // Row `r` starts at `top + r · unit`: within `clip.y0 − font_h − unit .. clip.y1` for
+        // the visited rows, stepped by `unit` (saturating, so extreme offsets stay ordered).
+        // SAFE-ARITH: `first < 2^20` and `unit < 2^31`, the product is below 2^51.
+        let mut y = util::sat_i32(top64.saturating_add(first.wrapping_mul(unit64)));
+        for _ in first..=last {
             let opt = it.next().unwrap_or("");
-            let y = top + (r as i32) * unit;
-            let area = Rect::new(x.0, y, x.1, y + font_h);
+            let area = Rect::new(x.0, y, x.1, y.saturating_add(font_h));
             cx.draw_text(area, opt, dsc);
-            self.rows_drawn.set(self.rows_drawn.get() + 1);
+            self.rows_drawn.set(self.rows_drawn.get().saturating_add(1));
+            y = y.saturating_add(unit);
         }
     }
 }
@@ -690,21 +750,21 @@ impl Widget for Roller {
             return;
         };
         let (font_h, unit) = Self::unit(&m);
-        let top = content.y0 + self.offset_y;
+        let top = content.y0.saturating_add(self.offset_y);
         let (lx, lw, align) = self.label_x(&m);
-        let x0 = content.x0 + lx;
+        let x0 = content.x0.saturating_add(lx);
         let mut dsc = cx.text_dsc(Part::Main);
         dsc.align = align;
         dsc.flags |= TextDrawFlags::EXPAND;
         // Above the band (LVGL's inclusive clip ends on the band's first row) and below it.
-        let above = Rect::new(clip.x0, clip.y0, clip.x1, clip.y1.min(sel.y0 + 1));
-        let below = Rect::new(clip.x0, clip.y0.max(sel.y1 - 1), clip.x1, clip.y1);
+        let above = Rect::new(clip.x0, clip.y0, clip.x1, clip.y1.min(sel.y0.saturating_add(1)));
+        let below = Rect::new(clip.x0, clip.y0.max(sel.y1.saturating_sub(1)), clip.x1, clip.y1);
         for part in [above, below] {
             if part.is_empty() {
                 continue;
             }
             let _ = cx.with_clip(part, |cx| {
-                self.draw_rows(cx, part, top, font_h, unit, (x0, x0 + lw), &dsc);
+                self.draw_rows(cx, part, top, font_h, unit, (x0, x0.saturating_add(lw)), &dsc);
             });
         }
         // The band's rows in the `Selected` style, moving proportionally with the column
@@ -718,18 +778,33 @@ impl Widget for Roller {
             sd.align = align;
         }
         let sel_font_h = i32::from(sd.font.line_height);
-        let sel_unit = sel_font_h + sd.line_space;
+        let sel_unit = sel_font_h.saturating_add(sd.line_space);
+        // The proportional position in `i64`: the rows (`< 2^20`) times a unit (`< 2^31`) stay
+        // below 2^51, sums of such terms and `i32`s below 2^53; the final product saturates.
         let rows = i64::from(self.total_rows());
-        let label_h = i64::from(rows as i32 * unit - (unit - font_h));
-        let sel_size_y = rows * i64::from(sel_unit) - i64::from(sd.line_space);
+        let (unit, font_h64) = (i64::from(unit), i64::from(font_h));
+        // SAFE-ARITH: see above.
+        let label_h = rows.wrapping_mul(unit).wrapping_sub(unit.wrapping_sub(font_h64));
+        // SAFE-ARITH: see above.
+        let sel_size_y = rows
+            .wrapping_mul(i64::from(sel_unit))
+            .wrapping_sub(i64::from(sd.line_space));
         let roller_h = i64::from(c.height());
-        let mut prop = (i64::from(top) + i64::from(font_h / 2)) - (roller_h / 2 + i64::from(c.y0));
-        let remain_h = label_h - i64::from(font_h);
+        let center = (roller_h / 2).wrapping_add(i64::from(c.y0));
+        // SAFE-ARITH: see above.
+        let mut prop = i64::from(top)
+            .wrapping_add(i64::from(font_h / 2))
+            .wrapping_sub(center);
+        // SAFE-ARITH: see above.
+        let remain_h = label_h.wrapping_sub(font_h64);
         if remain_h > 0 {
-            prop = (prop << 14) / remain_h;
+            // `|prop| < 2^34`, so `prop << 14` fits; `remain_h > 0` (the `if`).
+            prop = (prop << 14).checked_div(remain_h).unwrap_or(0);
         }
         let corr = i64::from(sel_font_h);
-        let sel_y = roller_h / 2 + i64::from(c.y0) + (((sel_size_y - corr) * prop) >> 14) - corr / 2;
+        // SAFE-ARITH: see above.
+        let moved = (sel_size_y.wrapping_sub(corr).saturating_mul(prop)) >> 14;
+        let sel_y = center.saturating_add(moved).saturating_sub(corr / 2);
         let sel_top = i32::try_from(sel_y).unwrap_or(0);
         let x = (content.x0, content.x1);
         let _ = cx.with_clip(band, |cx| {
@@ -764,13 +839,13 @@ impl Widget for Roller {
                     return EventResult::Continue;
                 }
                 if let (Some(p), Some(last)) = (cx.point(), self.last_y) {
-                    let dy = p.y - last;
+                    let dy = p.y.saturating_sub(last);
                     self.last_y = Some(p.y);
                     // The throw uses the last step: a finger held still throws nothing.
                     self.last_dy = dy;
                     if dy != 0 {
                         self.moved = true;
-                        let y = self.offset_y + dy;
+                        let y = self.offset_y.saturating_add(dy);
                         self.set_offset(&mut cx.widget_cx(), y);
                     }
                 }

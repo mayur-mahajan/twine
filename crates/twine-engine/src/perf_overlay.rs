@@ -69,6 +69,10 @@ impl Widget for PerfOverlay {
 impl Engine {
     /// Shows or hides the performance overlay of `display` (bottom-right corner of the system
     /// layer). Its own redraws are excluded from the frame statistics.
+    ///
+    /// # Errors
+    /// [`EngineError::DisplayNotFound`] for an unknown `display`; [`EngineError::TooManyNodes`]
+    /// when there is no room for the overlay node.
     pub fn set_perf_overlay(&mut self, display: DisplayId, on: bool) -> Result<(), EngineError> {
         let d = display.index();
         let disp = self

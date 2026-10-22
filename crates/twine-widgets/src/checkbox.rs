@@ -166,18 +166,22 @@ impl Checkbox {
         let border = m.style_i32(Part::Main, PropId::BorderWidth);
         let bg = m.padding(Part::Main);
         let mp = m.padding(Part::Indicator);
-        let top = bg.top + border;
+        let top = bg.top.saturating_add(border);
+        // The marker's width and height minus one (inclusive ends): the font height plus the
+        // indicator's paddings (saturating, like all geometry from styles).
+        let w1 = font_h.saturating_add(mp.horizontal()).saturating_sub(1);
+        let h1 = font_h.saturating_add(mp.vertical()).saturating_sub(1);
         let mut a = Area::default();
         if util::is_rtl(m) {
             // LVGL uses the right padding without the border here.
-            a.x2 = c.x2 - bg.right;
-            a.x1 = a.x2 - font_h - mp.left - mp.right + 1;
+            a.x2 = c.x2.saturating_sub(bg.right);
+            a.x1 = a.x2.saturating_sub(w1);
         } else {
-            a.x1 = c.x1 + bg.left + border;
-            a.x2 = a.x1 + font_h + mp.left + mp.right - 1;
+            a.x1 = c.x1.saturating_add(bg.left).saturating_add(border);
+            a.x2 = a.x1.saturating_add(w1);
         }
-        a.y1 = c.y1 + top;
-        a.y2 = a.y1 + font_h + mp.top + mp.bottom - 1;
+        a.y1 = c.y1.saturating_add(top);
+        a.y2 = a.y1.saturating_add(h1);
         a
     }
 }
@@ -215,9 +219,9 @@ impl Widget for Checkbox {
         let txt = self.text_size(cx);
         let col = cx.style_i32(Part::Main, PropId::ColumnGap);
         let mp = cx.padding(Part::Indicator);
-        let mw = font_h + mp.left + mp.right;
-        let mh = font_h + mp.top + mp.bottom;
-        Size::new(mw + txt.w + col, mh.max(txt.h))
+        let mw = font_h.saturating_add(mp.horizontal());
+        let mh = font_h.saturating_add(mp.vertical());
+        Size::new(mw.saturating_add(txt.w).saturating_add(col), mh.max(txt.h))
     }
 
     fn draw(&self, cx: &mut DrawCx<'_, '_>) {
@@ -225,24 +229,29 @@ impl Widget for Checkbox {
         let m = MeasureCx::new(cx.engine(), cx.node());
         let marker = Self::marker(&m);
         let (tw, th) = util::transform_wh(&m, Part::Indicator);
-        let mut grown = marker;
-        grown.x1 -= tw;
-        grown.x2 += tw;
-        grown.y1 -= th;
-        grown.y2 += th;
+        let grown = Area {
+            x1: marker.x1.saturating_sub(tw),
+            y1: marker.y1.saturating_sub(th),
+            x2: marker.x2.saturating_add(tw),
+            y2: marker.y2.saturating_add(th),
+        };
         cx.draw_rect_style(grown.to_rect(), Part::Indicator);
         let font_h = i32::from(m.font(Part::Main).line_height);
         let txt = self.text_size(&m);
         let col = m.style_i32(Part::Main, PropId::ColumnGap);
-        let y_ofs = (marker.height() - font_h) / 2;
-        let top = m.padding(Part::Main).top + m.style_i32(Part::Main, PropId::BorderWidth);
-        let y1 = m.coords().y0 + top + y_ofs;
+        let y_ofs = marker.height().saturating_sub(font_h) / 2;
+        let top = m
+            .padding(Part::Main)
+            .top
+            .saturating_add(m.style_i32(Part::Main, PropId::BorderWidth));
+        let y1 = m.coords().y0.saturating_add(top).saturating_add(y_ofs);
+        let y2 = y1.saturating_add(txt.h).saturating_add(1);
         let area = if util::is_rtl(&m) {
-            let x2 = marker.x1 - col;
-            Rect::new(x2 - txt.w, y1, x2 + 1, y1 + txt.h + 1)
+            let x2 = marker.x1.saturating_sub(col);
+            Rect::new(x2.saturating_sub(txt.w), y1, x2.saturating_add(1), y2)
         } else {
-            let x1 = marker.x2 + col;
-            Rect::new(x1, y1, x1 + txt.w + 1, y1 + txt.h + 1)
+            let x1 = marker.x2.saturating_add(col);
+            Rect::new(x1, y1, x1.saturating_add(txt.w).saturating_add(1), y2)
         };
         let dsc = cx.text_dsc(Part::Main);
         cx.draw_text(area, self.text(), &dsc);

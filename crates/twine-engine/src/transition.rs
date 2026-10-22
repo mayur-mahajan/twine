@@ -156,13 +156,7 @@ impl Engine {
         }
         // Higher state precedence first; equal weights keep the entries' order (insertion sort:
         // a handful of entries, stable, no allocation).
-        for i in 1..cands.len() {
-            let mut j = i;
-            while j > 0 && cands[j - 1].1 < cands[j].1 {
-                cands.swap(j - 1, j);
-                j -= 1;
-            }
-        }
+        crate::tree::sort_desc_by_key(&mut cands, |c| c.1);
         let motion = self.anim.motion;
         let mut claimed = PartProps::default();
         let mut started = 0;
@@ -182,7 +176,8 @@ impl Engine {
                     return;
                 }
                 if self.create_transition(id, *part, prev, new, prop, t) {
-                    started += 1;
+                    // `started < STYLE_TRANSITION_MAX` (returned above).
+                    started = started.saturating_add(1);
                 }
             }
         }
@@ -219,7 +214,9 @@ impl Engine {
             let c = self.coords(id);
             let circle = twine_style::PropValue::into_value(twine_style::Radius::Circle);
             let r = StyleValue::Length(twine_style::Length::Px(
-                (c.width() / 2 + 1).min(c.height() / 2 + 1),
+                (c.width() / 2)
+                    .saturating_add(1)
+                    .min((c.height() / 2).saturating_add(1)),
             ));
             if v1 == circle {
                 v1 = r;
@@ -251,6 +248,7 @@ impl Engine {
             spec.duration
         );
         twine_core::alloc_guard::before_push(
+            self.partition(),
             self.trans.list.len(),
             self.trans.list.capacity(),
             twine_core::alloc_guard::AllocSite::EngineScratch,
@@ -273,26 +271,32 @@ impl Engine {
     /// older transitions of the property (LVGL `trans_anim_start_cb`); once the animation has
     /// left the timeline the transition completes (LVGL `trans_anim_completed_cb`).
     pub(crate) fn transition_value(&mut self, serial: u32, v: i32) {
-        let Some(i) = self.trans.list.iter().position(|t| t.serial == serial) else {
+        let Some(t) = self.trans.list.iter().find(|t| t.serial == serial).copied() else {
             return;
         };
-        let t = self.trans.list[i];
         if !self.tree.contains(t.node) {
             return;
         }
         if !t.started {
             let start = self.style_prop(t.node, t.part, t.prop);
-            self.trans.list[i].start = start;
-            self.trans.list[i].started = true;
+            if let Some(e) = self.trans.list.iter_mut().find(|t| t.serial == serial) {
+                e.start = start;
+                e.started = true;
+            }
             self.remove_transitions(t.node, Some(t.part), Some(t.prop), Some(serial));
             self.trans_style_set(t.node, t.part, t.prop, start);
             self.refresh_style(t.node, t.part, Some(t.prop));
         }
         // Cancelling older transitions shifted the list.
-        let Some(i) = self.trans.list.iter().position(|o| o.serial == serial) else {
+        let Some((i, &t)) = self
+            .trans
+            .list
+            .iter()
+            .enumerate()
+            .find(|(_, o)| o.serial == serial)
+        else {
             return;
         };
-        let t = self.trans.list[i];
         let v = interpolate(t.prop, &t.start, &t.end, v.clamp(0, 255) as u8);
         if self.trans_style_set(t.node, t.part, t.prop, v) {
             self.refresh_style(t.node, t.part, Some(t.prop));
@@ -333,14 +337,14 @@ impl Engine {
     ) -> bool {
         let mut removed = false;
         let mut i = 0;
-        while i < self.trans.list.len() {
-            let t = self.trans.list[i];
+        while let Some(&t) = self.trans.list.get(i) {
             let hit = t.node == id
                 && part.is_none_or(|p| p == t.part)
                 && prop.is_none_or(|p| p == t.prop)
                 && older_than.is_none_or(|s| (t.serial.wrapping_sub(s) as i32) < 0);
             if !hit {
-                i += 1;
+                // SAFE-ARITH: `i` indexes `list` (a `Vec`): below `isize::MAX`.
+                i = i.wrapping_add(1);
                 continue;
             }
             self.trans.list.remove(i);
@@ -355,12 +359,13 @@ impl Engine {
     /// entries went away with the nodes).
     pub(crate) fn transitions_forget_nodes(&mut self, ids: &[NodeId]) {
         let mut i = 0;
-        while i < self.trans.list.len() {
-            if ids.contains(&self.trans.list[i].node) {
+        while let Some(t) = self.trans.list.get(i) {
+            if ids.contains(&t.node) {
                 let t = self.trans.list.remove(i);
                 self.anim.timeline.remove(t.anim);
             } else {
-                i += 1;
+                // SAFE-ARITH: `i` indexes `list` (a `Vec`): below `isize::MAX`.
+                i = i.wrapping_add(1);
             }
         }
     }

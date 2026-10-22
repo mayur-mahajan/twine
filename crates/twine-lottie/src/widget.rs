@@ -271,6 +271,7 @@ impl Lottie {
         let from = self.frame.min(total - 1);
         // Frames → milliseconds at this speed.
         let ms = |frames: u32| {
+            // DIV: both factors are `≥ 1` (`.max(1)`) and below 2^32, so their `u64` product is ≥ 1.
             let v = u64::from(frames) * 1000 * 256 / (u64::from(fr) * u64::from(self.speed.raw_256().max(1)));
             Duration::ms(v.max(1))
         };
@@ -402,6 +403,7 @@ impl Widget for Lottie {
         if total == 0 {
             return;
         }
+        // DIV: `total != 0` (returned above), so the divisor is `total` or `i32::MAX`.
         let f = u32::try_from(v.rem_euclid(i32::try_from(total).unwrap_or(i32::MAX))).unwrap_or(0);
         if f != self.frame {
             self.show_frame(cx, f);

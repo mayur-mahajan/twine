@@ -332,8 +332,8 @@ impl<'a, 'p> DrawCx<'a, 'p> {
             t.opa = t.opa.mul(opa);
             t.align = TextAlign::Center;
             let h = i32::from(t.font.line_height);
-            let y = area.y0 + (area.height() - h) / 2;
-            let a = Rect::new(area.x0, y, area.x1, y + h);
+            let y = area.y0.saturating_add(area.height().saturating_sub(h) / 2);
+            let a = Rect::new(area.x0, y, area.x1, y.saturating_add(h));
             self.draw_text(a, s, &t);
             return;
         }
@@ -357,8 +357,8 @@ impl<'a, 'p> DrawCx<'a, 'p> {
             } else {
                 let (w, h) = (i32::from(px.w), i32::from(px.h));
                 Rect::from_xywh(
-                    area.x0 + (area.width() - w) / 2,
-                    area.y0 + (area.height() - h) / 2,
+                    area.x0.saturating_add(area.width().saturating_sub(w) / 2),
+                    area.y0.saturating_add(area.height().saturating_sub(h) / 2),
                     w,
                     h,
                 )

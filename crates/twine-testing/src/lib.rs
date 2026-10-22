@@ -16,7 +16,7 @@
 //! | [`snapshot`] | golden images: pixel-exact snapshots against a committed hash manifest ([`assert_rgb_snapshot`], [`snapshot_config!`], [`snapshot::Manifest`]) |
 //! | [`fuzz`] | operation-sequence fuzzing: [`fuzz::Bytes`], and with the harness features the tree, input and reactive interpreters ([`fuzz`] module docs) shared by the property tests and the cargo-fuzz targets |
 //! | [`convert`] | any supported pixel format → RGB888 |
-//! | [`alloc`] | [`CountingAllocator`](alloc::CountingAllocator), [`count_allocs`](alloc::count_allocs), [`assert_no_alloc_after_seal`](alloc::assert_no_alloc_after_seal) (no allocation after `Ui::seal`) |
+//! | [`alloc`] | [`CountingAllocator`](alloc::CountingAllocator), [`count_allocs`](alloc::count_allocs), [`assert_no_alloc_after_seal`](alloc::assert_no_alloc_after_seal), [`assert_no_alloc_after_seal_in`](alloc::assert_no_alloc_after_seal_in) (no allocation after `Ui::seal`, per partition) |
 //! | [`init_test_logging`], [`capture_logs`] | `env_logger` for tests, capturing log records |
 //!
 //! Harness tiers selected by features (so lower crates can test before higher crates exist):

@@ -106,7 +106,9 @@ pub fn draw_qr(p: &mut Painter<'_>, area: Rect, qr: &QrMatrix, style: &QrStyle) 
     let s = layout.scale;
     let clip = p.clip();
     // Rows of modules whose pixel band meets the clip.
+    // DIV: `s = layout.scale ≥ 1` (`QrLayout::fit` returns `None` below 1).
     let first = ((clip.y0 - layout.origin.y).max(0) / s).min(i32::from(qr.size()));
+    // DIV: `s ≥ 1` (as above).
     let last = ((clip.y1 - layout.origin.y + s - 1).max(0) / s).min(i32::from(qr.size()));
     for y in first..last {
         let py = layout.origin.y + y * s;

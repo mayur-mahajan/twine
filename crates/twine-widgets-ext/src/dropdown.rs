@@ -509,34 +509,39 @@ impl Dropdown {
         let border = m.style_i32(Part::Main, PropId::BorderWidth).max(0);
         let pad = m.padding(Part::Main);
         let vertical = self.dir == Side::Bottom || self.dir == Side::Top;
-        let content_w = text.w + pad.left + pad.right + 2 * border;
+        // Geometry from styles and coordinates: saturating sums (exact for screen values).
+        let content_w = text
+            .w
+            .saturating_add(pad.horizontal())
+            .saturating_add(border.saturating_mul(2));
         let w = if content_w <= c.width() && vertical {
             c.width()
         } else {
             content_w
         };
-        let top = pad.top + border;
-        let bottom = pad.bottom + border;
-        let list_fit_h = text.h + top + bottom;
+        let top = pad.top.saturating_add(border);
+        let bottom = pad.bottom.saturating_add(border);
+        let list_fit_h = text.h.saturating_add(top).saturating_add(bottom);
         let mut list_h = list_fit_h;
         let (_, ver_res) = util::display_res(e, dd);
         // LVGL's inclusive y2.
-        let y2 = c.y1 - 1;
+        let y2 = c.y1.saturating_sub(1);
+        let below = ver_res.saturating_sub(y2);
         let mut dir = self.dir;
         if self.dir == Side::Bottom {
-            if y2 + list_h > ver_res {
-                if c.y0 > ver_res - y2 {
+            if y2.saturating_add(list_h) > ver_res {
+                if c.y0 > below {
                     // More space above: drop up.
                     dir = Side::Top;
-                    list_h = c.y0 - 1;
+                    list_h = c.y0.saturating_sub(1);
                 } else {
-                    list_h = ver_res - y2 - 1;
+                    list_h = below.saturating_sub(1);
                 }
             }
-        } else if self.dir == Side::Top && c.y0 - list_h < 0 {
-            if c.y0 < ver_res - y2 {
+        } else if self.dir == Side::Top && c.y0.saturating_sub(list_h) < 0 {
+            if c.y0 < below {
                 dir = Side::Bottom;
-                list_h = ver_res - y2;
+                list_h = below;
             } else {
                 list_h = c.y0;
             }
@@ -552,18 +557,23 @@ impl Dropdown {
         let rtl = util::is_rtl(&MeasureCx::new(e, list));
         let (x, y) = match dir {
             Side::Top | Side::Bottom => {
-                let x = if rtl { c.x1 - lw } else { c.x0 };
-                let y = if dir == Side::Bottom { c.y1 } else { c.y0 - lh };
+                let x = if rtl { c.x1.saturating_sub(lw) } else { c.x0 };
+                let y = if dir == Side::Bottom {
+                    c.y1
+                } else {
+                    c.y0.saturating_sub(lh)
+                };
                 (x, y)
             }
-            Side::Left => (c.x0 - lw, c.y0),
+            Side::Left => (c.x0.saturating_sub(lw), c.y0),
             Side::Right => (c.x1, c.y0),
         };
         let mut y = y;
-        if (dir == Side::Left || dir == Side::Right) && y + lh > ver_res {
-            y -= (y + lh - 1 - ver_res) + 1;
+        if (dir == Side::Left || dir == Side::Right) && y.saturating_add(lh) > ver_res {
+            // LVGL `y -= (y + h − 1 − ver_res) + 1`: the list ends at the display's bottom.
+            y = ver_res.saturating_sub(lh);
         }
-        e.set_pos(list, x - origin.x0, y - origin.y0);
+        e.set_pos(list, x.saturating_sub(origin.x0), y.saturating_sub(origin.y0));
         e.update_layout();
         twine_core::debug!(
             target: "twine::engine",
@@ -615,8 +625,8 @@ impl Dropdown {
     fn position_to_selected(&self, e: &mut Engine, anim: bool) {
         let Some(list) = self.live_list(e) else { return };
         let t = MeasureCx::new(e, list).text_dsc(Part::Main);
-        let unit_h = i32::from(t.font.line_height) + t.line_space;
-        e.scroll_to_y(list, i32::from(self.sel) * unit_h, anim);
+        let unit_h = i32::from(t.font.line_height).saturating_add(t.line_space);
+        e.scroll_to_y(list, i32::from(self.sel).saturating_mul(unit_h), anim);
         e.invalidate(
             list,
             twine_engine::InvalidateReason::WidgetSetter("dropdown selected"),
@@ -626,17 +636,18 @@ impl Dropdown {
     /// The option at absolute `y` in the list (LVGL `get_id_on_point`).
     fn id_on_point(&self, e: &Engine, list: NodeId, y: i32) -> u16 {
         let t = MeasureCx::new(e, list).text_dsc(Part::Main);
-        let label_y = e.content_area(list).y0 - e.scroll_offset(list).y;
-        let h = (i32::from(t.font.line_height) + t.line_space).max(1);
-        let y = y - label_y + t.line_space / 2;
-        let opt = u16::try_from(y.max(0) / h).unwrap_or(u16::MAX);
+        let label_y = e.content_area(list).y0.saturating_sub(e.scroll_offset(list).y);
+        let h = i32::from(t.font.line_height).saturating_add(t.line_space).max(1);
+        let y = y.saturating_sub(label_y).saturating_add(t.line_space / 2);
+        // `h ≥ 1`: the fallback is never taken.
+        let opt = u16::try_from(y.max(0).checked_div(h).unwrap_or(0)).unwrap_or(u16::MAX);
         opt.min(self.option_cnt.saturating_sub(1))
     }
 
     /// Moves the highlight by `delta` options while open, clamped (keys, rotary).
     fn move_sel(&mut self, cx: &mut WidgetCx<'_>, delta: i32) {
         let last = i32::from(self.option_cnt.saturating_sub(1));
-        let new = (i32::from(self.sel) + delta).clamp(0, last);
+        let new = i32::from(self.sel).saturating_add(delta).clamp(0, last);
         if new != i32::from(self.sel) {
             self.sel = new as u16;
             self.position_to_selected(cx.engine_mut(), true);
@@ -791,14 +802,17 @@ impl Widget for Dropdown {
     fn content_size(&self, cx: &MeasureCx<'_>) -> Size {
         let mut size = Size::ZERO;
         if let Some(sym) = self.shown_symbol() {
-            size.w += self.symbol_dims(cx, &sym).w + cx.style_i32(Part::Main, PropId::ColumnGap);
+            size.w = self
+                .symbol_dims(cx, &sym)
+                .w
+                .saturating_add(cx.style_i32(Part::Main, PropId::ColumnGap));
         }
         let d = cx.text_dsc(Part::Main);
         let mut l = TextLayout::new(self.button_text(), d.font);
         l.letter_space = d.letter_space;
         l.line_space = d.line_space;
         let t = l.measure();
-        size.w += t.w;
+        size.w = size.w.saturating_add(t.w);
         size.h = size.h.max(t.h);
         size
     }
@@ -810,18 +824,18 @@ impl Widget for Dropdown {
         let m = MeasureCx::new(cx.engine(), cx.node());
         let border = m.style_i32(Part::Main, PropId::BorderWidth).max(0);
         let pad = m.padding(Part::Main);
-        let (left, right) = (pad.left + border, pad.right + border);
+        let (left, right) = (pad.left.saturating_add(border), pad.right.saturating_add(border));
         let symbol_to_left = self.dir == Side::Left || util::is_rtl(&m);
         let mut symbol_w = -1;
         let sym = self.shown_symbol();
         if let Some(sym) = &sym {
             let s = self.symbol_dims(&m, sym);
             symbol_w = s.w;
-            let y = c.y0 + (c.height() - s.h) / 2;
+            let y = c.y0.saturating_add(c.height().saturating_sub(s.h) / 2);
             let x = if symbol_to_left {
-                c.x0 + left
+                c.x0.saturating_add(left)
             } else {
-                c.x1 - right - s.w
+                c.x1.saturating_sub(right).saturating_sub(s.w)
             };
             let area = Rect::from_xywh(x, y, s.w, s.h);
             if let ImageSource::Symbol(t) = sym {
@@ -844,22 +858,27 @@ impl Widget for Dropdown {
         l.letter_space = d.letter_space;
         l.line_space = d.line_space;
         let size = l.measure();
-        let y0 = c.y0 + (c.height() - size.h) / 2;
-        let mut area = Rect::new(c.x0 + left, y0, c.x1 - right, y0 + size.h);
+        let y0 = c.y0.saturating_add(c.height().saturating_sub(size.h) / 2);
+        let mut area = Rect::new(
+            c.x0.saturating_add(left),
+            y0,
+            c.x1.saturating_sub(right),
+            y0.saturating_add(size.h),
+        );
         if sym.is_none() && d.align == TextAlign::Auto {
             d.align = TextAlign::Center;
         } else {
-            let gap = symbol_w + m.style_i32(Part::Main, PropId::ColumnGap);
+            let gap = symbol_w.saturating_add(m.style_i32(Part::Main, PropId::ColumnGap));
             if symbol_to_left {
                 if d.align == TextAlign::Auto {
                     d.align = TextAlign::Right;
                 }
-                area.x0 += gap;
+                area.x0 = area.x0.saturating_add(gap);
             } else {
                 if d.align == TextAlign::Auto {
                     d.align = TextAlign::Left;
                 }
-                area.x1 -= gap;
+                area.x1 = area.x1.saturating_sub(gap);
             }
         }
         if !area.is_empty() {
@@ -971,8 +990,8 @@ impl DropdownList {
         let c = e.content_area(node);
         let s = e.scroll_offset(node);
         Rect::from_xywh(
-            c.x0 - s.x,
-            c.y0 - s.y,
+            c.x0.saturating_sub(s.x),
+            c.y0.saturating_sub(s.y),
             c.width().max(self.content.w),
             self.content.h,
         )
@@ -987,9 +1006,10 @@ impl DropdownList {
         let mut t = cx.text_dsc_for_state(Part::Selected, state);
         let font_h = i32::from(t.font.line_height);
         let ls = t.line_space;
-        let y1 = ta.y0 + i32::from(id) * (font_h + ls) - ls / 2;
+        let unit = font_h.saturating_add(ls);
+        let y1 = option_area(ta, id, unit).y0.saturating_sub(ls / 2);
         let c = cx.coords();
-        let area = Rect::new(c.x0, y1, c.x1, y1 + font_h + ls);
+        let area = Rect::new(c.x0, y1, c.x1, y1.saturating_add(unit));
         let Some(box_clip) = area.intersection(&clip) else {
             return;
         };
@@ -1000,7 +1020,7 @@ impl DropdownList {
         let Some(text) = options.get(id) else {
             return;
         };
-        let line = option_area(ta, id, font_h + ls);
+        let line = option_area(ta, id, unit);
         let _ = cx.with_clip(box_clip, |cx| cx.draw_text(line, text, &t));
     }
 }
@@ -1008,7 +1028,9 @@ impl DropdownList {
 /// The text area of option `i` in the options' text area `ta` (lines `unit` apart): from the
 /// option's line to the end of the text, as the line of a label of the joined options.
 fn option_area(ta: Rect, i: u16, unit: i32) -> Rect {
-    Rect::new(ta.x0, ta.y0 + i32::from(i) * unit, ta.x1, ta.y1)
+    // SAFE-ARITH: `i < 2^16` and `|unit| ≤ 2^31`: the product is below 2^47.
+    let y0 = i64::from(ta.y0).saturating_add(i64::from(i).wrapping_mul(i64::from(unit)));
+    Rect::new(ta.x0, util::sat_i32(y0), ta.x1, ta.y1)
 }
 
 /// `Auto` text alignment as the list draws it: left.
@@ -1041,15 +1063,20 @@ impl Widget for DropdownList {
         };
         // One line per option; only the lines near the clip are drawn (one line of margin
         // for glyphs reaching past their line).
-        let unit = (i32::from(t.font.line_height) + t.line_space).max(1);
+        let unit = i32::from(t.font.line_height).saturating_add(t.line_space).max(1);
+        // Lines of `unit ≥ 1` px from the text area's top; the margins are taken saturating.
+        let (below, above) = (
+            clip.y1.saturating_add(unit),
+            clip.y0.saturating_sub(unit.saturating_mul(2)),
+        );
         let _ = cx.with_clip(clip, |cx| {
             for (i, o) in options.iter().enumerate() {
                 let i = u16::try_from(i).unwrap_or(u16::MAX);
                 let line = option_area(ta, i, unit);
-                if line.y0 - unit >= clip.y1 {
+                if line.y0 >= below {
                     break;
                 }
-                if line.y0 + 2 * unit > clip.y0 {
+                if line.y0 > above {
                     cx.draw_text(line, o, &t);
                 }
             }

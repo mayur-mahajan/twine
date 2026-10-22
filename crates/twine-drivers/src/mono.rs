@@ -39,6 +39,7 @@ pub fn i1_to_page(src: &[u8], stride: usize, width: usize, page: usize, out: &mu
                 continue;
             }
             for (bit, col) in cols.iter_mut().enumerate() {
+                // SHIFT: `bit < 8` (`cols` is a chunk of at most 8).
                 if byte & (0x80 >> bit) != 0 {
                     *col |= bit_k;
                 }
@@ -60,6 +61,7 @@ pub fn page_to_i1(src: &[u8], stride: usize, width: usize, page: usize, out: &mu
         // 8 page columns make one row byte.
         for (cols, dst) in src.chunks(8).zip(row.iter_mut()) {
             for (bit, &b) in cols.iter().enumerate() {
+                // SHIFT: `bit < 8` (`cols` is a chunk of at most 8).
                 let mask = 0x80u8 >> bit;
                 if b & bit_k != 0 {
                     *dst |= mask;

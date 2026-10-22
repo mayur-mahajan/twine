@@ -143,8 +143,10 @@ impl SvgDocument {
             return Transform::translate(Fx::from_int(dst.x0), Fx::from_int(dst.y0));
         }
         let (dw, dh) = (i64::from(dst.width()) << 16, i64::from(dst.height()) << 16);
-        let sx = ((dw << 16) / vw).clamp(1, i64::from(i32::MAX)) as i32;
-        let sy = ((dh << 16) / vh).clamp(1, i64::from(i32::MAX)) as i32;
+        // `vw > 0` and `vh > 0` (returned above): the fallbacks are never taken. The sizes are
+        // below 2^31 · 2^16, shifted below 2^63.
+        let sx = ((dw << 16).checked_div(vw).unwrap_or(1)).clamp(1, i64::from(i32::MAX)) as i32;
+        let sy = ((dh << 16).checked_div(vh).unwrap_or(1)).clamp(1, i64::from(i32::MAX)) as i32;
         let (sx, sy) = match (self.aspect.align, self.aspect.slice) {
             (Align::None, _) => (sx, sy),
             (_, false) => (sx.min(sy), sx.min(sy)),
@@ -162,12 +164,17 @@ impl SvgDocument {
             Align::XMidYMax => (1, 2),
             Align::XMaxYMax => (2, 2),
         };
-        let free_x = dw - ((vw * i64::from(sx)) >> 16);
-        let free_y = dh - ((vh * i64::from(sy)) >> 16);
-        let tx =
-            (i64::from(dst.x0) << 16) + free_x * fx / 2 - ((i64::from(vb.x0.raw()) * i64::from(sx)) >> 16);
-        let ty =
-            (i64::from(dst.y0) << 16) + free_y * fy / 2 - ((i64::from(vb.y0.raw()) * i64::from(sy)) >> 16);
+        // SAFE-ARITH: `vw, vh, sx, sy < 2^31`, so the products are below 2^62; `dw, dh < 2^47`,
+        // the alignment factors are 0, 1 or 2, and every sum stays below 2^63.
+        let free_x = dw.wrapping_sub(vw.wrapping_mul(i64::from(sx)) >> 16);
+        let free_y = dh.wrapping_sub(vh.wrapping_mul(i64::from(sy)) >> 16);
+        let origin = |d: i32, free: i64, f: i64, v: Fx, s: i32| {
+            (i64::from(d) << 16)
+                .wrapping_add(free.wrapping_mul(f) / 2)
+                .wrapping_sub(i64::from(v.raw()).wrapping_mul(i64::from(s)) >> 16)
+        };
+        let tx = origin(dst.x0, free_x, fx, vb.x0, sx);
+        let ty = origin(dst.y0, free_y, fy, vb.y0, sy);
         Transform {
             a: Fx::from_raw(sx),
             b: Fx::ZERO,
@@ -190,6 +197,10 @@ impl SvgDocument {
 /// Returns an error only for markup that cannot be tokenized (malformed tags, unterminated
 /// comments, nesting deeper than [`MAX_DEPTH`], invalid UTF-8) or a non-`svg` root; invalid
 /// attribute values are ignored (logged), and path data is kept up to its first error.
+///
+/// # Errors
+/// [`SvgError`] for markup that cannot be tokenized or a root element that is not `svg` (see
+/// above).
 pub fn parse_svg(bytes: &[u8]) -> Result<SvgDocument, SvgError> {
     let src = core::str::from_utf8(bytes).map_err(|_| SvgError::InvalidUtf8)?;
     let grads = collect_gradients(src)?;
@@ -261,7 +272,10 @@ fn parse_opacity(v: &str) -> Option<Opa> {
         Length::Px(f) => i64::from(f.raw()),
         Length::Pct(p) => i64::from(p.raw()) / 100,
     };
-    Some(Opa::from_raw(((raw.clamp(0, 65_536) * 255 + 32_768) >> 16) as u8))
+    // SAFE-ARITH: the clamped value times 255 plus 2^15 is below 2^25.
+    Some(Opa::from_raw(
+        (raw.clamp(0, 65_536).wrapping_mul(255).wrapping_add(32_768) >> 16) as u8,
+    ))
 }
 
 // ---------------------------------------------------------------- gradients
@@ -304,24 +318,27 @@ fn collect_gradients(src: &str) -> Result<Vec<GradDef<'_>>, SvgError> {
                 match local(name) {
                     "linearGradient" | "radialGradient" => {
                         let g = parse_grad_def(name, attrs, &mut buf);
-                        out.push(g);
                         if !self_closing {
-                            open = Some((out.len() - 1, depth));
+                            open = Some((out.len(), depth));
                         }
+                        out.push(g);
                     }
                     "stop" => {
                         if let Some((gi, d)) = open {
-                            if d + 1 == depth {
-                                let s =
-                                    parse_stop(attrs, &mut buf, out[gi].stops.last().map(|s| s.frac.raw()));
-                                out[gi].stops.push(s);
+                            // `depth < MAX_DEPTH` (checked above).
+                            if d.saturating_add(1) == depth {
+                                if let Some(g) = out.get_mut(gi) {
+                                    let s = parse_stop(attrs, &mut buf, g.stops.last().map(|s| s.frac.raw()));
+                                    g.stops.push(s);
+                                }
                             }
                         }
                     }
                     _ => {}
                 }
                 if !self_closing {
-                    depth += 1;
+                    // SAFE-ARITH: `depth < MAX_DEPTH` (checked above).
+                    depth = depth.wrapping_add(1);
                 }
             }
             Token::End { .. } => {
@@ -369,8 +386,12 @@ fn parse_grad_def<'a>(name: &str, attrs: Attrs<'a>, buf: &mut String) -> GradDef
                 };
             }
             _ => {
-                if let Some(i) = keys.iter().position(|a| *a == k) {
-                    g.coords[i] = length(v);
+                if let Some(c) = keys
+                    .iter()
+                    .position(|a| *a == k)
+                    .and_then(|i| g.coords.get_mut(i))
+                {
+                    *c = length(v);
                 }
             }
         }
@@ -417,7 +438,12 @@ fn parse_stop(attrs: Attrs<'_>, buf: &mut String, prev: Option<u8>) -> GradStop 
             apply(k, v);
         }
     }
-    let frac = ((i64::from(offset.raw()).clamp(0, 65_536) * 255 + 32_768) >> 16) as u8;
+    // SAFE-ARITH: the clamped value times 255 plus 2^15 is below 2^25.
+    let frac = (i64::from(offset.raw())
+        .clamp(0, 65_536)
+        .wrapping_mul(255)
+        .wrapping_add(32_768)
+        >> 16) as u8;
     GradStop::with_opa(color, opa, Fraction::from_raw(frac.max(prev.unwrap_or(0))))
 }
 
@@ -431,8 +457,7 @@ struct Resolved<'g> {
     stops: &'g [GradStop],
 }
 
-fn resolve_grad<'g>(grads: &'g [GradDef<'_>], i: usize) -> Resolved<'g> {
-    let g = &grads[i];
+fn resolve_grad<'g>(grads: &'g [GradDef<'_>], g: &'g GradDef<'_>) -> Resolved<'g> {
     let mut r = Resolved {
         radial: g.radial,
         user_space: g.user_space.unwrap_or(false),
@@ -486,37 +511,37 @@ fn parse_transform(s: &str) -> Option<Transform> {
             return None;
         }
         let mut args = [Fx::ZERO; 6];
-        let mut n = 0;
+        let mut n = 0usize;
         while !c.eat(b')') {
-            if n == 6 {
-                return None;
-            }
-            args[n] = c.number()?;
+            // More than six arguments: invalid.
+            *args.get_mut(n)? = c.number()?;
             c.skip_sep();
-            n += 1;
+            // SAFE-ARITH: `n < 6` (the slot existed).
+            n = n.wrapping_add(1);
         }
+        let [a0, a1, a2, a3, a4, a5] = args;
         let t = match (name, n) {
             (b"matrix", 6) => Transform {
-                a: args[0],
-                b: args[1],
-                c: args[2],
-                d: args[3],
-                tx: args[4],
-                ty: args[5],
+                a: a0,
+                b: a1,
+                c: a2,
+                d: a3,
+                tx: a4,
+                ty: a5,
             },
-            (b"translate", 1) => Transform::translate(args[0], Fx::ZERO),
-            (b"translate", 2) => Transform::translate(args[0], args[1]),
-            (b"scale", 1) => Transform::scale(args[0], args[0]),
-            (b"scale", 2) => Transform::scale(args[0], args[1]),
-            (b"rotate", 1) => Transform::rotate(deg_to_angle(args[0])),
+            (b"translate", 1) => Transform::translate(a0, Fx::ZERO),
+            (b"translate", 2) => Transform::translate(a0, a1),
+            (b"scale", 1) => Transform::scale(a0, a0),
+            (b"scale", 2) => Transform::scale(a0, a1),
+            (b"rotate", 1) => Transform::rotate(deg_to_angle(a0)),
             (b"rotate", 3) => {
-                let (cx, cy) = (args[1], args[2]);
+                let (cx, cy) = (a1, a2);
                 Transform::translate(-cx, -cy)
-                    .then(Transform::rotate(deg_to_angle(args[0])))
+                    .then(Transform::rotate(deg_to_angle(a0)))
                     .then(Transform::translate(cx, cy))
             }
-            (b"skewX", 1) => Transform::skew(deg_to_angle(args[0]), twine_core::Angle::deci_deg(0)),
-            (b"skewY", 1) => Transform::skew(twine_core::Angle::deci_deg(0), deg_to_angle(args[0])),
+            (b"skewX", 1) => Transform::skew(deg_to_angle(a0), twine_core::Angle::deci_deg(0)),
+            (b"skewY", 1) => Transform::skew(twine_core::Angle::deci_deg(0), deg_to_angle(a0)),
             _ => return None,
         };
         // "A B" applies B first, then A.
@@ -934,7 +959,8 @@ impl Parser<'_, '_> {
             PaintSpec::Color(c) => Some((Paint::Solid(c), Opa::COVER)),
             PaintSpec::Current => Some((Paint::Solid(st.color), Opa::COVER)),
             PaintSpec::Grad(i, fallback) => {
-                let g = resolve_grad(self.grads, i);
+                // `i` comes from `paint_spec` (a position in `grads`): never `None`.
+                let g = resolve_grad(self.grads, self.grads.get(i)?);
                 match g.stops {
                     [] => return fallback.map(|c| (Paint::Solid(c), Opa::COVER)),
                     [s] => return Some((Paint::Solid(s.color), s.opa)),
@@ -974,7 +1000,7 @@ impl Parser<'_, '_> {
                     let f = FxPoint::new(fx, fy);
                     if r.raw() <= 0 {
                         // Zero radius: the last stop color.
-                        let s = g.stops[g.stops.len() - 1];
+                        let s = g.stops.last()?;
                         return Some((Paint::Solid(s.color), s.opa));
                     }
                     Paint::Radial {

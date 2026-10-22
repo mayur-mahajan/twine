@@ -95,7 +95,7 @@ fn fail_safe_is_entered_after_seal_without_allocating() {
         clock.advance(Duration::ms(50));
         ui.update();
     });
-    alloc_guard::unseal();
+    alloc_guard::unseal(twine_core::Partition::MAIN);
     assert_eq!(ui.fail_safe(), Some(9));
     assert_ne!(ui.engine().active_screen(ui.display()), Some(normal));
     let panel = ui.engine().driver::<MemoryDisplay>(ui.display()).unwrap();

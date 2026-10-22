@@ -132,6 +132,19 @@ display-integrity = [
     "twine-widgets/display-integrity",
     "twine-view/display-integrity",
 ]
+## Partitioned runtimes (`docs/design/adr-001-partitioned-runtimes.md`): up to four
+## independent UIs in one image (`Runtime::take_partition`), e.g. a safety-critical display
+## next to a non-critical one; a fault, loop cut, exhausted bound or slow update in one
+## cannot change the other (`docs/safety/profile.md` § 13). Not implied by `safety`; without
+## it the runtime and handles compile to the single-partition code.
+partitions = [
+    "twine-core/partitions",
+    "twine-reactive/partitions",
+    "twine-anim/partitions",
+    "twine-engine/partitions",
+    "twine-widgets/partitions",
+    "twine-view/partitions",
+]
 ## Pixel formats the renderer is compiled for.
 color-rgb565 = ["twine-engine/color-rgb565", "twine-render/color-rgb565"]
 color-rgb565-swapped = ["twine-engine/color-rgb565-swapped", "twine-render/color-rgb565-swapped"]
@@ -364,3 +377,11 @@ twine-demos = { path = "../twine-demos", features = ["multilang-cjk", "ttf", "ve
 # Host implementation for `critical-section` (used by `twine_reactive::Channel`).
 critical-section = { version = "1", features = ["std"] }
 env_logger = "0.11"
+# Property tests (`tests/zero_divisors.rs`).
+proptest = "1"
+
+# Two partitioned runtimes (ADR-001): needs the opt-in `partitions` feature, which `full` does
+# not include (`cargo xtask sim partitions` enables it).
+[[example]]
+name = "partitions"
+required-features = ["partitions"]

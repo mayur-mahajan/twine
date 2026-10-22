@@ -145,7 +145,7 @@ fn seal_checks_the_heap_budget() {
         .mount(|_| label("hi"));
     t.run_until_idle();
     let report = t.seal();
-    alloc_guard::unseal();
+    alloc_guard::unseal(twine_core::Partition::MAIN);
     assert!(report.heap_bytes() > 64);
     assert_eq!(
         last_code(&t, FaultKind::Capacity),
@@ -176,7 +176,7 @@ fn sealed_steady_state_allocates_nothing() {
         }
     });
     assert_eq!(t.engine().fault_counts().get(FaultKind::AllocAfterSeal), 0);
-    alloc_guard::unseal();
+    alloc_guard::unseal(twine_core::Partition::MAIN);
 }
 
 /// fault: `AllocAfterSeal`
@@ -193,7 +193,7 @@ fn creating_after_seal_raises_alloc_after_seal_at_the_next_update() {
     let show = t.root_scope().use_context::<Signal<bool>>().unwrap();
     show.set(true);
     t.run_until_idle();
-    alloc_guard::unseal();
+    alloc_guard::unseal(twine_core::Partition::MAIN);
     let r = *t.engine().last_fault(FaultKind::AllocAfterSeal).unwrap();
     assert!(r.occurrences > 1, "{r:?}");
     assert!(AllocSite::from_code(r.code).is_some());

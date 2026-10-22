@@ -243,6 +243,9 @@ impl<I2C: I2c, IRQ> Stmpe811<I2C, IRQ> {
     }
 
     /// Runs the init sequence (see the module docs). Call once before reading.
+    ///
+    /// # Errors
+    /// The I²C bus error.
     pub fn init(&mut self, delay: &mut impl DelayNs) -> Result<(), I2C::Error> {
         for (r, v, ms) in INIT {
             self.write_reg(r, v)?;
@@ -261,6 +264,9 @@ impl<I2C: I2c, IRQ> Stmpe811<I2C, IRQ> {
 
     /// Reads a filtered raw sample: `Ok(None)` if not touched, `Ok(Some(None))` if touched
     /// but no sample is ready yet, else the raw 12-bit `(x, y)`.
+    ///
+    /// # Errors
+    /// The I²C bus error.
     pub fn read_raw(&mut self) -> Result<Option<Option<(u16, u16)>>, I2C::Error> {
         let mut b = [0u8; 1];
         self.read_regs(reg::TSC_CTRL, &mut b)?;

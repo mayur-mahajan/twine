@@ -18,6 +18,7 @@ use twine_text::{BREAK_CHARS, DOTS, Font, TextDrawFlags, TextFlags, TextLayout, 
 
 use crate::label::LabelText;
 use crate::log_set;
+use crate::util;
 
 /// The class of [`SpanGroup`]: `"spangroup"`, part `Main`, the base object's flags (LVGL
 /// `lv_spangroup_class`).
@@ -141,6 +142,13 @@ struct Snippet {
     letter_space: i32,
 }
 
+impl Snippet {
+    /// How far the next snippet starts: the width plus the letter space (saturating).
+    fn advance(&self) -> i32 {
+        self.w.saturating_add(self.letter_space)
+    }
+}
+
 /// One laid-out line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LineInfo {
@@ -164,6 +172,14 @@ struct SpanLayoutCache {
     lines: Vec<LineInfo>,
     /// Height of all lines (without the last line space).
     height: i32,
+}
+
+impl SpanLayoutCache {
+    /// The snippets of line `l` (its range always lies within `snippets`: both are built
+    /// together by `build`).
+    fn pieces(&self, l: &LineInfo) -> &[Snippet] {
+        self.snippets.get(l.snippets.clone()).unwrap_or(&[])
+    }
 }
 
 /// A line of a [`SpanGroup`]'s layout (see [`SpanGroup::line_layout`]).
@@ -289,7 +305,7 @@ fn snippet(txt: &str, font: &'static Font, ls: i32, max_w: i32, flags: TextFlags
         end
     };
     let w = l.line_width(line.range.start..line.range.end);
-    let newline = txt[..end].ends_with(['\n', '\r']);
+    let newline = txt.get(..end).unwrap_or(txt).ends_with(['\n', '\r']);
     let fill = end < txt.len() || newline || w > max_w;
     (end, w, fill)
 }
@@ -367,6 +383,7 @@ impl SpanGroup {
         let id = SpanId(self.next_id);
         self.next_id = self.next_id.wrapping_add(1);
         twine_core::alloc_guard::push(
+            cx.partition(),
             &mut self.spans,
             (id, Span::new()),
             twine_core::alloc_guard::AllocSite::WidgetBuffer,
@@ -508,10 +525,12 @@ impl SpanGroup {
                 if max > 0 && width >= max {
                     return max;
                 }
-                width += font.advance_px(c, it.peek().copied()) + ls;
+                width = width
+                    .saturating_add(font.advance_px(c, it.peek().copied()))
+                    .saturating_add(ls);
             }
         }
-        width - last_ls
+        width.saturating_sub(last_ls)
     }
 
     /// The tallest line height of the spans (LVGL `lv_spangroup_get_max_line_height`).
@@ -545,12 +564,13 @@ impl SpanGroup {
             .iter()
             .map(|l| {
                 let mut x = l.x;
-                let pieces = c.snippets[l.snippets.clone()]
+                let pieces = c
+                    .pieces(l)
                     .iter()
-                    .map(|s| {
-                        let p = (self.spans[s.span].0, s.range.clone(), x, s.w);
-                        x += s.w + s.letter_space;
-                        p
+                    .filter_map(|s| {
+                        let p = (self.spans.get(s.span)?.0, s.range.clone(), x, s.w);
+                        x = x.saturating_add(s.advance());
+                        Some(p)
                     })
                     .collect();
                 SpanLine {
@@ -572,19 +592,19 @@ impl SpanGroup {
         let max_w = content.width();
         let align = Self::align(cx);
         for l in &c.lines {
-            let (mut x, w) = (l.x, Self::line_width(&c, l));
-            x += Self::align_ofs(align, max_w, w);
-            for s in &c.snippets[l.snippets.clone()] {
-                let r = Rect::new(
-                    content.x0 + x,
-                    content.y0 + l.y,
-                    content.x0 + x + s.w + s.letter_space,
-                    content.y0 + l.y + l.h,
-                );
+            let w = Self::line_width(&c, l);
+            let mut x = content
+                .x0
+                .saturating_add(l.x)
+                .saturating_add(Self::align_ofs(align, max_w, w));
+            let y = content.y0.saturating_add(l.y);
+            for s in c.pieces(l) {
+                let x1 = x.saturating_add(s.advance());
+                let r = Rect::new(x, y, x1, y.saturating_add(l.h));
                 if r.contains(p) {
-                    return Some(self.spans[s.span].0);
+                    return self.spans.get(s.span).map(|sp| sp.0);
                 }
-                x += s.w + s.letter_space;
+                x = x1;
             }
         }
         None
@@ -597,13 +617,14 @@ impl SpanGroup {
     }
 
     fn line_width(c: &SpanLayoutCache, l: &LineInfo) -> i32 {
-        let sn = &c.snippets[l.snippets.clone()];
-        let w: i32 = sn.iter().map(|s| s.w + s.letter_space).sum();
-        l.x + w - sn.last().map_or(0, |s| s.letter_space)
+        let sn = c.pieces(l);
+        let w = sn.iter().fold(0i32, |w, s| w.saturating_add(s.advance()));
+        l.x.saturating_add(w)
+            .saturating_sub(sn.last().map_or(0, |s| s.letter_space))
     }
 
     fn align_ofs(align: TextAlign, max_w: i32, w: i32) -> i32 {
-        let ofs = (max_w - w).max(0);
+        let ofs = max_w.saturating_sub(w).max(0);
         match align {
             TextAlign::Center => ofs >> 1,
             TextAlign::Right => ofs,
@@ -654,24 +675,29 @@ impl SpanGroup {
             let mut base_line = 0;
             while let Some((_, sp)) = self.spans.get(span_i) {
                 let txt = sp.text();
-                if ofs >= txt.len() {
-                    span_i += 1;
+                // The rest of the span's text (`ofs` is a character boundary: the end of the
+                // previous snippet).
+                let Some(rest) = txt.get(ofs..).filter(|r| !r.is_empty()) else {
+                    span_i = span_i.saturating_add(1);
                     ofs = 0;
                     continue;
-                }
+                };
                 let st = SpanStyle { m: cx, span: sp };
                 let font = st.font();
                 let ls = st.i32(PropId::LetterSpacing);
-                let line_h = i32::from(font.line_height) + line_space;
-                let (next, w, fill) = snippet(&txt[ofs..], font, ls, max_w, flags);
+                let line_h = i32::from(font.line_height).saturating_add(line_space);
+                let (next, w, fill) = snippet(rest, font, ls, max_w, flags);
+                // The snippet and what follows it (`next` is a character boundary of `rest`).
+                let (piece, after) = rest.split_at_checked(next).unwrap_or((rest, ""));
                 if fill && next > 0 && c.snippets.len() > start {
                     // Do not break a word that started in an earlier span of this line.
-                    let drawn = if span_i + 1 == self.spans.len() { w - ls } else { w };
+                    let last_span = span_i.saturating_add(1) == self.spans.len();
+                    let drawn = if last_span { w.saturating_sub(ls) } else { w };
                     if max_w < drawn {
                         break;
                     }
-                    let letter = txt[ofs..ofs + next].chars().next_back();
-                    let letter_next = txt[ofs + next..].chars().next();
+                    let letter = piece.chars().next_back();
+                    let letter_next = after.chars().next();
                     let brk = |c: Option<char>| match c {
                         None | Some('\n' | '\r') => true,
                         Some(c) => BREAK_CHARS.contains(&c),
@@ -683,22 +709,23 @@ impl SpanGroup {
                 }
                 // Kept between layouts: grows only for more pieces than ever (noted).
                 twine_core::alloc_guard::push(
+                    cx.partition(),
                     &mut c.snippets,
                     Snippet {
                         span: span_i,
-                        range: ofs..ofs + next,
+                        range: ofs..ofs.saturating_add(piece.len()),
                         w,
                         font,
                         letter_space: ls,
                     },
                     twine_core::alloc_guard::AllocSite::WidgetBuffer,
                 );
-                ofs += next;
+                ofs = ofs.saturating_add(piece.len());
                 if max_line_h < line_h {
                     max_line_h = line_h;
                     base_line = i32::from(font.base_line);
                 }
-                max_w -= w + ls;
+                max_w = max_w.saturating_sub(w.saturating_add(ls));
                 if fill || max_w <= 0 {
                     break;
                 }
@@ -708,6 +735,7 @@ impl SpanGroup {
             }
             let snippets = start..c.snippets.len();
             twine_core::alloc_guard::push(
+                cx.partition(),
                 &mut c.lines,
                 LineInfo {
                     snippets,
@@ -719,13 +747,13 @@ impl SpanGroup {
                 twine_core::alloc_guard::AllocSite::WidgetBuffer,
             );
             first = false;
-            y += max_line_h;
+            y = y.saturating_add(max_line_h);
             max_w = max_width;
             if c.lines.len() >= lines_limit {
                 break;
             }
         }
-        c.height = (y - line_space).max(0);
+        c.height = y.saturating_sub(line_space).max(0);
     }
 
     /// Draws the lines (LVGL `lv_draw_span`).
@@ -742,29 +770,38 @@ impl SpanGroup {
         let line_space = m.style_i32(Part::Main, PropId::LineSpacing);
         let base = cx.text_dsc(Part::Main);
         let obj_opa = cx.opa();
-        let n_lines = c.lines.len();
         let _ = cx.with_clip(clip, |cx| {
             for (li, l) in c.lines.iter().enumerate() {
-                let top = content.y0 + l.y;
+                let top = content.y0.saturating_add(l.y);
                 if top >= clip.y1 {
                     break;
                 }
+                let bottom = top.saturating_add(l.h);
                 // The end line: the next one would not fit (LVGL's overflow check).
-                let next_h = c.lines.get(li + 1).map_or(0, |n| n.h);
-                let end_line = top + l.h + next_h - line_space > content.y1;
-                let more = li + 1 < n_lines;
+                let next = c.lines.get(li.saturating_add(1));
+                let next_h = next.map_or(0, |n| n.h);
+                let end_line = bottom.saturating_add(next_h).saturating_sub(line_space) > content.y1;
+                let more = next.is_some();
                 let ellipsis = end_line && more && self.overflow == SpanOverflow::Ellipsis;
-                if top + l.h < clip.y0 {
+                if bottom < clip.y0 {
                     if end_line {
                         break;
                     }
                     continue;
                 }
                 let lw = Self::line_width(&c, l);
-                let mut x = content.x0 + l.x + Self::align_ofs(align, max_w, lw);
-                let sn = &c.snippets[l.snippets.clone()];
+                let mut x = content
+                    .x0
+                    .saturating_add(l.x)
+                    .saturating_add(Self::align_ofs(align, max_w, lw));
+                let sn = c.pieces(l);
+                let last = sn.len().saturating_sub(1);
                 for (i, s) in sn.iter().enumerate() {
-                    let (_, sp) = &self.spans[s.span];
+                    // A snippet of a span deleted since the layout: skipped (the layout is
+                    // rebuilt on every span change, so this does not happen).
+                    let Some((_, sp)) = self.spans.get(s.span) else {
+                        continue;
+                    };
                     let st = SpanStyle { m: &m, span: sp };
                     let mut d = base;
                     d.font = s.font;
@@ -775,27 +812,36 @@ impl SpanGroup {
                     d.line_space = line_space;
                     d.align = TextAlign::Left;
                     d.flags |= TextDrawFlags::EXPAND;
-                    let y = top + l.h
-                        - (i32::from(s.font.line_height) + line_space)
-                        - (l.base_line - i32::from(s.font.base_line));
-                    let txt = sp.text()[s.range.clone()].trim_end_matches(['\n', '\r']);
                     let h = i32::from(s.font.line_height);
-                    if ellipsis && i + 1 == sn.len() {
+                    // The snippet's baseline on the line's (line heights are `u16`s).
+                    let y = bottom
+                        .saturating_sub(h.saturating_add(line_space))
+                        .saturating_sub(l.base_line.saturating_sub(i32::from(s.font.base_line)));
+                    let txt = sp
+                        .text()
+                        .get(s.range.clone())
+                        .unwrap_or("")
+                        .trim_end_matches(['\n', '\r']);
+                    // A text box `w` wide from `x0` (one pixel of margin, as LVGL).
+                    let boxed = |x0: i32, w: i32| {
+                        Rect::new(x0, y, x0.saturating_add(w).saturating_add(1), y.saturating_add(h))
+                    };
+                    if ellipsis && i == last {
                         let dots = TextLayout::new(DOTS, s.font).line_width(0..DOTS.len());
-                        let avail = (content.x1 - x - dots).max(0);
+                        let avail = content.x1.saturating_sub(x).saturating_sub(dots).max(0);
                         let (end, _, _) = snippet(txt, s.font, s.letter_space, avail, TextFlags::BREAK_ALL);
                         // Trailing spaces may overhang a line: drop them before the dots.
-                        let keep = txt[..end.min(txt.len())].trim_end_matches(' ');
+                        let keep = txt.get(..end.min(txt.len())).unwrap_or(txt).trim_end_matches(' ');
                         let mut kl = TextLayout::new(keep, s.font);
                         kl.letter_space = s.letter_space;
                         let w = kl.line_width(0..keep.len());
-                        cx.draw_text(Rect::new(x, y, x + w + 1, y + h), keep, &d);
-                        let dx = x + w + s.letter_space;
-                        cx.draw_text(Rect::new(dx, y, dx + dots + 1, y + h), DOTS, &d);
+                        cx.draw_text(boxed(x, w), keep, &d);
+                        let dx = x.saturating_add(w).saturating_add(s.letter_space);
+                        cx.draw_text(boxed(dx, dots), DOTS, &d);
                         break;
                     }
-                    cx.draw_text(Rect::new(x, y, x + s.w + 1, y + h), txt, &d);
-                    x += s.w + s.letter_space;
+                    cx.draw_text(boxed(x, s.w), txt, &d);
+                    x = x.saturating_add(s.advance());
                 }
                 if end_line {
                     break;
@@ -811,19 +857,21 @@ fn avail_width(cx: &MeasureCx<'_>) -> i32 {
     let m = Part::Main;
     let pad = cx.padding(m);
     let border = cx.style_i32(m, PropId::BorderWidth).max(0);
-    let spaces = pad.left + pad.right + 2 * border;
+    let spaces = pad.horizontal().saturating_add(border.saturating_mul(2));
     if cx.style_i32(m, PropId::FlexGrow) > 0 {
         return cx.content_area().width();
     }
     match cx.style(m, PropId::Width).as_length() {
-        Some(Length::Px(w)) => (w - spaces).max(0),
+        Some(Length::Px(w)) => w.saturating_sub(spaces).max(0),
         Some(Length::Pct(p)) => {
             let parent = cx
                 .engine()
                 .tree()
                 .parent(cx.node())
                 .map_or(0, |p| cx.engine().content_area(p).width());
-            ((i64::from(parent) * i64::from(p) / 100) as i32 - spaces).max(0)
+            // SAFE-ARITH: the product of two `i32`s fits `i64`.
+            let share = util::sat_i32(i64::from(parent).wrapping_mul(i64::from(p)) / 100);
+            share.saturating_sub(spaces).max(0)
         }
         _ => COORD_MAX,
     }

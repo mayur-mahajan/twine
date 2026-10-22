@@ -14,6 +14,11 @@ const TILE: usize = 8;
 /// 270° the destination block is `h × w`. The pixel mapping is the one of
 /// [`Rect::rotate_in`] (and [`rotate_area`]): 90° maps `(x, y)` to `(y, w − 1 − x)`.
 ///
+/// # Errors
+/// [`RenderError::UnsupportedFormat`] for `bytes_per_px` outside `1..=4`;
+/// [`RenderError::InvalidArea`] for a stride shorter than a row; [`RenderError::BufferTooSmall`]
+/// when `src` or `dst` cannot hold the block. An empty block is `Ok` and copies nothing.
+///
 /// ```
 /// use twine_core::Rotation;
 /// use twine_render::rotate_buffer;
@@ -45,51 +50,106 @@ pub fn rotate_buffer(
         return Ok(());
     }
     let (dw, dh) = if rotation.swaps_axes() { (h, w) } else { (w, h) };
-    if src_stride < w * bpp || dst_stride < dw * bpp {
+    // Saturating sizes: an impossible size reads as "too small" below.
+    let (row, drow) = (w.saturating_mul(bpp), dw.saturating_mul(bpp));
+    if src_stride < row || dst_stride < drow {
         return Err(RenderError::InvalidArea);
     }
-    let need_src = src_stride * (h - 1) + w * bpp;
+    // `w, h ≥ 1` (returned above).
+    let need_src = src_stride.saturating_mul(h.saturating_sub(1)).saturating_add(row);
     if src.len() < need_src {
         return Err(RenderError::BufferTooSmall {
             needed: need_src,
             got: src.len(),
         });
     }
-    let need_dst = dst_stride * (dh - 1) + dw * bpp;
+    let need_dst = dst_stride
+        .saturating_mul(dh.saturating_sub(1))
+        .saturating_add(drow);
     if dst.len() < need_dst {
         return Err(RenderError::BufferTooSmall {
             needed: need_dst,
             got: dst.len(),
         });
     }
+    // From here every offset below is at most `need_src` / `need_dst`, which fit the buffers
+    // (checked above), so the arithmetic is exact.
     if rotation == Rotation::Deg0 {
-        for y in 0..h {
-            dst[y * dst_stride..y * dst_stride + w * bpp]
-                .copy_from_slice(&src[y * src_stride..y * src_stride + w * bpp]);
+        for (d, s) in dst.chunks_mut(dst_stride).zip(src.chunks(src_stride)).take(h) {
+            // SAFE-INDEX: every row holds `row` bytes (the size checks); never falls back.
+            if let (Some(d), Some(s)) = (d.get_mut(..row), s.get(..row)) {
+                d.copy_from_slice(s);
+            }
         }
         return Ok(());
     }
+    rotate_tiles(src, src_stride, dst, dst_stride, w, h, rotation, bpp);
+    Ok(())
+}
+
+/// Copies the `B`-byte pixel at `s` of `srow` to `d` of `dst`: a fixed-size copy (a load and
+/// a store), not a variable-length one. Out of range it copies nothing (never happens: the
+/// caller checked the sizes).
+#[inline(always)]
+fn copy_px<const B: usize>(dst: &mut [u8], d: usize, srow: &[u8], s: usize) {
+    let dp = dst.get_mut(d..).and_then(<[u8]>::first_chunk_mut::<B>);
+    let sp = srow.get(s..).and_then(<[u8]>::first_chunk::<B>);
+    if let (Some(dp), Some(sp)) = (dp, sp) {
+        *dp = *sp;
+    }
+}
+
+/// The 90°/180°/270° walk of [`rotate_buffer`] for `bpp`-byte pixels (`1..=4`), in
+/// `TILE × TILE` tiles (cache-friendly). The caller checked the strides and buffer sizes for
+/// the `w × h` block (`w, h ≥ 1`). One copy of the walk serves every pixel size (flash); each
+/// pixel is a fixed-size copy chosen by a branch that is the same for the whole call.
+#[allow(clippy::too_many_arguments)]
+fn rotate_tiles(
+    src: &[u8],
+    src_stride: usize,
+    dst: &mut [u8],
+    dst_stride: usize,
+    w: usize,
+    h: usize,
+    rotation: Rotation,
+    bpp: usize,
+) {
     // Destination coordinates of source pixel (x, y).
+    // SAFE-ARITH: `x < w` and `y < h`, so the mirrored coordinates are in range.
     let map = |x: usize, y: usize| -> (usize, usize) {
+        let (mx, my) = (
+            w.wrapping_sub(1).wrapping_sub(x),
+            h.wrapping_sub(1).wrapping_sub(y),
+        );
         match rotation {
-            Rotation::Deg90 => (y, w - 1 - x),
-            Rotation::Deg180 => (w - 1 - x, h - 1 - y),
-            _ => (h - 1 - y, x),
+            Rotation::Deg90 => (y, mx),
+            Rotation::Deg180 => (mx, my),
+            _ => (my, x),
         }
     };
     for ty in (0..h).step_by(TILE) {
         for tx in (0..w).step_by(TILE) {
-            for y in ty..(ty + TILE).min(h) {
-                let row = &src[y * src_stride..];
-                for x in tx..(tx + TILE).min(w) {
+            // SAFE-ARITH: `ty < h` and `tx < w`, so `+ TILE` cannot overflow.
+            for y in ty..ty.wrapping_add(TILE).min(h) {
+                // SAFE-ARITH: `y < h`: a row start inside the checked source size.
+                let srow = src.get(y.wrapping_mul(src_stride)..).unwrap_or_default();
+                for x in tx..tx.wrapping_add(TILE).min(w) {
                     let (dx, dy) = map(x, y);
-                    let d = dy * dst_stride + dx * bpp;
-                    dst[d..d + bpp].copy_from_slice(&row[x * bpp..x * bpp + bpp]);
+                    // SAFE-ARITH: `dx < dw`, `dy < dh`, `x < w`: offsets inside the checked
+                    // sizes.
+                    let d = dy.wrapping_mul(dst_stride).wrapping_add(dx.wrapping_mul(bpp));
+                    let sx = x.wrapping_mul(bpp);
+                    // SAFE-INDEX: inside the checked sizes; nothing is ever skipped.
+                    match bpp {
+                        1 => copy_px::<1>(dst, d, srow, sx),
+                        2 => copy_px::<2>(dst, d, srow, sx),
+                        3 => copy_px::<3>(dst, d, srow, sx),
+                        _ => copy_px::<4>(dst, d, srow, sx),
+                    }
                 }
             }
         }
     }
-    Ok(())
 }
 
 /// Where a logical `area` lands on a panel whose logical size is `panel` (the size before
@@ -114,6 +174,9 @@ pub fn rotate_area(area: Rect, panel: Size, rotation: Rotation) -> Rect {
 /// Mono panels get their chunks rendered in `L8` (so anti-aliasing and blending see real
 /// gray levels) and converted at the end of the chunk.
 ///
+/// # Errors
+/// [`RenderError::BufferTooSmall`] when `src` or `dst` cannot hold the block.
+///
 /// ```
 /// use twine_render::convert_l8_to_i1;
 /// let src = [255, 0, 200, 127, 128, 0, 0, 0, 9, 255];
@@ -126,15 +189,16 @@ pub fn convert_l8_to_i1(src: &[u8], dst: &mut [u8], w: usize, h: usize) -> Resul
         return Ok(());
     }
     let dst_stride = w.div_ceil(8);
-    if src.len() < w * h {
+    let (need_src, need_dst) = (w.saturating_mul(h), dst_stride.saturating_mul(h));
+    if src.len() < need_src {
         return Err(RenderError::BufferTooSmall {
-            needed: w * h,
+            needed: need_src,
             got: src.len(),
         });
     }
-    if dst.len() < dst_stride * h {
+    if dst.len() < need_dst {
         return Err(RenderError::BufferTooSmall {
-            needed: dst_stride * h,
+            needed: need_dst,
             got: dst.len(),
         });
     }
@@ -143,6 +207,7 @@ pub fn convert_l8_to_i1(src: &[u8], dst: &mut [u8], w: usize, h: usize) -> Resul
             let mut b = 0u8;
             for (i, &l) in bits.iter().enumerate() {
                 if l >= 128 {
+                    // SHIFT: `i < 8` (`bits` is a chunk of at most 8).
                     b |= 0x80 >> i;
                 }
             }

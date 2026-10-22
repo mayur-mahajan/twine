@@ -15,6 +15,9 @@ default = []
 ## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
 ## safety lints of library code and the refusal of excluded features.
 safety = ["twine-core/safety"]
+## Partitioned runtimes (ADR-001): forwards to `twine-core/partitions` (each table notes its
+## growth in its partition's seal domain, `Timers::set_partition`).
+partitions = ["twine-core/partitions"]
 ## std-only conveniences.
 std = ["twine-core/std"]
 ## Log through the `log` crate.

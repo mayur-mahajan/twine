@@ -137,7 +137,7 @@ impl LayoutTree for EngineLayout<'_> {
         if let Some(p) = n.parent() {
             e.forget_children_box(p);
         }
-        let (dx, dy) = (r.x0 - old.x0, r.y0 - old.y0);
+        let (dx, dy) = (r.x0.saturating_sub(old.x0), r.y0.saturating_sub(old.y0));
         if dx != 0 || dy != 0 {
             // Children are absolute: move the subtree along. Children the layout does not
             // move any further then keep their (shifted) rectangle and need no work at all.
@@ -150,6 +150,7 @@ impl LayoutTree for EngineLayout<'_> {
             }
         }
         twine_core::alloc_guard::push(
+            e.partition(),
             &mut e.layout.moved,
             (id, old, r),
             twine_core::alloc_guard::AllocSite::EngineScratch,
@@ -258,6 +259,7 @@ impl Engine {
             while let Some(p) = cur.filter(|p| self.is_passthrough(*p)) {
                 if !wrappers.iter().any(|(w, _)| *w == p) {
                     twine_core::alloc_guard::push(
+                        self.partition(),
                         &mut wrappers,
                         (p, self.tree.ancestors(p).count()),
                         twine_core::alloc_guard::AllocSite::EngineScratch,
@@ -269,13 +271,7 @@ impl Engine {
         // Deepest first. Insertion sort: the list is short (the wrappers above the moved
         // nodes, de-duplicated above in O(n²) anyway), where it is as fast as `sort_unstable`
         // — which would link ~4 KiB of generic sorting code into firmware for this one call.
-        for i in 1..wrappers.len() {
-            let mut j = i;
-            while j > 0 && wrappers[j - 1].1 < wrappers[j].1 {
-                wrappers.swap(j - 1, j);
-                j -= 1;
-            }
-        }
+        crate::tree::sort_desc_by_key(&mut wrappers, |w| w.1);
         for &(w, _) in &wrappers {
             self.refresh_passthrough_box(w);
         }
@@ -426,12 +422,12 @@ impl Engine {
                 );
                 break;
             }
-            stats.iterations += 1;
+            stats.iterations = stats.iterations.saturating_add(1);
             self.layout.pending = false;
             self.collect_layout_targets();
-            stats.roots += self.layout.targets.len() as u32;
+            stats.roots = stats.roots.saturating_add(self.layout.targets.len() as u32);
             self.layout_targets();
-            stats.moved += self.layout.moved.len() as u32;
+            stats.moved = stats.moved.saturating_add(self.layout.moved.len() as u32);
             self.apply_moves();
         }
         twine_core::debug!(
@@ -519,6 +515,7 @@ impl Engine {
             r.1 = anim;
         } else {
             twine_core::alloc_guard::push(
+                self.partition(),
                 &mut self.layout.reveal,
                 (node, anim),
                 twine_core::alloc_guard::AllocSite::EngineScratch,
@@ -574,7 +571,8 @@ impl Engine {
         targets.clear();
         let mut i = 0;
         while let Some(root) = self.tree.root_at(i) {
-            i += 1;
+            // SAFE-ARITH: `i` indexes the tree's roots (a `Vec`): below `isize::MAX`.
+            i = i.wrapping_add(1);
             let mut cur = Some(root);
             while let Some(c) = cur {
                 let Some(n) = self.tree.node_mut(c) else { break };
@@ -590,6 +588,7 @@ impl Engine {
                     let target = self.layout_owner(target);
                     if targets.last() != Some(&target) {
                         twine_core::alloc_guard::push(
+                            self.partition(),
                             &mut targets,
                             target,
                             twine_core::alloc_guard::AllocSite::EngineScratch,
@@ -672,19 +671,24 @@ impl Engine {
             let (a, b) = (old.expand(ext_old), new.expand(ext_new));
             if overflow {
                 // Descendants may draw outside: their old (shifted back) and new areas.
-                let (dx, dy) = (new.x0 - old.x0, new.y0 - old.y0);
+                let (dx, dy) = (new.x0.saturating_sub(old.x0), new.y0.saturating_sub(old.y0));
                 let mut cur = self.tree.node(id).and_then(crate::Node::first_child);
                 while let Some(c) = cur {
                     if let Some(cn) = self.tree.node(c) {
                         let area = cn.coords.expand(i32::from(cn.ext_draw));
-                        self.invalidate_rect_of(c, area.translate(-dx, -dy), InvalidateReason::Layout);
+                        self.invalidate_rect_of(
+                            c,
+                            area.translate(dx.saturating_neg(), dy.saturating_neg()),
+                            InvalidateReason::Layout,
+                        );
                         self.invalidate_rect_of(c, area, InvalidateReason::Layout);
                     }
                     cur = self.next_in_subtree(id, c);
                 }
             }
             let union = a.union(&b);
-            if a.intersects(&b) && union.area() <= 2 * (a.area() + b.area()) {
+            // `area()` is a `u64` below 2^62 (two `i32` extents): the sum and double saturate.
+            if a.intersects(&b) && union.area() <= a.area().saturating_add(b.area()).saturating_mul(2) {
                 self.invalidate_rect_of(id, union, InvalidateReason::Layout);
             } else {
                 self.invalidate_rect_of(id, a, InvalidateReason::Layout);
@@ -693,6 +697,7 @@ impl Engine {
             if let Some(p) = parent {
                 if !parents.contains(&p) {
                     twine_core::alloc_guard::push(
+                        self.partition(),
                         &mut parents,
                         p,
                         twine_core::alloc_guard::AllocSite::EngineScratch,
@@ -706,6 +711,7 @@ impl Engine {
         for &(id, old, new) in &moved {
             if old.size() != new.size() && self.tree.contains(id) {
                 twine_core::alloc_guard::push(
+                    self.partition(),
                     &mut self.layout.readjust,
                     id,
                     twine_core::alloc_guard::AllocSite::EngineScratch,
@@ -732,6 +738,7 @@ impl Engine {
         for (id, n) in self.tree.all_nodes() {
             if n.align_to().is_some_and(|a| a.base == base) {
                 twine_core::alloc_guard::push(
+                    self.partition(),
                     &mut hit,
                     id,
                     twine_core::alloc_guard::AllocSite::EngineScratch,
@@ -1045,9 +1052,10 @@ impl Engine {
             let part = (selector.part != Part::Any).then_some(selector.part);
             self.remove_transitions(id, part, Some(prop), None);
         }
+        let part = self.partition();
         let Some(n) = self.tree.node_mut(id) else { return };
         if n.styles
-            .local_mut(selector)
+            .local_mut(selector, part)
             .is_some_and(|s| s.set_tracks(prop, tracks))
         {
             self.refresh_style(id, selector.part, Some(prop));

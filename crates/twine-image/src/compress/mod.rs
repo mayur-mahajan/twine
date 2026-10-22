@@ -16,6 +16,11 @@ impl Image {
     /// [`ImageHeader::data_size`] bytes) and returns the header of the result (without
     /// [`ImageFlags::COMPRESSED`]).
     ///
+    /// # Errors
+    /// [`Error::SizeMismatch`] when `out` is smaller than [`ImageHeader::data_size`] or the data
+    /// decompresses to fewer bytes; [`Error::Decode`] for corrupt data or LZ4 data without the
+    /// `img-lz4` feature.
+    ///
     /// ```
     /// use twine_core::ColorFormat;
     /// use twine_image::{Compression, Image, ImageData, ImageHeader, rle_compress};
@@ -40,7 +45,13 @@ impl Image {
                 got: out.len(),
             });
         }
-        let out = &mut out[..expected];
+        // `out.len() ≥ expected` (checked above): never `None`.
+        let Some(out) = out.get_mut(..expected) else {
+            return Err(Error::SizeMismatch {
+                expected,
+                got: out.len(),
+            });
+        };
         let written = match &self.data {
             ImageData::Static(d) => copy(d, out)?,
             ImageData::Owned(d) => copy(d, out)?,

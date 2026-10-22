@@ -14,7 +14,9 @@ use twine_core::math::{cos, isqrt64, sin};
 use twine_core::{Angle, Color, Opa, Point, Rect};
 
 use crate::blend::{BlendMode, Source};
+use crate::circle::MAX_RADIUS;
 use crate::mask::Mask;
+use crate::num::{sat32, span};
 use crate::painter::Paint;
 use crate::rrect::RowSpan;
 use crate::transform_blit::{is_direct_format, warn_unsupported_image};
@@ -62,53 +64,67 @@ struct Cap {
 }
 
 impl Cap {
+    /// `mid256` and `rad` are below `2^31` (radius ≤ `MAX_RADIUS = 2^22`, in 1/256 px).
     fn new(a: Angle, mid256: i64, rad: i64) -> Self {
+        // SAFE-ARITH: `|mid256| < 2^31` and `|cos|, |sin| ≤ 32_767`: products below 2^46.
         Self {
-            cx: mid256 * i64::from(cos(a)) / 32767,
-            cy: mid256 * i64::from(sin(a)) / 32767,
+            cx: mid256.wrapping_mul(i64::from(cos(a))) / 32767,
+            cy: mid256.wrapping_mul(i64::from(sin(a))) / 32767,
             rad,
         }
     }
 
-    /// Coverage of the pixel whose center is `(px, py)` (1/256 px, relative to the center).
+    /// Coverage of the pixel whose center is `(px, py)` (1/256 px, relative to the center;
+    /// `|px|, |py| < 2^41`).
     #[inline]
     fn cov(&self, px: i64, py: i64) -> u8 {
-        let (dx, dy) = (px - self.cx, py - self.cy);
-        let lim = self.rad + 256;
+        // SAFE-ARITH: `|px|, |py| < 2^41` and `|cx|, |cy|, rad < 2^31`; past the early return
+        // `|dx|, |dy| ≤ rad + 256 < 2^31`, so each square is below 2^62 and their sum fits
+        // in `u64`.
+        let (dx, dy) = (px.wrapping_sub(self.cx), py.wrapping_sub(self.cy));
+        let lim = self.rad.wrapping_add(256);
         if dx.abs() > lim || dy.abs() > lim {
             return 0;
         }
-        let dist = i64::from(isqrt64((dx * dx + dy * dy) as u64));
-        (self.rad + 128 - dist).clamp(0, 255) as u8
+        let d2 = (dx.wrapping_mul(dx) as u64).wrapping_add(dy.wrapping_mul(dy) as u64);
+        let dist = i64::from(isqrt64(d2));
+        self.rad.wrapping_add(128).wrapping_sub(dist).clamp(0, 255) as u8
     }
 }
 
 impl Painter<'_> {
     /// Draws an arc from `start` clockwise to `end` (angles clockwise from 3 o'clock).
-    /// `start == end` draws nothing; `|end − start| ≥ 360°` draws the full ring.
+    /// `start == end` draws nothing; `|end − start| ≥ 360°` draws the full ring. Radii above
+    /// 2^22 px are clamped to 2^22 px. Never panics.
     pub fn arc(&mut self, center: Point, radius: i32, start: Angle, end: Angle, dsc: &ArcDsc<'_>) {
         if radius <= 0 || dsc.width <= 0 || dsc.opa.is_transparent() || start == end {
             return;
         }
         twine_core::trace!(target: "twine::render", "arc {} r {} {}..{}", center, radius, start, end);
-        let full = (i64::from(end.as_deci_deg()) - i64::from(start.as_deci_deg())).abs() >= 3600;
+        let radius = radius.min(MAX_RADIUS);
+        // SAFE-ARITH (whole function): `1 ≤ w ≤ radius ≤ 2^22`, angles are `i32`s.
+        let full = i64::from(end.as_deci_deg())
+            .wrapping_sub(i64::from(start.as_deci_deg()))
+            .abs()
+            >= 3600;
         let w = dsc.width.min(radius);
         let outer = Rect::new(
-            center.x - radius,
-            center.y - radius,
-            center.x + radius,
-            center.y + radius,
+            center.x.saturating_sub(radius),
+            center.y.saturating_sub(radius),
+            center.x.saturating_add(radius),
+            center.y.saturating_add(radius),
         );
-        let ri = radius - w;
-        let inner = outer.expand(-w);
+        let ri = radius.wrapping_sub(w);
+        let inner = outer.expand(w.wrapping_neg());
         // Angle range [s, e) with e > s.
         let s = start.normalized().as_deci_deg();
         let mut e = end.normalized().as_deci_deg();
         if e <= s {
-            e += 3600;
+            // Normalized angles are in `0..3600`.
+            e = e.wrapping_add(3600);
         }
-        let mid256 = i64::from(2 * radius - w) * 128;
-        let rad = i64::from(w) * 128;
+        let mid256 = i64::from(radius.wrapping_mul(2).wrapping_sub(w)).wrapping_mul(128);
+        let rad = i64::from(w).wrapping_mul(128);
         let caps = (dsc.rounded && !full).then(|| {
             [
                 Cap::new(Angle::deci_deg(s), mid256, rad),
@@ -119,22 +135,41 @@ impl Painter<'_> {
         let bbox = if full {
             outer
         } else {
-            let mut b = Rect::new(center.x, center.y, center.x + 1, center.y + 1);
+            let mut b = Rect::new(
+                center.x,
+                center.y,
+                center.x.saturating_add(1),
+                center.y.saturating_add(1),
+            );
             let mut add = |a: i32, r: i64| {
-                let x = i64::from(center.x) + r * i64::from(cos(Angle::deci_deg(a))) / 32767;
-                let y = i64::from(center.y) + r * i64::from(sin(Angle::deci_deg(a))) / 32767;
-                b = b.union(&Rect::new(x as i32 - 1, y as i32 - 1, x as i32 + 2, y as i32 + 2));
+                // `r ≤ 2^22`: the offsets are below 2^37 / 32_767.
+                let x = i64::from(center.x)
+                    .wrapping_add(r.wrapping_mul(i64::from(cos(Angle::deci_deg(a)))) / 32767);
+                let y = i64::from(center.y)
+                    .wrapping_add(r.wrapping_mul(i64::from(sin(Angle::deci_deg(a)))) / 32767);
+                let (x, y) = (sat32(x), sat32(y));
+                b = b.union(&Rect::new(
+                    x.saturating_sub(1),
+                    y.saturating_sub(1),
+                    x.saturating_add(2),
+                    y.saturating_add(2),
+                ));
             };
             for a in [s, e] {
                 add(a, i64::from(radius));
                 add(a, i64::from(ri));
             }
-            let mut q = (s / 900 + 1) * 900;
+            // `s, e < 7200`.
+            let mut q = (s / 900).wrapping_add(1).wrapping_mul(900);
             while q < e {
                 add(q, i64::from(radius));
-                q += 900;
+                q = q.wrapping_add(900);
             }
-            let pad = if caps.is_some() { w / 2 + 2 } else { 1 };
+            let pad = if caps.is_some() {
+                (w / 2).wrapping_add(2)
+            } else {
+                1
+            };
             b.expand(pad).intersection(&outer).unwrap_or(Rect::ZERO)
         };
         let Some(rows) = bbox.intersection(&self.clip()) else {
@@ -148,7 +183,7 @@ impl Painter<'_> {
             }
             other => other,
         };
-        let img_pos = Point::new(center.x - radius, center.y - radius);
+        let img_pos = Point::new(center.x.saturating_sub(radius), center.y.saturating_sub(radius));
         let angle_mask = (!full).then_some(Mask::Angle {
             center,
             start: Angle::deci_deg(s),
@@ -170,18 +205,21 @@ impl Painter<'_> {
             let mut hi = o.aa_r1.min(rows.x1);
             let mut paint = Paint::Solid(dsc.color);
             if let Some(img) = img {
-                let iy = y - img_pos.y;
-                if iy < 0 || iy >= i32::from(img.h) {
+                let Some(iy) = (y >= img_pos.y)
+                    .then(|| u16::try_from(span(img_pos.y, y)).ok())
+                    .flatten()
+                    .filter(|&iy| iy < img.h)
+                else {
                     continue;
-                }
+                };
                 lo = lo.max(img_pos.x);
-                hi = hi.min(img_pos.x + i32::from(img.w));
-                let row = img.row(iy as u16);
+                hi = hi.min(img_pos.x.saturating_add(i32::from(img.w)));
+                let row = img.row(iy);
                 let bpp = usize::from(img.format.bpp()) / 8;
-                let skip = ((lo - img_pos.x).max(0) as usize * bpp).min(row.len());
+                let skip = span(img_pos.x, lo).saturating_mul(bpp);
                 paint = Paint::Src {
                     src: Source::Pixels {
-                        data: &row[skip..],
+                        data: row.get(skip..).unwrap_or_default(),
                         format: img.format,
                     },
                     x0: lo,
@@ -196,24 +234,33 @@ impl Painter<'_> {
             } else {
                 [(lo, hi), (0, 0)]
             };
-            let py = 2 * i64::from(y - center.y) + 1; // pixel center, half pixels
+            // Pixel center, half pixels (`|py| < 2^34`).
+            let py = i64::from(y)
+                .wrapping_sub(i64::from(center.y))
+                .wrapping_mul(2)
+                .wrapping_add(1);
             for (a, b) in pieces {
                 if a >= b {
                     continue;
                 }
                 let mut f = |x0: i32, buf: &mut [u8]| {
-                    for (k, v) in buf.iter_mut().enumerate() {
-                        let x = x0 + k as i32;
+                    // The chunk ends before `b ≤ i32::MAX`: the bounded range covers it.
+                    for (v, x) in buf.iter_mut().zip(x0..i32::MAX) {
                         *v = o.cov(x).saturating_sub(i.cov(x));
                     }
                     if let Some(m) = &angle_mask {
                         m.apply(y, x0, buf);
                     }
-                    if let Some(caps) = &caps {
-                        for (k, v) in buf.iter_mut().enumerate() {
-                            let px = (2 * i64::from(x0 + k as i32 - center.x) + 1) * 128;
-                            let c = caps[0].cov(px, py * 128).max(caps[1].cov(px, py * 128));
-                            *v = (*v).max(c);
+                    if let Some([c0, c1]) = &caps {
+                        // Pixel centers in 1/256 px: `|px|, |py · 128| < 2^41` (`Cap::cov`).
+                        let py = py.wrapping_mul(128);
+                        for (v, x) in buf.iter_mut().zip(x0..i32::MAX) {
+                            let px = i64::from(x)
+                                .wrapping_sub(i64::from(center.x))
+                                .wrapping_mul(2)
+                                .wrapping_add(1)
+                                .wrapping_mul(128);
+                            *v = (*v).max(c0.cov(px, py).max(c1.cov(px, py)));
                         }
                     }
                 };

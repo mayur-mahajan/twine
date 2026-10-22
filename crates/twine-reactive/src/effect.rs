@@ -41,7 +41,7 @@ impl EffectId {
 
     /// Stops the effect and releases its closure. Disposing twice is a no-op.
     pub fn dispose(self) {
-        with_runtime(|rt| rt.dispose_node(self.h.key));
+        with_runtime(self.h.part, |rt| rt.dispose_node(self.h.key));
     }
 
     /// Whether the effect is still alive (not disposed, scope alive).

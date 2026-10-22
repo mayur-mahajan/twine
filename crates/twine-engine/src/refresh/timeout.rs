@@ -81,22 +81,25 @@ impl Engine {
     pub(crate) fn check_flush_timeout(&mut self, d: usize) -> bool {
         let timeout = self.config.flush_timeout.map(Duration::as_micros);
         let now = self.wait_stamp();
-        let check = match &mut self.displays[d].refresher.strategy {
+        let Some(disp) = self.displays.get_mut(d) else {
+            return false;
+        };
+        let check = match &mut disp.refresher.strategy {
             Strategy::Partial(p) => {
-                let Some(front) = p.in_flight.front().map(|&s| usize::from(s)) else {
+                let Some(&front) = p.in_flight.front() else {
                     return false;
                 };
-                match p.flights[front].as_mut() {
+                match front.pick_mut(&mut p.flights).as_mut() {
                     None => Check::Fine,
                     Some(f) if f.timed_out => Check::Stuck,
                     Some(f) => match (timeout, f.since.micros_until(now)) {
                         (Some(t), Some(waited)) if waited >= t => {
                             let mut areas = [None; 2];
-                            for (i, &s) in p.in_flight.iter().enumerate() {
-                                if let Some(f) = p.flights[usize::from(s)].as_mut() {
+                            for &s in &p.in_flight {
+                                if let Some(f) = s.pick_mut(&mut p.flights).as_mut() {
                                     if !f.timed_out {
                                         f.timed_out = true;
-                                        areas[i] = Some(f.area);
+                                        *s.pick_mut(&mut areas) = Some(f.area);
                                     }
                                 }
                             }
@@ -146,7 +149,10 @@ impl Engine {
     /// started (after [`recover_display`](Self::recover_display)).
     pub(crate) fn restart_flush_timeouts(&mut self, d: usize) {
         let now = self.wait_stamp();
-        match &mut self.displays[d].refresher.strategy {
+        let Some(disp) = self.displays.get_mut(d) else {
+            return;
+        };
+        match &mut disp.refresher.strategy {
             Strategy::Partial(p) => {
                 for f in p.flights.iter_mut().flatten() {
                     *f = Flight {
@@ -175,7 +181,7 @@ impl Engine {
             Strategy::Partial(p) => p
                 .in_flight
                 .front()
-                .is_some_and(|&s| p.flights[usize::from(s)].is_none_or(|f| !f.timed_out)),
+                .is_some_and(|&s| s.pick(&p.flights).is_none_or(|f| !f.timed_out)),
             Strategy::Full(st) => st.present.is_some_and(|pp| !pp.timed_out),
             Strategy::Direct(_) => false,
         })

@@ -12,6 +12,7 @@
 use core::fmt;
 use core::panic::Location;
 
+use twine_core::Partition;
 use twine_core::fault::FaultKind;
 
 /// The kind of reactive handle a [`ReactiveError`] is about.
@@ -124,12 +125,13 @@ impl ReactiveError {
     }
 
     /// Logs the error (`warn!`, with the caller's location) and records its fault in the
-    /// runtime (counted, reported to the fault hook, kept for `take_faults`). Called without
+    /// runtime of partition `part` (counted, reported to the fault hook, kept for
+    /// `take_faults`). Called without
     /// any borrow of the runtime held (rule R1: the hook is foreign code).
     #[cfg(feature = "no-panic-runtime")]
     #[cold]
     #[inline(never)]
-    fn report(self, at: &'static Location<'static>) {
+    fn report(self, part: Partition, at: &'static Location<'static>) {
         twine_core::log::warn!(
             target: "twine::reactive",
             "{} at {}:{}",
@@ -137,7 +139,7 @@ impl ReactiveError {
             at.file(),
             at.line()
         );
-        crate::global::with_runtime(|rt| match self {
+        crate::global::with_runtime(part, |rt| match self {
             ReactiveError::Capacity(HandleKind::Scope) => {
                 rt.record_capacity(twine_core::fault::CapacityFault::ReactiveScopes, 1);
             }
@@ -151,18 +153,19 @@ impl ReactiveError {
     /// The failure path of an operation that can be skipped (a write, a creation): with
     /// `no-panic-runtime`, reports the error ([`report`](Self::report)) and returns, so the
     /// caller skips the operation; otherwise panics with the error's message.
-    /// `created` is where the handle was created (debug builds), for the message.
+    /// `part` is the partition whose runtime records the fault (the handle's); `created` is
+    /// where the handle was created (debug builds), for the message.
     #[cold]
     #[inline(never)]
     #[track_caller]
-    pub(crate) fn skip(self, created: Option<&'static Location<'static>>) {
+    pub(crate) fn skip(self, part: Partition, created: Option<&'static Location<'static>>) {
         #[cfg(feature = "no-panic-runtime")]
         {
             let _ = created;
-            self.report(Location::caller());
+            self.report(part, Location::caller());
         }
         #[cfg(not(feature = "no-panic-runtime"))]
-        self.fail(created);
+        self.fail(part, created);
     }
 
     /// The failure path of an operation that has no value to continue with (a read of a
@@ -177,9 +180,11 @@ impl ReactiveError {
     #[cold]
     #[inline(never)]
     #[track_caller]
-    pub(crate) fn fail(self, created: Option<&'static Location<'static>>) -> ! {
+    pub(crate) fn fail(self, part: Partition, created: Option<&'static Location<'static>>) -> ! {
         #[cfg(feature = "no-panic-runtime")]
-        self.report(Location::caller());
+        self.report(part, Location::caller());
+        #[cfg(not(feature = "no-panic-runtime"))]
+        let _ = part;
         // PANIC: a read must return a value and none exists (disposed handle, borrowed value,
         // cycle on a memo's first computation); inventing one would show wrong data
         // silently. A programming error, never input data; `try_*` forms avoid it.

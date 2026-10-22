@@ -20,19 +20,34 @@ const NEWTON_ITERATIONS: usize = 8;
 /// ```
 #[must_use]
 pub const fn bezier3(t: u16, u0: i32, u1: i32, u2: i32, u3: i32) -> i32 {
+    const fn term(u: i32, k: i64, a: i64, b: i64, c: i64) -> i64 {
+        (u as i64)
+            .wrapping_mul(k)
+            .wrapping_mul(a)
+            .wrapping_mul(b)
+            .wrapping_mul(c)
+    }
     let t = if t > 1024 { 1024 } else { t as i64 };
-    let r = 1024 - t;
-    // Exact Bernstein sum in 30-bit fixed point (≤ 2^61, fits i64), rounded once.
-    let sum =
-        u0 as i64 * r * r * r + 3 * u1 as i64 * r * r * t + 3 * u2 as i64 * r * t * t + u3 as i64 * t * t * t;
-    crate::geometry::sat_i32((sum + (1 << 29)) >> 30)
+    // SAFE-ARITH: `t ≤ 1024`.
+    let r = 1024i64.wrapping_sub(t);
+    // Exact Bernstein sum in 30-bit fixed point, rounded once.
+    // SAFE-ARITH: `r + t = 2^10`, so the four weights (`r³`, `3r²t`, `3rt²`, `t³`) are each at
+    // most 2^30 and sum to 2^30; each partial product is at most `2^31 · 3 · 2^30 < 2^63`, and
+    // `|sum| ≤ 2^31 · 2^30 = 2^61`, so nothing leaves `i64`.
+    let sum = term(u0, 1, r, r, r)
+        .wrapping_add(term(u1, 3, r, r, t))
+        .wrapping_add(term(u2, 3, r, t, t))
+        .wrapping_add(term(u3, 1, t, t, t));
+    // SAFE-ARITH: `|sum| ≤ 2^61`.
+    crate::geometry::sat_i32(sum.wrapping_add(1 << 29) >> 30)
 }
 
-/// `a·t³ + b·t² + c·t` in 10-bit fixed point (LVGL `do_cubic_bezier`).
+/// `a·t³ + b·t² + c·t` in 10-bit fixed point (LVGL `do_cubic_bezier`), saturating (Newton
+/// steps may try a `t` outside `0..=1024`).
 const fn eval(t: i64, a: i64, b: i64, c: i64) -> i64 {
-    let r = (a * t) >> SHIFT;
-    let r = ((r + b) * t) >> SHIFT;
-    ((r + c) * t) >> SHIFT
+    let r = a.saturating_mul(t) >> SHIFT;
+    let r = r.saturating_add(b).saturating_mul(t) >> SHIFT;
+    r.saturating_add(c).saturating_mul(t) >> SHIFT
 }
 
 /// CSS-style `cubic-bezier(x1, y1, x2, y2)` easing evaluated at `x` (port of LVGL
@@ -65,32 +80,40 @@ pub fn cubic_bezier(x: i32, x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
         i64::from(x2),
         i64::from(y2),
     );
-    let cx = 3 * x1;
-    let bx = 3 * (x2 - x1) - cx;
-    let ax = one - cx - bx;
-    let cy = 3 * y1;
-    let by = 3 * (y2 - y1) - cy;
-    let ay = one - cy - by;
+    // Coefficients of `x(t)`: `x1`, `x2` ∈ `0..=1024` (checked above).
+    // SAFE-ARITH: `|cx| ≤ 3072`, `|bx| ≤ 9216`, `|ax| ≤ 13_312`.
+    let cx = x1.wrapping_mul(3);
+    let bx = x2.wrapping_sub(x1).wrapping_mul(3).wrapping_sub(cx);
+    let ax = one.wrapping_sub(cx).wrapping_sub(bx);
+    // Coefficients of `y(t)`: `y1`, `y2` are any `i32`.
+    // SAFE-ARITH: `|cy| < 2^33`, `|by| < 2^35`, `|ay| < 2^36`.
+    let cy = y1.wrapping_mul(3);
+    let by = y2.wrapping_sub(y1).wrapping_mul(3).wrapping_sub(cy);
+    let ay = one.wrapping_sub(cy).wrapping_sub(by);
 
     let t = 'solve: {
         // Newton's method first.
         let mut t = x;
         for _ in 0..NEWTON_ITERATIONS {
-            let xs = eval(t, ax, bx, cx) - x;
+            let xs = eval(t, ax, bx, cx).saturating_sub(x);
             if xs.abs() <= 1 {
                 break 'solve t;
             }
-            let mut d = (3 * ax * t) >> SHIFT;
-            d = ((d + 2 * bx) * t) >> SHIFT;
-            d += cx;
+            // The derivative `3a·t² + 2b·t + c`; Newton steps can leave `0..=1024`, so the
+            // steps saturate.
+            let mut d = ax.saturating_mul(3).saturating_mul(t) >> SHIFT;
+            d = d.saturating_add(bx.saturating_mul(2)).saturating_mul(t) >> SHIFT;
+            d = d.saturating_add(cx);
             if d.abs() <= 1 {
                 break;
             }
-            let step = (xs << SHIFT) / d;
+            // `|d| > 1` (the loop breaks above otherwise): the fallback is never taken (a zero
+            // step ends the iterations).
+            let step = (xs << SHIFT).checked_div(d).unwrap_or(0);
             if step == 0 {
                 break;
             }
-            t -= step;
+            t = t.saturating_sub(step);
         }
         // Bisection fallback for reliability.
         let (mut tl, mut tr) = (0, one);
@@ -103,7 +126,8 @@ pub fn cubic_bezier(x: i32, x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
         }
         while tl < tr {
             let xs = eval(t, ax, bx, cx);
-            if (xs - x).abs() <= 1 {
+            // SAFE-ARITH: `t ∈ 0..=1024` during the bisection, so `|xs| < 2^15`.
+            if xs.wrapping_sub(x).abs() <= 1 {
                 break 'solve t;
             }
             if x > xs {
@@ -111,7 +135,8 @@ pub fn cubic_bezier(x: i32, x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
             } else {
                 tr = t;
             }
-            t = (tr - tl) / 2 + tl;
+            // SAFE-ARITH: `0 ≤ tl < tr ≤ 1024`.
+            t = (tr.wrapping_sub(tl) / 2).wrapping_add(tl);
             if t == tl {
                 break;
             }

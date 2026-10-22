@@ -16,9 +16,10 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::Key as WKey;
 use winit::window::{Window, WindowId};
 
-use crate::app::{Deadline, SimApp, SimError};
+use crate::app::{Deadline, InputEvent, SimApp, SimError};
 use crate::hotkeys::Hotkey;
 use crate::input::{WheelAccum, map_key, mouse_to_panel};
+use crate::panels::PointerEvent;
 
 struct Gfx {
     window: Rc<Window>,
@@ -165,8 +166,10 @@ impl Runner {
         let (ww, wh) = (size.width as usize, size.height as usize);
         let mut buffer = g.surface.buffer_mut().map_err(|e| e.to_string())?;
         if pw > 0 && ph > 0 {
+            // DIV: `ww ≥ 1` (a `NonZeroU32` above).
             let xmap: Vec<usize> = (0..ww).map(|x| x * pw / ww).collect();
             for (y, row) in buffer.chunks_exact_mut(ww).enumerate().take(wh) {
+                // DIV: `wh ≥ 1` (a `NonZeroU32` above).
                 let src = &self.xrgb[(y * ph / wh) * pw..][..pw];
                 for (dst, &sx) in row.iter_mut().zip(&xmap) {
                     *dst = src[sx];
@@ -193,7 +196,7 @@ impl Runner {
             return; // the engine generates its own long-press repeats
         }
         if let Some(k) = map_key(&event.logical_key, event.text.as_deref(), self.shift) {
-            self.app.devices().state.borrow_mut().key(k, pressed);
+            self.app.input(InputEvent::Key(k, pressed));
         }
     }
 }
@@ -233,22 +236,21 @@ impl ApplicationHandler for Runner {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x, position.y);
                 let p = self.panel_point();
-                self.app.devices().state.borrow_mut().pointer_move(p);
+                self.app.input(InputEvent::Pointer(PointerEvent::Move(p)));
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let pressed = state == ElementState::Pressed;
                 match button {
                     MouseButton::Left => {
                         let p = self.panel_point();
-                        let mut s = self.app.devices().state.borrow_mut();
-                        if pressed {
-                            s.pointer_press(p);
+                        self.app.input(InputEvent::Pointer(if pressed {
+                            PointerEvent::Press(p)
                         } else {
-                            s.pointer_release();
-                        }
+                            PointerEvent::Release
+                        }));
                     }
                     MouseButton::Middle => {
-                        self.app.devices().state.borrow_mut().encoder_button(pressed);
+                        self.app.input(InputEvent::EncButton(pressed));
                     }
                     _ => {}
                 }
@@ -258,7 +260,7 @@ impl ApplicationHandler for Runner {
                     MouseScrollDelta::LineDelta(_, y) => self.wheel.lines(f64::from(y)),
                     MouseScrollDelta::PixelDelta(p) => self.wheel.pixels(p.y),
                 };
-                self.app.devices().state.borrow_mut().encoder_rotate(diff);
+                self.app.input(InputEvent::Wheel(diff));
             }
             WindowEvent::ModifiersChanged(m) => self.shift = m.state().shift_key(),
             WindowEvent::KeyboardInput {
@@ -269,7 +271,7 @@ impl ApplicationHandler for Runner {
                 }
             }
             WindowEvent::Focused(false) => {
-                self.app.devices().state.borrow_mut().release_all();
+                self.app.input(InputEvent::ReleaseAll);
             }
             _ => {}
         }

@@ -58,6 +58,7 @@
 //! | memory | [`Engine::memory_report`], [`EngineMemory`], [`HeapPeak`], [`MemInfo`], [`Engine::with_layer_buf`] |
 //! | bounds | [`Engine::set_limits`], [`Engine::limits`] ([`Limits`](twine_core::Limits): nodes, tree depth, text length, handlers, timers, animations; preallocation), [`WidgetCx::fit_text`], [`EngineError::TooDeep`] |
 //! | display integrity | [`Engine::heartbeat`], [`Engine::now`]; with the `display-integrity` feature: `FrameObserver`, `FrameChunk`, `FrameReport`, `Engine::set_frame_observer`, `Engine::region`, `Engine::render_region_to`, `Engine::read_back`, `Engine::check_region` (`IntegrityCheck`), `ObjFlags::SAFETY_CRITICAL`, `Engine::critical_nodes`, `Engine::critical_report` (`CriticalReport`, `Widget::value_digest`), `Engine::set_fail_safe_screen`, `Engine::enter_fail_safe`, `Engine::leave_fail_safe`, `Engine::fail_safe` |
+//! | partitions | [`Engine::set_partition`], [`Engine::partition`], [`WidgetCx::partition`], [`MeasureCx::partition`]: the seal domain the engine's growth is noted in ([`Partition`](twine_core::Partition), ADR-001) |
 //! | audit | `impl Audit for EngineConfig` ([`twine_core::audit`]), [`audit_features`], [`ThemeHook::audit`] |
 //! | draw acceleration | [`Engine::set_accel`], [`Engine::clear_accel`] |
 //!
@@ -76,6 +77,10 @@
 //!   `ObjFlags::SAFETY_CRITICAL`, the stale / invalid marks and the fail-safe screen
 //!   (`docs/safety/profile.md` § 11). Off (the default), none of it is compiled: no flag test
 //!   per drawn node, no observer branch per chunk.
+//! - `partitions`: four partitions instead of one ([`Engine::set_partition`]; ADR-001).
+//!   Everything else an engine owns — limits, step budget and timing, faults, observer,
+//!   critical registry, fail-safe screens, heartbeat — is per engine anyway, so engines of two
+//!   partitions share nothing. Not implied by `safety`.
 //!
 //! ## Example
 //!
@@ -111,13 +116,14 @@
 // the `safety` feature (`cargo xtask ci` stage `clippy-safety`).
 #![cfg_attr(
     all(feature = "safety", not(test)),
-    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable,)
-)]
-// NOTE(R5.S12): sites of these lints remain (counts: `docs/safety/profile.md` § Lint status,
-// `cargo xtask safety-lints`); a lint moves to `deny` above when its last site is fixed.
-#![cfg_attr(
-    all(feature = "safety", not(test)),
-    allow(clippy::indexing_slicing, clippy::arithmetic_side_effects,)
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+    )
 )]
 #![cfg_attr(not(test), deny(clippy::float_arithmetic))]
 

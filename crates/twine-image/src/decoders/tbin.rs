@@ -36,25 +36,29 @@ pub struct BinDecoder;
 
 /// The header and the compression of a `.tbin` file.
 fn parse(bytes: &[u8]) -> Option<(ImageHeader, Option<Compression>)> {
-    let h = bytes.get(..TBIN_HEADER_LEN)?;
-    if h[..4] != TBIN_MAGIC || h[4] & 0x0F != TBIN_VERSION {
+    let h: &[u8; TBIN_HEADER_LEN] = bytes.first_chunk()?;
+    let [m0, m1, m2, m3, flags, format, w0, w1, h0, h1, s0, s1] = *h;
+    if [m0, m1, m2, m3] != TBIN_MAGIC || flags & 0x0F != TBIN_VERSION {
         return None;
     }
-    let compression = match (h[4] >> 4) & 0x3 {
+    let compression = match (flags >> 4) & 0x3 {
         0 => None,
         1 => Some(Compression::Rle),
         2 => Some(Compression::Lz4),
         _ => return None,
     };
-    let format = ColorFormat::from_u8(h[5])?;
-    let u16_at = |o: usize| u16::from_le_bytes([h[o], h[o + 1]]);
-    let (w, hgt, stride) = (u16_at(6), u16_at(8), u16_at(10));
+    let format = ColorFormat::from_u8(format)?;
+    let (w, hgt, stride) = (
+        u16::from_le_bytes([w0, w1]),
+        u16::from_le_bytes([h0, h1]),
+        u16::from_le_bytes([s0, s1]),
+    );
     if w == 0 || hgt == 0 || stride < format.min_stride(w) {
         return None;
     }
     let mut header = ImageHeader::new(format, w, hgt);
     header.stride = stride;
-    if h[4] & PREMULTIPLIED_BIT != 0 {
+    if flags & PREMULTIPLIED_BIT != 0 {
         header.flags |= ImageFlags::PREMULTIPLIED;
     }
     Some((header, compression))
@@ -72,7 +76,8 @@ impl Decoder for BinDecoder {
     fn decode(&self, bytes: &[u8], out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
         let (header, compression) = parse(bytes).ok_or(Error::InvalidHeader)?;
         let n = header.data_size();
-        let data = &bytes[TBIN_HEADER_LEN..];
+        // `parse` read the header, so the data follows it.
+        let data = bytes.get(TBIN_HEADER_LEN..).unwrap_or_default();
         prepare_out(out, n)?;
         let written = match compression {
             None => {
@@ -117,7 +122,7 @@ impl Decoder for BinDecoder {
 /// ```
 #[must_use]
 pub fn encode_tbin(header: ImageHeader, compression: Option<Compression>, stored: &[u8]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(TBIN_HEADER_LEN + stored.len());
+    let mut v = Vec::with_capacity(TBIN_HEADER_LEN.saturating_add(stored.len()));
     v.extend_from_slice(&TBIN_MAGIC);
     let c = match compression {
         None => 0,

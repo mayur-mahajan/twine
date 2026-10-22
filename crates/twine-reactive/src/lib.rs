@@ -32,6 +32,7 @@
 //! | Item | Role |
 //! |------|------|
 //! | [`Runtime`] | the token of the UI context's runtime ([`Runtime::take`]); root scopes ([`Runtime::create_root`]) and every runtime-wide operation |
+//! | [`Runtime::take_partition`], [`Runtime::partition`], [`Scope::partition`], [`Partition`](twine_core::Partition) | partitioned runtimes (feature `partitions`): independent runtimes for independent UIs (§ Partitions) |
 //! | [`Scope`] | owns nodes, child scopes, cleanups, context values |
 //! | [`Scope::provide`], [`Scope::use_context`], `Scope::expect_context`, [`MissingContext`] | context values: provided by a scope for its descendants, found by type (allocation-free scope-chain walk); `Result` or panicking lookup (not in the `safety` profile) |
 //! | [`Signal`], [`ReadSignal`], [`WriteSignal`] | reactive values |
@@ -208,14 +209,19 @@
 //! and pass the application a `Copy` struct of references — `Ports { sensor: &SENSOR, cmd:
 //! &CMD }` — instead of letting it name globals. Tests then give each UI its own objects.
 //!
-//! - `std`: one runtime per thread (`thread_local!`); [`Runtime::take`] succeeds once per
-//!   thread, `Runtime::current_thread` always. Used on the host, in the simulator and in
-//!   tests.
-//! - without `std`: one runtime per process, in a `static`; [`Runtime::take`] succeeds once.
+//! - `std`: one runtime per thread and partition (`thread_local!`); [`Runtime::take`]
+//!   succeeds once per thread, `Runtime::current_thread` always. Used on the host, in the
+//!   simulator and in tests.
+//! - without `std`: one runtime per partition and process, in a `static`; [`Runtime::take`]
+//!   succeeds once.
+//! - `partitions`: [`Partition::COUNT`](twine_core::Partition::COUNT) = 4 independent runtimes
+//!   instead of 1 (§ Partitions). Not implied by `safety`; without it handles hold no
+//!   partition byte and the runtime is the single-runtime code.
 //! - `debug-checks`: every runtime access asks the interrupt probe ([`set_interrupt_probe`],
 //!   installed by `UiBuilder::platform`) and panics when it reports interrupt context (a
 //!   safety net for `unsafe` code; costs one probe call per access, nothing without the
-//!   feature).
+//!   feature). With `partitions` and `std` it also panics when a handle of one partition is
+//!   used while another partition's flush, update or batch runs on the thread.
 //! - `async`: `Outbox::recv`, an executor-agnostic future (no dependency).
 //! - `log` / `defmt`: logging backend (target `twine::reactive`).
 //! - `no-panic-runtime`: failed writes and creations, capacity exhaustion and memo cycles are
@@ -225,6 +231,47 @@
 //!   `docs/safety/profile.md` in the repository): the profile's lints, `no-panic-runtime`,
 //!   and no panicking context lookups ([`Scope::expect_context`] and
 //!   [`MissingContext::panic`] are removed; handle the `Result` of [`Scope::use_context`]).
+//!
+//! ## Partitions
+//!
+//! With the `partitions` feature an image runs up to four **partitions**: independent
+//! runtimes, each claimed once with [`Runtime::take_partition`] (ADR-001,
+//! `docs/design/adr-001-partitioned-runtimes.md`). Every handle carries its partition and
+//! reaches only that partition's runtime, so a partition's arenas, effect queue and loop cut,
+//! [`Limits`](twine_core::Limits) ([`Runtime::set_limits`]), faults and fault hook, ambient
+//! slot and seal domain are its own: an effect loop, an exhausted bound or a reactive misuse
+//! in one partition never changes another, and two partitions may run in different,
+//! preempting contexts (each core or task takes its own). Data crosses partitions only
+//! through the cross-context types: [`Latest`] (recommended: the newest value, never blocks),
+//! [`Channel`] when every value matters, [`Outbox`] towards a task. A `Channel` or `Latest`
+//! has **one consuming partition** — the first that registers a handler, permanently (the
+//! record is never released, also when the owner's handlers are disposed); a registration from
+//! another partition is refused with a `warn!` and a
+//! [`FaultKind::PartitionViolation`] fault (fan out with one cell per consumer). Process-wide
+//! objects stay shared: the waker pool (give a critical partition its own `static` waker),
+//! the interrupt probe, critical sections and log output.
+//!
+//! ```
+//! use twine_core::Partition;
+//! use twine_reactive::{Latest, Runtime};
+//!
+//! static SPEED: Latest<u16> = Latest::new(0);
+//! let critical = Runtime::take().unwrap(); // Partition::MAIN
+//! let cx = critical.create_root();
+//! let speed = cx.watch(&SPEED);
+//! SPEED.set(88); // from a sensor task, or from another partition
+//! critical.drain_channels(8);
+//! assert_eq!(speed.get(), 88);
+//! if let Some(p) = Partition::new(1) {
+//!     // `partitions`: a second runtime with its own arenas, limits and faults.
+//!     let other = Runtime::take_partition(p).unwrap();
+//!     let cx2 = other.create_root();
+//!     cx2.watch(&SPEED); // refused: SPEED is consumed by the main partition
+//!     assert_eq!(other.take_faults().get(twine_reactive::FaultKind::PartitionViolation), 1);
+//!     cx2.dispose();
+//! }
+//! cx.dispose();
+//! ```
 //!
 //! The cross-context types use `critical-section`; the final binary provides its implementation (embassy,
 //! esp-hal, `cortex-m`'s single-core implementation, or `critical-section/std` on the host).

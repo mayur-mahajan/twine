@@ -16,15 +16,16 @@
 
 pub(crate) mod read;
 
+use core::num::NonZeroU32;
 use core::sync::atomic::AtomicBool;
 
 use twine_core::color::{expand_alpha, unpack_bits};
-use twine_core::math::udiv255;
 use twine_core::{Angle, Color, ColorFormat, Fx, Opa, Point, Rect, Scale, Transform};
 
 use crate::blend::{BlendMode, Source};
 use crate::dispatch::warn_once;
 use crate::mask::{Mask, MaskResult};
+use crate::num::{advance, mul8, span};
 use crate::painter::Scratch;
 use crate::transform_blit::is_direct;
 use crate::{BlitDsc, ImagePixels, Painter};
@@ -131,7 +132,7 @@ pub fn transformed_area(area: Rect, angle: Angle, scale_x: Scale, scale_y: Scale
     if angle.normalized().as_deci_deg() == 0 && scale_x == Scale::ONE && scale_y == Scale::ONE {
         return area;
     }
-    let p = Point::new(area.x0 + pivot.x, area.y0 + pivot.y);
+    let p = Point::new(area.x0.saturating_add(pivot.x), area.y0.saturating_add(pivot.y));
     Transform::from_rotate_scale(angle, scale_x, scale_y, p).map_rect_bounds(area)
 }
 
@@ -191,21 +192,22 @@ impl<'m> ImageMasks<'m> {
             if y < r.y0 || y >= r.y1 {
                 return false;
             }
-            let row = m.row((y - r.y0) as u16);
+            // `r` is the mask's rectangle (at most `u16::MAX` rows).
+            let row = m.row(u16::try_from(span(r.y0, y)).unwrap_or(u16::MAX));
             let bpp = m.format.bpp();
-            for (i, c) in cov.iter_mut().enumerate() {
-                let x = x0 + i as i32;
+            // The coverage ends before `i32::MAX`: the bounded range covers it.
+            for (c, x) in cov.iter_mut().zip(x0..i32::MAX) {
                 let a = if x < r.x0 || x >= r.x1 {
                     0
                 } else {
-                    let v = unpack_bits(row, bpp, (x - r.x0) as usize);
+                    let v = unpack_bits(row, bpp, span(r.x0, x));
                     if m.format == ColorFormat::L8 {
                         v
                     } else {
                         expand_alpha(v, bpp)
                     }
                 };
-                *c = udiv255(u32::from(*c) * u32::from(a)) as u8;
+                *c = mul8(*c, a);
             }
         }
         true
@@ -286,7 +288,10 @@ impl Painter<'_> {
         let masks = ImageMasks::new(area, dsc);
         let ops = dsc.texel_ops(px.format);
         if dsc.is_transformed() {
-            let pivot = Point::new(area.x0 + dsc.pivot.x, area.y0 + dsc.pivot.y);
+            let pivot = Point::new(
+                area.x0.saturating_add(dsc.pivot.x),
+                area.y0.saturating_add(dsc.pivot.y),
+            );
             let t = Transform::translate(Fx::from_int(area.x0), Fx::from_int(area.y0)).then(
                 Transform::from_rotate_scale(dsc.angle, dsc.scale_x, dsc.scale_y, pivot),
             );
@@ -331,25 +336,31 @@ impl Painter<'_> {
             && dsc.opa.is_cover()
             && px.format == self.buf().format()
             && !px.format.has_alpha();
-        let (w, h) = (i32::from(px.w), i32::from(px.h));
+        // `px.w`, `px.h` are not 0 (returned at the top of `image`): the fallbacks are never
+        // taken. A remainder by a `NonZeroU32` needs no check at all.
+        let (Some(w), Some(h)) = (NonZeroU32::new(u32::from(px.w)), NonZeroU32::new(u32::from(px.h))) else {
+            return;
+        };
         let mut sc = self.take_scratch();
-        let chunk = sc.cov.len().max(1) as i32;
+        let chunk = sc.cov.len().max(1);
+        // `draw` lies inside `area` (`area` itself or the part covered by the image), so the
+        // offsets from `area`'s origin are non-negative (`abs_diff` is the exact offset).
         for y in draw.y0..draw.y1 {
-            let iy = (y - area.y0).rem_euclid(h) as u16;
+            // The remainder is below `h ≤ u16::MAX`.
+            // DIV: `h` is a `NonZeroU32` (the `let` above).
+            let iy = (y.abs_diff(area.y0) % h) as u16;
             if copy {
-                self.caches_mut().image_copy_rows += 1;
+                let c = &mut self.caches_mut().image_copy_rows;
+                *c = c.wrapping_add(1);
             }
             let mut x = draw.x0;
             while x < draw.x1 {
-                let ix = (x - area.x0).rem_euclid(w);
-                let e = draw.x1.min(x + (w - ix)).min(x + chunk);
-                let run = Run {
-                    y,
-                    x,
-                    e,
-                    ix: ix as usize,
-                    iy,
-                };
+                // DIV: `w` is a `NonZeroU32` (the `let` above).
+                let ix = x.abs_diff(area.x0) % w;
+                // SAFE-ARITH: `ix < w`.
+                let e = advance(x, (w.get().wrapping_sub(ix) as usize).min(chunk), draw.x1);
+                let ix = ix as usize;
+                let run = Run { y, x, e, ix, iy };
                 self.image_run(&mut sc, px, path, run, ops, masks.as_ref(), dsc);
                 x = e;
             }
@@ -369,61 +380,72 @@ impl Painter<'_> {
         masks: Option<&ImageMasks<'_>>,
         dsc: &ImageDsc<'_>,
     ) {
-        let n = (r.e - r.x) as usize;
+        let n = span(r.x, r.e);
         let (opa, mode) = (dsc.opa, dsc.blend_mode);
+        // SAFE-INDEX: `n ≤ chunk = cov.len()` (the run length, `image`); the fallback is never
+        // taken.
+        let Some(cov) = sc.cov.get_mut(..n) else {
+            return;
+        };
         match path {
             ImagePath::Direct | ImagePath::Generic => {
                 let has_cov = match masks {
                     Some(m) => {
-                        if !m.fill(r.y, r.x, &mut sc.cov[..n]) {
+                        if !m.fill(r.y, r.x, cov) {
                             return;
                         }
                         true
                     }
                     None => false,
                 };
-                let cov = if has_cov { Some(&mut sc.cov[..n]) } else { None };
+                let cov = if has_cov { Some(cov) } else { None };
                 if path == ImagePath::Direct {
                     let row = px.row(r.iy);
-                    let skip = (r.ix * usize::from(px.format.bpp()) / 8).min(row.len());
+                    let skip = r.ix.saturating_mul(usize::from(px.format.bpp())) / 8;
                     let src = Source::Pixels {
-                        data: &row[skip..],
+                        data: row.get(skip..).unwrap_or_default(),
                         format: px.format,
                     };
                     self.blend_masked_span(r.y, r.x, r.e, src, cov, opa, mode);
                 } else {
                     with_texel!(px, T => convert_row::<T>(px, r.ix, usize::from(r.iy), n, ops, &mut sc.span));
-                    self.blend_masked_span(r.y, r.x, r.e, Source::Argb(&sc.span[..n * 4]), cov, opa, mode);
+                    // SAFE-ARITH: `n ≤ max_span ≤ 65_535`. SAFE-INDEX: the span scratch holds
+                    // `4 · max_span` bytes; the fallback is never taken.
+                    let argb = sc.span.get(..n.wrapping_mul(4)).unwrap_or_default();
+                    self.blend_masked_span(r.y, r.x, r.e, Source::Argb(argb), cov, opa, mode);
                 }
             }
             ImagePath::AlphaSolid(_) | ImagePath::Rgb565A8 => {
-                let cov = &mut sc.cov[..n];
                 if path == ImagePath::Rgb565A8 {
                     let a = px.alpha_row(r.iy);
-                    match a.get(r.ix..r.ix + n) {
+                    match a.get(r.ix..r.ix.saturating_add(n)) {
                         Some(a) => cov.copy_from_slice(a),
                         None => return,
                     }
                 } else {
                     let (row, bpp) = (px.row(r.iy), px.format.bpp());
-                    for (i, c) in cov.iter_mut().enumerate() {
-                        *c = expand_alpha(unpack_bits(row, bpp, r.ix + i), bpp);
+                    // `ix + n ≤ w < 2^16`: the bounded range covers the run.
+                    for (c, x) in cov.iter_mut().zip(r.ix..usize::MAX) {
+                        *c = expand_alpha(unpack_bits(row, bpp, x), bpp);
                     }
                 }
                 if let Some(m) = masks {
-                    let tmp = &mut sc.span[..n];
+                    // SAFE-INDEX: as above (the span scratch is larger); never falls back.
+                    let Some(tmp) = sc.span.get_mut(..n) else {
+                        return;
+                    };
                     if !m.fill(r.y, r.x, tmp) {
                         return;
                     }
                     for (c, &t) in cov.iter_mut().zip(tmp.iter()) {
-                        *c = udiv255(u32::from(*c) * u32::from(t)) as u8;
+                        *c = mul8(*c, t);
                     }
                 }
                 let src = if let ImagePath::AlphaSolid(c) = path {
                     Source::Solid(c)
                 } else {
                     Source::Pixels {
-                        data: px.row(r.iy).get(r.ix * 2..).unwrap_or(&[]),
+                        data: px.row(r.iy).get(r.ix.saturating_mul(2)..).unwrap_or(&[]),
                         format: ColorFormat::Rgb565,
                     }
                 };

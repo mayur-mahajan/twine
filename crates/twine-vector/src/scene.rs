@@ -31,14 +31,15 @@ use crate::path::Path;
 #[derive(Clone, Debug, Default)]
 pub struct VectorScene {
     items: Vec<(Path, VectorDsc)>,
-    /// Number of live items (`items[len..]` are spare paths kept for reuse).
+    /// Number of live items (`items[len..]` are spare paths kept for reuse; `len ≤
+    /// items.len()`).
     len: usize,
 }
 
 impl PartialEq for VectorScene {
     /// Scenes are equal when their live items are equal (spare storage is ignored).
     fn eq(&self, o: &Self) -> bool {
-        self.items[..self.len] == o.items[..o.len]
+        self.live() == o.live()
     }
 }
 
@@ -54,27 +55,57 @@ impl VectorScene {
         }
     }
 
+    /// The live items (`len ≤ items.len()`, so all of them).
+    fn live(&self) -> &[(Path, VectorDsc)] {
+        // SAFE-INDEX: `len ≤ items.len()` (every method keeps it); the fallback is never
+        // taken.
+        self.items.get(..self.len).unwrap_or(&self.items)
+    }
+
     /// Appends `path` drawn with `dsc`.
     pub fn add(&mut self, path: Path, dsc: VectorDsc) {
-        if self.len < self.items.len() {
-            self.items[self.len] = (path, dsc);
-        } else {
-            self.items.push((path, dsc));
+        match self.items.get_mut(self.len) {
+            Some(slot) => *slot = (path, dsc),
+            None => self.items.push((path, dsc)),
         }
-        self.len += 1;
+        // SAFE-ARITH: `len < items.len() ≤ isize::MAX` after the line above.
+        self.len = self.len.wrapping_add(1);
     }
 
     /// Appends an item and returns its (cleared, capacity-keeping) path and descriptor for
-    /// filling in place: the allocation-free way to rebuild a scene.
-    pub fn path_mut(&mut self) -> (&mut Path, &mut VectorDsc) {
+    /// filling in place: the allocation-free way to rebuild a scene. A spare item left by
+    /// [`clear`](Self::clear) is reused; otherwise the storage grows by one item.
+    ///
+    /// Returns `None` (and appends nothing) when the storage cannot grow: the allocation of a
+    /// new item failed. Never panics.
+    ///
+    /// ```
+    /// use twine_core::{Color, Fx};
+    /// use twine_vector::{FxPoint, VectorDsc, VectorScene};
+    ///
+    /// let mut scene = VectorScene::new();
+    /// let Some((path, dsc)) = scene.path_mut() else {
+    ///     return; // out of memory: the scene keeps its items, nothing is appended
+    /// };
+    /// path.circle(FxPoint::from_int(10, 10), Fx::from_int(5));
+    /// *dsc = VectorDsc::fill(Color::RED);
+    /// assert_eq!(scene.len(), 1);
+    /// // Rebuilding reuses the item: no allocation.
+    /// scene.clear();
+    /// assert!(scene.path_mut().is_some_and(|(path, _)| path.is_empty()));
+    /// ```
+    pub fn path_mut(&mut self) -> Option<(&mut Path, &mut VectorDsc)> {
         if self.len == self.items.len() {
+            self.items.try_reserve(1).ok()?;
             self.items.push((Path::new(), VectorDsc::default()));
         }
-        let (p, d) = &mut self.items[self.len];
+        let i = self.len;
+        let (p, d) = self.items.get_mut(i)?;
+        // SAFE-ARITH: item `i` exists, so `len < items.len() ≤ isize::MAX`.
+        self.len = i.wrapping_add(1);
         p.clear();
         *d = VectorDsc::default();
-        self.len += 1;
-        (p, d)
+        Some((p, d))
     }
 
     /// Removes every item (the storage is kept for reuse).
@@ -96,7 +127,7 @@ impl VectorScene {
 
     /// The items.
     pub fn items(&self) -> impl Iterator<Item = (&Path, &VectorDsc)> + '_ {
-        self.items[..self.len].iter().map(|(p, d)| (p, d))
+        self.live().iter().map(|(p, d)| (p, d))
     }
 
     /// Screen bounds of all items (`None` when nothing is drawn).

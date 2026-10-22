@@ -163,8 +163,10 @@ impl Switch {
         }
         let chk = cx.state().contains(State::CHECKED);
         let end = if chk { ANIM_STATE_END } else { 0 };
-        let start = self.anim_state.unwrap_or(ANIM_STATE_END - end);
-        let dur = full * (start - end).abs() / ANIM_STATE_END;
+        // `end ∈ {0, 256}` and `start ∈ 0..=256`: the remaining share of the full duration.
+        // SAFE-ARITH: see above.
+        let start = self.anim_state.unwrap_or(ANIM_STATE_END.wrapping_sub(end));
+        let dur = util::lerp256(0, full, util::sat_i32(i64::from(start.abs_diff(end))));
         self.stop_anim(cx.engine_mut());
         if dur == 0 {
             return;
@@ -198,45 +200,45 @@ impl Switch {
         let rtl = util::is_rtl(cx);
         if self.is_hor(c) {
             let size = c.height();
-            let len = c.width() - size;
-            let mut v = match self.anim_state {
-                Some(s) => len * s / ANIM_STATE_END,
-                None if chk => len,
-                None => 0,
-            };
-            if rtl {
-                v = len - v;
-            }
-            k.x1 += v;
-            k.x2 = k.x1 + (size - 1).max(0);
+            let v = self.knob_travel(c.width(), size, chk, rtl);
+            k.x1 = k.x1.saturating_add(v);
+            k.x2 = k.x1.saturating_add(size.saturating_sub(1).max(0));
         } else {
             let size = c.width();
-            let len = c.height() - size;
-            let mut v = match self.anim_state {
-                Some(s) => len * s / ANIM_STATE_END,
-                None if chk => len,
-                None => 0,
-            };
-            if rtl {
-                v = len - v;
-            }
-            k.y2 -= v;
-            k.y1 = k.y2 - (size - 1).max(0);
+            let v = self.knob_travel(c.height(), size, chk, rtl);
+            k.y2 = k.y2.saturating_sub(v);
+            k.y1 = k.y2.saturating_sub(size.saturating_sub(1).max(0));
         }
         let pad = cx.padding(Part::Knob);
-        k.x1 -= pad.left;
-        k.x2 += pad.right;
-        k.y1 -= pad.top;
-        k.y2 += pad.bottom;
+        k.x1 = k.x1.saturating_sub(pad.left);
+        k.x2 = k.x2.saturating_add(pad.right);
+        k.y1 = k.y1.saturating_sub(pad.top);
+        k.y2 = k.y2.saturating_add(pad.bottom);
         k.to_rect()
+    }
+
+    /// How far the knob (`size` px) has moved along a track `track` px long: the animation's
+    /// share of the free length, all of it when checked (mirrored in right-to-left).
+    fn knob_travel(&self, track: i32, size: i32, chk: bool, rtl: bool) -> i32 {
+        let len = track.saturating_sub(size);
+        let v = match self.anim_state {
+            // `len · s / 256`, exact (`s ∈ 0..=256`).
+            Some(s) => util::lerp256(0, len, s),
+            None if chk => len,
+            None => 0,
+        };
+        if rtl { len.saturating_sub(v) } else { v }
     }
 
     /// LVGL `LV_EVENT_REFR_EXT_DRAW_SIZE` of the switch.
     fn ext_for(m: &MeasureCx<'_>) -> i32 {
         let pad = m.padding(Part::Knob);
-        let knob = pad.left.max(pad.right).max(pad.top.max(pad.bottom))
-            + KNOB_EXT_AREA_CORRECTION
-            + util::part_ext_draw(m, Part::Knob);
+        let knob = pad
+            .left
+            .max(pad.right)
+            .max(pad.top.max(pad.bottom))
+            .saturating_add(KNOB_EXT_AREA_CORRECTION)
+            .saturating_add(util::part_ext_draw(m, Part::Knob));
         knob.max(util::part_ext_draw(m, Part::Indicator))
     }
 }

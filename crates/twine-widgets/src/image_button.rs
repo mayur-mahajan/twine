@@ -80,9 +80,55 @@ impl ImageButtonState {
             ImageButtonState::CheckedDisabled => State::CHECKED.union(State::DISABLED),
         }
     }
+}
 
-    fn index(self) -> usize {
-        self as usize
+/// The `[left, mid, right]` images of one state.
+type Images = [Option<Slot>; 3];
+
+/// The images of every state, reached by the state (no index: the six sets are the six
+/// variants of [`ImageButtonState`], in LVGL's order).
+#[derive(Debug, Default)]
+struct PerState([Images; 6]);
+
+impl PerState {
+    fn get(&self, s: ImageButtonState) -> &Images {
+        use ImageButtonState as S;
+        let [
+            released,
+            pressed,
+            disabled,
+            checked,
+            checked_pressed,
+            checked_disabled,
+        ] = &self.0;
+        match s {
+            S::Released => released,
+            S::Pressed => pressed,
+            S::Disabled => disabled,
+            S::CheckedReleased => checked,
+            S::CheckedPressed => checked_pressed,
+            S::CheckedDisabled => checked_disabled,
+        }
+    }
+
+    fn get_mut(&mut self, s: ImageButtonState) -> &mut Images {
+        use ImageButtonState as S;
+        let [
+            released,
+            pressed,
+            disabled,
+            checked,
+            checked_pressed,
+            checked_disabled,
+        ] = &mut self.0;
+        match s {
+            S::Released => released,
+            S::Pressed => pressed,
+            S::Disabled => disabled,
+            S::CheckedReleased => checked,
+            S::CheckedPressed => checked_pressed,
+            S::CheckedDisabled => checked_disabled,
+        }
     }
 }
 
@@ -134,8 +180,8 @@ impl Slot {
 /// ```
 #[derive(Debug, Default)]
 pub struct ImageButton {
-    /// `[state][left, mid, right]`.
-    srcs: [[Option<Slot>; 3]; 6],
+    /// `[left, mid, right]` per state.
+    srcs: PerState,
 }
 
 impl ImageButton {
@@ -148,8 +194,10 @@ impl ImageButton {
     /// The `[left, mid, right]` sources of `state`.
     #[must_use]
     pub fn src(&self, state: ImageButtonState) -> [Option<&ImageSource>; 3] {
-        let s = &self.srcs[state.index()];
-        [0, 1, 2].map(|i| s[i].as_ref().map(|x| &x.src))
+        self.srcs
+            .get(state)
+            .each_ref()
+            .map(|s| s.as_ref().map(|x| &x.src))
     }
 
     /// Sets the images of `state` (LVGL `lv_imagebutton_set_src`). Idempotent. A source whose
@@ -163,7 +211,7 @@ impl ImageButton {
         right: Option<ImageSource>,
     ) {
         let new = [left, mid, right];
-        let cur = &self.srcs[state.index()];
+        let cur = self.srcs.get(state);
         let same = cur.iter().zip(new.iter()).all(|(c, n)| match (c, n) {
             (None, None) => true,
             (Some(c), Some(n)) => same_source(&c.src, n),
@@ -197,7 +245,7 @@ impl ImageButton {
                 }
             })
         });
-        self.srcs[state.index()] = slots;
+        *self.srcs.get_mut(state) = slots;
         Self::refresh(cx);
     }
 
@@ -220,7 +268,7 @@ impl ImageButton {
     pub fn shown_state(&self, s: State) -> ImageButtonState {
         use ImageButtonState as S;
         let st = S::from_state(s);
-        let has = |x: S| self.srcs[x.index()][1].is_some();
+        let has = |x: S| self.srcs.get(x)[1].is_some();
         if has(st) {
             return st;
         }
@@ -240,7 +288,7 @@ impl ImageButton {
     }
 
     fn slots(&self, s: State) -> &[Option<Slot>; 3] {
-        &self.srcs[self.shown_state(s).index()]
+        self.srcs.get(self.shown_state(s))
     }
 }
 
@@ -260,9 +308,10 @@ impl Widget for ImageButton {
 
     /// The images' widths (the middle one once) and the middle image's height.
     fn content_size(&self, cx: &MeasureCx<'_>) -> Size {
-        let s = self.slots(cx.state());
-        let size = |i: usize| s[i].as_ref().map_or(Size::ZERO, |x| x.size(cx));
-        Size::new(size(0).w + size(1).w + size(2).w, size(1).h)
+        let [l, mid, r] = self.slots(cx.state());
+        let size = |s: &Option<Slot>| s.as_ref().map_or(Size::ZERO, |x| x.size(cx));
+        let (l, mid, r) = (size(l), size(mid), size(r));
+        Size::new(l.w.saturating_add(mid.w).saturating_add(r.w), mid.h)
     }
 
     /// LVGL `draw_main`: left and right images at the ends, the middle one tiled between.
@@ -272,7 +321,12 @@ impl Widget for ImageButton {
         let (tw, th) = util::transform_wh(&m, Part::Main);
         let st = m.state();
         let c = cx.coords();
-        let c = Rect::new(c.x0 - tw, c.y0 - th, c.x1 + tw, c.y1 + th);
+        let c = Rect::new(
+            c.x0.saturating_sub(tw),
+            c.y0.saturating_sub(th),
+            c.x1.saturating_add(tw),
+            c.y1.saturating_add(th),
+        );
         let slots = self.slots(st);
         let dsc = cx.image_dsc(Part::Main);
         let draw = |cx: &mut DrawCx<'_, '_>, src: &ImageSource, area: Rect, clip: Rect, tile: bool| {
@@ -299,11 +353,16 @@ impl Widget for ImageButton {
         if let Some(r) = &slots[2] {
             let sz = r.size(&m);
             right_w = sz.w;
-            let a = Rect::from_xywh(c.x1 - right_w, c.y0, right_w, sz.h);
+            let a = Rect::from_xywh(c.x1.saturating_sub(right_w), c.y0, right_w, sz.h);
             draw(cx, &r.src, a, a, false);
         }
         if let Some(mid) = &slots[1] {
-            let a = Rect::new(c.x0 + left_w, c.y0, c.x1 - right_w, c.y1);
+            let a = Rect::new(
+                c.x0.saturating_add(left_w),
+                c.y0,
+                c.x1.saturating_sub(right_w),
+                c.y1,
+            );
             if !a.is_empty() {
                 draw(cx, &mid.src, a, a, true);
             }

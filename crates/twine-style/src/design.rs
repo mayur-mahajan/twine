@@ -248,10 +248,13 @@ impl ThemeMode {
     /// ```
     #[must_use]
     pub fn next_in(self, modes: &[ThemeMode]) -> ThemeMode {
-        match modes.iter().position(|&m| m == self) {
-            Some(i) => modes[(i + 1) % modes.len()],
-            None => modes.first().copied().unwrap_or(self),
-        }
+        // The entry after `self`, wrapping to the first (also when `self` is not listed).
+        let next = match modes.iter().position(|&m| m == self) {
+            // SAFE-ARITH: `i < modes.len()`.
+            Some(i) => modes.get(i.wrapping_add(1)),
+            None => None,
+        };
+        next.or(modes.first()).copied().unwrap_or(self)
     }
 }
 
@@ -656,13 +659,21 @@ impl ElementTable {
     /// t.set(BRAND, Color::hex(0x00FF_8800));
     /// assert_eq!(t.get(BRAND), Some(Color::hex(0x00FF_8800)));
     /// ```
+    // Out of line: a theme sets dozens of elements in one function; one copy per element type
+    // instead of the resize code inlined at every call (flash; build time only).
+    #[inline(never)]
     pub fn set<T: ElementType>(&mut self, element: Element<T>, value: T) {
         let slots = T::slots_mut(self);
         let i = usize::from(element.id);
         if slots.len() <= i {
-            slots.resize(i + 1, None);
+            // SAFE-ARITH: `i` is a `u16`.
+            slots.resize(i.wrapping_add(1), None);
         }
-        slots[i] = Some(value);
+        // SAFE-INDEX: the table holds at least `i + 1` slots (resized above); the fallback is
+        // never taken.
+        if let Some(slot) = slots.get_mut(i) {
+            *slot = Some(value);
+        }
     }
 
     /// The value of `element` (`None` if the table does not define it).

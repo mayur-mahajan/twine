@@ -225,6 +225,9 @@ impl<SPI: SpiDevice, IRQ> Xpt2046<SPI, IRQ> {
 
     /// Takes one filtered reading: `Some((x, y, z))` in raw 12-bit units if the pressure
     /// exceeds the threshold, `None` if not touched. Always ends with a power-down conversion.
+    ///
+    /// # Errors
+    /// The SPI bus error.
     pub fn read_raw(&mut self) -> Result<Option<(u16, u16, u16)>, SPI::Error> {
         let z1 = self.convert(CMD_Z1)?;
         let z2 = self.convert(CMD_Z2)?;

@@ -33,6 +33,10 @@ const MAX_LIST: usize = 1 << 16;
 /// `warn!(target: "twine::lottie", "lottie: unsupported {}", what)` and listed in
 /// [`Composition::unsupported`]. Invalid input returns an error, never panics.
 ///
+/// # Errors
+/// A [`LottieError`] for input that is not valid Lottie JSON (syntax errors, missing required
+/// fields, values out of range).
+///
 /// ```
 /// let json = br#"{"v":"5.7.0","fr":30,"ip":0,"op":60,"w":100,"h":100,"layers":[
 ///   {"ty":4,"ind":1,"ip":0,"op":60,"st":0,"ks":{},"shapes":[

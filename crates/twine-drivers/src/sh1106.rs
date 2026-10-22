@@ -100,6 +100,9 @@ impl<I> core::fmt::Debug for Sh1106<I> {
 
 impl<I: DcsInterface> Sh1106<I> {
     /// Initializes the controller.
+    ///
+    /// # Errors
+    /// .
     pub fn new(iface: I, rotation: Rotation) -> Result<Self, OledError<I::Error>> {
         let mut this = Self {
             iface,
@@ -119,11 +122,17 @@ impl<I: DcsInterface> Sh1106<I> {
     }
 
     /// Sets the contrast (`0x81`).
+    ///
+    /// # Errors
+    /// .
     pub fn set_contrast(&mut self, contrast: u8) -> Result<(), OledError<I::Error>> {
         self.commands(&[0x81, contrast])
     }
 
     /// Turns the panel on or off.
+    ///
+    /// # Errors
+    /// .
     pub fn display_on(&mut self, on: bool) -> Result<(), OledError<I::Error>> {
         self.commands(&[if on { 0xAF } else { 0xAE }])
     }
@@ -225,6 +234,9 @@ mod asynch {
 
     impl<I: AsyncDcsInterface> AsyncSh1106<I> {
         /// Initializes the controller.
+        ///
+        /// # Errors
+        /// .
         pub async fn new(iface: I, rotation: Rotation) -> Result<Self, OledError<I::Error>> {
             let mut this = Self {
                 iface,
@@ -246,11 +258,17 @@ mod asynch {
         }
 
         /// Sets the contrast (`0x81`).
+        ///
+        /// # Errors
+        /// .
         pub async fn set_contrast(&mut self, contrast: u8) -> Result<(), OledError<I::Error>> {
             self.commands(&[0x81, contrast]).await
         }
 
         /// Turns the panel on or off.
+        ///
+        /// # Errors
+        /// .
         pub async fn display_on(&mut self, on: bool) -> Result<(), OledError<I::Error>> {
             self.commands(&[if on { 0xAF } else { 0xAE }]).await
         }

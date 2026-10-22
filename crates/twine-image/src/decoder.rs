@@ -23,6 +23,10 @@ pub trait Decoder {
 
     /// Decodes `bytes` into `out` (cleared first, reserved once; allocation failure is
     /// `Error::Decode("out of memory")`, never an abort).
+    ///
+    /// # Errors
+    /// [`Error::InvalidHeader`] for data this decoder does not recognise, [`Error::Decode`] for
+    /// corrupt data or when `out` cannot be allocated.
     fn decode(&self, bytes: &[u8], out: &mut Vec<u8>) -> Result<ImageHeader, Error>;
 }
 
@@ -130,6 +134,9 @@ impl DecoderRegistry {
 
     /// Appends a decoder (probed after the existing ones); [`Error::CacheFull`] when
     /// [`MAX_DECODERS`] are registered.
+    ///
+    /// # Errors
+    /// [`Error::CacheFull`] when [`MAX_DECODERS`] are registered.
     pub fn register(&mut self, d: &'static dyn Decoder) -> Result<(), Error> {
         self.decoders.push(d).map_err(|_| Error::CacheFull)
     }
@@ -147,6 +154,10 @@ impl DecoderRegistry {
 
     /// Decodes `bytes` with the first decoder that recognises them; [`Error::InvalidHeader`]
     /// when none does.
+    ///
+    /// # Errors
+    /// [`Error::InvalidHeader`] when no decoder recognises `bytes`, and the error of the decoder
+    /// that does.
     pub fn decode(&self, bytes: &[u8], out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
         if let Some((d, _)) = self.probe(bytes) {
             d.decode(bytes, out)

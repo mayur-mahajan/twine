@@ -81,6 +81,28 @@ fn triple_tap_sends_triple_clicked() {
     );
 }
 
+/// req: SAF-020
+#[test]
+fn regression_long_click_streak_keeps_cycling() {
+    // The click counter was a `u8` incremented per click and read as `count − 1`: the 256th
+    // click of an unbroken streak wrapped it to 0 and `0 − 1` overflowed (a panic with
+    // `overflow-checks`). It now cycles single → double → triple.
+    let (mut h, _, log) = setup();
+    for _ in 0..300 {
+        h.tap(Point::new(20, 20));
+        h.clock().advance(Duration::ms(100));
+    }
+    let multi: Vec<C> = input_codes(&log)
+        .into_iter()
+        .filter(|c| matches!(c, C::SingleClicked | C::DoubleClicked | C::TripleClicked))
+        .collect();
+    assert_eq!(multi.len(), 300);
+    for (i, c) in multi.iter().enumerate() {
+        let want = [C::SingleClicked, C::DoubleClicked, C::TripleClicked][i % 3];
+        assert_eq!(*c, want, "click {i}");
+    }
+}
+
 #[test]
 fn slow_second_tap_is_single() {
     let (mut h, _, log) = setup();

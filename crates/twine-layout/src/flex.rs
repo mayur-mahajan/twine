@@ -20,6 +20,8 @@
 //! - Right-to-left rows are placed from the right; right-to-left column flows place their
 //!   tracks from the right.
 
+use core::num::NonZeroI64;
+
 use twine_core::{Rect, Size};
 use twine_style::{CrossAlign, FlexFlow, MainAlign, PropId};
 
@@ -104,17 +106,19 @@ fn clamp_grow(w: i32) -> u16 {
     g
 }
 
-/// LVGL `div_round_closest` (in `i64`, so `free × grow` cannot overflow).
-fn div_round_closest(a: i64, b: i64) -> i64 {
-    (a + b / 2) / b
+/// LVGL `div_round_closest` (in `i64`); `b` is non-zero by its type. The rounding offset
+/// saturates (only reachable for a saturated `a`); the fallback of the division (`a = i64::MIN`,
+/// `b = −1`) is never taken: callers pass a positive weight sum.
+fn div_round_closest(a: i64, b: NonZeroI64) -> i64 {
+    a.saturating_add(b.get() / 2).checked_div(b.get()).unwrap_or(a)
 }
 
 /// Size of an item on `axis` including margins; `measure` applies the content-size exclusion.
 fn extent_m<I>(it: &Item<I>, axis: Axis, measure: bool) -> i32 {
-    if measure && it.ignore[axis.index()] {
+    if measure && axis.pick(it.ignore) {
         0
     } else {
-        axis.of(it.size) + sum(it.margin, axis)
+        axis.of(it.size).saturating_add(sum(it.margin, axis))
     }
 }
 
@@ -133,35 +137,38 @@ fn find_track<I>(
     };
     let mut j = first;
     let mut first_item = true;
-    while j < items.len() {
-        let it = &items[j];
+    // Coordinate sums saturate (style values are any `i32`).
+    while let Some(it) = items.get(j) {
         if !it.in_flow {
-            j += 1;
+            // SAFE-ARITH: `j < items.len()`.
+            j = j.wrapping_add(1);
             continue;
         }
         if !first_item && it.flags.contains(LayoutFlags::FLEX_IN_NEW_TRACK) {
             break;
         }
         let gap = if first_item { 0 } else { f.item_gap };
+        let used = tr.fix.saturating_add(tr.grow_min);
         if it.grow > 0 {
-            let min = it.min[f.main.index()];
-            if wrap && !first_item && tr.fix + tr.grow_min + min + gap > max_main {
+            let min = f.main.pick(it.min);
+            if wrap && !first_item && used.saturating_add(min).saturating_add(gap) > max_main {
                 break;
             }
-            tr.grow_min += min;
-            tr.fix += gap;
-            tr.grow_count += 1;
+            tr.grow_min = tr.grow_min.saturating_add(min);
+            tr.fix = tr.fix.saturating_add(gap);
+            tr.grow_count = tr.grow_count.saturating_add(1);
         } else {
-            let req = extent_m(it, f.main, measure) + gap;
-            if wrap && !first_item && tr.fix + tr.grow_min + req > max_main {
+            let req = extent_m(it, f.main, measure).saturating_add(gap);
+            if wrap && !first_item && used.saturating_add(req) > max_main {
                 break;
             }
-            tr.fix += req;
+            tr.fix = tr.fix.saturating_add(req);
         }
         first_item = false;
         tr.cross = tr.cross.max(extent_m(it, f.main.other(), measure));
-        tr.count += 1;
-        j += 1;
+        tr.count = tr.count.saturating_add(1);
+        // SAFE-ARITH: `j < items.len()`.
+        j = j.wrapping_add(1);
     }
     tr.end = j;
     tr.main = if tr.grow_count > 0 { max_main } else { tr.fix };
@@ -175,27 +182,33 @@ fn place_content(place: MainAlign, max: i32, content: i32, n: i32, start: &mut i
     } else {
         place
     };
+    // Saturating: sizes and gaps are any `i32`. The divisors are at least 1 where the
+    // divisions are reached (noted per arm), so the `checked_div` fallbacks are never taken.
+    let free = max.saturating_sub(content);
     match place {
         MainAlign::Center => {
             *gap = 0;
-            *start += (max - content) / 2;
+            *start = start.saturating_add(free / 2);
         }
         MainAlign::End => {
             *gap = 0;
-            *start += max - content;
+            *start = start.saturating_add(free);
         }
         MainAlign::SpaceBetween => {
             if n > 1 {
-                *gap = (max - content) / (n - 1);
+                // `n > 1` (the `if`), so `n − 1 ≥ 1`.
+                *gap = free.checked_div(n.saturating_sub(1)).unwrap_or(0);
             }
         }
         MainAlign::SpaceAround => {
-            *gap += (max - content) / n;
-            *start += *gap / 2;
+            // `n > 1` (`n ≤ 1` was turned into `Center` above).
+            *gap = gap.saturating_add(free.checked_div(n).unwrap_or(0));
+            *start = start.saturating_add(*gap / 2);
         }
         MainAlign::SpaceEvenly => {
-            *gap = (max - content) / (n + 1);
-            *start += *gap;
+            // `n > 1` (`n ≤ 1` was turned into `Center` above), so `n + 1 ≥ 3`.
+            *gap = free.checked_div(n.saturating_add(1)).unwrap_or(0);
+            *start = start.saturating_add(*gap);
         }
         MainAlign::Start => *gap = 0,
     }
@@ -220,7 +233,9 @@ pub(crate) fn extent<T: LayoutTree + ?Sized>(
     rtl: bool,
 ) -> Option<i32> {
     let f = Flex::of(t, id);
-    let items = &mut s.items[frame..end];
+    // SAFE-INDEX: the caller's frame `frame..end` lies inside the scratch items; the fallback
+    // (no flex content) is never taken.
+    let items = s.items.get_mut(frame..end)?;
     if f.rev {
         items.reverse();
     }
@@ -232,12 +247,12 @@ pub(crate) fn extent<T: LayoutTree + ?Sized>(
             if tr.count == 0 {
                 break;
             }
-            req = req.max(tr.fix + tr.grow_min);
+            req = req.max(tr.fix.saturating_add(tr.grow_min));
             i = tr.end;
         }
         return Some(req);
     }
-    let wrap = f.wrap && !sized[f.main.index()];
+    let wrap = f.wrap && !f.main.pick(sized);
     let max_main = f.main.of(avail);
     let mut total: Option<i32> = None;
     loop {
@@ -245,7 +260,9 @@ pub(crate) fn extent<T: LayoutTree + ?Sized>(
         if tr.count == 0 {
             break;
         }
-        total = Some(total.map_or(tr.cross, |v| v + f.track_gap + tr.cross));
+        total = Some(total.map_or(tr.cross, |v| {
+            v.saturating_add(f.track_gap).saturating_add(tr.cross)
+        }));
         i = tr.end;
     }
     let others = abs_extent_all(t, items, axis, avail, sized, rtl);
@@ -257,7 +274,6 @@ pub(crate) fn extent<T: LayoutTree + ?Sized>(
 
 /// Grow distribution of one track (LVGL `children_repos`, first loop).
 fn distribute_grow<I>(items: &mut [Item<I>], tr: &Track, main: Axis) {
-    let a = main.index();
     let is_grow = |it: &Item<I>| it.in_flow && it.grow > 0;
     for it in items.iter_mut().filter(|it| is_grow(it)) {
         it.clamped = false;
@@ -265,13 +281,14 @@ fn distribute_grow<I>(items: &mut [Item<I>], tr: &Track, main: Axis) {
     let mut again = true;
     while again {
         again = false;
+        // Saturating: the sums run over all grow items of the track.
         let mut sum_grow: i64 = 0;
-        let mut free = i64::from(tr.main - tr.fix);
+        let mut free = i64::from(tr.main).saturating_sub(i64::from(tr.fix));
         for it in items.iter().filter(|it| is_grow(it)) {
             if it.clamped {
-                free -= i64::from(it.final_main);
+                free = free.saturating_sub(i64::from(it.final_main));
             } else {
-                sum_grow += i64::from(it.grow);
+                sum_grow = sum_grow.saturating_add(i64::from(it.grow));
             }
         }
         for it in items.iter_mut().filter(|it| is_grow(it)) {
@@ -279,16 +296,20 @@ fn distribute_grow<I>(items: &mut [Item<I>], tr: &Track, main: Axis) {
                 continue;
             }
             let g = i64::from(it.grow);
-            let size =
-                div_round_closest(free * g, sum_grow).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-            let c = it.min[a].max(size.min(it.max[a]));
+            // `sum_grow` still includes this item's `grow ≥ 1` (`is_grow`), so it is ≥ 1.
+            let Some(sum) = NonZeroI64::new(sum_grow) else {
+                break;
+            };
+            let size = div_round_closest(free.saturating_mul(g), sum)
+                .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+            let c = main.pick(it.min).max(size.min(main.pick(it.max)));
             if c != size {
                 it.clamped = true;
                 again = true;
             }
             it.final_main = c;
-            sum_grow -= g;
-            free -= i64::from(c);
+            sum_grow = sum_grow.saturating_sub(g);
+            free = free.saturating_sub(i64::from(c));
         }
     }
 }
@@ -312,45 +333,66 @@ pub(crate) fn arrange<T: LayoutTree + ?Sized>(
     let (main, cross) = (f.main, f.main.other());
     let csize = raw_size(content);
     let (max_main, max_cross) = (main.of(csize), cross.of(csize));
-    let wrap = f.wrap && !sized[main.index()];
+    let wrap = f.wrap && !main.pick(sized);
+    // SAFE-INDEX: the caller's frame `frame..end` lies inside the scratch items, and the tracks
+    // below are sub-ranges of it; the `get` fallbacks are never taken.
     if f.rev {
-        s.items[frame..end].reverse();
+        if let Some(items) = s.items.get_mut(frame..end) {
+            items.reverse();
+        }
     }
 
     for i in frame..end {
-        if !s.items[i].in_flow {
+        let Some(&Item { in_flow, id: c, .. }) = s.items.get(i) else {
+            break;
+        };
+        if !in_flow {
             continue;
         }
-        let c = s.items[i].id;
         let r = resolve_node(&*t, s, c, csize, [None; 2]);
-        let it = &mut s.items[i];
-        it.set_resolved(r);
-        it.margin = margins(&*t, c);
-        it.grow = grow_of(&*t, c);
+        if let Some(it) = s.items.get_mut(i) {
+            it.set_resolved(r);
+            it.margin = margins(&*t, c);
+            it.grow = grow_of(&*t, c);
+        }
     }
 
     // Build the tracks, grow their items and measure their final cross sizes.
     let tframe = s.tracks.len();
     let mut i = frame;
     loop {
-        let mut tr = find_track(&s.items[..end], i, &f, wrap, max_main, false);
+        let mut tr = find_track(
+            s.items.get(..end).unwrap_or_default(),
+            i,
+            &f,
+            wrap,
+            max_main,
+            false,
+        );
         if tr.count == 0 {
             break;
         }
         if tr.grow_count > 0 {
-            distribute_grow(&mut s.items[tr.start..tr.end], &tr, main);
+            if let Some(items) = s.items.get_mut(tr.start..tr.end) {
+                distribute_grow(items, &tr, main);
+            }
             for j in tr.start..tr.end {
-                let it = s.items[j];
+                let Some(&it) = s.items.get(j) else { break };
                 if !it.in_flow || it.grow == 0 {
                     continue;
                 }
                 let mut ovr = [None; 2];
-                ovr[main.index()] = Some(it.final_main);
+                *main.pick_mut(&mut ovr) = Some(it.final_main);
                 let r = resolve_node(&*t, s, it.id, csize, ovr);
-                s.items[j].size = r.size;
-                s.items[j].ovr[main.index()] = true;
+                if let Some(it) = s.items.get_mut(j) {
+                    it.size = r.size;
+                    *main.pick_mut(&mut it.ovr) = true;
+                }
             }
-            tr.cross = s.items[tr.start..tr.end]
+            tr.cross = s
+                .items
+                .get(tr.start..tr.end)
+                .unwrap_or_default()
                 .iter()
                 .filter(|it| it.in_flow)
                 .map(|it| extent_m(it, cross, false))
@@ -360,10 +402,11 @@ pub(crate) fn arrange<T: LayoutTree + ?Sized>(
         i = tr.end;
         s.tracks.push(tr);
     }
-    let ntracks = (s.tracks.len() - tframe) as i32;
+    let tracks = s.tracks.get(tframe..).unwrap_or_default();
+    let ntracks = i32::try_from(tracks.len()).unwrap_or(i32::MAX);
 
     // Content-sized cross axis: tracks are packed at the start.
-    let mut track_place = if sized[cross.index()] {
+    let mut track_place = if cross.pick(sized) {
         MainAlign::Start
     } else {
         f.track_place
@@ -376,8 +419,10 @@ pub(crate) fn arrange<T: LayoutTree + ?Sized>(
             other => other,
         };
     }
-    let total =
-        s.tracks[tframe..].iter().map(|tr| tr.cross).sum::<i32>() + f.track_gap * (ntracks - 1).max(0);
+    let total = tracks
+        .iter()
+        .fold(0i32, |acc, tr| acc.saturating_add(tr.cross))
+        .saturating_add(f.track_gap.saturating_mul(ntracks.saturating_sub(1).max(0)));
     let mut cross_pos = 0;
     let mut track_extra = 0;
     place_content(
@@ -389,18 +434,19 @@ pub(crate) fn arrange<T: LayoutTree + ?Sized>(
         &mut track_extra,
     );
     if rtl_col {
-        cross_pos += total;
+        cross_pos = cross_pos.saturating_add(total);
     }
+    let step = track_extra.saturating_add(f.track_gap);
     for k in tframe..s.tracks.len() {
-        let tr = s.tracks[k];
+        let Some(&tr) = s.tracks.get(k) else { break };
         if rtl_col {
-            cross_pos -= tr.cross;
+            cross_pos = cross_pos.saturating_sub(tr.cross);
         }
         place_track(t, s, &f, &tr, content, cross_pos, max_main, rtl);
         if rtl_col {
-            cross_pos -= track_extra + f.track_gap;
+            cross_pos = cross_pos.saturating_sub(step);
         } else {
-            cross_pos += tr.cross + track_extra + f.track_gap;
+            cross_pos = cross_pos.saturating_add(tr.cross).saturating_add(step);
         }
     }
     s.tracks.truncate(tframe);
@@ -431,42 +477,49 @@ fn place_track<T: LayoutTree + ?Sized>(
     );
     let rtl_row = rtl && f.row();
     if rtl_row {
-        main_pos = max_main - main_pos;
+        main_pos = max_main.saturating_sub(main_pos);
     }
+    // Coordinates saturate (style values are any `i32`).
+    let step = f.item_gap.saturating_add(extra);
+    // SAFE-INDEX: a track is a sub-range of the scratch items; the fallback is never taken.
     for j in tr.start..tr.end {
-        let it = s.items[j];
+        let Some(&it) = s.items.get(j) else { break };
         if !it.in_flow {
             continue;
         }
         let (m, size) = (it.margin, it.size);
         let cross_off = match f.cross_place {
             CrossAlign::Center => {
-                (((tr.cross + 1) & !1) - cross.of(size)) / 2 + (start(m, cross) - end(m, cross)) / 2
+                let even = tr.cross.saturating_add(1) & !1;
+                (even.saturating_sub(cross.of(size)) / 2)
+                    .saturating_add(start(m, cross).saturating_sub(end(m, cross)) / 2)
             }
-            CrossAlign::End => tr.cross - cross.of(size) - end(m, cross),
+            CrossAlign::End => tr
+                .cross
+                .saturating_sub(cross.of(size))
+                .saturating_sub(end(m, cross)),
             CrossAlign::Start => start(m, cross),
         };
         if rtl_row {
-            main_pos -= main.of(size);
+            main_pos = main_pos.saturating_sub(main.of(size));
         }
         let (tx, ty) = translate(&*t, it.id, size);
-        let mpos = main_pos + start(m, main);
-        let (x, y) = if f.row() {
-            (mpos, cross_pos + cross_off)
-        } else {
-            (cross_pos + cross_off, mpos)
-        };
-        place(
-            t,
-            s,
-            it.id,
-            Rect::from_xywh(content.x0 + x + tx, content.y0 + y + ty, size.w, size.h),
-        );
-        s.items[j].done = true;
+        let mpos = main_pos.saturating_add(start(m, main));
+        let cpos = cross_pos.saturating_add(cross_off);
+        let (x, y) = if f.row() { (mpos, cpos) } else { (cpos, mpos) };
+        let x0 = content.x0.saturating_add(x).saturating_add(tx);
+        let y0 = content.y0.saturating_add(y).saturating_add(ty);
+        place(t, s, it.id, Rect::from_xywh(x0, y0, size.w, size.h));
+        if let Some(it) = s.items.get_mut(j) {
+            it.done = true;
+        }
         if rtl_row {
-            main_pos -= f.item_gap + extra;
+            main_pos = main_pos.saturating_sub(step);
         } else {
-            main_pos += main.of(size) + f.item_gap + extra + sum(m, main);
+            main_pos = main_pos
+                .saturating_add(main.of(size))
+                .saturating_add(step)
+                .saturating_add(sum(m, main));
         }
     }
 }

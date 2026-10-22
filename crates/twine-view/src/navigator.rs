@@ -210,6 +210,8 @@ impl Core {
 }
 
 struct NavState<R> {
+    /// The navigator's partition (the seal domain its stacks' growth is noted in).
+    part: twine_core::Partition,
     core: Core,
     /// The routes, root first (one per page).
     routes: Vec<R>,
@@ -911,6 +913,7 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
                     match s.core.pages.iter_mut().find(|p| p.id == id) {
                         Some(p) => p.entry = Some(en),
                         None => twine_core::alloc_guard::push(
+                            s.part,
                             &mut s.core.doomed,
                             en,
                             twine_core::alloc_guard::AllocSite::NavStack,
@@ -932,8 +935,8 @@ impl<R: Clone + PartialEq + 'static> Navigator<R> {
 /// allocation guard.
 fn push_page<R>(s: &mut NavState<R>, page: Page, route: R) {
     use twine_core::alloc_guard::{self, AllocSite};
-    alloc_guard::push(&mut s.core.pages, page, AllocSite::NavStack);
-    alloc_guard::push(&mut s.routes, route, AllocSite::NavStack);
+    alloc_guard::push(s.part, &mut s.core.pages, page, AllocSite::NavStack);
+    alloc_guard::push(s.part, &mut s.routes, route, AllocSite::NavStack);
 }
 
 /// Takes one thing the removal of the pages above `keep` drops: a guard of a removed page, or
@@ -950,6 +953,7 @@ fn take_removed<R>(s: &mut NavState<R>, keep: usize) -> Option<Removed<R>> {
     if s.core.pages.len() > keep {
         if let Some(Page { entry: Some(en), .. }) = s.core.pages.pop() {
             twine_core::alloc_guard::push(
+                s.part,
                 &mut s.core.doomed,
                 en,
                 twine_core::alloc_guard::AllocSite::NavStack,
@@ -1178,6 +1182,7 @@ where
     let routes = alloc::vec![initial];
     let nav = Navigator {
         state: cx.stored_value(NavState {
+            part: cx.partition(),
             core,
             routes,
             guards: Vec::new(),
@@ -1373,6 +1378,9 @@ impl<R: Clone + PartialEq + 'static> View for NavigatorView<R> {
 /// the page is built and move the `Copy` handle into its handlers.
 ///
 /// Never panics.
+///
+/// # Errors
+/// [`MissingContext`] naming `Navigator<R>` when `cx` is not inside a navigator over `R`.
 ///
 /// ```
 /// use twine_view::prelude::*;

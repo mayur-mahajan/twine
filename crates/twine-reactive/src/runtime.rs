@@ -16,7 +16,7 @@ use core::cell::RefCell;
 use twine_core::alloc_guard::{self, AllocSite};
 use twine_core::fault::{CapacityFault, FaultCounts, FaultKind};
 use twine_core::log::{debug, error, trace};
-use twine_core::{Arena, Id, Limits, SmallVec};
+use twine_core::{Arena, Id, Limits, Partition, SmallVec};
 
 use crate::channel::ChannelReg;
 use crate::error::{HandleKind, ReactiveError};
@@ -180,6 +180,8 @@ pub type FaultHook = fn(FaultKind, u32);
 
 /// All mutable runtime state.
 pub(crate) struct Inner {
+    /// The partition this runtime is the state of (its seal domain).
+    pub(crate) part: Partition,
     pub(crate) nodes: Arena<ReactiveNode>,
     pub(crate) scopes: Arena<ScopeData>,
     /// The computation currently tracking reads.
@@ -221,10 +223,11 @@ pub(crate) struct Inner {
 }
 
 impl Inner {
-    const fn new() -> Self {
+    const fn new(part: Partition) -> Self {
         Inner {
-            nodes: Arena::new(),
-            scopes: Arena::new(),
+            part,
+            nodes: Arena::new_in(part),
+            scopes: Arena::new_in(part),
             observer: None,
             running_effect: None,
             batch_depth: 0,
@@ -274,6 +277,7 @@ impl Inner {
     /// queued.
     #[inline]
     fn queue_effect(
+        part: Partition,
         pending: &mut VecDeque<NodeKey>,
         limits: RuntimeLimits,
         overflow: &mut u32,
@@ -285,7 +289,7 @@ impl Inner {
             return false;
         }
         node.flags |= QUEUED;
-        alloc_guard::push_back(pending, k, AllocSite::EffectQueue);
+        alloc_guard::push_back(part, pending, k, AllocSite::EffectQueue);
         true
     }
 
@@ -377,6 +381,7 @@ impl Inner {
     /// descendants `Check`; effects reached are queued once.
     fn mark_stale(&mut self, key: NodeKey) {
         let Inner {
+            part,
             nodes,
             stack,
             pending,
@@ -384,11 +389,12 @@ impl Inner {
             pending_overflow,
             ..
         } = self;
+        let part = *part;
         stack.clear();
         if let Some(n) = nodes.get(key) {
             // Reverse so that subscribers are visited (and effects queued) in subscription order.
             let subs = n.subscribers.as_slice();
-            alloc_guard::reserve(stack, subs.len(), AllocSite::ReactiveScratch);
+            alloc_guard::reserve(part, stack, subs.len(), AllocSite::ReactiveScratch);
             stack.extend(subs.iter().rev().map(|&s| (s, NodeState::Dirty)));
         }
         while let Some((k, st)) = stack.pop() {
@@ -402,11 +408,11 @@ impl Inner {
             node.state = st;
             if node.is_effect() {
                 if node.flags & (QUEUED | DEFERRED) == 0 {
-                    Self::queue_effect(pending, *limits, pending_overflow, node, k);
+                    Self::queue_effect(part, pending, *limits, pending_overflow, node, k);
                 }
             } else if was_clean {
                 let subs = node.subscribers.as_slice();
-                alloc_guard::reserve(stack, subs.len(), AllocSite::ReactiveScratch);
+                alloc_guard::reserve(part, stack, subs.len(), AllocSite::ReactiveScratch);
                 stack.extend(subs.iter().rev().map(|&s| (s, NodeState::Check)));
             }
         }
@@ -470,8 +476,12 @@ impl Inner {
     }
 }
 
-/// The state of the reactive runtime (one per thread with `std`, one per process without; reached through [`with_runtime`](crate::global::with_runtime)).
+/// The state of one partition's reactive runtime (one per partition and thread with `std`, one
+/// per partition and process without; reached through
+/// [`with_runtime`](crate::global::with_runtime)).
 pub(crate) struct RuntimeState {
+    /// The partition this state belongs to (fixed at construction: one state per slot).
+    pub(crate) part: Partition,
     pub(crate) inner: RefCell<Inner>,
     /// Cold fault state (never borrowed together with `inner` on a hot path).
     pub(crate) faults: RefCell<FaultState>,
@@ -588,10 +598,12 @@ impl RuntimeState {
         self.record_capacity(CapacityFault::PendingEffects, n);
     }
 
-    /// An empty runtime (usable in `static` and `const` thread-local initializers).
-    pub(crate) const fn new() -> Self {
+    /// An empty runtime of partition `part` (usable in `static` and `const` thread-local
+    /// initializers).
+    pub(crate) const fn new(part: Partition) -> Self {
         RuntimeState {
-            inner: RefCell::new(Inner::new()),
+            part,
+            inner: RefCell::new(Inner::new(part)),
             faults: RefCell::new(FaultState::new()),
         }
     }
@@ -630,7 +642,7 @@ impl RuntimeState {
             })
             .map_err(|_| ReactiveError::Capacity(HandleKind::Scope))?;
         if let Some(p) = parent.and_then(|p| inner.scopes.get_mut(p)) {
-            alloc_guard::push(&mut p.children, key, AllocSite::ReactiveScope);
+            alloc_guard::push(self.part, &mut p.children, key, AllocSite::ReactiveScope);
         }
         Ok(key)
     }
@@ -723,11 +735,13 @@ impl RuntimeState {
             }
             data
         };
-        // One node at a time: the statement's borrow ends before the node (user values and
-        // closures) is dropped.
+        // One node at a time: the statement's borrow ends before the node's user values and
+        // closures (its value cell and computation) are dropped. Only those two leave the
+        // borrow: the node's bookkeeping (its subscriber list) is freed inside it, where no
+        // user code runs (and the whole node is not moved out).
         for &k in &data.nodes {
-            let node = self.inner.borrow_mut().unlink_node(k);
-            drop(node);
+            let user = self.inner.borrow_mut().unlink_node(k).map(|n| (n.value, n.comp));
+            drop(user);
         }
         // Dead keys in the queues are skipped by a flush (none runs inside the caller's
         // batch); pruning once frees their room.
@@ -737,7 +751,7 @@ impl RuntimeState {
             let Some(reg) = reg else {
                 break;
             };
-            crate::channel::release_channel(reg);
+            crate::channel::release_channel(self.part, reg);
         }
         debug!(target: "twine::reactive", "dispose scope {:?}: {} nodes", s, data.nodes.len());
         let parent = data.parent;
@@ -751,9 +765,9 @@ impl RuntimeState {
         match inner.scopes.get_mut(s) {
             Some(d) => {
                 if core::mem::size_of_val(&*f) != 0 {
-                    alloc_guard::note(AllocSite::ReactiveCleanup);
+                    alloc_guard::note(self.part, AllocSite::ReactiveCleanup);
                 }
-                alloc_guard::push(&mut d.cleanups, f, AllocSite::ReactiveCleanup);
+                alloc_guard::push(self.part, &mut d.cleanups, f, AllocSite::ReactiveCleanup);
                 Ok(())
             }
             None => Err(f),
@@ -762,26 +776,31 @@ impl RuntimeState {
 
     // ----- nodes --------------------------------------------------------------------------
 
-    /// Inserts a node owned by scope `s`: `Disposed(Scope)` if the scope is dead,
-    /// `Capacity(what)` if [`Limits::max_reactive_nodes`] nodes are live. On failure `value` and
-    /// `kind` are dropped by the caller's frame, after the borrow is released (rule R1).
+    /// Inserts a node owned by scope `s`, taking `value` and `kind` out of the caller's
+    /// options: `Disposed(Scope)` if the scope is dead, `Capacity(what)` if
+    /// [`Limits::max_reactive_nodes`] nodes are live. On failure `value` and `kind` stay with
+    /// the caller, which drops them after the borrow is released (rule R1).
+    ///
+    /// Out of line, and taking the options by reference (the result is a key or an error, no
+    /// values travel back), so that the runtime access around it inlines into the caller.
+    #[inline]
     pub(crate) fn create_node(
         &self,
         s: ScopeKey,
-        value: Option<ValueRc>,
-        kind: Option<Kind>,
+        value: &mut Option<ValueRc>,
+        kind: &mut Option<Kind>,
         what: HandleKind,
-    ) -> Result<NodeKey, (ReactiveError, Option<ValueRc>, Option<Kind>)> {
+    ) -> Result<NodeKey, ReactiveError> {
         let mut inner = self.inner.borrow_mut();
         let Some(root) = inner.root_of(s) else {
-            return Err((ReactiveError::Disposed(HandleKind::Scope), value, kind));
+            return Err(ReactiveError::Disposed(HandleKind::Scope));
         };
         if inner.nodes.len() >= inner.limits.nodes || inner.nodes.is_full() {
-            return Err((ReactiveError::Capacity(what), value, kind));
+            return Err(ReactiveError::Capacity(what));
         }
         // A node always comes with a heap value: its value cell or its computation.
-        alloc_guard::note(AllocSite::ReactiveNode);
-        let comp = kind.map(|kind| {
+        alloc_guard::note(self.part, AllocSite::ReactiveNode);
+        let comp = kind.take().map(|kind| {
             Box::new(Computation {
                 kind,
                 sources: SmallVec::new(),
@@ -794,7 +813,7 @@ impl RuntimeState {
             NodeState::Clean
         };
         let node = ReactiveNode {
-            value,
+            value: value.take(),
             subscribers: KeyList::new(),
             comp,
             scope: s,
@@ -805,10 +824,10 @@ impl RuntimeState {
         // refused value is handed back and dropped outside this borrow, rule R1). Should it
         // fail anyway, `insert` drops the node and the creation reports the capacity error.
         let Ok(key) = inner.nodes.insert(node) else {
-            return Err((ReactiveError::Capacity(what), None, None));
+            return Err(ReactiveError::Capacity(what));
         };
         if let Some(d) = inner.scopes.get_mut(s) {
-            alloc_guard::push(&mut d.nodes, key, AllocSite::ReactiveScope);
+            alloc_guard::push(self.part, &mut d.nodes, key, AllocSite::ReactiveScope);
         }
         Ok(key)
     }
@@ -847,12 +866,13 @@ impl RuntimeState {
         }
         let mut inner = self.inner.borrow_mut();
         let value = inner.nodes.get(k)?.value.clone();
+        let part = self.part;
         if let Some(o) = inner.observer {
             if o != k {
                 let observer_alive = match inner.nodes.get_mut(o).and_then(|n| n.comp.as_deref_mut()) {
                     Some(c) => {
                         if !c.sources.contains(&k) {
-                            c.sources.push(k);
+                            c.sources.push_in(part, k);
                         }
                         true
                     }
@@ -860,7 +880,7 @@ impl RuntimeState {
                 };
                 if observer_alive {
                     if let Some(n) = inner.nodes.get_mut(k) {
-                        n.subscribers.insert(o);
+                        n.subscribers.insert(part, o);
                     }
                 }
             }
@@ -1032,7 +1052,7 @@ impl RuntimeState {
                     if let Some(n) = self.inner.borrow_mut().nodes.get_mut(k) {
                         n.state = NodeState::Dirty;
                     }
-                    ReactiveError::Borrowed(HandleKind::Memo).skip(None);
+                    ReactiveError::Borrowed(HandleKind::Memo).skip(self.part, None);
                     return;
                 };
                 if changed {
@@ -1097,7 +1117,7 @@ impl RuntimeState {
                     ..
                 } = &mut *inner;
                 if let Some(n) = nodes.get_mut(k) {
-                    Inner::queue_effect(pending, *limits, pending_overflow, n, k);
+                    Inner::queue_effect(self.part, pending, *limits, pending_overflow, n, k);
                 }
                 (true, inner.take_overflow())
             } else {
@@ -1114,7 +1134,7 @@ impl RuntimeState {
         {
             let _flush = FlushGuard(self);
             if let Err(e) = self.update_if_necessary(k, &mut ()) {
-                e.skip(None);
+                e.skip(self.part, None);
             }
         }
         let flush = {
@@ -1193,7 +1213,7 @@ impl RuntimeState {
                 k
             };
             if let Err(e) = self.update_if_necessary(key, ctx) {
-                e.skip(None);
+                e.skip(self.part, None);
             }
         }
     }
@@ -1203,6 +1223,7 @@ impl RuntimeState {
     /// their own root's flush.
     fn requeue_deferred(inner: &mut Inner) {
         let active = inner.active_root;
+        let part = inner.part;
         let Inner {
             nodes,
             deferred,
@@ -1218,7 +1239,7 @@ impl RuntimeState {
             if active.is_some_and(|a| n.comp.as_deref().is_some_and(|c| c.root != a)) {
                 return true;
             }
-            if n.flags & QUEUED == 0 && !Inner::queue_effect(pending, *limits, pending_overflow, n, k) {
+            if n.flags & QUEUED == 0 && !Inner::queue_effect(part, pending, *limits, pending_overflow, n, k) {
                 // No room: stays deferred for the next flush with a context.
                 return true;
             }
@@ -1258,7 +1279,7 @@ impl RuntimeState {
             if node.flags & DEFERRED == 0 {
                 if deferred.len() < max {
                     node.flags |= DEFERRED;
-                    alloc_guard::push(deferred, k, AllocSite::EffectQueue);
+                    alloc_guard::push(self.part, deferred, k, AllocSite::EffectQueue);
                 } else {
                     full = true;
                 }
@@ -1315,7 +1336,7 @@ impl RuntimeState {
         let (nodes, scopes, channels) = garbage;
         drop(nodes);
         for reg in channels {
-            crate::channel::release_channel(reg);
+            crate::channel::release_channel(self.part, reg);
         }
         drop(scopes);
     }

@@ -5,7 +5,7 @@ use alloc::rc::Rc;
 
 use twine_anim::Motion;
 use twine_core::audit::{Audit, AuditSink, AuditValue, KeyValues};
-use twine_core::{Limits, Rotation};
+use twine_core::{Limits, Partition, Rotation};
 use twine_engine::{DisplayId, Engine, EngineConfig, EngineError, FaultHook, IntoTheme, ThemeHook};
 use twine_reactive::{Runtime, WakerLease};
 
@@ -70,9 +70,16 @@ pub struct AppConfig {
     /// The memory bounds of the engine, the reactive runtime, the `Ui`'s queues, the
     /// navigation stack and the waker pool (see [`Limits`]), applied when the `Ui` is built
     /// (before anything is created, so preallocated storage is reserved first). Default
-    /// [`Limits::DEFAULT`]. The runtime's and the waker pool's shares are process-wide (per
-    /// thread with `std`): the last `Ui` built sets them.
+    /// [`Limits::DEFAULT`]. The runtime's share applies to the `Ui`'s partition only (every
+    /// partition has its own runtime and bounds); the waker pool's share is process-wide (per
+    /// thread with `std`): the last `Ui` built sets it.
     pub limits: Limits,
+    /// The partition this configuration is for ([`Partition`], ADR-001): named in the audit
+    /// report (`partition.index`) so each partition's evidence names itself. The `Ui` builders
+    /// set it from the runtime token ([`UiBuilder::runtime`](crate::UiBuilder::runtime));
+    /// [`apply_limits`](Self::apply_limits) refuses a configuration for another partition
+    /// than the token's. Default [`Partition::MAIN`].
+    pub partition: Partition,
     /// The theme of the (first) display. Default `None`: no theme — set one, or the widgets
     /// get only their own styles (on every host alike). Further displays of a multi-display
     /// `Ui` bring their own ([`DisplayBuilder::theme`](crate::DisplayBuilder::theme)).
@@ -96,6 +103,7 @@ impl core::fmt::Debug for AppConfig {
         f.debug_struct("AppConfig")
             .field("engine", &self.engine)
             .field("limits", &self.limits)
+            .field("partition", &self.partition)
             .field("theme", &self.theme.as_ref().map(|t| t.name()))
             .field("motion", &self.motion)
             .field("rotation", &self.rotation)
@@ -127,11 +135,29 @@ impl AppConfig {
         Self {
             engine: EngineConfig::default(),
             limits: Limits::DEFAULT,
+            partition: Partition::MAIN,
             theme: None,
             motion: Motion::Full,
             rotation: None,
             fault_hook: None,
         }
+    }
+
+    /// Sets [`partition`](Self::partition): the partition this configuration is reviewed
+    /// for. Needed only when the configuration is applied by hand
+    /// ([`apply_limits`](Self::apply_limits), [`UiCore::mount_configured`](crate::UiCore::mount_configured))
+    /// to a runtime of another partition than [`Partition::MAIN`]; the builders set it from
+    /// their token.
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    /// let p = Partition::ALL[Partition::COUNT - 1];
+    /// let cfg = AppConfig::new().partition(p);
+    /// assert!(cfg.audit_report().to_string().contains(&format!("partition.index={}\n", p.index())));
+    /// ```
+    pub fn partition(mut self, p: Partition) -> Self {
+        self.partition = p;
+        self
     }
 
     /// Sets [`engine`](Self::engine).
@@ -264,9 +290,12 @@ impl AppConfig {
         engine.set_motion(self.motion);
     }
 
-    /// Applies [`limits`](Self::limits): the engine's share ([`Engine::set_limits`]), the
-    /// reactive runtime's ([`Runtime::set_limits`]) and the waker pool's heap bound
-    /// ([`WakerLease::set_heap_limit`] from [`Limits::max_heap_wakers`]). With
+    /// Puts `engine` into `rt`'s partition ([`Engine::set_partition`]: its growth is then
+    /// noted in that partition's seal domain) and applies [`limits`](Self::limits): the
+    /// engine's share ([`Engine::set_limits`]), the reactive runtime's
+    /// ([`Runtime::set_limits`], for `rt`'s partition only) and the waker pool's heap bound
+    /// ([`WakerLease::set_heap_limit`] from [`Limits::max_heap_wakers`]; process-wide, shared
+    /// by every partition — the last `Ui` built sets it). With
     /// [`Limits::preallocate`] this reserves the bounded storage, so call it before anything
     /// is created (the builders and [`UiCore::mount_configured`](crate::UiCore::mount_configured)
     /// do). The `Ui`'s own bounds (engine queue, messages per channel) are applied by the
@@ -275,7 +304,8 @@ impl AppConfig {
     /// # Errors
     /// [`UiError::Engine`] with [`EngineError::InvalidConfig`] when [`Limits::validate`]
     /// refuses the limits (nothing is applied) — in the `safety` profile also when they are
-    /// not preallocated.
+    /// not preallocated —, or when the configuration is for another partition than `rt`'s
+    /// ([`partition`](Self::partition): its audit evidence would name the wrong partition).
     ///
     /// ```
     /// use twine_view::prelude::*;
@@ -284,9 +314,23 @@ impl AppConfig {
     /// let mut engine = Engine::new(cfg.engine).unwrap();
     /// cfg.apply_limits(Runtime::take().unwrap(), &mut engine).unwrap();
     /// assert_eq!(engine.limits().max_nodes, 64);
+    /// assert_eq!(engine.partition(), Partition::MAIN);
     /// assert!(cfg.limits(Limits::DEFAULT.max_nodes(0)).apply_limits(Runtime::current_thread(), &mut engine).is_err());
     /// ```
     pub fn apply_limits(&self, rt: Runtime, engine: &mut Engine) -> Result<(), UiError> {
+        if self.partition != rt.partition() {
+            twine_core::warn!(
+                target: "twine::view",
+                "apply_limits: the configuration is for {}, the runtime is {}",
+                self.partition,
+                rt.partition()
+            );
+            return Err(UiError::Engine(EngineError::InvalidConfig(
+                "the configuration is for another partition than the runtime",
+            )));
+        }
+        // The engine belongs to the token's partition (its seal domain), before anything grows.
+        engine.set_partition(rt.partition());
         engine.set_limits(&self.limits)?;
         // Validated by the engine above: the runtime accepts the same value.
         if let Err(twine_core::Error::InvalidArgument(msg)) = rt.set_limits(&self.limits) {
@@ -304,7 +348,8 @@ impl AppConfig {
     /// | Section | Entries |
     /// |---------|---------|
     /// | `audit` | `format` (the format version, `1`) |
-    /// | `build` | `twine_version`, the profile and feature flags (`safety`, `no_panic_runtime`, `debug_checks`, `async`, `std`, …) |
+    /// | `build` | `twine_version`, the profile and feature flags (`safety`, `no_panic_runtime`, `debug_checks`, `async`, `std`, …), `partitions` (the number of partitions the build has, [`Partition::COUNT`]) |
+    /// | `partition` | `index`: the partition the configuration is for ([`partition`](Self::partition)) |
     /// | `limits` | every [`Limits`] field ([`Limits::summary`]) |
     /// | `engine` | every [`EngineConfig`] field: refresh, flush timeout and policy, cache budgets, input timings, idle timeout |
     /// | `fixed` | compile-time capacities: displays, input devices, focus groups, static waker slots |
@@ -328,6 +373,8 @@ impl AppConfig {
     /// assert!(report.contains("limits.preallocate=true\n"));
     /// assert!(report.contains("engine.flush_timeout_us=500000\n"));
     /// assert!(report.contains("build.safety=false\n"));
+    /// assert!(report.contains(&format!("build.partitions={}\n", Partition::COUNT)));
+    /// assert!(report.contains("partition.index=0\n"));
     /// assert!(report.contains("theme.set=true\n"));
     /// // The last line digests the others.
     /// let (body, last) = report.trim_end().rsplit_once('\n').unwrap();
@@ -393,8 +440,14 @@ impl Audit for Entries<'_> {
         out.entry("build", "view_vector", AuditValue::Bool(cfg!(feature = "vector")));
         out.entry("build", "view_svg", AuditValue::Bool(cfg!(feature = "svg")));
         out.entry("build", "std", AuditValue::Bool(cfg!(feature = "std")));
+        out.entry("build", "partitions", AuditValue::from_usize(Partition::COUNT));
         twine_reactive::audit_features(out);
         twine_engine::audit_features(out);
+        out.entry(
+            "partition",
+            "index",
+            AuditValue::Uint(u64::from(this.partition.index())),
+        );
         this.limits.audit(out);
         this.engine.audit(out);
         out.entry(

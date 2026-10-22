@@ -97,13 +97,14 @@
 // the `safety` feature (`cargo xtask ci` stage `clippy-safety`).
 #![cfg_attr(
     all(feature = "safety", not(test)),
-    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable,)
-)]
-// NOTE(R5.S11): sites of these lints remain (counts: `docs/safety/profile.md` § Lint status,
-// `cargo xtask safety-lints`); a lint moves to `deny` above when its last site is fixed.
-#![cfg_attr(
-    all(feature = "safety", not(test)),
-    allow(clippy::indexing_slicing, clippy::arithmetic_side_effects,)
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+    )
 )]
 #![deny(clippy::float_arithmetic)]
 

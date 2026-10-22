@@ -10,11 +10,13 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use twine_core::{ColorFormat, Rect, Rotation};
 use twine_hal::{DisplayInfo, DrawBufferMem};
 
+use super::Slot;
 use super::areas;
 use super::timeout::Flight;
 use crate::display::{Backend, leak_buffer};
@@ -30,7 +32,7 @@ pub(crate) struct PartialState {
     /// Number of usable slots (1 or 2).
     pub(crate) count: usize,
     /// Slots whose memory the driver holds, oldest first.
-    pub(crate) in_flight: heapless::Deque<u8, 2>,
+    pub(crate) in_flight: heapless::Deque<Slot, 2>,
     /// Per slot: the flush it is in (while in flight).
     pub(crate) flights: [Option<Flight>; 2],
     /// Rows per chunk.
@@ -68,15 +70,17 @@ impl PartialState {
         a: DrawBufferMem,
         b: Option<DrawBufferMem>,
     ) -> Result<Self, EngineError> {
-        let row = info.bytes_per_row();
-        if row == 0 || info.height == 0 {
+        let Some(row) = NonZeroUsize::new(info.bytes_per_row()) else {
+            return Err(EngineError::InvalidConfig("display has no pixels"));
+        };
+        if info.height == 0 {
             return Err(EngineError::InvalidConfig("display has no pixels"));
         }
         let mut rows = usize::MAX;
         for m in core::iter::once(&a).chain(b.as_ref()) {
-            if m.len() < row {
+            if m.len() < row.get() {
                 return Err(EngineError::BufferTooSmall {
-                    needed: row,
+                    needed: row.get(),
                     got: m.len(),
                 });
             }
@@ -100,7 +104,7 @@ impl PartialState {
         let align = i32::from(info.align.max(1));
         if rows < align {
             return Err(EngineError::BufferTooSmall {
-                needed: row * align as usize,
+                needed: row.get().saturating_mul(usize::from(info.align.max(1))),
                 got: a.len(),
             });
         }
@@ -111,13 +115,13 @@ impl PartialState {
             info.rotation
         };
         let count = if b.is_some() { 2 } else { 1 };
-        let chunk_px = rows as usize * usize::from(info.width);
+        let chunk_px = (rows as usize).saturating_mul(usize::from(info.width));
         let mono = info.format == ColorFormat::I1;
         let mut scratch = [None, None];
         if rotation != Rotation::Deg0 {
             // The rotated chunk is `rows` wide and `width` tall: its packed size can exceed the
             // chunk's for sub-byte formats, so size it for the rotated layout.
-            let rot_len = info.format.stride(rows as u32) as usize * usize::from(info.width);
+            let rot_len = (info.format.stride(rows as u32) as usize).saturating_mul(usize::from(info.width));
             for s in scratch.iter_mut().take(count) {
                 *s = Some(leak_buffer(rot_len.max(a.len())));
             }
@@ -145,8 +149,10 @@ impl PartialState {
     /// caller's buffers hold `chunk_bytes`. Chunks have as many rows as fit (in the rotated
     /// layout too), rounded to the display alignment.
     pub(crate) fn new_external(info: &DisplayInfo, chunk_bytes: usize) -> Result<Self, EngineError> {
-        let row = info.bytes_per_row();
-        if row == 0 || info.height == 0 {
+        let Some(row) = NonZeroUsize::new(info.bytes_per_row()) else {
+            return Err(EngineError::InvalidConfig("display has no pixels"));
+        };
+        if info.height == 0 {
             return Err(EngineError::InvalidConfig("display has no pixels"));
         }
         let rotation = if info.hw_rotation {
@@ -160,25 +166,26 @@ impl PartialState {
             let rot = if rotation == Rotation::Deg0 {
                 0
             } else {
-                info.format.stride(rows as u32) as usize * usize::from(info.width)
+                (info.format.stride(rows as u32) as usize).saturating_mul(usize::from(info.width))
             };
-            rows * row <= chunk_bytes && rot <= chunk_bytes
+            rows.saturating_mul(row.get()) <= chunk_bytes && rot <= chunk_bytes
         };
         let mut rows = (chunk_bytes / row).min(usize::from(info.height));
         while rows > 0 && !fits(rows) {
-            rows -= 1;
+            rows = rows.saturating_sub(1);
         }
         let align = i32::from(info.align.max(1));
         if (rows as i32) < align {
             return Err(EngineError::BufferTooSmall {
-                needed: row * align as usize,
+                needed: row.get().saturating_mul(usize::from(info.align.max(1))),
                 got: chunk_bytes,
             });
         }
         let rows = areas::chunk_rows(rows as i32, info.align);
-        let chunk_px = rows as usize * usize::from(info.width);
+        let chunk_px = (rows as usize).saturating_mul(usize::from(info.width));
         let mono = info.format == ColorFormat::I1;
-        let ext_src = (rotation != Rotation::Deg0 && !mono).then(|| leak_buffer(rows as usize * row));
+        let ext_src = (rotation != Rotation::Deg0 && !mono)
+            .then(|| leak_buffer((rows as usize).saturating_mul(row.get())));
         Ok(Self {
             bufs: [None, None],
             scratch: [None, None],
@@ -203,8 +210,9 @@ impl PartialState {
         if self.count == 0 {
             return self.ext_chunk;
         }
-        self.bufs[..self.count]
+        self.bufs
             .iter()
+            .take(self.count)
             .map(|b| b.as_ref().map_or(0, DrawBufferMem::len))
             .min()
             .unwrap_or(0)
@@ -212,8 +220,9 @@ impl PartialState {
 
     /// Bytes of the smallest software-rotation scratch buffer (`0` when one is missing).
     fn scratch_bytes(&self) -> usize {
-        self.scratch[..self.count]
+        self.scratch
             .iter()
+            .take(self.count)
             .map(|b| b.as_ref().map_or(0, DrawBufferMem::len))
             .min()
             .unwrap_or(0)
@@ -222,7 +231,7 @@ impl PartialState {
     /// The most rows of `info`'s width that fit the memory this state has, rotating by
     /// `rotation` in software (`0` if not even one row fits).
     fn rows_that_fit(&self, info: &DisplayInfo, rotation: Rotation) -> usize {
-        let row = info.bytes_per_row();
+        let row: NonZeroUsize = NonZeroUsize::new(info.bytes_per_row()).unwrap_or(NonZeroUsize::MIN);
         let w = usize::from(info.width);
         let mono = info.format == ColorFormat::I1;
         let rotating = rotation != Rotation::Deg0;
@@ -233,24 +242,24 @@ impl PartialState {
         );
         let fits = |rows: usize| {
             let rot_len = if rotating {
-                info.format.stride(rows as u32) as usize * w
+                (info.format.stride(rows as u32) as usize).saturating_mul(w)
             } else {
                 0
             };
+            let bytes = rows.saturating_mul(row.get());
+            let px = rows.saturating_mul(w);
             let flush_ok = if external {
-                rows * row <= self.ext_chunk
+                bytes <= self.ext_chunk
                     && rot_len <= self.ext_chunk
-                    && (!rotating || mono || ext_src >= rows * row)
+                    && (!rotating || mono || ext_src >= bytes)
             } else {
                 !rotating || scratch >= rot_len
             };
-            flush_ok
-                && (!mono || self.l8.len() >= rows * w)
-                && (!(mono && rotating) || self.l8_rot.len() >= rows * w)
+            flush_ok && (!mono || self.l8.len() >= px) && (!(mono && rotating) || self.l8_rot.len() >= px)
         };
-        let mut rows = (self.buffer_bytes() / row.max(1)).min(usize::from(info.height));
+        let mut rows = (self.buffer_bytes() / row).min(usize::from(info.height));
         while rows > 0 && !fits(rows) {
-            rows -= 1;
+            rows = rows.saturating_sub(1);
         }
         rows
     }
@@ -264,7 +273,8 @@ impl PartialState {
         let align = usize::from(info.align.max(1));
         if rows < align {
             // Would enough rows fit without the rotation memory? Then reserving it helps.
-            let plain = (self.buffer_bytes() / info.bytes_per_row().max(1)).min(usize::from(info.height));
+            let row: NonZeroUsize = NonZeroUsize::new(info.bytes_per_row()).unwrap_or(NonZeroUsize::MIN);
+            let plain = (self.buffer_bytes() / row).min(usize::from(info.height));
             return Err(if rotation != Rotation::Deg0 && plain >= align {
                 Refit::NotReserved
             } else {
@@ -280,8 +290,10 @@ impl PartialState {
     /// display of `info`'s geometry needs and this state lacks: rotation scratch buffers, the
     /// mono shadow chunks, an external display's render buffer. Nothing when it is there.
     pub(crate) fn reserve(&mut self, info: &DisplayInfo) {
-        let row = info.bytes_per_row();
-        if row == 0 || info.height == 0 {
+        let Some(row) = NonZeroUsize::new(info.bytes_per_row()) else {
+            return;
+        };
+        if info.height == 0 {
             return;
         }
         let w = usize::from(info.width);
@@ -290,15 +302,16 @@ impl PartialState {
         // Rows of this width the draw memory holds (as `new` / `new_external` size them).
         let mut rows = (self.buffer_bytes() / row).min(usize::from(info.height));
         if external {
-            while rows > 0 && info.format.stride(rows as u32) as usize * w > self.ext_chunk {
-                rows -= 1;
+            while rows > 0 && (info.format.stride(rows as u32) as usize).saturating_mul(w) > self.ext_chunk {
+                rows = rows.saturating_sub(1);
             }
         }
         let rows = areas::chunk_rows(rows as i32, info.align).max(0) as usize;
-        let rot_len = info.format.stride(rows as u32) as usize * w;
+        let rot_len = (info.format.stride(rows as u32) as usize).saturating_mul(w);
+        let bytes = rows.saturating_mul(row.get());
         if external {
-            if !mono && self.ext_src.as_ref().is_none_or(|b| b.len() < rows * row) {
-                self.ext_src = Some(leak_buffer(rows * row));
+            if !mono && self.ext_src.as_ref().is_none_or(|b| b.len() < bytes) {
+                self.ext_src = Some(leak_buffer(bytes));
             }
         } else {
             let len = rot_len.max(self.buffer_bytes());
@@ -309,7 +322,7 @@ impl PartialState {
             }
         }
         if mono {
-            let px = rows * w;
+            let px = rows.saturating_mul(w);
             if self.l8.len() < px {
                 self.l8.resize(px, 0);
             }
@@ -324,14 +337,16 @@ impl PartialState {
     }
 
     /// A slot whose flush memory the engine holds.
-    fn free_slot(&self) -> Option<usize> {
-        (0..self.count).find(|&s| {
-            if self.rotating() {
-                self.scratch[s].is_some()
-            } else {
-                self.bufs[s].is_some()
-            }
-        })
+    fn free_slot(&self) -> Option<Slot> {
+        let mem = if self.rotating() {
+            &self.scratch
+        } else {
+            &self.bufs
+        };
+        Slot::BOTH
+            .into_iter()
+            .take(self.count)
+            .find(|s| s.pick(mem).is_some())
     }
 
     /// Puts a buffer returned by `poll_flush` back into the oldest in-flight slot.
@@ -339,14 +354,14 @@ impl PartialState {
         let rotating = self.rotating();
         match self.in_flight.pop_front() {
             Some(s) => {
-                if self.flights[usize::from(s)].take().is_some_and(|f| f.timed_out) {
-                    twine_core::info!(target: "twine::refresh", "flush of slot {} completed after timeout", s);
+                if s.pick_mut(&mut self.flights).take().is_some_and(|f| f.timed_out) {
+                    twine_core::info!(target: "twine::refresh", "flush of slot {} completed after timeout", s.number());
                 }
-                let slot = if rotating {
-                    &mut self.scratch[usize::from(s)]
+                let slot = s.pick_mut(if rotating {
+                    &mut self.scratch
                 } else {
-                    &mut self.bufs[usize::from(s)]
-                };
+                    &mut self.bufs
+                });
                 debug_assert!(slot.is_none(), "reclaimed buffer into an occupied slot");
                 *slot = Some(buf);
             }
@@ -360,7 +375,7 @@ impl PartialState {
 /// What waiting for a draw buffer ended with.
 enum Acquire {
     /// This slot is free.
-    Slot(usize),
+    Slot(Slot),
     /// None is free yet; the step yields (cooperative, or a bounded wait without a
     /// high-resolution timer).
     Wait,
@@ -381,8 +396,8 @@ pub(crate) enum ChunkStep {
 impl Engine {
     /// Renders and flushes the chunk of `area` starting at row `y`.
     pub(crate) fn partial_chunk(&mut self, d: usize, area: Rect, y: i32) -> ChunkStep {
-        let (rows, rotation) = match &self.displays[d].refresher.strategy {
-            super::Strategy::Partial(p) => (p.rows, p.rotation),
+        let (rows, rotation) = match self.displays.get(d).map(|x| &x.refresher.strategy) {
+            Some(super::Strategy::Partial(p)) => (p.rows, p.rotation),
             _ => return ChunkStep::Next(area.y1),
         };
         let chunk = areas::chunk_at(area, y, rows, 1);
@@ -396,16 +411,19 @@ impl Engine {
         let t_render = self.hires_us();
         #[cfg(feature = "debug-checks")]
         if let Some(h) = self.render_hook {
-            h(slot as u8);
+            h(slot.number());
         }
         // 2. Render (and rotate / convert).
         let (target, src) = match self.partial(d) {
-            Some(st) if rotation == Rotation::Deg0 => (st.bufs[slot].take(), None),
-            Some(st) => (st.scratch[slot].take(), st.bufs[slot].take()),
+            Some(st) if rotation == Rotation::Deg0 => (slot.pick_mut(&mut st.bufs).take(), None),
+            Some(st) => (
+                slot.pick_mut(&mut st.scratch).take(),
+                slot.pick_mut(&mut st.bufs).take(),
+            ),
             None => (None, None),
         };
         let Some(mut mem) = target else {
-            twine_core::error!(target: "twine::refresh", "slot {} has no buffer", slot);
+            twine_core::error!(target: "twine::refresh", "slot {} has no buffer", slot.number());
             return ChunkStep::Next(chunk.y1);
         };
         let mut src = src;
@@ -416,14 +434,16 @@ impl Engine {
             src.as_mut().map(DrawBufferMem::as_mut_slice),
         );
         if let (Some(src), Some(st)) = (src, self.partial(d)) {
-            st.bufs[slot] = Some(src);
+            *slot.pick_mut(&mut st.bufs) = Some(src);
         }
         #[cfg(feature = "display-integrity")]
         self.observe_chunk(d, flush_area, mem.as_slice(), None);
         // 3. Flush.
         let t_flush = self.hires_us();
         let since = self.wait_stamp();
-        let disp = &mut self.displays[d];
+        let Some(disp) = self.displays.get_mut(d) else {
+            return ChunkStep::Next(chunk.y1);
+        };
         let vsync = disp.refresher.job.as_ref().is_some_and(|j| j.vsync_pending);
         let mut result = Ok(());
         if let Backend::Flush(b) = &mut disp.backend {
@@ -434,14 +454,13 @@ impl Engine {
             result = b.begin_flush(flush_area, mem);
         }
         // The buffer is the driver's until `poll_flush` returns it, success or not.
-        let disp = &mut self.displays[d];
         if let super::Strategy::Partial(p) = &mut disp.refresher.strategy {
-            if p.in_flight.push_back(slot as u8).is_err() {
+            if p.in_flight.push_back(slot).is_err() {
                 // Cannot happen: a slot is in flight at most once and there are at most
                 // two. Losing track would freeze the display, so make it loud.
-                twine_core::error!(target: "twine::refresh", "in-flight queue full (slot {})", slot);
+                twine_core::error!(target: "twine::refresh", "in-flight queue full (slot {})", slot.number());
             }
-            p.flights[slot] = Some(Flight {
+            *slot.pick_mut(&mut p.flights) = Some(Flight {
                 area: chunk,
                 since,
                 timed_out: false,
@@ -459,7 +478,7 @@ impl Engine {
             target: "twine::refresh",
             "chunk {} buf={} wait={}us",
             flush_area,
-            slot,
+            slot.number(),
             t_render.zip(t_wait).map_or(0, |(a, b)| a.saturating_sub(b))
         );
         // 4. Reclaim a finished buffer without blocking before the next chunk.
@@ -507,7 +526,9 @@ impl Engine {
         target: &mut [u8],
         src: Option<&mut [u8]>,
     ) -> (Rect, u64) {
-        let info = self.displays[d].info;
+        let Some(info) = self.displays.get(d).map(|x| x.info) else {
+            return (chunk, 0);
+        };
         let Some(rotation) = self.partial(d).map(|st| st.rotation) else {
             twine_core::error!(target: "twine::refresh", "display {} renders no chunks", d);
             return (chunk, 0);
@@ -526,16 +547,28 @@ impl Engine {
                 .partial(d)
                 .map(|st| (core::mem::take(&mut st.l8), core::mem::take(&mut st.l8_rot)))
                 .unwrap_or_default();
-            render_us = self.render_buffer(d, &mut l8[..w * h], ColorFormat::L8, w, chunk, chunk);
-            let (src_l8, pw, ph) = if rotating {
-                super::rotate::rotate_chunk(&l8[..w * h], &mut l8_rot[..w * h], w, h, 1, rotation);
-                let (pw, ph) = if rotation.swaps_axes() { (h, w) } else { (w, h) };
-                (&l8_rot[..w * h], pw, ph)
-            } else {
-                (&l8[..w * h], w, h)
+            // The shadow chunks hold `rows × width` pixels (`new`, `reserve`): a chunk fits.
+            let px = w.saturating_mul(h);
+            render_us = match l8.get_mut(..px) {
+                Some(l8) => self.render_buffer(d, l8, ColorFormat::L8, w, chunk, chunk),
+                None => 0,
             };
-            if let Err(e) = twine_render::convert_l8_to_i1(src_l8, target, pw, ph) {
-                twine_core::error!(target: "twine::refresh", "mono conversion failed: {:?}", e);
+            let (src_l8, pw, ph) = if rotating {
+                if let (Some(src), Some(dst)) = (l8.get(..px), l8_rot.get_mut(..px)) {
+                    super::rotate::rotate_chunk(src, dst, w, h, 1, rotation);
+                }
+                let (pw, ph) = if rotation.swaps_axes() { (h, w) } else { (w, h) };
+                (l8_rot.get(..px), pw, ph)
+            } else {
+                (l8.get(..px), w, h)
+            };
+            match src_l8 {
+                Some(src) => {
+                    if let Err(e) = twine_render::convert_l8_to_i1(src, target, pw, ph) {
+                        twine_core::error!(target: "twine::refresh", "mono conversion failed: {:?}", e);
+                    }
+                }
+                None => mono_chunk_too_large(px, l8.len()),
             }
             if let Some(st) = self.partial(d) {
                 st.l8 = l8;
@@ -560,7 +593,7 @@ impl Engine {
     /// The partial-refresh state of display `d`; `None` for a framebuffer display (the
     /// callers run only for chunked displays, so `None` means there is no chunk to render).
     fn partial(&mut self, d: usize) -> Option<&mut PartialState> {
-        match &mut self.displays[d].refresher.strategy {
+        match &mut self.displays.get_mut(d)?.refresher.strategy {
             super::Strategy::Partial(p) => Some(p),
             _ => None,
         }
@@ -579,7 +612,9 @@ impl Engine {
             if let Some(s) = self.partial(d).and_then(|st| st.free_slot()) {
                 return Acquire::Slot(s);
             }
-            let disp = &mut self.displays[d];
+            let Some(disp) = self.displays.get_mut(d) else {
+                return Acquire::Wait;
+            };
             let (super::Strategy::Partial(p), Backend::Flush(b)) =
                 (&mut disp.refresher.strategy, &mut disp.backend)
             else {
@@ -602,4 +637,12 @@ impl Engine {
             core::hint::spin_loop();
         }
     }
+}
+
+/// A mono chunk larger than its shadow buffer (never: the shadow chunks are sized for the
+/// largest chunk): logged, the chunk is not converted.
+#[cold]
+#[inline(never)]
+fn mono_chunk_too_large(px: usize, have: usize) {
+    twine_core::error!(target: "twine::refresh", "mono chunk of {} px exceeds its {} px buffer", px, have);
 }

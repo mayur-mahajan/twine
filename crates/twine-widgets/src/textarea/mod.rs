@@ -368,7 +368,8 @@ impl Textarea {
     #[must_use]
     pub fn current_char(&self, cx: &MeasureCx<'_>) -> Option<char> {
         let t = self.text(cx);
-        t[..self.cursor.byte.min(t.len())].chars().next_back()
+        // The cursor byte is a character boundary (kept with the cursor position).
+        t.get(..self.cursor.byte.min(t.len()))?.chars().next_back()
     }
 
     /// Sets (or removes) the placeholder shown while the text is empty (LVGL
@@ -679,7 +680,7 @@ impl Textarea {
         let line_space = m.style_i32(Part::Main, PropId::LineSpacing);
         let shown = l.shown_text();
         let mut byte = byte_of(shown, self.cursor.pos);
-        let letter = shown[byte..].chars().next();
+        let letter = shown.get(byte..).and_then(|s| s.chars().next());
         let printable = |c: Option<char>| match c {
             None | Some('\n' | '\r') => ' ',
             Some(c) => c,
@@ -692,26 +693,36 @@ impl Textarea {
         let rtl = dsc.base_dir.resolved(shown) == TextDir::Rtl;
         let align = dsc.align.resolve(if rtl { TextDir::Rtl } else { TextDir::Ltr });
         // The cursor out of the text on the right is drawn at the start of the next line.
-        if label_c.x0 + pos.x + letter_w > label_c.x1 - 1 && !self.one_line && align != TextAlign::Right {
+        let cursor_end = label_c.x0.saturating_add(pos.x).saturating_add(letter_w);
+        if cursor_end > label_c.x1.saturating_sub(1) && !self.one_line && align != TextAlign::Right {
             pos.x = 0;
-            pos.y += letter_h + line_space;
+            pos.y = pos.y.saturating_add(letter_h.saturating_add(line_space));
             if let Some(c) = letter {
-                byte += c.len_utf8();
+                byte = byte.saturating_add(c.len_utf8());
             }
-            letter_w = font.advance_px(printable(shown[byte..].chars().next()), None);
+            let next = shown.get(byte..).and_then(|s| s.chars().next());
+            letter_w = font.advance_px(printable(next), None);
         }
         let bw = m.style_i32(Part::Cursor, PropId::BorderWidth);
         let pad = m.padding(Part::Cursor);
-        let (top, bottom) = (pad.top + bw, pad.bottom + bw);
-        let (left, right) = (pad.left + bw, pad.right + bw);
+        let (top, bottom) = (pad.top.saturating_add(bw), pad.bottom.saturating_add(bw));
+        let (left, right) = (pad.left.saturating_add(bw), pad.right.saturating_add(bw));
         let ls = lm.style_i32(Part::Main, PropId::LetterSpacing);
         // In right-to-left text the character after the cursor is on its left.
-        let x0 = if rtl { pos.x - letter_w } else { pos.x };
+        let x0 = if rtl {
+            pos.x.saturating_sub(letter_w)
+        } else {
+            pos.x
+        };
+        // Half the letter space on each side (the right one rounded up).
+        let (ls_left, ls_right) = (ls / 2, ls.saturating_add(1) / 2);
         let area = Rect::new(
-            x0 - left - ls / 2,
-            pos.y - top,
-            x0 + right + letter_w + (ls + 1) / 2,
-            pos.y + bottom + letter_h,
+            x0.saturating_sub(left).saturating_sub(ls_left),
+            pos.y.saturating_sub(top),
+            x0.saturating_add(right)
+                .saturating_add(letter_w)
+                .saturating_add(ls_right),
+            pos.y.saturating_add(bottom).saturating_add(letter_h),
         );
         self.cursor.shown_byte = byte;
         if area != self.cursor.area {
@@ -738,15 +749,16 @@ impl Textarea {
             let scroll = e.scroll_offset(id);
             let (top, left) = (scroll.y, e.scroll_left(id));
             let e = cx.engine_mut();
+            // Scroll positions and coordinates: saturating (exact for screen values).
             if cur.y < top {
                 e.scroll_to_y(id, cur.y, anim);
-            } else if cur.y + font_h - top > h {
-                e.scroll_to_y(id, cur.y - h + font_h, anim);
+            } else if cur.y.saturating_add(font_h).saturating_sub(top) > h {
+                e.scroll_to_y(id, cur.y.saturating_sub(h).saturating_add(font_h), anim);
             }
             if cur.x < left {
                 e.scroll_to_x(id, cur.x, anim);
-            } else if cur.x + font_h > left + w {
-                e.scroll_to_x(id, cur.x - w + font_h, anim);
+            } else if cur.x.saturating_add(font_h) > left.saturating_add(w) {
+                e.scroll_to_x(id, cur.x.saturating_sub(w).saturating_add(font_h), anim);
             }
             self.cursor.valid_x = cur.x;
         }
@@ -762,7 +774,7 @@ impl Textarea {
             return (0, true);
         };
         let lc = e.content_area(self.label);
-        let rel = Point::new(p.x - lc.x0, p.y - lc.y0);
+        let rel = Point::new(p.x.saturating_sub(lc.x0), p.y.saturating_sub(lc.y0));
         let shown = l.shown_text();
         // Left of the text is its start in left-to-right text and its end in right-to-left.
         let mcx = MeasureCx::new(e, self.label);
@@ -891,12 +903,18 @@ pub fn with_textarea<R>(
 
 /// Copies a short string into `buf` (the bullet, while the widget is borrowed).
 fn copy_small<'b>(s: &str, buf: &'b mut [u8; 16]) -> &'b str {
-    let mut n = s.len().min(16);
-    while !s.is_char_boundary(n) {
-        n -= 1;
+    // The longest prefix of at most 16 bytes ending on a character boundary (0 always is).
+    let n = (0..=s.len().min(16))
+        .rev()
+        .find(|&n| s.is_char_boundary(n))
+        .unwrap_or(0);
+    let src = s.as_bytes().get(..n).unwrap_or_default();
+    for (d, b) in buf.iter_mut().zip(src) {
+        *d = *b;
     }
-    buf[..n].copy_from_slice(&s.as_bytes()[..n]);
-    core::str::from_utf8(&buf[..n]).unwrap_or("*")
+    buf.get(..n)
+        .and_then(|b| core::str::from_utf8(b).ok())
+        .unwrap_or("*")
 }
 
 /// Creates a textarea, 260 × 130 px, as the last child of `parent` (LVGL
@@ -1035,7 +1053,7 @@ impl Textarea {
         };
         let area = area.translate(pad.left, pad.top);
         cx.draw_text(
-            Rect::new(area.x0, area.y0, area.x1, area.y1.max(area.y0 + 1)),
+            Rect::new(area.x0, area.y0, area.x1, area.y1.max(area.y0.saturating_add(1))),
             ph,
             &dsc,
         );
@@ -1055,24 +1073,26 @@ impl Textarea {
         let rs = cx.rect_dsc(Part::Cursor);
         cx.painter().rect(area, &rs.dsc());
         let bw = cx.style_i32(Part::Cursor, PropId::BorderWidth);
-        let left = cx.style_i32(Part::Cursor, PropId::PaddingLeft) + bw;
-        let top = cx.style_i32(Part::Cursor, PropId::PaddingTop) + bw;
+        let left = cx.style_i32(Part::Cursor, PropId::PaddingLeft).saturating_add(bw);
+        let top = cx.style_i32(Part::Cursor, PropId::PaddingTop).saturating_add(bw);
         let label_color = e.style_color(self.label, Part::Main, PropId::TextColor);
         let mut t = cx.text_dsc(Part::Cursor);
         // Draw the letter again only over a cursor background or in another color, else the
         // letter would look bold (LVGL).
         if rs.base.bg_opa.raw() > 2 || t.color != label_color {
             let shown = l.shown_text();
-            let b = self.cursor.shown_byte.min(shown.len());
-            let letter = shown[b..].chars().next().map_or(0, char::len_utf8);
-            let txt = &shown[b..b + letter];
+            // The letter at the cursor (empty past the end or off a character boundary).
+            let rest = shown.get(self.cursor.shown_byte..).unwrap_or("");
+            let letter = rest.chars().next().map_or(0, char::len_utf8);
+            let txt = rest.get(..letter).unwrap_or("");
             if !txt.is_empty() && txt != "\n" && txt != "\r" {
                 t.align = TextAlign::Left;
+                let y0 = area.y0.saturating_add(top);
                 let a = Rect::new(
-                    area.x0 + left,
-                    area.y0 + top,
+                    area.x0.saturating_add(left),
+                    y0,
                     area.x1,
-                    area.y1.max(area.y0 + top + 1),
+                    area.y1.max(y0.saturating_add(1)),
                 );
                 cx.draw_text(a, txt, &t);
             }

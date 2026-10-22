@@ -35,11 +35,13 @@ pub type NodeId = twine_core::Id<Node>;
 pub const DEAD_NODE: NodeId = NodeId::INVALID;
 
 // The node handle's size per profile (R5.S04; the five links of every node are
-// `Option<NodeId>`).
+// `Option<NodeId>`) is asserted where it is decided, in `twine_core::arena`: the profile is
+// twine-core's `safety` feature, which can be on without this crate's (feature unification).
+// Here: `NodeId` adds nothing to the core handle.
 const _: () = {
     use core::mem::size_of;
-    assert!(size_of::<NodeId>() == if cfg!(feature = "safety") { 8 } else { 4 });
-    assert!(size_of::<Option<NodeId>>() == if cfg!(feature = "safety") { 8 } else { 6 });
+    assert!(size_of::<NodeId>() == size_of::<twine_core::Id<()>>());
+    assert!(size_of::<Option<NodeId>>() == size_of::<Option<twine_core::Id<()>>>());
 };
 
 /// Formats a [`NodeId`] as `n<index>g<generation>` (e.g. `n12g3`), the notation of tree dumps

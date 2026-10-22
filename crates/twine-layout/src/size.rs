@@ -74,7 +74,11 @@ pub fn content_size_of<T: LayoutTree + ?Sized>(t: &T, id: T::Id, axis: Axis) -> 
     let mut s = LayoutScratch::new();
     let sp = spaces(t, id);
     let c = t.coords(id);
-    let avail = Size::new(c.x1 - c.x0 - sp.horizontal(), c.y1 - c.y0 - sp.vertical());
+    let own = raw_size(c);
+    let avail = Size::new(
+        own.w.saturating_sub(sp.horizontal()),
+        own.h.saturating_sub(sp.vertical()),
+    );
     let sized = [t.is_content_sized(id, Axis::X), t.is_content_sized(id, Axis::Y)];
     measure_content(t, &mut s, id, axis, avail, sized)
 }
@@ -156,7 +160,7 @@ pub(crate) fn resolve_node<T: LayoutTree + ?Sized>(
         ovr[0].is_none() && z.x.styles[0] == Length::Content,
         ovr[1].is_none() && z.y.styles[0] == Length::Content,
     ];
-    let needs = |axis: Axis| ovr[axis.index()].is_none() && z.of(axis).styles.contains(&Length::Content);
+    let needs = |axis: Axis| axis.pick(ovr).is_none() && z.of(axis).styles.contains(&Length::Content);
     // A content size may depend on the other axis (wrapping flex): resolve that one first.
     let order = if needs(Axis::X) && !needs(Axis::Y) {
         [Axis::Y, Axis::X]
@@ -172,8 +176,7 @@ pub(crate) fn resolve_node<T: LayoutTree + ?Sized>(
     let mut known = ovr;
     let mut measured = false;
     for axis in order {
-        let a = axis.index();
-        let v = if let Some(v) = ovr[a] {
+        let v = if let Some(v) = axis.pick(ovr) {
             v
         } else {
             let pc = axis.of(parent);
@@ -186,12 +189,12 @@ pub(crate) fn resolve_node<T: LayoutTree + ?Sized>(
             };
             let mut content: Option<i32> = None;
             let mut vals = [0; 3];
-            for (k, val) in vals.iter_mut().enumerate() {
-                *val = match fixed(styles[k]) {
+            for (val, style) in vals.iter_mut().zip(styles) {
+                *val = match fixed(style) {
                     Some(v) => v,
                     None => *content.get_or_insert_with(|| {
-                        let own = fixed(styles[0]).map_or(0, |v| v - za.space);
-                        let other = known[1 - a].map_or(0, |v| v - zo.space);
+                        let own = fixed(styles[0]).map_or(0, |v| v.saturating_sub(za.space));
+                        let other = axis.other().pick(known).map_or(0, |v| v.saturating_sub(zo.space));
                         let avail = match axis {
                             Axis::X => Size::new(own, other),
                             Axis::Y => Size::new(other, own),
@@ -202,16 +205,16 @@ pub(crate) fn resolve_node<T: LayoutTree + ?Sized>(
                 };
             }
             let [v, mn, mx] = vals;
-            out.min[a] = mn;
-            out.max[a] = mx;
-            out.pct[a] = size_in_effect_is_pct(v, mn, mx, styles);
+            *axis.pick_mut(&mut out.min) = mn;
+            *axis.pick_mut(&mut out.max) = mx;
+            *axis.pick_mut(&mut out.pct) = size_in_effect_is_pct(v, mn, mx, styles);
             mn.max(v.min(mx))
         };
         match axis {
             Axis::X => out.size.w = v,
             Axis::Y => out.size.h = v,
         }
-        known[a] = Some(v);
+        *axis.pick_mut(&mut known) = Some(v);
     }
     if measured {
         // Only content-sized nodes are worth remembering (the others resolve in O(1)). The
@@ -283,17 +286,22 @@ fn children_extent<T: LayoutTree + ?Sized>(
     if end == frame {
         return None;
     }
+    let [sized_x, sized_y] = sized;
+    // SAFE-INDEX: `frame..end` are the items just pushed (indices of `s.items` until the
+    // truncation below); the fallbacks are never taken.
     for i in frame..end {
-        let c = s.items[i].id;
-        Item::classify(&mut s.items[i], t, kind);
-        if !s.items[i].in_flow && !s.items[i].counts_for_content() {
+        let Some(it) = s.items.get_mut(i) else { break };
+        let c = it.id;
+        Item::classify(it, t, kind);
+        if !it.in_flow && !it.counts_for_content() {
             continue;
         }
         let r = resolve_node(t, s, c, avail, [None; 2]);
-        let it = &mut s.items[i];
+        let Some(it) = s.items.get_mut(i) else { break };
         it.set_resolved(r);
         it.margin = margins(t, c);
-        it.ignore = [sized[0] && r.pct[0], sized[1] && r.pct[1]];
+        let [pct_x, pct_y] = r.pct;
+        it.ignore = [sized_x && pct_x, sized_y && pct_y];
         match kind {
             LayoutKind::Flex => it.grow = flex::grow_of(t, c),
             LayoutKind::Grid => it.cell = grid::cell_of(t, c),
@@ -304,7 +312,10 @@ fn children_extent<T: LayoutTree + ?Sized>(
     let ext = match kind {
         LayoutKind::Flex => flex::extent(t, s, id, frame, end, axis, avail, sized, rtl),
         LayoutKind::Grid => grid::extent(t, s, id, frame, end, axis, avail, sized, rtl),
-        LayoutKind::None => position::abs_extent_all(t, &s.items[frame..end], axis, avail, sized, rtl),
+        LayoutKind::None => {
+            let items = s.items.get(frame..end).unwrap_or_default();
+            position::abs_extent_all(t, items, axis, avail, sized, rtl)
+        }
     };
     s.items.truncate(frame);
     ext
@@ -312,7 +323,7 @@ fn children_extent<T: LayoutTree + ?Sized>(
 
 /// `Size` of a (possibly degenerate) rectangle without clamping negative extents to 0.
 pub(crate) const fn raw_size(r: Rect) -> Size {
-    Size::new(r.x1 - r.x0, r.y1 - r.y0)
+    Size::new(r.x1.saturating_sub(r.x0), r.y1.saturating_sub(r.y0))
 }
 
 /// `Pct` of `base` like LVGL, `Px` as is, `Content` as 0 (positions and translations).

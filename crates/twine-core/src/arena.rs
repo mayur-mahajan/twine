@@ -7,7 +7,7 @@ use core::fmt;
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 
-use crate::Error;
+use crate::{Error, Partition};
 
 /// The generation of an arena slot (see [`Id::generation`]), as a plain integer.
 ///
@@ -584,6 +584,9 @@ pub struct Arena<T> {
     /// Slots whose generation reached `MAX_GENERATION` and that are never reused: at most
     /// `MAX_LEN` (one per slot).
     retired: u16,
+    /// The partition whose seal domain the arena's growth is noted in (zero-sized without the
+    /// `partitions` feature).
+    part: Partition,
 }
 
 impl<T> Default for Arena<T> {
@@ -602,32 +605,68 @@ impl<T> Arena<T> {
     /// [reuse order](Self#reuse-order)).
     pub const ROTATE_PERIOD: u16 = 4096;
 
-    /// An empty arena (no allocation).
+    /// An empty arena (no allocation) of [`Partition::MAIN`].
     #[must_use]
     pub const fn new() -> Self {
+        Self::new_in(Partition::MAIN)
+    }
+
+    /// An empty arena (no allocation) whose growth after a seal is noted in partition `p`'s
+    /// seal domain ([`alloc_guard`](crate::alloc_guard)): what an owner in partition `p` (a
+    /// partition's reactive runtime, an engine's tree) uses.
+    ///
+    /// ```
+    /// use twine_core::{Arena, Partition};
+    /// let a: Arena<u8> = Arena::new_in(Partition::MAIN);
+    /// assert_eq!(a.partition(), Partition::MAIN);
+    /// ```
+    #[must_use]
+    pub const fn new_in(p: Partition) -> Self {
         Arena {
             slots: Vec::new(),
             free: Vec::new(),
             reserve: VecDeque::new(),
             len: 0,
             retired: 0,
+            part: p,
         }
     }
 
-    /// An empty arena with room for `n` values.
+    /// An empty arena of [`Partition::MAIN`] with room for `n` values.
     #[must_use]
     pub fn with_capacity(n: u16) -> Self {
         Arena {
             slots: Vec::with_capacity(usize::from(n)),
-            free: Vec::new(),
-            reserve: VecDeque::new(),
-            len: 0,
-            retired: 0,
+            ..Self::new()
         }
+    }
+
+    /// The partition the arena's growth is noted in (see [`new_in`](Self::new_in)).
+    #[must_use]
+    #[inline]
+    pub const fn partition(&self) -> Partition {
+        self.part
+    }
+
+    /// Moves the arena to partition `p`'s seal domain: its later growth is noted there (the
+    /// owner calls it when it learns its partition, e.g. `Engine::set_partition`). Never
+    /// panics.
+    ///
+    /// ```
+    /// use twine_core::{Arena, Partition};
+    /// let mut a: Arena<u8> = Arena::new();
+    /// a.set_partition(Partition::MAIN);
+    /// assert_eq!(a.partition(), Partition::MAIN);
+    /// ```
+    pub fn set_partition(&mut self, p: Partition) {
+        self.part = p;
     }
 
     /// Stores `v`, returning its handle; [`Error::CapacityExceeded`] when 65 535 values are
     /// live (or every slot is retired).
+    ///
+    /// # Errors
+    /// [`Error::CapacityExceeded`] when 65 535 values are live or every slot is retired.
     pub fn insert(&mut self, v: T) -> Result<Id<T>, Error> {
         // Hot path: the most recently freed slot (same code as a plain LIFO free list).
         if let Some(index) = self.free.pop() {
@@ -669,7 +708,7 @@ impl<T> Arena<T> {
     #[cold]
     #[inline(never)]
     fn grow_slots(&mut self) {
-        crate::alloc_guard::grew(crate::alloc_guard::AllocSite::ArenaSlots);
+        crate::alloc_guard::grew(self.part, crate::alloc_guard::AllocSite::ArenaSlots);
         let grow = (self.slots.len() >> 2).max(8);
         self.slots.reserve_exact(grow);
     }
@@ -748,6 +787,7 @@ impl<T> Arena<T> {
         // takes the cold path.
         if slot.gen_.step_within_period() {
             crate::alloc_guard::push(
+                self.part,
                 &mut self.free,
                 index,
                 crate::alloc_guard::AllocSite::ArenaFreeList,
@@ -768,6 +808,7 @@ impl<T> Arena<T> {
         };
         if slot.gen_.step() {
             crate::alloc_guard::push_back(
+                self.part,
                 &mut self.reserve,
                 index,
                 crate::alloc_guard::AllocSite::ArenaFreeList,

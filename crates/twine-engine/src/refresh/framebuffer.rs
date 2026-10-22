@@ -2,11 +2,13 @@
 //! the areas the next back buffer is missing — LVGL `refr_sync_areas`) and `Direct` (one
 //! framebuffer rendered in place).
 
+use core::num::NonZeroUsize;
+
 use twine_core::{ColorFormat, Rect};
 use twine_hal::DrawBufferMem;
 
 use super::timeout::PendingPresent;
-use super::{MAX_FRAME_AREAS, Strategy};
+use super::{MAX_FRAME_AREAS, Slot, Strategy};
 use crate::Engine;
 use crate::display::Backend;
 
@@ -14,8 +16,8 @@ use crate::display::Backend;
 pub(crate) struct FullState {
     /// Both framebuffers (taken out only while being drawn into or synced).
     pub(crate) fb: [Option<DrawBufferMem>; 2],
-    /// Index of the back buffer (rendered next).
-    pub(crate) back: u8,
+    /// The back buffer (rendered next).
+    pub(crate) back: Slot,
     /// Areas rendered by the previous frame (in the current front buffer).
     pub(crate) last_areas: heapless::Vec<Rect, MAX_FRAME_AREAS>,
     /// A `present` was issued and has not taken effect yet (since when).
@@ -28,7 +30,7 @@ impl FullState {
     pub(crate) fn new(a: DrawBufferMem, b: DrawBufferMem) -> Self {
         Self {
             fb: [Some(a), Some(b)],
-            back: 1,
+            back: Slot::B,
             last_areas: heapless::Vec::new(),
             present: None,
             sync_px: 0,
@@ -48,13 +50,28 @@ impl DirectState {
 }
 
 /// Copies the rows of `r` from `src` to `dst` (full framebuffers with `stride` bytes per row).
+/// `r` lies inside the framebuffers (areas are clipped to the display); a part outside them
+/// is not copied.
 fn copy_rect(src: &[u8], dst: &mut [u8], stride: usize, format: ColorFormat, r: Rect) {
+    let (Some(stride), Ok(x0), Ok(x1), Ok(y0), Ok(y1)) = (
+        NonZeroUsize::new(stride),
+        usize::try_from(r.x0),
+        usize::try_from(r.x1),
+        usize::try_from(r.y0),
+        usize::try_from(r.y1),
+    ) else {
+        return;
+    };
     let bpp = usize::from(format.bpp());
-    let bx0 = r.x0 as usize * bpp / 8;
-    let bx1 = (r.x1 as usize * bpp).div_ceil(8);
-    for y in r.y0..r.y1 {
-        let o = y as usize * stride;
-        dst[o + bx0..o + bx1].copy_from_slice(&src[o + bx0..o + bx1]);
+    let bx0 = x0.saturating_mul(bpp) / 8;
+    let bx1 = x1.saturating_mul(bpp).div_ceil(8);
+    let rows = src
+        .chunks_exact(stride.get())
+        .zip(dst.chunks_exact_mut(stride.get()));
+    for (s, d) in rows.skip(y0).take(y1.saturating_sub(y0)) {
+        if let (Some(s), Some(d)) = (s.get(bx0..bx1), d.get_mut(bx0..bx1)) {
+            d.copy_from_slice(s);
+        }
     }
 }
 
@@ -80,8 +97,11 @@ impl Engine {
     /// Area sync at the start of a `Full` frame: every area of the previous frame that the
     /// current frame does not redraw completely is copied from the front into the back buffer.
     pub(crate) fn sync_areas(&mut self, d: usize) {
-        let info = self.displays[d].info;
-        let r = &mut self.displays[d].refresher;
+        let Some(disp) = self.displays.get_mut(d) else {
+            return;
+        };
+        let info = disp.info;
+        let r = &mut disp.refresher;
         let Some(job) = r.job.as_ref() else {
             return;
         };
@@ -89,8 +109,9 @@ impl Engine {
             return;
         };
         st.sync_px = 0;
-        let back = usize::from(st.back);
-        let (Some(front_mem), Some(mut back_mem)) = (st.fb[1 - back].take(), st.fb[back].take()) else {
+        let back = st.back;
+        let (back_slot, front_slot) = back.split_mut(&mut st.fb);
+        let (Some(front_mem), Some(mut back_mem)) = (front_slot.take(), back_slot.take()) else {
             return;
         };
         let stride = info.bytes_per_row();
@@ -126,19 +147,22 @@ impl Engine {
                     info.format,
                     *p,
                 );
-                st.sync_px += p.area();
+                st.sync_px = st.sync_px.saturating_add(p.area());
             }
         }
-        st.fb[1 - back] = Some(front_mem);
-        st.fb[back] = Some(back_mem);
+        *back.other().pick_mut(&mut st.fb) = Some(front_mem);
+        *back.pick_mut(&mut st.fb) = Some(back_mem);
         twine_core::trace!(target: "twine::refresh", "area sync: {} px", st.sync_px);
     }
 
     /// Renders `area` into the back buffer (`Full`) or the framebuffer (`Direct`).
     pub(crate) fn framebuffer_area(&mut self, d: usize, area: Rect) {
-        let info = self.displays[d].info;
-        let taken = match &mut self.displays[d].refresher.strategy {
-            Strategy::Full(st) => st.fb[usize::from(st.back)].take(),
+        let Some(disp) = self.displays.get_mut(d) else {
+            return;
+        };
+        let info = disp.info;
+        let taken = match &mut disp.refresher.strategy {
+            Strategy::Full(st) => st.back.pick_mut(&mut st.fb).take(),
             Strategy::Direct(st) => st.fb.take(),
             Strategy::Partial(_) => None,
         };
@@ -157,10 +181,10 @@ impl Engine {
         if self.observer.is_some() {
             observe_fb_area(self, d, &info, area, mem.as_slice());
         }
-        match &mut self.displays[d].refresher.strategy {
-            Strategy::Full(st) => st.fb[usize::from(st.back)] = Some(mem),
-            Strategy::Direct(st) => st.fb = Some(mem),
-            Strategy::Partial(_) => {}
+        match self.displays.get_mut(d).map(|x| &mut x.refresher.strategy) {
+            Some(Strategy::Full(st)) => *st.back.pick_mut(&mut st.fb) = Some(mem),
+            Some(Strategy::Direct(st)) => st.fb = Some(mem),
+            _ => {}
         }
         if let Some(job) = self.job_mut(d) {
             job.stats.chunks = job.stats.chunks.saturating_add(1);
@@ -177,18 +201,20 @@ impl Engine {
     /// the frame's areas are redrawn according to the flush policy.
     pub(crate) fn present_full(&mut self, d: usize) -> bool {
         let since = self.wait_stamp();
-        let disp = &mut self.displays[d];
+        let Some(disp) = self.displays.get_mut(d) else {
+            return true;
+        };
         let (Strategy::Full(st), Backend::Framebuffer(b)) = (&mut disp.refresher.strategy, &mut disp.backend)
         else {
             return true;
         };
-        match b.present(st.back) {
+        match b.present(st.back.number()) {
             Ok(()) => {
                 st.present = Some(PendingPresent {
                     since,
                     timed_out: false,
                 });
-                st.back ^= 1;
+                st.back = st.back.other();
                 self.flush_ok(d);
                 true
             }
@@ -204,8 +230,8 @@ impl Engine {
     /// Ends a `Direct` frame: `present(0)` (a cache clean or no-op for most drivers). On
     /// failure the frame's areas are redrawn according to the flush policy.
     pub(crate) fn present_direct(&mut self, d: usize) {
-        let result = match &mut self.displays[d].backend {
-            Backend::Framebuffer(b) => b.present(0),
+        let result = match self.displays.get_mut(d).map(|x| &mut x.backend) {
+            Some(Backend::Framebuffer(b)) => b.present(0),
             _ => return,
         };
         match result {

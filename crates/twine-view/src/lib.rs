@@ -51,6 +51,7 @@
 //! | [`BuildReport`], [`BuildFault`], [`BuildError`] | widgets that could not be created while mounting: the per-mount report and the error that fails the mount |
 //! | [`AppConfig`], [`UiBuilder::app_config`], [`UiCore::mount_configured`], [`UiCore::mount_configured_with_waker`] | the application's configuration (engine, limits, theme, motion, rotation, fault hook), one value for firmware, simulator and tests |
 //! | [`Limits`](twine_core::Limits), [`UiBuilder::limits`], [`AppConfig::apply_limits`], [`CapacityFault`] | the memory bounds of everything that grows (nodes, tree depth, texts, handlers, timers, animations, reactive nodes and scopes, effects, queues, navigation, keyed lists, wakers, heap budget), enforced as `Capacity` faults, optionally preallocated |
+//! | [`Ui::partition`], [`UiCore::partition`], [`AppConfig::partition`], [`Partition`](twine_core::Partition) | partitioned runtimes (feature `partitions`): independent UIs on runtimes of their own, sharing no state ([`run`] § Partitions) |
 //! | [`Ui::seal`], [`UiCore::seal`] | end of start-up: heap budget checked, then any allocation by Twine raises [`FaultKind::AllocAfterSeal`](twine_core::fault::FaultKind::AllocAfterSeal) ([`twine_core::alloc_guard`]) |
 //! | [`AppConfig::audit_report`] | the complete configuration as stable `section.key=value` lines for audit evidence ([`twine_core::audit`]), ending with its CRC-32 digest |
 //! | [`Ui::heartbeat`]; with the `display-integrity` feature `Ui::set_fail_safe`, `Ui::enter_fail_safe`, `UiBuilder::frame_observer`, `ViewExt::validity`, `ViewExt::safety_critical`, `ScopeExt::watch_fresh`, `INVALID_TEXT` ([`Validity`](twine_core::validity::Validity) texts) | display integrity: liveness, the static fail-safe screen, an independent frame monitor, data validity and its standard look (critical nodes and region checks: the engine's `ObjFlags::SAFETY_CRITICAL`, `Engine::check_region`) |
@@ -134,6 +135,12 @@
 //! `display-integrity`: the fail-safe screen (`Ui::set_fail_safe`, `enter_fail_safe`), frame
 //! observers (`UiBuilder::frame_observer`), `.safety_critical`, `.validity`, `Validity` texts
 //! and `ScopeExt::watch_fresh` (`docs/safety/profile.md` § 11); off, none of it is compiled.
+//!
+//! `partitions`: up to four partitioned runtimes (ADR-001): a `Ui` built with
+//! `Runtime::take_partition(p)` runs in partition `p` with its own runtime, engine, limits,
+//! faults, seal domain, step budget and heartbeat ([`run`] § Partitions,
+//! `docs/safety/profile.md` § 13). Not implied by `safety`; without it there is one partition and
+//! nothing of it is compiled into handles or the runtime.
 #![no_std]
 #![forbid(unsafe_code)]
 // The safety profile's lints (`docs/safety/profile.md` § Lints): denied in library code under

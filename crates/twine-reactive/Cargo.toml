@@ -19,11 +19,18 @@ safety = ["twine-core/safety", "no-panic-runtime"]
 ## Failed writes and creations, capacity exhaustion and memo cycles are skipped with a `warn!`
 ## and a fault instead of panicking (crate docs § Failures).
 no-panic-runtime = []
+## Partitioned runtimes (ADR-001): `Partition::COUNT` = 4 independent runtimes, taken with
+## `Runtime::take_partition`; every handle carries its partition (one byte), `Channel` and
+## `Latest` record their consuming partition. Not implied by `safety`. Without it the runtime
+## compiles to one state and zero-sized partition ids.
+partitions = ["twine-core/partitions"]
 ## Thread-local runtime (host, simulator, tests): one runtime per thread. Without it the
 ## runtime lives in a `static`, owned by the context that took its `Runtime` token.
 std = ["twine-core/std"]
 ## Debug diagnostics: every runtime access asks the interrupt probe (`set_interrupt_probe`) and
-## panics when the runtime is used from interrupt context.
+## panics when the runtime is used from interrupt context; with `partitions` and `std` it also
+## panics when a handle of one partition is used while another partition's flush, update or
+## batch runs (ADR-001 § 5.4).
 debug-checks = []
 ## `Outbox::recv`: await commands from the UI in any executor (a plain `Future`, no dependency).
 async = []
