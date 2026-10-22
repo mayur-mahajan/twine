@@ -136,7 +136,7 @@
 //! observers (`UiBuilder::frame_observer`), `.safety_critical`, `.validity`, `Validity` texts
 //! and `ScopeExt::watch_fresh` (`docs/safety/profile.md` § 11); off, none of it is compiled.
 //!
-//! `partitions`: up to four partitioned runtimes (ADR-001): a `Ui` built with
+//! `partitions`: two partitioned runtimes (ADR-001): a `Ui` built with
 //! `Runtime::take_partition(p)` runs in partition `p` with its own runtime, engine, limits,
 //! faults, seal domain, step budget and heartbeat ([`run`] § Partitions,
 //! `docs/safety/profile.md` § 13). Not implied by `safety`; without it there is one partition and

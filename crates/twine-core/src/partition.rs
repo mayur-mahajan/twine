@@ -16,7 +16,7 @@
 //! Partitions are opt-in. Without the feature [`Partition::COUNT`] is 1, the type is
 //! zero-sized and every per-partition table has one entry, so an image with one partition
 //! compiles to the code it had before partitions existed (no byte per handle, no slot
-//! selection). With it, [`Partition::COUNT`] is 4 and a partition is one byte.
+//! selection). With it, [`Partition::COUNT`] is 2 and a partition is one byte.
 //!
 //! ```
 //! use twine_core::Partition;
@@ -38,8 +38,6 @@
 enum Index {
     P0 = 0,
     P1 = 1,
-    P2 = 2,
-    P3 = 3,
 }
 
 /// Without `partitions`: one partition, zero-sized.
@@ -54,7 +52,8 @@ enum Index {
 ///
 /// `Copy`, compared and hashed by index. One byte with the `partitions` feature, zero-sized
 /// without. [`Partition::MAIN`] (index 0) always exists; with `partitions` there are
-/// [`Partition::COUNT`] = 4 (room for "critical, non-critical, diagnostics, service").
+/// [`Partition::COUNT`] = 2 (a critical and a non-critical partition: each per-partition table
+/// costs RAM in every image with the feature, ADR-001 § 6.2).
 ///
 /// A `Partition` value is only a name: holding one grants no access. Access to a partition's
 /// runtime needs its token (`twine_reactive::Runtime::take_partition`), which is claimed once.
@@ -71,8 +70,8 @@ enum Index {
 pub struct Partition(Index);
 
 impl Partition {
-    /// The number of partitions: 4 with the `partitions` feature, 1 without. A power of two.
-    pub const COUNT: usize = if cfg!(feature = "partitions") { 4 } else { 1 };
+    /// The number of partitions: 2 with the `partitions` feature, 1 without. A power of two.
+    pub const COUNT: usize = if cfg!(feature = "partitions") { 2 } else { 1 };
 
     /// The main partition (index 0): what `Runtime::take()` claims and what a single-partition
     /// application uses everywhere.
@@ -80,12 +79,7 @@ impl Partition {
 
     /// Every partition, in index order.
     #[cfg(feature = "partitions")]
-    pub const ALL: [Partition; Partition::COUNT] = [
-        Partition(Index::P0),
-        Partition(Index::P1),
-        Partition(Index::P2),
-        Partition(Index::P3),
-    ];
+    pub const ALL: [Partition; Partition::COUNT] = [Partition(Index::P0), Partition(Index::P1)];
 
     /// Every partition, in index order.
     #[cfg(not(feature = "partitions"))]
@@ -105,8 +99,6 @@ impl Partition {
         let p = match index {
             0 => Index::P0,
             1 => Index::P1,
-            2 => Index::P2,
-            3 => Index::P3,
             _ => return None,
         };
         #[cfg(not(feature = "partitions"))]

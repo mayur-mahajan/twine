@@ -86,7 +86,7 @@
 //!   `display-integrity`.
 //! - `display-integrity`: the value digests of bars, sliders, arcs and spinboxes
 //!   (`Widget::value_digest`, display-integrity cross-checks).
-//! - `partitions`: four partitioned runtimes instead of one (ADR-001); widgets note the growth
+//! - `partitions`: two partitioned runtimes instead of one (ADR-001); widgets note the growth
 //!   of their own buffers in their engine's partition (`WidgetCx::partition`). Not implied by
 //!   `safety`.
 #![no_std]

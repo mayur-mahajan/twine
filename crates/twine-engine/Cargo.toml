@@ -29,7 +29,7 @@ safety = [
 ## Display-integrity mechanisms: frame observers, region re-render / read-back /
 ## checks, `ObjFlags::SAFETY_CRITICAL`, the validity marks and the fail-safe screen (`docs/safety/profile.md` § 11); implied by `safety`. Off: not linked.
 display-integrity = ["twine-render/display-integrity", "twine-text/display-integrity"]
-## Partitioned runtimes (ADR-001): `Engine::set_partition` names one of 4 partitions instead
+## Partitioned runtimes (ADR-001): `Engine::set_partition` names one of 2 partitions instead
 ## of 1 (the engine's growth is noted in that partition's seal domain). Not implied by `safety`.
 partitions = ["twine-core/partitions", "twine-anim/partitions"]
 ## std-only conveniences.

@@ -132,7 +132,7 @@ display-integrity = [
     "twine-widgets/display-integrity",
     "twine-view/display-integrity",
 ]
-## Partitioned runtimes (`docs/design/adr-001-partitioned-runtimes.md`): up to four
+## Partitioned runtimes (`docs/design/adr-001-partitioned-runtimes.md`): two
 ## independent UIs in one image (`Runtime::take_partition`), e.g. a safety-critical display
 ## next to a non-critical one; a fault, loop cut, exhausted bound or slow update in one
 ## cannot change the other (`docs/safety/profile.md` § 13). Not implied by `safety`; without

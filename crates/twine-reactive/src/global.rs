@@ -1,7 +1,7 @@
 //! The [`Runtime`] token and access to the runtime state of each partition.
 //!
 //! There is one runtime state per [`Partition`] (`Partition::COUNT` slots: 1 without the
-//! `partitions` feature, 4 with it, ADR-001). Tokens and handles carry their partition, and
+//! `partitions` feature, 2 with it, ADR-001). Tokens and handles carry their partition, and
 //! [`with_runtime`]`(p, f)` selects slot `p` (an address computation: the partition is an
 //! enum below `COUNT`; without the feature the selection folds away and the code is the
 //! single-runtime code).
@@ -45,13 +45,8 @@ const _: () = assert!(
 const fn slots() -> [RuntimeState; Partition::COUNT] {
     #[cfg(feature = "partitions")]
     {
-        let [a, b, c, d] = Partition::ALL;
-        [
-            RuntimeState::new(a),
-            RuntimeState::new(b),
-            RuntimeState::new(c),
-            RuntimeState::new(d),
-        ]
+        let [a, b] = Partition::ALL;
+        [RuntimeState::new(a), RuntimeState::new(b)]
     }
     #[cfg(not(feature = "partitions"))]
     {
@@ -302,7 +297,7 @@ fn context_violation(what: &'static str) -> ! {
 ///
 /// # Partitions
 ///
-/// With the `partitions` feature there are [`Partition::COUNT`] = 4 independent runtimes
+/// With the `partitions` feature there are [`Partition::COUNT`] = 2 independent runtimes
 /// (ADR-001, `docs/design/adr-001-partitioned-runtimes.md`). A partition is one runtime and
 /// every `Ui` built on its token; two partitions share no state — arenas, effect queues and
 /// loop cut, [`Limits`], faults and fault hook, seal domain — so a safety-critical display

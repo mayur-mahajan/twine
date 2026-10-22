@@ -88,7 +88,7 @@
 //! - `no-panic-runtime`: reactive failures that can be skipped (a write to a disposed signal, a
 //!   creation in a disposed scope or a full arena, a memo cycle) raise a fault instead of
 //!   panicking (`reactive` crate docs § Failures); implied by `safety`.
-//! - `partitions`: up to four [partitioned runtimes](#partitioned-runtimes) instead of one
+//! - `partitions`: two [partitioned runtimes](#partitioned-runtimes) instead of one
 //!   (not in `default` or `full`, not implied by `safety`; zero cost without it).
 //!
 //! Firmware that offers alternatives as its own cargo features (one display of several, at
@@ -162,7 +162,7 @@
 //!
 //! ## Partitioned runtimes
 //!
-//! With the `partitions` feature an image runs up to four **partitions**
+//! With the `partitions` feature an image runs up to two **partitions**
 //! ([`core::Partition`]): each is one reactive runtime, claimed once with
 //! [`Runtime::take_partition`](reactive::Runtime::take_partition), and every `Ui` built on its
 //! token. Partitions share no state — arenas, effect queue and loop cut, limits, faults, seal

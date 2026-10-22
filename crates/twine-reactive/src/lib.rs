@@ -214,7 +214,7 @@
 //!   simulator and in tests.
 //! - without `std`: one runtime per partition and process, in a `static`; [`Runtime::take`]
 //!   succeeds once.
-//! - `partitions`: [`Partition::COUNT`](twine_core::Partition::COUNT) = 4 independent runtimes
+//! - `partitions`: [`Partition::COUNT`](twine_core::Partition::COUNT) = 2 independent runtimes
 //!   instead of 1 (§ Partitions). Not implied by `safety`; without it handles hold no
 //!   partition byte and the runtime is the single-runtime code.
 //! - `debug-checks`: every runtime access asks the interrupt probe ([`set_interrupt_probe`],
@@ -234,7 +234,7 @@
 //!
 //! ## Partitions
 //!
-//! With the `partitions` feature an image runs up to four **partitions**: independent
+//! With the `partitions` feature an image runs up to two **partitions**: independent
 //! runtimes, each claimed once with [`Runtime::take_partition`] (ADR-001,
 //! `docs/design/adr-001-partitioned-runtimes.md`). Every handle carries its partition and
 //! reaches only that partition's runtime, so a partition's arenas, effect queue and loop cut,

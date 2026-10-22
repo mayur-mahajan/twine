@@ -19,7 +19,7 @@ safety = ["twine-core/safety", "no-panic-runtime"]
 ## Failed writes and creations, capacity exhaustion and memo cycles are skipped with a `warn!`
 ## and a fault instead of panicking (crate docs § Failures).
 no-panic-runtime = []
-## Partitioned runtimes (ADR-001): `Partition::COUNT` = 4 independent runtimes, taken with
+## Partitioned runtimes (ADR-001): `Partition::COUNT` = 2 independent runtimes, taken with
 ## `Runtime::take_partition`; every handle carries its partition (one byte), `Channel` and
 ## `Latest` record their consuming partition. Not implied by `safety`. Without it the runtime
 ## compiles to one state and zero-sized partition ids.

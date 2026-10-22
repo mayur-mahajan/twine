@@ -11,7 +11,7 @@ publish = false
 
 # Feature sets `cargo xtask firmware` builds ("" = the defaults).
 [package.metadata.twine]
-feature-sets = ["", "panel-st7789,touch-ft6x36,demo-controls", "panel-ili9341,touch-xpt2046,demo-calibrate", "panel-ili9341,touch-xpt2046,demo-selection", "panel-ili9342,touch-gt911,demo-counter", "panel-st7796,touch-cst816s,demo-counter", "oled-ssd1306,demo-counter"]
+feature-sets = ["", "panel-st7789,touch-ft6x36,demo-controls", "panel-ili9341,touch-xpt2046,demo-calibrate", "panel-ili9341,touch-xpt2046,demo-selection", "panel-ili9341,touch-xpt2046,demo-counter,safety", "panel-ili9342,touch-gt911,demo-counter", "panel-st7796,touch-cst816s,demo-counter", "oled-ssd1306,demo-counter"]
 
 [features]
 default = ["panel-ili9341", "touch-xpt2046", "demo-counter"]

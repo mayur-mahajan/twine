@@ -51,7 +51,7 @@
 //! - `safety`: the safety profile (enabled by the `twine` facade's `safety` feature; see
 //!   [`SAFETY_PROFILE`] and `docs/safety/profile.md`). Among other things it widens arena
 //!   generations to 48 bits ([`Generation`]), so no arena slot retires in practice.
-//! - `partitions`: [`Partition::COUNT`] = 4 partitioned runtimes instead of 1 (ADR-001,
+//! - `partitions`: [`Partition::COUNT`] = 2 partitioned runtimes instead of 1 (ADR-001,
 //!   `docs/design/adr-001-partitioned-runtimes.md`); per-partition seal domains in
 //!   [`alloc_guard`]. Not implied by `safety`. Without it [`Partition`] is zero-sized.
 //!

@@ -47,6 +47,8 @@ heap.
 | `oled-ssd1306` | SSD1306 128 × 64 mono OLED at I2C address `0x3C`, on the capacitive touch's I2C pins (so no touch feature), mono theme, whole-frame 1 KiB buffers |
 | `touch-xpt2046` (default), `touch-ft6x36`, `touch-gt911`, `touch-cst816s`, `touch-axs5106l` (`esp32c6`, its default) | touch driver (through `twine/drivers-<driver>`); the capacitive ones share one set of I2C pins |
 | `demo-counter` (default), `demo-controls`, `demo-selection`, `demo-calibrate` | the demo (`demo-selection` needs ~130 KB of heap: the RP2040 example then uses a 160 KiB heap; it does not fit the STM32F411's 128 KiB of RAM; `demo-calibrate` needs a touch feature) |
+| `perf-monitor` (off by default) | the on-screen performance overlay (fps, CPU, render and flush time, heap) over the UI, a debugging aid; the `twine::perf` log line does not need it |
+| `safety` (off by default) | Twine's safety profile (`docs/safety/profile.md`; refuses `perf-monitor`). The examples build the UI with `try_build`, the form both profiles have. CI builds the STM32F411 counter with it (it implies `display-integrity`: +39 KiB of flash) |
 
 Every example depends on the `twine` facade only (drivers, the embassy run loop and fonts are
 facade features: `drivers-<name>`, `embassy`, `montserrat-20`). Feature groups are checked with

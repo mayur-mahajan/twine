@@ -317,7 +317,7 @@ mechanisms (faults, limits, hooks, evidence), the application owns the policy.
   faults that the application handles; `Result`-returning constructors and lookups.
 - **Display integrity** (`twine/display-integrity`, implied by `safety`): CRC checks of
   rendered regions, read-back from the panel, a heartbeat and a fail-safe screen.
-- **Partitioned runtimes** (`twine/partitions`, opt-in): up to four independent UIs in one
+- **Partitioned runtimes** (`twine/partitions`, opt-in): two independent UIs in one
   image — e.g. a safety-critical display next to a non-critical one — each with its own
   runtime, limits, faults, seal, step budget and heartbeat, so a fault in one cannot change
   the other (`cargo xtask sim partitions`). Zero cost without the feature.

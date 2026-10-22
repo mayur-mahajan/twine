@@ -25,14 +25,14 @@ fn ab() -> (Runtime, Runtime) {
 
 #[test]
 fn each_partition_is_taken_once_and_out_of_range_is_none() {
-    assert_eq!(Partition::COUNT, 4);
+    assert_eq!(Partition::COUNT, 2);
     for p in Partition::ALL {
         let rt = Runtime::take_partition(p).expect("first take of the partition");
         assert_eq!(rt.partition(), p);
         assert!(Runtime::take_partition(p).is_none(), "second take of {p}");
     }
     assert!(Runtime::take().is_none(), "`take` is the main partition's claim");
-    assert_eq!(Partition::new(4), None);
+    assert_eq!(Partition::new(2), None);
     assert_eq!(Partition::new(u8::MAX), None);
 }
 

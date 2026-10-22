@@ -77,7 +77,7 @@
 //!   `ObjFlags::SAFETY_CRITICAL`, the stale / invalid marks and the fail-safe screen
 //!   (`docs/safety/profile.md` § 11). Off (the default), none of it is compiled: no flag test
 //!   per drawn node, no observer branch per chunk.
-//! - `partitions`: four partitions instead of one ([`Engine::set_partition`]; ADR-001).
+//! - `partitions`: two partitions instead of one ([`Engine::set_partition`]; ADR-001).
 //!   Everything else an engine owns — limits, step budget and timing, faults, observer,
 //!   critical registry, fail-safe screens, heartbeat — is per engine anyway, so engines of two
 //!   partitions share nothing. Not implied by `safety`.
