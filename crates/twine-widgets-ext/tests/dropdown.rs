@@ -663,6 +663,6 @@ fn dd_slice_options_are_zero_copy_and_draw_like_text() {
     with(&mut h, d, |w: &mut Dropdown, cx| {
         w.set_options_static(cx, &CITY_LIST);
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     h.assert_idle();
 }

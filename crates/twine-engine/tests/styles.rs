@@ -160,7 +160,7 @@ fn set_local_prop_same_value_is_noop() {
 fn state_change_without_state_styles_is_noop() {
     let (mut h, b) = harness_box();
     h.engine_mut().add_state(b, State::PRESSED);
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     assert_eq!(h.engine().tree().node(b).unwrap().state(), State::PRESSED);
     h.assert_idle();
     // With a PRESSED style, the state change redraws the box.
@@ -168,7 +168,7 @@ fn state_change_without_state_styles_is_noop() {
         .add_style(b, &GREEN_BG, Selector::state(State::PRESSED));
     h.run_until_idle();
     h.engine_mut().clear_state(b, State::PRESSED);
-    assert!(!h.engine().invalidation_log().is_empty());
+    assert_ne!(h.engine().invalidation_log(), []);
     h.run_until_idle();
     assert_eq!(h.pixel(15, 15), Color::RED);
 }
@@ -208,7 +208,7 @@ fn report_style_change_refreshes_users_only() {
     h.run_until_idle();
     h.engine_mut().report_style_change(&shared);
     let log: Vec<Rect> = h.engine().invalidation_log().iter().map(|(r, _)| *r).collect();
-    assert!(!log.is_empty());
+    assert_ne!(log, []);
     assert!(
         log.iter()
             .all(|r| *r == Rect::from_xywh(0, 0, 10, 10) || *r == Rect::from_xywh(20, 0, 10, 10)),
@@ -347,7 +347,7 @@ fn style_parent_same_link_is_noop() {
     let epoch = h.engine().tree().style_epoch();
     h.engine_mut().set_style_parent(popup, Some(owner));
     assert_eq!(h.engine().tree().style_epoch(), epoch);
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     h.assert_idle();
     // Clearing a link that is not set does nothing either.
     h.engine_mut().set_style_parent(owner, None);

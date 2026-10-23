@@ -1461,7 +1461,7 @@ fn h(a: i64, b: i64) -> i64 {
 
     #[test]
     fn shift_scan_ignores_divisions() {
-        assert!(sites("fn f(a: u32, b: u32) -> u32 { a / b % b }").is_empty());
+        assert_eq!(sites("fn f(a: u32, b: u32) -> u32 { a / b % b }"), []);
     }
 
     #[test]

@@ -279,7 +279,7 @@ text
                 ("R1.S01".into(), false)
             ]
         );
-        assert!(check(&p).is_empty());
+        assert_eq!(check(&p), Vec::<String>::new());
     }
 
     #[test]
@@ -322,7 +322,7 @@ text
     fn the_real_plan_is_consistent_when_present() {
         if let Ok(text) = std::fs::read_to_string(plan_path()) {
             let plan = parse(&text);
-            assert!(!plan.phases.is_empty());
+            assert_ne!(plan.phases, []);
             assert_eq!(check(&plan), Vec::<String>::new());
         }
     }

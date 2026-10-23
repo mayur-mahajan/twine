@@ -5,7 +5,7 @@
 # Reference PNGs are not committed: `tests/snapshots/*.png` is a local cache used for diffs.
 
 [approved]
-core_widgets_after_tap = "480x320 xxh64:3dd0609dded09161"
+core_widgets_after_tap = "480x320 xxh64:b0571360ab3bed38"
 counter_clicked_once = "320x240 xxh64:328d34ea2c3ee3c8"
 gauge_dark = "272x140 xxh64:98aabc7db3ff2b60"
 gauge_focused_and_disabled = "272x140 xxh64:7efd3e064259f2ba"

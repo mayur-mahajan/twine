@@ -56,7 +56,7 @@ fn label_set_same_text_no_invalidate() {
     with(&mut h, l, |w: &mut Label, cx| w.set_max_lines(cx, 0));
     with(&mut h, l, |w: &mut Label, cx| w.clear_selection(cx));
     with(&mut h, l, |w: &mut Label, cx| w.set_text_static(cx, "Hello"));
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     assert!(!h.engine().layout_pending());
     h.assert_idle();
 }
@@ -143,7 +143,7 @@ fn label_selection_is_clamped_and_idempotent() {
     assert_eq!(get::<Label>(&h, l).selection(), Some((1, 6)));
     h.run_until_idle();
     with(&mut h, l, |w: &mut Label, cx| w.set_selection(cx, 1, 6));
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     with(&mut h, l, |w: &mut Label, cx| w.set_selection(cx, 3, 3));
     assert_eq!(get::<Label>(&h, l).selection(), None);
 }

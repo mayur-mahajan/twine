@@ -100,7 +100,7 @@ fn degenerate_curve_single_segment() {
         FxPoint::from_int(5, 5),
         FxPoint::from_int(5, 5),
     );
-    assert!(curve_lines(&q, &Transform::IDENTITY).is_empty());
+    assert_eq!(curve_lines(&q, &Transform::IDENTITY), []);
 }
 
 #[test]

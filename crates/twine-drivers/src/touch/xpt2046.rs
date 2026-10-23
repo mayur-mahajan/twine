@@ -471,7 +471,7 @@ mod tests {
         for _ in 0..10 {
             assert!(matches!(t.read(), InputData::Pointer(p) if !p.pressed));
         }
-        assert!(rec.ops().is_empty());
+        assert_eq!(rec.ops(), []);
         assert_eq!(rec.spi_transactions(), 0);
     }
 
@@ -494,10 +494,10 @@ mod tests {
                 pressed: false
             })
         );
-        assert!(!rec.ops().is_empty());
+        assert_ne!(rec.ops(), []);
         let _ = rec.take_ops();
         let _ = t.read();
-        assert!(rec.ops().is_empty());
+        assert_eq!(rec.ops(), []);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Procedurally drawn sample images (`cargo xtask gen-assets`), so the repository needs no
-//! third-party artwork: the Twine logo and the image gallery's sample files.
+//! third-party artwork: the Twine logo (the Rope mark of `assets/logo/`, redrawn at 64 × 64
+//! from its geometry) and the image gallery's sample files.
 
 #![allow(clippy::cast_precision_loss)] // small image coordinates
 
@@ -11,45 +12,185 @@ use image::{Delay, Frame, ImageFormat, Rgba, RgbaImage};
 
 use super::Result;
 
-/// Coverage of a rounded square of half-size `half` and corner radius `r` centered at `c`
-/// (1-pixel anti-aliased edge).
-fn rounded_square(x: f32, y: f32, c: f32, half: f32, r: f32) -> f32 {
-    let qx = ((x - c).abs() - (half - r)).max(0.0);
-    let qy = ((y - c).abs() - (half - r)).max(0.0);
-    let d = (qx * qx + qy * qy).sqrt() - r;
-    (0.5 - d).clamp(0.0, 1.0)
-}
-
-/// Coverage of a thick sine "thread".
-fn thread(x: f32, y: f32, phase: f32, center: f32, width: f32) -> f32 {
-    let yc = center + (x / 64.0 * std::f32::consts::TAU + phase).sin() * 9.0;
-    (width / 2.0 + 0.5 - (y - yc).abs()).clamp(0.0, 1.0)
-}
-
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-/// The 64 × 64 Twine logo: a rounded square with a teal → violet gradient and two woven
-/// white threads, transparent outside.
-#[must_use]
-pub fn logo() -> RgbaImage {
-    RgbaImage::from_fn(64, 64, |x, y| {
-        let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
-        let cov = rounded_square(fx, fy, 32.0, 30.0, 12.0);
-        let t = (fx + fy) / 128.0;
-        let mut c = [lerp(0.0, 124.0, t), lerp(170.0, 77.0, t), lerp(170.0, 255.0, t)];
-        let a = thread(fx, fy, 0.0, 26.0, 5.0);
-        let b = thread(fx, fy, std::f32::consts::PI, 38.0, 5.0);
-        // Over/under weaving: which thread is on top alternates every 16 px.
-        let (first, second) = if (x / 16) % 2 == 0 { (a, b) } else { (b, a) };
-        for w in [second, first] {
-            for ch in &mut c {
-                *ch = lerp(*ch, 255.0, w);
+// The Rope mark (the artwork in `assets/logo/`), in its 64-unit design box: three strands
+// plaited on three lanes, then opening to the right into three rays.
+/// Distance between the plait's lanes (centered on y = 32).
+const LANE: f32 = 9.5;
+/// Length of one crossing (one strand moving from an outer lane to the middle).
+const STEP: f32 = 11.0;
+/// Start of the strands, and the straight lead-in before the first crossing.
+const X0: f32 = 4.0;
+const LEAD: f32 = 4.0;
+/// Length of the S-curve from each lane to its ray, the rays' end, and the rays' heights.
+const EXIT: f32 = 16.0;
+const X1: f32 = 60.0;
+const RAYS: [f32; 3] = [11.0, 32.0, 53.0];
+/// Stroke width, and the transparent gap on each side of an over-strand at a crossing.
+const STROKE: f32 = 4.4;
+const GAP: f32 = 2.4;
+/// Sample spacing of the strand polylines.
+const RES: f32 = 0.25;
+/// Strand colors (red, green, blue), by the lane each strand starts in.
+const STRAND_COLORS: [[u8; 3]; 3] = [[0xEC, 0x40, 0x48], [0x22, 0xB8, 0x68], [0x30, 0x70, 0xF0]];
+/// Side of the square the mark is framed in: its width (`X0..X1`, wider than its height) plus
+/// the widest stroke (the gap) and a 3-unit margin on each side; the mark is centered on
+/// (32, 32) already, so only scaling is needed (like `export_big.py` of the artwork).
+const FRAME: f32 = (X1 - X0) + 2.0 * (STROKE / 2.0 + GAP + 3.0);
+
+/// A point in the design box.
+type Point = (f32, f32);
+
+/// One stroke of the mark: a polyline drawn `half` wide on each side, in `paint` or cutting
+/// to transparent (`None`). `flat` ends stop at the plane through each end point (butt caps);
+/// otherwise the ends are round.
+struct Stroke {
+    pts: Vec<Point>,
+    half: f32,
+    paint: Option<[u8; 3]>,
+    flat: bool,
+}
+
+impl Stroke {
+    /// Whether `(x, y)` lies on the stroke.
+    fn covers(&self, x: f32, y: f32) -> bool {
+        let p = &self.pts;
+        let n = p.len() - 1;
+        let dot = |a: Point, b: Point| (x - a.0) * (b.0 - a.0) + (y - a.1) * (b.1 - a.1);
+        if self.flat && (dot(p[0], p[1]) < 0.0 || dot(p[n], p[n - 1]) < 0.0) {
+            return false;
+        }
+        p.windows(2).any(|s| {
+            let (a, b) = (s[0], s[1]);
+            let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+            let len2 = dx * dx + dy * dy;
+            let t = if len2 == 0.0 { 0.0 } else { dot(a, b) / len2 }.clamp(0.0, 1.0);
+            let (qx, qy) = (a.0 + t * dx - x, a.1 + t * dy - y);
+            qx * qx + qy * qy <= self.half * self.half
+        })
+    }
+}
+
+/// The three strands as polylines (index = starting lane = color) and the crossings as
+/// `(strand on top, crossing point)`.
+fn plait() -> ([Vec<Point>; 3], Vec<(usize, Point)>) {
+    let lanes = [32.0 - LANE, 32.0, 32.0 + LANE];
+    // Cosine ease: crossings and exits are S-curves that leave and arrive level.
+    let ease = |t: f32| (1.0 - (std::f32::consts::PI * t).cos()) / 2.0;
+    let mut lane_of = [0, 1, 2];
+    let mut x = X0 + LEAD;
+    let mut paths = lanes.map(|y| vec![(X0, y), (x, y)]);
+    let mut crossings = Vec::new();
+    let n = (STEP / RES) as usize;
+    // Three crossings: the outer strand (top, then bottom, then top) moves over the middle
+    // one into the middle lane while that one moves under it to the outer lane.
+    for outer in [0, 2, 0] {
+        let over = lane_of.iter().position(|&l| l == outer).unwrap_or(0);
+        let under = lane_of.iter().position(|&l| l == 1).unwrap_or(0);
+        for (i, path) in paths.iter_mut().enumerate() {
+            let y0 = lanes[lane_of[i]];
+            let y1 = if i == over {
+                lanes[1]
+            } else if i == under {
+                lanes[outer]
+            } else {
+                y0
+            };
+            for k in 1..=n {
+                let t = k as f32 / n as f32;
+                path.push((x + STEP * t, lerp(y0, y1, ease(t))));
             }
         }
-        let alpha = (cov * 255.0).round() as u8;
-        Rgba([c[0].round() as u8, c[1].round() as u8, c[2].round() as u8, alpha])
+        crossings.push((over, (x + STEP / 2.0, f32::midpoint(lanes[1], lanes[outer]))));
+        lane_of.swap(over, under);
+        x += STEP;
+    }
+    // Exit: each lane's strand eases to its ray (the middle one stays level), then runs level
+    // to `X1`.
+    let m = (EXIT / RES) as usize;
+    for (path, &lane) in paths.iter_mut().zip(&lane_of) {
+        let (y0, y1) = (lanes[lane], RAYS[lane]);
+        for k in 1..=m {
+            let t = k as f32 / m as f32;
+            path.push((x + EXIT * t, lerp(y0, y1, ease(t))));
+        }
+        path.push((X1, y1));
+    }
+    (paths, crossings)
+}
+
+/// The strokes of the mark, back to front: the three strands, then for every crossing a
+/// transparent gap cut through the under-strand and the over-strand's segment redrawn on top.
+fn rope_strokes() -> Vec<Stroke> {
+    let (paths, crossings) = plait();
+    let near = |i: usize, c: Point, r: f32| -> Vec<Point> {
+        let in_reach = |p: &&Point| (p.0 - c.0).hypot(p.1 - c.1) <= r;
+        paths[i].iter().filter(in_reach).copied().collect()
+    };
+    let mut strokes: Vec<Stroke> = paths
+        .iter()
+        .zip(STRAND_COLORS)
+        .map(|(p, c)| Stroke {
+            pts: p.clone(),
+            half: STROKE / 2.0,
+            paint: Some(c),
+            flat: false,
+        })
+        .collect();
+    // The gap reaches just past where the strands' outlines meet; the over-strand's core runs
+    // one stroke width further, so its bend refills the notch the gap cut into itself.
+    let reach = (STROKE + 2.0 * GAP) * 0.62;
+    for (i, c) in crossings {
+        let (gap, core) = (near(i, c, reach), near(i, c, reach + STROKE));
+        strokes.push(Stroke {
+            pts: gap,
+            half: STROKE / 2.0 + GAP,
+            paint: None,
+            flat: true,
+        });
+        strokes.push(Stroke {
+            pts: core,
+            half: STROKE / 2.0,
+            paint: Some(STRAND_COLORS[i]),
+            flat: true,
+        });
+    }
+    strokes
+}
+
+/// The 64 × 64 Twine logo, the Rope mark: red, green and blue strands woven as a 3-strand
+/// plait (with transparent gaps where one strand passes over another), opening on the right
+/// into three rays; transparent background. Drawn from the same geometry as the artwork in
+/// `assets/logo/`, centered, with 4 × 4 supersampling.
+#[must_use]
+pub fn logo() -> RgbaImage {
+    const SS: u32 = 4;
+    let strokes = rope_strokes();
+    let scale = FRAME / 64.0; // pixels → design units
+    RgbaImage::from_fn(64, 64, |x, y| {
+        let (mut sum, mut hits) = ([0u32; 3], 0u32);
+        for (sx, sy) in (0..SS * SS).map(|s| (s % SS, s / SS)) {
+            let px = (x as f32 + (sx as f32 + 0.5) / SS as f32 - 32.0) * scale + 32.0;
+            let py = (y as f32 + (sy as f32 + 0.5) / SS as f32 - 32.0) * scale + 32.0;
+            // The last stroke covering the sample decides its color (or cuts it).
+            if let Some(c) = strokes
+                .iter()
+                .rev()
+                .find(|s| s.covers(px, py))
+                .and_then(|s| s.paint)
+            {
+                sum.iter_mut().zip(c).for_each(|(a, v)| *a += u32::from(v));
+                hits += 1;
+            }
+        }
+        if hits == 0 {
+            return Rgba([0, 0, 0, 0]);
+        }
+        let [r, g, b] = sum.map(|v| (v / hits) as u8);
+        Rgba([r, g, b, (255 * hits / (SS * SS)) as u8])
     })
 }
 

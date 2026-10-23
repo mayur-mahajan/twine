@@ -262,7 +262,7 @@ mod tests {
         let mut b = DrawBuf::new_packed(&mut d, ColorFormat::Rgb888, Rect::from_xywh(100, 50, 4, 3)).unwrap();
         // Outside the area: empty (debug builds assert).
         if !cfg!(debug_assertions) {
-            assert!(b.row_mut(53, 100, 101).is_empty());
+            assert_eq!(b.row_mut(53, 100, 101), []);
         }
         assert_eq!(&d[12..24], &[0, 0, 0, 7, 7, 7, 7, 7, 7, 0, 0, 0]);
     }

@@ -103,7 +103,7 @@ fn arc_setters_same_value_no_invalidate() {
         let (s, e) = (x.angle_start(), x.angle_end());
         x.set_angles(cx, s, e);
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     h.assert_idle();
 }
 

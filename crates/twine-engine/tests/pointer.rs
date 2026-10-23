@@ -232,7 +232,7 @@ fn disabled_blocks_input() {
     assert_eq!(h.engine_mut().hit_test(d, Point::new(18, 18)), None);
     log.borrow_mut().clear();
     h.tap(Point::new(18, 18));
-    assert!(input_codes(&clog).is_empty());
+    assert_eq!(input_codes(&clog), []);
     assert!(input_codes(&log).is_empty(), "the parent gets nothing either");
 }
 

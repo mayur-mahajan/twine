@@ -1,4 +1,8 @@
-# Twine
+<p align="center">
+  <img src="assets/logo/twine-logo-color.svg" alt="The Twine logo: red, green and blue strands woven into a plait that opens into three rays" width="160">
+</p>
+
+<h1 align="center">Twine</h1>
 
 **A declarative, signal-driven GUI library in Rust for microcontrollers and desktops.**
 

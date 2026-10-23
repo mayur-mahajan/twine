@@ -52,7 +52,7 @@ fn clicks_call_the_store_actions() {
     assert_eq!(count(&t), "1 of 1 left");
     t.find(by_text(Symbol::Close.as_str())).click();
     t.run_until_idle();
-    assert!(texts(todos).is_empty());
+    assert_eq!(texts(todos), Vec::<String>::new());
     t.assert_idle();
 }
 
@@ -100,7 +100,7 @@ fn remote_commands_go_through_the_same_actions() {
     todos.toggle(todos.items().with_untracked(|v| v[0].id));
     ports.remote.try_send(Remote::ClearDone).unwrap();
     t.run_until_idle();
-    assert!(texts(todos).is_empty());
+    assert_eq!(texts(todos), Vec::<String>::new());
     assert_eq!(count(&t), "0 of 0 left");
 }
 
@@ -129,8 +129,8 @@ fn a_nested_store_shadows_the_root_store() {
     draft.push("draft");
     let seen = dialog.child().expect_context::<Todos>();
     assert_eq!(texts(seen), ["draft"]);
-    assert!(texts(root_todos).is_empty());
+    assert_eq!(texts(root_todos), Vec::<String>::new());
     dialog.dispose();
-    assert!(texts(cx.child().expect_context::<Todos>()).is_empty());
+    assert_eq!(texts(cx.child().expect_context::<Todos>()), Vec::<String>::new());
     cx.dispose();
 }

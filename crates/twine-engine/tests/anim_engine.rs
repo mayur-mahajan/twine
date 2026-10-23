@@ -71,7 +71,7 @@ fn anim_x_moves_node_and_invalidates_old_and_new_only() {
     let old = Rect::from_xywh(10, 10, 20, 20);
     let new = Rect::from_xywh(30, 10, 20, 20);
     let log = h.engine().invalidation_log().to_vec();
-    assert!(!log.is_empty());
+    assert_ne!(log, []);
     for (r, _) in &log {
         assert!(
             old.union(&new).contains_rect(r),

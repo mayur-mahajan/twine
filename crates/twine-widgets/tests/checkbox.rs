@@ -93,7 +93,7 @@ fn checkbox_set_same_text_no_invalidate() {
         w.set_text_static(cx, "Remember me");
         w.set_checked(cx, false);
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     let before = h.engine().coords(c).width();
     with(&mut h, c, |w: &mut Checkbox, cx| {
         w.set_text(cx, "Remember me please");
@@ -109,7 +109,7 @@ fn checkbox_set_same_text_no_invalidate() {
     });
     h.run_until_idle();
     with(&mut h, c, |w: &mut Checkbox, cx| w.set_checked(cx, true));
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     h.assert_idle();
 }
 

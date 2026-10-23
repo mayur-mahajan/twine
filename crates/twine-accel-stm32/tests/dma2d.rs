@@ -284,7 +284,7 @@ fn swapped_format_unsupported_falls_back() {
         let r = dma.fill(&mut buf, Rect::from_xywh(0, 0, W, H), Color::RED, Opa::COVER);
         assert_eq!(r, AccelResult::Unsupported, "{format:?}");
     }
-    assert!(dma.regs().log().is_empty());
+    assert_eq!(dma.regs().log(), []);
 }
 
 #[test]

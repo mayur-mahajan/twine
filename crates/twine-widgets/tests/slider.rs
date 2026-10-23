@@ -106,7 +106,7 @@ fn slider_setters_same_value_no_invalidate() {
         w.set_mode(cx, SliderMode::Normal);
         w.set_orientation(cx, twine_widgets::Orientation::Auto);
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     h.assert_idle();
 }
 

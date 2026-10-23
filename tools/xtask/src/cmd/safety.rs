@@ -667,12 +667,12 @@ mod tests {
         let a = parse_lint_attrs(CLEAN);
         assert_eq!(a.deny.len(), LINT_COUNT);
         assert!(a.allow.is_empty() && a.float_denied);
-        assert!(check_lint_attrs("c", &a).is_empty());
+        assert_eq!(check_lint_attrs("c", &a), Vec::<String>::new());
         let a = parse_lint_attrs(PENDING);
         assert_eq!(a.deny, ["unwrap_used", "expect_used", "panic", "unreachable"]);
         assert_eq!(a.allow, ["indexing_slicing", "arithmetic_side_effects"]);
         assert!(a.allow_noted);
-        assert!(check_lint_attrs("c", &a).is_empty());
+        assert_eq!(check_lint_attrs("c", &a), Vec::<String>::new());
     }
 
     #[test]
@@ -687,7 +687,10 @@ mod tests {
             "// NOTE(R5.S02): sites of these lints remain.",
             "// SAFETY-MANUAL: limitation L1 keeps these sites.",
         );
-        assert!(check_lint_attrs("c", &parse_lint_attrs(&manual)).is_empty());
+        assert_eq!(
+            check_lint_attrs("c", &parse_lint_attrs(&manual)),
+            Vec::<String>::new()
+        );
         // The predicate must be exactly the profile's: a typo leaves the lints inactive.
         let typo = CLEAN.replace("feature = \"safety\"", "feature = \"safe\"");
         assert_eq!(check_lint_attrs("c", &parse_lint_attrs(&typo)).len(), LINTS.len());

@@ -73,11 +73,11 @@ fn vec_option_array_unit_seq() {
     let (_h, t) = build_seq(Some(label("s")));
     assert_eq!(t, ["s"]);
     let (_h, t) = build_seq(None::<twine_view::WidgetView<Label>>);
-    assert!(t.is_empty());
+    assert_eq!(t, Vec::<String>::new());
     let (_h, t) = build_seq([label("p"), label("q"), label("r")]);
     assert_eq!(t, ["p", "q", "r"]);
     let (h, t) = build_seq(());
-    assert!(t.is_empty());
+    assert_eq!(t, Vec::<String>::new());
     assert_eq!(h.engine().tree().children(h.screen()).count(), 0);
 }
 

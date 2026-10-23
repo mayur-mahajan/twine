@@ -688,7 +688,7 @@ fn disposed_navigator_is_inert() {
     assert_eq!(nav.pop(ScreenAnim::None), NavOutcome::Disposed);
     assert_eq!(nav.depth(), 0);
     assert_eq!(nav.current(), None);
-    assert!(nav.stack().is_empty());
+    assert_eq!(nav.stack(), []);
     t.run_until_idle();
     assert_eq!(screens(&t), 1, "the pages were deleted at the next update");
 }

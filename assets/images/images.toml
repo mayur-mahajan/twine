@@ -1,11 +1,13 @@
 # Images converted by `cargo xtask images` into `crates/twine/examples/assets/` (the `image_gallery` example).
 # Inputs are drawn procedurally by `cargo xtask gen-assets` (see SOURCES.md).
+# The logo's formats without alpha flatten its transparent background onto white (`background`).
 
 [[image]]
 name = "LOGO_L8"
 file = "logo_l8"
 input = "assets/images/twine_logo.png"
 format = "l8"
+background = "#FFFFFF"
 
 [[image]]
 name = "LOGO_A1"
@@ -64,12 +66,14 @@ name = "LOGO_RGB565"
 file = "logo_rgb565"
 input = "assets/images/twine_logo.png"
 format = "rgb565"
+background = "#FFFFFF"
 
 [[image]]
 name = "LOGO_RGB565_SWAPPED"
 file = "logo_rgb565_swapped"
 input = "assets/images/twine_logo.png"
 format = "rgb565-swapped"
+background = "#FFFFFF"
 
 [[image]]
 name = "LOGO_RGB565A8"
@@ -82,6 +86,7 @@ name = "LOGO_RGB888"
 file = "logo_rgb888"
 input = "assets/images/twine_logo.png"
 format = "rgb888"
+background = "#FFFFFF"
 
 [[image]]
 name = "LOGO_ARGB8888"
@@ -94,6 +99,7 @@ name = "LOGO_XRGB8888"
 file = "logo_xrgb8888"
 input = "assets/images/twine_logo.png"
 format = "xrgb8888"
+background = "#FFFFFF"
 
 [[image]]
 name = "LOGO_ARGB8888_PREMULTIPLIED"

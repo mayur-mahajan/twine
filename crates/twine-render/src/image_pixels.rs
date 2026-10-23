@@ -217,7 +217,7 @@ mod tests {
         let px =
             ImagePixels::from_parts(ColorFormat::Rgb565A8, 4, 2, 8, &d[..16], None, Some(&a), false).unwrap();
         assert_eq!(px.alpha_row(1), &[9; 4]);
-        assert!(px.alpha_row(2).is_empty());
+        assert_eq!(px.alpha_row(2), []);
         assert!(
             ImagePixels::from_parts(ColorFormat::Argb8888Premultiplied, 1, 1, 4, &d, None, None, false)
                 .unwrap()

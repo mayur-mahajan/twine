@@ -169,7 +169,7 @@ fn transition_invalidates_only_node() {
         .coords(b)
         .expand(i32::from(h.engine().tree().node(b).unwrap().ext_draw()));
     let log = h.engine().invalidation_log();
-    assert!(!log.is_empty());
+    assert_ne!(log, []);
     for (r, _) in log {
         assert!(area.contains_rect(r), "{r} outside {area}");
     }

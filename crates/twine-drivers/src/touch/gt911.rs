@@ -285,7 +285,7 @@ mod tests {
             .for_display(&crate::touch::test_util::display(1, 1));
         rec.set_level("int", true);
         let _ = t.read();
-        assert!(rec.ops().is_empty());
+        assert_eq!(rec.ops(), []);
         assert_eq!(t.poll_hint(), PollHint::Interrupt);
         assert_eq!(t.kind(), InputKind::Pointer);
     }

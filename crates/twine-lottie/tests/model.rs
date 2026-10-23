@@ -54,7 +54,7 @@ fn load_minimal_shape_layer() {
     assert_eq!(f.c, Animatable::Static([1.0, 0.5, 0.0, 1.0]));
     assert_eq!(f.o, Animatable::Static(80.0));
     assert_eq!(f.rule, twine_lottie::model::FillRule::EvenOdd);
-    assert!(comp.unsupported().is_empty());
+    assert_eq!(comp.unsupported(), Vec::<String>::new());
 }
 
 #[test]

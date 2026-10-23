@@ -185,7 +185,7 @@ fn is_gray(c: Color) -> bool {
 fn mode_change_invalidates() {
     let (mut h, cont) = scene(10, 100);
     h.engine_mut().set_scrollbar_mode(cont, ScrollbarMode::On);
-    assert!(!h.engine().invalidation_log().is_empty());
+    assert_ne!(h.engine().invalidation_log(), []);
     h.run_until_idle();
     h.engine_mut().set_scrollbar_mode(cont, ScrollbarMode::On);
     assert!(h.engine().invalidation_log().is_empty(), "unchanged: nothing");

@@ -213,7 +213,7 @@ mod tests {
     #[test]
     fn a_path_over_budget_fails() {
         let p = parse(OUT).unwrap();
-        assert!(over_budget(&p, 32, 32 * 1024).is_empty());
+        assert_eq!(over_budget(&p, 32, 32 * 1024), Vec::<String>::new());
         let e = over_budget(&p, 255, 32 * 1024);
         assert_eq!(e.len(), 2);
         assert!(e[1].starts_with("layout_content: 171328 B at depth 255"));

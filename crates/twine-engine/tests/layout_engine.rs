@@ -214,7 +214,7 @@ fn unchanged_layout_does_not_invalidate() {
     h.engine_mut().mark_layout_dirty(b[0]);
     assert!(h.engine().layout_pending());
     h.engine_mut().update_layout();
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     assert_eq!(events.get(), 0);
     let st = h.engine().layout_stats();
     assert_eq!((st.moved, st.iterations), (0, 1));
@@ -222,7 +222,7 @@ fn unchanged_layout_does_not_invalidate() {
     // Setting a layout property to its current value is a no-op as well.
     h.engine_mut().set_size(a[1], 50, 20);
     assert!(!h.engine().layout_pending());
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
 }
 
 #[test]

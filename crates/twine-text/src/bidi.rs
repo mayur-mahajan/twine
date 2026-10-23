@@ -325,7 +325,7 @@ mod tests {
             }]
         );
         assert!(!v.is_rtl());
-        assert!(visual_runs("", TextDir::Rtl).runs().is_empty());
+        assert_eq!(visual_runs("", TextDir::Rtl).runs(), []);
     }
 
     #[test]

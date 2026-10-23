@@ -196,7 +196,7 @@ fn macro_covers_every_property() {
     };
     assert_eq!(S.props().len(), 7);
     for id in PropId::ALL {
-        assert!(!id.snake_name().is_empty());
+        assert_ne!(id.snake_name(), "");
     }
 }
 

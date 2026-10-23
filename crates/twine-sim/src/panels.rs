@@ -566,7 +566,7 @@ mod tests {
         assert_eq!(r, [Rect::new(4, 4, 104, 54), Rect::new(4, 58, 64, 98)]);
         assert_eq!(size, (108, 102));
         let (r, size) = PanelLayout::Row.arrange(&[]);
-        assert!(r.is_empty());
+        assert_eq!(r, []);
         assert_eq!(size, (4, 8));
     }
 

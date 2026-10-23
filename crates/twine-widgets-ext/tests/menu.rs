@@ -256,11 +256,11 @@ fn menu_clear_history() {
     s.h.tap(center(&s.h, s.rows[0]));
     s.h.run_until_idle();
     with(&mut s.h, s.menu, |w: &mut Menu, _| w.clear_history());
-    assert!(get::<Menu>(&s.h, s.menu).history().is_empty());
+    assert_eq!(get::<Menu>(&s.h, s.menu).history(), []);
     with(&mut s.h, s.menu, |w: &mut Menu, cx| w.set_page(cx, Some(s.root)));
     assert_eq!(get::<Menu>(&s.h, s.menu).history(), &[s.root]);
     with(&mut s.h, s.menu, |w: &mut Menu, cx| w.set_page(cx, None));
-    assert!(get::<Menu>(&s.h, s.menu).history().is_empty());
+    assert_eq!(get::<Menu>(&s.h, s.menu).history(), []);
     assert_eq!(get::<Menu>(&s.h, s.menu).cur_main_page(), None);
 }
 

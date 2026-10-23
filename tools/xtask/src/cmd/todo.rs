@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn accepts_api_evolution_step_ids() {
-        assert!(check_source("// NOTE(R0.S04): later").is_empty());
+        assert_eq!(check_source("// NOTE(R0.S04): later"), []);
         assert_eq!(check_source("// NOTE(R0.4): bad").len(), 1);
         assert_eq!(check_source("// NOTE(R10.S01): bad").len(), 1);
     }
@@ -171,9 +171,9 @@ mod tests {
 
     #[test]
     fn allows_note_with_step_id() {
-        assert!(check_source("// NOTE(P03.S10): faster path").is_empty());
-        assert!(check_source("// NOTE: plain notes are fine").is_empty());
-        assert!(check_source("// NOTE(P01.S02): a NOTE(P02.S03): b").is_empty());
+        assert_eq!(check_source("// NOTE(P03.S10): faster path"), []);
+        assert_eq!(check_source("// NOTE: plain notes are fine"), []);
+        assert_eq!(check_source("// NOTE(P01.S02): a NOTE(P02.S03): b"), []);
     }
 
     #[test]

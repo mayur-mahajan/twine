@@ -687,6 +687,6 @@ mod tests {
         let l = run(&gaps);
         assert_eq!(l.iter().filter(|b| **b).count(), 2);
         assert!(!l[0] && !l[2]);
-        assert!(run(&[]).is_empty());
+        assert_eq!(run(&[]), []);
     }
 }

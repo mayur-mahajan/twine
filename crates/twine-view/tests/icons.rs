@@ -130,7 +130,7 @@ fn list_button_icons() {
         ))
     });
     // `()` creates no image at all (no node, no binding).
-    assert!(images(&t, node(&t, "none")).is_empty());
+    assert_eq!(images(&t, node(&t, "none")), []);
     for (id, s) in [
         ("sym", Symbol::File),
         ("src", Symbol::Save),

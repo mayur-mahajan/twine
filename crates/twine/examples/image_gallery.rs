@@ -130,7 +130,7 @@ const PAGES: &[Page] = &[
     },
     Page {
         title: "Opacity, recolor, chroma key, tiling",
-        hint: "opa 25/50/100 %, recolor, white threads keyed out, tiled background, clip radius 16",
+        hint: "opa 25/50/100 %, recolor, green strand keyed out, tiled background, clip radius 16",
         draw: page_effects,
     },
     Page {
@@ -249,9 +249,11 @@ fn page_effects(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
             },
         ),
         (
-            "chroma key white",
+            "chroma key green",
             ImageDsc {
-                chroma_key: Some(Color::WHITE),
+                // The logo's green strand (#22B868; its anti-aliased edge pixels keep the
+                // color and only fade in alpha, so the whole strand disappears).
+                chroma_key: Some(Color::hex(0x22B868)),
                 ..ImageDsc::default()
             },
         ),

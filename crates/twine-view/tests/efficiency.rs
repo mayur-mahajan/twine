@@ -70,7 +70,7 @@ fn signal_update_invalidates_only_its_rect() {
     let period = t.engine().config().refr_period;
     t.advance(period);
     let inv: Vec<Rect> = t.invalidations().iter().map(|(r, _)| *r).collect();
-    assert!(!inv.is_empty());
+    assert_ne!(inv, []);
     for r in &inv {
         assert!(
             area.contains_rect(r),

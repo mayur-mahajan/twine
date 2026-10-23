@@ -41,6 +41,7 @@ fn opts(format: ColorFormat, compress: CompressArg) -> ImageOptions {
         compress,
         dither: false,
         premultiply: false,
+        background: None,
         name: "TEST".into(),
         out: "test.rs".into(),
         crate_path: "twine_image".into(),
@@ -152,6 +153,53 @@ fn rle_and_lz4_outputs_decompress() {
     }
 }
 
+/// `--background`: composited over the color with rounding (straight alpha), opaque in every
+/// format, recorded in the command line; rejected for alpha-only formats.
+#[test]
+fn background_flattens_exactly() {
+    // A half-transparent orange pixel and a transparent one, over #102030.
+    let src = [200, 100, 50, 128, 0, 0, 0, 0];
+    let mut o = opts(ColorFormat::Rgb888, CompressArg::None);
+    o.background = Some(twine_core::Color::hex(0x10_2030));
+    let g = generate_rgba(&src, 2, 1, "", &o).unwrap();
+    // (c·128 + bg·127 + 127) / 255 = 108, 66, 49; stored as B, G, R.
+    assert_eq!(g.data, [49, 66, 108, 0x30, 0x20, 0x10]);
+    assert!(
+        g.source.contains("--background #102030"),
+        "recorded in the command"
+    );
+    o.format = ColorFormat::Argb8888;
+    let g = generate_rgba(&src, 2, 1, "", &o).unwrap();
+    assert_eq!(
+        g.data,
+        [49, 66, 108, 255, 0x30, 0x20, 0x10, 255],
+        "opaque with alpha too"
+    );
+    o.format = ColorFormat::A8;
+    assert!(
+        generate_rgba(&src, 2, 1, "", &o).is_err(),
+        "alpha-only formats refuse it"
+    );
+}
+
+/// Without `--background` the source's alpha goes through unchanged (the conversion is the
+/// plain `convert` of the pixels) and the command line does not mention it.
+#[test]
+fn no_background_keeps_alpha() {
+    let src = pattern(8);
+    for f in [
+        ColorFormat::Rgb565,
+        ColorFormat::Argb8888,
+        ColorFormat::L8,
+        ColorFormat::I4,
+    ] {
+        let g = generate_rgba(&src, W, H, "", &opts(f, CompressArg::None)).unwrap();
+        let plain = twine_cli::image::convert(&src, W as u16, H as u16, f, false, false).unwrap();
+        assert_eq!(g.data, plain.data, "{f:?}");
+        assert!(!g.source.contains("--background"));
+    }
+}
+
 #[test]
 fn deterministic_output() {
     let src = pattern(200);
@@ -243,6 +291,23 @@ fn cli_writes_files_and_info_reads_them() {
         .output()
         .unwrap();
     assert!(!bad.status.success());
+    let bad_bg = std::process::Command::new(bin)
+        .args(["image", "--in"])
+        .arg(&png)
+        .args([
+            "--format",
+            "rgb565",
+            "--background",
+            "white",
+            "--name",
+            "LOGO",
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(!bad_bg.status.success());
+    assert!(String::from_utf8_lossy(&bad_bg.stderr).contains("#RRGGBB"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -294,4 +359,29 @@ fn tbin_roundtrip_via_cli_output() {
         );
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The generated Twine logo (`cargo xtask gen-assets`): the Rope mark, deterministic, on a
+/// transparent background, with the right strand on top at each of the plait's three crossings.
+#[test]
+fn logo_is_the_rope_mark() {
+    let logo = twine_cli::image::assets::logo();
+    assert_eq!(logo, twine_cli::image::assets::logo(), "deterministic");
+    assert_eq!(logo.dimensions(), (64, 64));
+    for (x, y) in [(0, 0), (63, 0), (0, 63), (63, 63), (32, 2), (32, 61)] {
+        assert_eq!(logo.get_pixel(x, y).0[3], 0, "transparent at ({x}, {y})");
+    }
+    let (red, green, blue) = (
+        [0xEC, 0x40, 0x48, 255],
+        [0x22, 0xB8, 0x68, 255],
+        [0x30, 0x70, 0xF0, 255],
+    );
+    // Crossing centers: red over green, blue over red, green over blue.
+    for ((x, y), top) in [((15, 27), red), ((25, 36), blue), ((35, 27), green)] {
+        assert_eq!(logo.get_pixel(x, y).0, top, "strand on top at ({x}, {y})");
+    }
+    // The rays on the right: blue up, green level, red down.
+    for ((x, y), ray) in [((58, 13), blue), ((58, 32), green), ((58, 50), red)] {
+        assert_eq!(logo.get_pixel(x, y).0, ray, "ray at ({x}, {y})");
+    }
 }

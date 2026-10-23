@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use twine_cli::image::{CompressArg, ImageOptions, generate, parse_format};
+use twine_cli::image::{CompressArg, ImageOptions, generate, parse_background, parse_format};
 
 use crate::util::{R, workspace_root};
 
@@ -41,6 +41,9 @@ pub struct ImageEntry {
     /// Premultiplied alpha.
     #[serde(default)]
     pub premultiply: bool,
+    /// `twine image --background` value (`#RRGGBB`): composite over this color first.
+    #[serde(default)]
+    pub background: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,12 +65,19 @@ impl ImageEntry {
             "lz4" => CompressArg::Lz4,
             s => return Err(format!("{}: compress must be none/rle/lz4 (got {s:?})", self.name).into()),
         };
+        let background = self
+            .background
+            .as_deref()
+            .map(parse_background)
+            .transpose()
+            .map_err(|e| format!("{}: {e}", self.name))?;
         Ok(ImageOptions {
             input: PathBuf::from(&self.input),
             format: parse_format(&self.format).map_err(|e| format!("{}: {e}", self.name))?,
             compress,
             dither: self.dither,
             premultiply: self.premultiply,
+            background,
             name: self.name.clone(),
             out: PathBuf::from(OUT_DIR).join(format!("{}.rs", self.file)),
             crate_path: "twine_image".into(),

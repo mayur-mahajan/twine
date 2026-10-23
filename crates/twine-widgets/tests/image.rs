@@ -99,7 +99,7 @@ fn set_same_src_no_invalidate() {
     with(&mut h, i, |w: &mut Image, cx| {
         w.set_src(cx, stat(&logo_rgb565a8::LOGO_RGB565A8));
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     with(&mut h, i, |w: &mut Image, cx| {
         w.set_src(cx, ImageSource::Symbol(SYMBOL_OK));
     });
@@ -109,7 +109,7 @@ fn set_same_src_no_invalidate() {
     with(&mut h, i, |w: &mut Image, cx| {
         w.set_src(cx, ImageSource::Symbol(copy));
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     // Every transform setter is idempotent too.
     with(&mut h, i, |w: &mut Image, cx| {
         w.set_rotation(cx, Angle::deci_deg(3600));
@@ -119,7 +119,7 @@ fn set_same_src_no_invalidate() {
         w.set_offset(cx, Point::ZERO);
         w.set_blend_mode(cx, twine_render::BlendMode::Normal);
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     h.assert_idle();
 }
 

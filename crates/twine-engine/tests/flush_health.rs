@@ -151,7 +151,7 @@ fn halt_policy_stops_refreshing_until_recover_display() {
     let _ = e.step(ms(100));
     let _ = e.step(ms(200));
     assert_eq!(panel(&mut e, d).failed_flushes(), 2);
-    assert!(panel(&mut e, d).take_flushes().is_empty());
+    assert_eq!(panel(&mut e, d).take_flushes(), []);
     // The application resets the panel and recovers the display: everything is redrawn.
     panel(&mut e, d).stop_failing();
     e.recover_display(d).unwrap();
@@ -189,7 +189,7 @@ fn failed_present_is_not_swapped_and_is_redrawn() {
         .fail_present_times(1);
     let wake = e.step(ms(0));
     let fb = e.driver::<MockFramebufferDisplay>(d).unwrap();
-    assert!(fb.presents().is_empty());
+    assert_eq!(fb.presents(), []);
     let r = *e.last_fault(FaultKind::FlushError).unwrap();
     assert_eq!((r.display, r.code), (Some(d), MockPresentError::CODE));
     let h = e.display_health(d).unwrap();

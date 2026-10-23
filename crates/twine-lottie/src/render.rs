@@ -1073,8 +1073,8 @@ mod tests {
         assert_eq!(s[1].color, Color::new(128, 128, 128));
         assert_eq!(s[1].opa, Opa::from_raw(128));
         // Garbage: too few values → no stops.
-        assert!(stops(&[0.0, 1.0], 2).is_empty());
-        assert!(stops(&[], 0).is_empty());
+        assert_eq!(stops(&[0.0, 1.0], 2), []);
+        assert_eq!(stops(&[], 0), []);
     }
 
     #[test]

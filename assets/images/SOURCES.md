@@ -6,7 +6,7 @@ artwork is used; the files are covered by the repository license (MIT OR Apache-
 
 | File | Content | Encoder |
 |------|---------|---------|
-| `twine_logo.png`, `twine_logo.qoi` | 64 × 64 Twine logo (rounded square, gradient, two woven threads, alpha) | `image` PNG / QOI |
+| `twine_logo.png`, `twine_logo.qoi` | 64 × 64 Twine logo: the Rope mark of `../logo/` (red, green and blue strands plaited, opening into three rays) redrawn from its geometry, transparent background | `image` PNG / QOI |
 | `photo.png`, `photo.qoi`, `photo.bmp`, `photo.jpg` | 96 × 64 landscape (sky, sun, hills), opaque | `image` PNG / QOI / BMP (24-bit) / JPEG |
 | `spinner.gif` | 48 × 48 spinner, 8 frames × 80 ms, loops forever, transparent background | `image` GIF |
 | `avatars/{en,de,fr,zh,ja,he,ar,fa}.qoi` | 40 × 40 avatars of the multilang demo (colored disc, head-and-shoulders silhouette) | `image` QOI |

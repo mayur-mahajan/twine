@@ -143,7 +143,7 @@ fn scroll_invalidates_container_only() {
     h.clock().advance(h.engine().config().refr_period);
     h.update();
     let areas: Vec<Rect> = h.flushes().iter().map(|f| f.area).collect();
-    assert!(!areas.is_empty());
+    assert_ne!(areas, []);
     for a in areas {
         assert!(Rect::new(150, 20, 200, 120).contains_rect(&a), "{a:?}");
     }
@@ -170,7 +170,7 @@ fn scroll_to_same_position_is_noop() {
     let log = EvLog::default();
     record(h.engine_mut(), cont, &log);
     h.engine_mut().scroll_to(cont, 0, 60, false);
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     assert!(log.borrow().is_empty());
     h.assert_idle();
 }

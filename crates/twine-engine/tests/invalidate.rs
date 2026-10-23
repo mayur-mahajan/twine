@@ -127,7 +127,7 @@ fn place_same_rect_is_noop() {
     let b = boxed(h.engine_mut(), s, Rect::from_xywh(10, 10, 20, 20), Color::RED);
     h.run_until_idle();
     h.engine_mut().place(b, Rect::from_xywh(10, 10, 20, 20));
-    assert!(log(&h).is_empty());
+    assert_eq!(log(&h), []);
     h.assert_idle();
     // A move invalidates exactly the old and the new area.
     h.engine_mut().place(b, Rect::from_xywh(14, 10, 20, 20));
@@ -181,7 +181,7 @@ fn hidden_ancestor_skips_invalidation() {
         twine_style::Selector::MAIN,
         StyleProp::BgColor(Color::GREEN.into()),
     );
-    assert!(log(&h).is_empty());
+    assert_eq!(log(&h), []);
     h.assert_idle();
     h.engine_mut().set_flag(parent, ObjFlags::HIDDEN, false);
     h.run_until_idle();
@@ -196,7 +196,7 @@ fn inactive_screen_skips_invalidation() {
     let b = boxed(h.engine_mut(), other, Rect::from_xywh(0, 0, 10, 10), Color::RED);
     h.run_until_idle();
     h.engine_mut().invalidate(b, InvalidateReason::Explicit);
-    assert!(log(&h).is_empty());
+    assert_eq!(log(&h), []);
     h.assert_idle();
     h.engine_mut().load_screen(other);
     assert_eq!(log(&h), [Rect::new(0, 0, 200, 100)]);

@@ -337,7 +337,7 @@ mod tests {
             assert!(matches!(t.read(), InputData::Pointer(p) if !p.pressed));
         }
         assert_eq!(rec.i2c_transactions(), 0);
-        assert!(rec.ops().is_empty());
+        assert_eq!(rec.ops(), []);
         // Active → reads; keeps reading while pressed even after the line goes idle.
         rec.set_level("int", false);
         assert!(matches!(t.read(), InputData::Pointer(p) if p.pressed));

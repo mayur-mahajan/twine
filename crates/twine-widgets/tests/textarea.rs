@@ -254,7 +254,7 @@ mod textarea_model {
             t.set_text_selection(cx, false);
             t.set_cursor_click_pos(cx, true);
         });
-        assert!(h.engine().invalidation_log().is_empty());
+        assert_eq!(h.engine().invalidation_log(), []);
         assert!(log.borrow().is_empty());
         h.assert_idle();
     }

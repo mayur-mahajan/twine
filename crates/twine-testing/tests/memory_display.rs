@@ -107,5 +107,5 @@ fn out_of_bounds_area_is_rejected() {
         d.begin_flush(Rect::from_xywh(0, 0, 4, 1), leak_buffer(7)),
         Err(MemoryDisplayError::BufferTooSmall { needed: 8, got: 7 })
     );
-    assert!(d.flushes().is_empty());
+    assert_eq!(d.flushes(), []);
 }

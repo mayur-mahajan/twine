@@ -31,7 +31,7 @@ fn p1_idle_after_render() {
     for _ in 0..100 {
         h.clock().advance(Duration::ms(7));
         assert_eq!(h.update(), Wake::Idle);
-        assert!(h.flushes().is_empty());
+        assert_eq!(h.flushes(), []);
     }
 }
 
@@ -78,7 +78,7 @@ fn p2_style_change_invalidates_node_only() {
     h.engine_mut()
         .set_local_prop(ids[3], Selector::MAIN, StyleProp::BgColor(Color::GREEN.into()));
     let log = h.engine().invalidation_log().to_vec();
-    assert!(!log.is_empty());
+    assert_ne!(log, []);
     assert!(
         log.iter().all(|(r, _)| *r == Rect::from_xywh(90, 10, 25, 25)),
         "{log:?}"

@@ -1196,7 +1196,7 @@ mod tests {
             Err(DcsError::BadArea)
         );
         assert!(d.poll_flush().is_some());
-        assert!(rec.ops().is_empty());
+        assert_eq!(rec.ops(), []);
     }
 
     #[test]

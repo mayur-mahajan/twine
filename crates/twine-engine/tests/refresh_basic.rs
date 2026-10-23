@@ -40,7 +40,7 @@ fn align_8_rounds_areas_and_chunks() {
     h.engine_mut()
         .invalidate_area(d, Rect::new(3, 5, 21, 30), InvalidateReason::Explicit);
     h.advance(Duration::ms(16));
-    assert!(!h.flushes().is_empty());
+    assert_ne!(h.flushes(), []);
     for f in h.flushes() {
         let a = f.area;
         assert!(
@@ -72,12 +72,12 @@ fn refresh_respects_refr_period() {
         .invalidate_area(d, Rect::new(0, 0, 8, 8), InvalidateReason::Explicit);
     let w = h.update();
     assert!(matches!(w, Wake::At(_)), "{w:?}");
-    assert!(h.flushes().is_empty());
+    assert_eq!(h.flushes(), []);
     h.clock().advance(Duration::ms(5));
     h.engine_mut()
         .invalidate_area(d, Rect::new(30, 30, 38, 38), InvalidateReason::Explicit);
     assert!(matches!(h.update(), Wake::At(_)));
-    assert!(h.flushes().is_empty());
+    assert_eq!(h.flushes(), []);
     h.clock().advance(Duration::ms(11));
     assert_eq!(h.update(), Wake::Idle);
     let frames: Vec<u32> = h.flushes().iter().map(|f| f.frame).collect();
@@ -91,7 +91,7 @@ fn idle_when_nothing_dirty() {
     for _ in 0..10 {
         h.clock().advance(Duration::ms(100));
         assert_eq!(h.update(), Wake::Idle);
-        assert!(h.flushes().is_empty());
+        assert_eq!(h.flushes(), []);
     }
 }
 

@@ -43,7 +43,7 @@ fn led_setters_same_value_no_invalidate() {
         w.set_brightness(cx, Fraction::from_raw(255));
         w.on(cx);
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     with(&mut h, l, |w: &mut Led, cx| {
         w.set_brightness(cx, Fraction::from_raw(10));
     }); // clamps to 80
@@ -51,7 +51,7 @@ fn led_setters_same_value_no_invalidate() {
     with(&mut h, l, |w: &mut Led, cx| {
         w.set_brightness(cx, Fraction::from_raw(0));
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     h.assert_idle();
 }
 
@@ -196,7 +196,7 @@ fn line_same_points_no_invalidate() {
         w.set_points(cx, &ZIGZAG); // equal content: nothing
         w.set_y_invert(cx, false);
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     // Owned storage reuses its capacity.
     with(&mut h, l, |w: &mut Line, cx| w.set_points(cx, &ZIGZAG[..4]));
     with(&mut h, l, |w: &mut Line, cx| w.set_points(cx, &ZIGZAG[..3]));
@@ -216,7 +216,7 @@ fn line_invalidates_old_and_new_bbox() {
     let log = h.engine().invalidation_log().to_vec();
     // Done-when: the union of the old and the new bounding box plus half the line width.
     let bbox = Rect::new(c.x0, c.y0, c.x0 + 101, c.y0 + 31).expand(1);
-    assert!(!log.is_empty());
+    assert_ne!(log, []);
     for (r, _) in &log {
         assert!(bbox.contains_rect(r), "{r} outside {bbox}");
     }

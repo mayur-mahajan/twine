@@ -270,7 +270,7 @@ fn set_theme_mode_swaps_the_table_and_invalidates_once() {
     h.run_until_idle();
     h.engine_mut().set_theme_mode(d, ThemeMode::Dark);
     assert_eq!(h.engine().theme_mode(d), ThemeMode::Light);
-    assert!(h.engine().theme_modes(d).is_empty());
+    assert_eq!(h.engine().theme_modes(d), []);
     assert_eq!(
         h.engine().style_color(n, Part::Main, PropId::BgColor),
         Color::WHITE,

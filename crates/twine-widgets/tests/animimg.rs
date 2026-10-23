@@ -63,7 +63,7 @@ fn animimg_defaults() {
         (w.period(), w.repeat()),
         (ANIMIMG_DEFAULT_PERIOD, Repeat::Forever)
     );
-    assert!(w.frames().is_empty());
+    assert_eq!(w.frames(), []);
     assert!(!playing(&h, a), "LVGL: nothing plays before start");
     h.assert_idle();
 }
@@ -76,7 +76,7 @@ fn animimg_setters_same_value_no_invalidate() {
         w.set_period(cx, Duration::ms(400));
         w.set_repeat(cx, Repeat::Forever);
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     assert_eq!(
         h.engine().coords(a).size(),
         Size::new(24, 24),

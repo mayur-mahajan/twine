@@ -37,7 +37,7 @@ fn idle_touch_ui_never_wakes() {
     for _ in 0..1000 {
         h.clock().advance(Duration::ms(10));
         assert_eq!(h.update(), Wake::Idle);
-        assert!(h.flushes().is_empty());
+        assert_eq!(h.flushes(), []);
     }
     assert_eq!(p.reads(), 0);
     assert_eq!(h.last_frame().frame, frames, "no frames");

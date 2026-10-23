@@ -76,7 +76,7 @@ fn short_drag_below_limit_clicks() {
         row.contains(&C::ShortClicked) && row.contains(&C::Clicked),
         "{row:?}"
     );
-    assert!(scroll_codes(&log).is_empty());
+    assert_eq!(scroll_codes(&log), []);
 }
 
 #[test]

@@ -225,7 +225,7 @@ fn i1_output_thresholds_and_aligns() {
         .invalidate_area(d, Rect::new(3, 5, 21, 30), InvalidateReason::Explicit);
     h.clock().advance(twine_core::Duration::ms(16));
     h.update();
-    assert!(!h.flushes().is_empty());
+    assert_ne!(h.flushes(), []);
     for f in h.flushes() {
         let a = f.area;
         assert!(

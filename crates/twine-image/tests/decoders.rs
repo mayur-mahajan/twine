@@ -411,7 +411,7 @@ mod decoders {
             assert_eq!(r.probe(&file).unwrap().0.name(), name);
             let mut out = Vec::new();
             r.decode(&file, &mut out).unwrap();
-            assert!(!out.is_empty());
+            assert_ne!(out, []);
         }
         assert_eq!(r.decode(b"nothing", &mut Vec::new()), Err(Error::InvalidHeader));
     }

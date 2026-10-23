@@ -122,7 +122,7 @@ fn observer_sees_every_chunk_of_every_frame() {
     let s = seen.0.borrow();
     assert_eq!(s.frames.len(), 2);
     assert_eq!(usize::from(s.frames[1].stats.chunks), s.chunks.len());
-    assert!(!s.chunks.is_empty());
+    assert_ne!(s.chunks, []);
     assert!(s.chunks.iter().all(|(_, a, _)| a.width() < 80 || a.height() < 48));
 }
 

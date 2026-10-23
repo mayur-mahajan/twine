@@ -657,7 +657,7 @@ mod tests {
         for code in 0..64 {
             if let Some(s) = AllocSite::from_code(code) {
                 assert_eq!(s.code(), code);
-                assert!(!s.name().is_empty());
+                assert_ne!(s.name(), "");
             }
         }
     }

@@ -959,7 +959,7 @@ mod tests {
         );
         tl.tick(ms(25), &mut sink);
         assert_eq!(sink.log, ["v=25"]);
-        assert!(sink.applied.is_empty());
+        assert_eq!(sink.applied, []);
     }
 
     #[test]

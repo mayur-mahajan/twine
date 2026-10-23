@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn ignores_dev_dependencies() {
         let j = meta(&[("twine-core", &[("twine-testing", Some("dev"))])]);
-        assert!(check_metadata(&j).unwrap().is_empty());
+        assert_eq!(check_metadata(&j).unwrap(), Vec::<String>::new());
     }
 
     #[test]

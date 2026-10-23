@@ -307,7 +307,7 @@ fn dynamic_span_text_updates_only_group_area() {
         w.set_span_text(cx, b, "Bob");
         w.set_span_text(cx, a, "Hello, ");
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     h.assert_idle();
 }
 

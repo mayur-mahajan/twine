@@ -14,10 +14,10 @@ mod quantize;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use twine_core::ColorFormat;
+use twine_core::{Color, ColorFormat};
 use twine_image::{ImageFlags, ImageHeader, rle_block_size, rle_compress};
 
-pub use convert::{Converted, convert, luminance};
+pub use convert::{Converted, convert, flatten, luminance};
 pub use emit::{Emit, render, summary, variant};
 pub use quantize::{Rgba, map_to_palette, median_cut};
 
@@ -91,6 +91,34 @@ pub fn format_name(f: ColorFormat) -> &'static str {
     FORMAT_NAMES.iter().find(|(_, g)| *g == f).map_or("?", |(n, _)| n)
 }
 
+/// Parses a `--background` value: `#RRGGBB` (hex digits in either case).
+///
+/// ```
+/// use twine_cli::image::parse_background;
+/// use twine_core::Color;
+///
+/// assert_eq!(parse_background("#FFffFF"), Ok(Color::WHITE));
+/// assert_eq!(parse_background("#22B868"), Ok(Color::hex(0x22B868)));
+/// assert!(parse_background("FFFFFF").is_err());
+/// assert!(parse_background("#FFF").is_err());
+/// ```
+///
+/// # Errors
+/// A message when `s` is not `#` followed by exactly six hex digits.
+pub fn parse_background(s: &str) -> std::result::Result<Color, String> {
+    s.strip_prefix('#')
+        .filter(|h| h.len() == 6 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+        .and_then(|h| u32::from_str_radix(h, 16).ok())
+        .map(Color::hex)
+        .ok_or_else(|| format!("invalid background {s:?} (expected #RRGGBB, e.g. #FFFFFF)"))
+}
+
+/// The `--background` spelling of `c` (`#RRGGBB`, upper case).
+#[must_use]
+pub fn background_name(c: Color) -> String {
+    format!("#{:02X}{:02X}{:02X}", c.r, c.g, c.b)
+}
+
 /// Arguments of `twine image`.
 #[derive(Debug, Clone, clap::Args)]
 pub struct ImageArgs {
@@ -110,6 +138,12 @@ pub struct ImageArgs {
     /// Premultiply colors by alpha (argb8888, rgb565a8).
     #[arg(long)]
     pub premultiply: bool,
+    /// Composite the image over this color (`#RRGGBB`) before converting: the result is opaque
+    /// in every format (alpha 255), and formats without alpha (l8, rgb565, rgb888, xrgb8888, …)
+    /// show this color instead of black where the source is transparent. Not allowed with
+    /// the alpha-only formats a1, a2, a4, a8. Without it, alpha is kept as is.
+    #[arg(long, value_name = "#RRGGBB", value_parser = parse_background)]
+    pub background: Option<Color>,
     /// Name of the generated static (e.g. `LOGO`).
     #[arg(long, required_unless_present_any = ["info", "bin"])]
     pub name: Option<String>,
@@ -142,6 +176,9 @@ pub struct ImageOptions {
     pub dither: bool,
     /// Premultiplied alpha.
     pub premultiply: bool,
+    /// Composite over this color first (`--background`): every pixel becomes opaque. `None`
+    /// keeps the source's alpha.
+    pub background: Option<Color>,
     /// Static name.
     pub name: String,
     /// Output `.rs` path.
@@ -173,6 +210,7 @@ impl ImageOptions {
             compress: a.compress,
             dither: a.dither,
             premultiply: a.premultiply,
+            background: a.background,
             name,
             out: need(a.out.clone(), "out")?,
             crate_path: a.crate_path.clone(),
@@ -196,6 +234,9 @@ impl ImageOptions {
         }
         if self.premultiply {
             s += " --premultiply";
+        }
+        if let Some(bg) = self.background {
+            let _ = write!(s, " --background {}", background_name(bg));
         }
         if self.bin {
             let _ = write!(s, " --bin --out {}", self.out.display());
@@ -246,9 +287,13 @@ pub fn compress(data: &[u8], format: ColorFormat, method: CompressArg) -> Vec<u8
 
 /// Converts in-memory RGBA pixels (the part of [`generate`] after decoding the input).
 ///
+/// With [`ImageOptions::background`], the pixels are first composited over that color
+/// ([`flatten`]).
+///
 /// # Errors
-/// A message when the image is wider or taller than 65 535 pixels, or cannot be converted to the
-/// requested format.
+/// A message when the image is wider or taller than 65 535 pixels, when a background is given
+/// for an alpha-only format (A1…A8: flattening would leave a fully opaque mask), or when it
+/// cannot be converted to the requested format.
 pub fn generate_rgba(
     rgba: &[u8],
     w: u32,
@@ -260,6 +305,26 @@ pub fn generate_rgba(
         u16::try_from(w).map_err(|_| "image too wide (max 65535)")?,
         u16::try_from(h).map_err(|_| "image too tall (max 65535)")?,
     );
+    let flat;
+    let rgba = match opts.background {
+        None => rgba,
+        Some(_)
+            if matches!(
+                opts.format,
+                ColorFormat::A1 | ColorFormat::A2 | ColorFormat::A4 | ColorFormat::A8
+            ) =>
+        {
+            return Err(format!(
+                "--background needs a format with color (not {})",
+                format_name(opts.format)
+            )
+            .into());
+        }
+        Some(bg) => {
+            flat = flatten(rgba, bg);
+            &flat[..]
+        }
+    };
     let Converted { mut header, data } = convert(rgba, w16, h16, opts.format, opts.dither, opts.premultiply)?;
     let bin = compress(&data, opts.format, opts.compress);
     if opts.compress != CompressArg::None {

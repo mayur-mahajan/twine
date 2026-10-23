@@ -113,7 +113,7 @@ fn every_display_feature_has_a_panel_color_entry() {
         .filter_map(|l| l.split_once(" = ").map(|(k, _)| k.trim()))
         .collect();
     let table = metadata_table();
-    assert!(!features.is_empty());
+    assert_ne!(features, Vec::<&str>::new());
     for f in &features {
         assert!(
             table.iter().any(|(k, _)| k == f),

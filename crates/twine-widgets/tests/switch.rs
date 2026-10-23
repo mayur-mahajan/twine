@@ -94,11 +94,11 @@ fn switch_setters_same_value_no_invalidate() {
         w.set_checked(cx, false, true);
         w.set_orientation(cx, Orientation::Auto);
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     with(&mut h, s, |w: &mut Switch, cx| w.set_checked(cx, true, false));
     h.run_until_idle();
     with(&mut h, s, |w: &mut Switch, cx| w.set_checked(cx, true, true));
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     h.assert_idle();
 }
 

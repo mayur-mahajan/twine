@@ -1,7 +1,7 @@
 //! RGBA → every `ColorFormat`, in the memory layout of `twine_image::Image` (palette, main
 //! plane, alpha plane).
 
-use twine_core::ColorFormat;
+use twine_core::{Color, ColorFormat};
 use twine_image::{ImageFlags, ImageHeader};
 
 use super::quantize::{Rgba, map_to_palette, median_cut};
@@ -43,6 +43,35 @@ fn premul(p: Rgba) -> Rgba {
 fn put_bits(row: &mut [u8], bpp: u8, x: usize, v: u8) {
     let bit = x * usize::from(bpp);
     row[bit / 8] |= v << (8 - usize::from(bpp) - bit % 8);
+}
+
+/// Composites straight-alpha RGBA pixels over the opaque color `bg`: every channel becomes
+/// `(c·a + bg·(255 − a) + 127) / 255` (rounded to nearest) and every alpha 255, so a format
+/// without alpha shows `bg` where the source is transparent instead of the color stored there
+/// (usually black).
+///
+/// ```
+/// use twine_cli::image::flatten;
+/// use twine_core::Color;
+///
+/// // Transparent, half-transparent black and opaque red over white.
+/// let px = [0, 0, 0, 0, 0, 0, 0, 128, 255, 0, 0, 255];
+/// assert_eq!(
+///     flatten(&px, Color::WHITE),
+///     [255, 255, 255, 255, 127, 127, 127, 255, 255, 0, 0, 255]
+/// );
+/// ```
+#[must_use]
+pub fn flatten(rgba: &[u8], bg: Color) -> Vec<u8> {
+    let mut out = Vec::with_capacity(rgba.len());
+    for p in rgba.chunks_exact(4) {
+        let a = u32::from(p[3]);
+        for (c, b) in p[..3].iter().zip([bg.r, bg.g, bg.b]) {
+            out.push(((u32::from(*c) * a + u32::from(b) * (255 - a) + 127) / 255) as u8);
+        }
+        out.push(255);
+    }
+    out
 }
 
 /// Converts `w × h` straight-alpha RGBA pixels to `format`.

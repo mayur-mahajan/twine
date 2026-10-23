@@ -105,7 +105,7 @@ fn btnm_setters_same_value_no_invalidate() {
         w.clear_btn_ctrl(cx, 3, BtnCtrl::CHECKED);
         w.set_btn_width(cx, 3, 1);
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     // Adding a bit twice: the second call does nothing.
     with(&mut h, m, |w: &mut ButtonMatrix, cx| {
         w.set_btn_ctrl(cx, 1, BtnCtrl::CHECKED);
@@ -114,7 +114,7 @@ fn btnm_setters_same_value_no_invalidate() {
     with(&mut h, m, |w: &mut ButtonMatrix, cx| {
         w.set_btn_ctrl(cx, 1, BtnCtrl::CHECKED);
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     h.assert_idle();
 }
 
@@ -247,7 +247,7 @@ fn btnm_press_invalidates_only_button() {
         .btn_invalidation_area(&MeasureCx::new(h.engine(), m), 4)
         .unwrap();
     let inv: Vec<Rect> = h.engine().invalidation_log().iter().map(|(r, _)| *r).collect();
-    assert!(!inv.is_empty());
+    assert_ne!(inv, []);
     for r in &inv {
         assert!(expected.contains_rect(r), "{r:?} outside {expected:?}");
     }
@@ -261,7 +261,7 @@ fn btnm_press_invalidates_only_button() {
         .chain(h.engine().invalidation_log())
         .map(|(r, _)| *r)
         .collect();
-    assert!(!inv.is_empty());
+    assert_ne!(inv, []);
     for r in &inv {
         assert!(expected.contains_rect(r), "{r:?} outside {expected:?}");
     }
@@ -348,7 +348,7 @@ fn btnm_one_checked_exclusive() {
     // Without one-checked a click toggles.
     with(&mut h, m, |w: &mut ButtonMatrix, cx| w.set_one_checked(cx, false));
     h.tap(center(area(&h, m, 0)));
-    assert!(checked(&h).is_empty());
+    assert_eq!(checked(&h), []);
 }
 
 #[test]

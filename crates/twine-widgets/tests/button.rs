@@ -75,12 +75,12 @@ fn button_set_checkable_is_idempotent() {
     let (mut h, b) = scene(Mode::Light);
     h.run_until_idle();
     with(&mut h, b, |w: &mut Button, cx| w.set_checkable(cx, false));
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     with(&mut h, b, |w: &mut Button, cx| w.set_checkable(cx, true));
     assert!(h.engine().has_flag(b, ObjFlags::CHECKABLE));
     h.run_until_idle();
     with(&mut h, b, |w: &mut Button, cx| w.set_checkable(cx, true));
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     h.assert_idle();
 }
 

@@ -63,11 +63,11 @@ fn bar_setters_same_value_no_invalidate() {
         w.set_orientation(cx, Orientation::Auto);
         w.set_start_value(cx, 10, false); // ignored outside range mode
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     with(&mut h, b, |w: &mut Bar, cx| w.set_value(cx, 40, false));
     h.run_until_idle();
     with(&mut h, b, |w: &mut Bar, cx| w.set_value(cx, 40, true));
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     h.assert_idle();
 }
 

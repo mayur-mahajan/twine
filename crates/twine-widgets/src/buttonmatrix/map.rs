@@ -381,7 +381,7 @@ mod tests {
         assert_eq!(o.texts[1].capacity(), cap);
         assert!(!set(&mut m, 9, "x"));
         assert_eq!(m.owned_texts_mut().len(), 3);
-        assert!(BtnMap::from(&MAP).owned_texts_mut().is_empty());
+        assert_eq!(BtnMap::from(&MAP).owned_texts_mut(), Vec::<String>::new());
     }
 
     #[test]

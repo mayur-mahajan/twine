@@ -81,7 +81,7 @@ fn imgbtn_set_src_same_value_no_invalidate() {
         w.set_src(cx, S::Released, None, Some(i2), None);
         w.set_state(cx, S::Released);
     });
-    assert!(h.engine().invalidation_log().is_empty());
+    assert_eq!(h.engine().invalidation_log(), []);
     h.assert_idle();
 }
 
