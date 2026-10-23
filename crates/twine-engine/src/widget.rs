@@ -847,7 +847,7 @@ impl<'a> WidgetCx<'a> {
     /// use twine_engine::{Engine, EngineConfig, Obj};
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// e.set_limits(&Limits::DEFAULT.max_text_len(4)).unwrap();
+    /// e.set_limits(&Limits::DEFAULT.max_text_len(4).preallocated()).unwrap();
     /// let n = e.create_root(Box::new(Obj)).unwrap();
     /// e.with_widget_mut(n, |_: &mut Obj, cx| {
     ///     assert_eq!(cx.fit_text("abc"), "abc");
@@ -889,7 +889,7 @@ impl<'a> WidgetCx<'a> {
     /// use twine_engine::{Engine, EngineConfig, Obj};
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// e.set_limits(&Limits::DEFAULT.max_text_len(8)).unwrap();
+    /// e.set_limits(&Limits::DEFAULT.max_text_len(8).preallocated()).unwrap();
     /// let n = e.create_root(Box::new(Obj)).unwrap();
     /// e.with_widget_mut(n, |_: &mut Obj, cx| {
     ///     assert!(cx.text_len_fits(8));
@@ -981,7 +981,7 @@ impl<'a> WidgetCx<'a> {
     /// use twine_engine::{Engine, EngineConfig, Obj};
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// e.set_limits(&Limits::DEFAULT.max_text_len(3)).unwrap();
+    /// e.set_limits(&Limits::DEFAULT.max_text_len(3).preallocated()).unwrap();
     /// let n = e.create_root(Box::new(Obj)).unwrap();
     /// let mut buf = String::from("abcdef");
     /// let cap = buf.capacity();

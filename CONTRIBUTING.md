@@ -77,6 +77,10 @@ These keep Twine usable on small, battery-powered devices. CI or review will rej
 - **No floating point in hot paths.** Rendering, layout, styles, text rendering, vector
   rasterization and the engine use integer/fixed-point math (`clippy::float_arithmetic` is denied
   there). This keeps output identical on every platform and fast on MCUs without an FPU.
+- **Divide `i128` through `twine_core::math::div_rem_i128`** (or `div_rem_euclid_i128`), not
+  with `/`, `%` or `checked_div*` by a non-constant divisor: 32-bit targets have no 128-bit division in their runtime
+  library, so LLVM expands each one inline (several hundred bytes of flash per site); the shared
+  helper is one out-of-line copy with a 64-bit fast path.
 - **`no_std` + `alloc` compatible.** Library crates must build for `thumbv6m-none-eabi`
   (RP2040), which has no atomic compare-and-swap: don't use `Arc`, `alloc::sync` or CAS atomics;
   use `Rc`, `portable-atomic` and `critical-section`.

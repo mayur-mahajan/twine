@@ -7,7 +7,7 @@
 //! Geometry uses continuous coordinates: pixel `(x, y)` covers `[x, x+1) × [y, y+1)` and its
 //! center is `(x + ½, y + ½)`. Anti-aliasing is 1 px wide.
 
-use twine_core::math::{cos, isqrt64, sin};
+use twine_core::math::{cos, div_rem_i128, isqrt64, sin};
 use twine_core::{Angle, Opa, Point, Rect};
 
 use crate::circle::Quarter;
@@ -431,11 +431,11 @@ fn apply_line(p1: Point, p2: Point, side: LineSide, y: i32, x0: i32, cov: &mut [
         .wrapping_mul(2)
         .wrapping_add(1);
     let scale = |v: i64| -> i64 {
-        let q = i128::from(v)
-            .wrapping_mul(128 << 16)
-            .wrapping_mul(256)
-            .checked_div(i128::from(len256))
-            .unwrap_or(0);
+        let q = div_rem_i128(
+            i128::from(v).wrapping_mul(128 << 16).wrapping_mul(256),
+            i128::from(len256),
+        )
+        .map_or(0, |(q, _)| q);
         q.clamp(-(1 << 57), 1 << 57) as i64
     };
     let step = scale(nx.wrapping_mul(2));

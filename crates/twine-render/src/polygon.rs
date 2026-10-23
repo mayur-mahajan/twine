@@ -11,6 +11,7 @@
 use core::mem::take;
 use core::sync::atomic::AtomicBool;
 
+use twine_core::math::div_rem_i128;
 use twine_core::{Color, Opa, Point, Rect};
 
 use crate::Painter;
@@ -88,10 +89,7 @@ fn crossing(e: &Edge, ys: i64) -> i64 {
     let q = match dy.checked_mul(dx) {
         Some(n) => n.checked_div(h).unwrap_or(0),
         None => sat64(
-            i128::from(dy)
-                .wrapping_mul(i128::from(dx))
-                .checked_div(i128::from(h))
-                .unwrap_or(0),
+            div_rem_i128(i128::from(dy).wrapping_mul(i128::from(dx)), i128::from(h)).map_or(0, |(q, _)| q),
         ),
     };
     e.x0.wrapping_add(q)

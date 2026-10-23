@@ -8,7 +8,7 @@ on **fine-grained reactive signals**. The same app runs on a Cortex-M0+ with 264
 an ESP32-S3 driving a QSPI AMOLED and in a window on Linux, macOS or Windows.
 
 <p align="center">
-  <img src="assets/readme/showcase.gif" alt="The showcase example: a tabbed app with a live gauge and chart, controls, a task list and a dark mode switch" width="480">
+  <img src="assets/readme/showcase.gif" alt="The showcase example: a bedside patient monitor with live ECG, pleth and respiration waveforms, vital signs and alarms" width="480">
 </p>
 
 > **Status: pre-alpha.** The library is under active development and the API may still change
@@ -39,8 +39,8 @@ an ESP32-S3 driving a QSPI AMOLED and in a window on Linux, macOS or Windows.
 
 | | |
 |---|---|
-| <img src="assets/readme/showcase.gif" alt="Showcase example" width="400"> | **Showcase** — a 480 × 320 tabbed app: a gauge and chart fed by a timer, controls sharing one value, a keyed task list, dark mode at run time.<br><br>`cargo xtask sim showcase` |
-| <img src="assets/readme/desktop.gif" alt="Desktop example" width="400"> | **Desktop app** — Twine as the UI of an ordinary desktop program: a file browser over `std::fs`, a notes editor saved to disk, a clock and a job queue running on background threads.<br><br>`cargo xtask sim desktop` |
+| <img src="assets/readme/showcase.gif" alt="Showcase example: a bedside patient monitor" width="400"> | **Patient monitor** — a bedside monitor on a 480 × 320 touch panel, the kind of device Twine is built for. ECG, pleth and respiration sweep across the screen like on a real monitor, redrawn a few pixel columns at a time. A simulated desaturation raises prioritised, flashing alarms you can silence, review and trace in the 1–12 h trends; Setup edits alarm limits and the patient and switches between Day, Dark and Night. *A demo, not a medical device.*<br><br>`cargo xtask sim showcase` |
+| <img src="assets/readme/desktop.gif" alt="Desktop example: the Twine Player music app" width="400"> | **Twine Player** — a desktop music player built entirely with Twine, running as an ordinary program on Linux, macOS or Windows (960 × 600). A ~500-song library with instant search and sortable columns, generated cover art, a 60 fps 32-band visualizer (bars or a radial spinning record), a 10-band equalizer that glides between presets with a live frequency-response curve, and a slide-in Up Next queue. Audio is simulated, so it runs anywhere.<br><br>`cargo xtask sim desktop` |
 | <img src="assets/readme/lottie.gif" alt="Lottie example" width="400"> | **Lottie** — vector animations from After Effects with play/pause, loop and a frame scrubber.<br><br>`cargo xtask sim lottie` |
 
 A tour of the widgets — controls, pickers, the on-screen keyboard, right-to-left Arabic text,
@@ -231,20 +231,25 @@ ESP32-S3 AMOLED boards, Waveshare's ESP32-C6 1.47" LCD) and the hardware checkli
 **Desktop: Linux, macOS and Windows.** Yes, you can use Twine as the UI library of a regular
 Rust program. `twine-sim` opens a native window (winit + softbuffer, pure Rust, no SDL) and
 runs your app in it, with the standard library, threads and files at hand — the
-[`desktop`](crates/twine/examples/desktop) example is a complete app built this way:
+[`desktop`](crates/twine/examples/desktop) example, **Twine Player**, is a complete music
+player built this way (`cargo xtask sim desktop`): a ~500-song library with search and
+sorting, generated cover art, a 32-band visualizer, a 10-band equalizer and a queue, styled
+by its own theme and driven by one frame clock:
 
 ```rust
-// Abridged from crates/twine/examples/desktop/main.rs.
+// Abridged from crates/twine/examples/desktop/main.rs and player.rs.
+fn app(cx: Scope) -> impl View {
+    let app = App { player: Player::new(cx, /* … */), eq: Equalizer::new(cx), /* … */ };
+    // One 16 ms timer advances playback, eases the equalizer and feeds the visualizer.
+    app.player.run(cx, app.eq);
+    column((row((sidebar(app), pages)), transport::bar(cx, app), queue::panel(cx, app, 516)))
+        .focusable(true) // the window owns the keyboard shortcuts
+        .on_key(move |k| shortcut(app, k))
+}
+
 fn main() {
-    // Threads feed the UI through `'static` `Latest`, `Channel` and `Outbox` cells.
-    std::thread::spawn(|| loop {
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        CLOCK.set(unix_now());
-    });
-    let window = twine_sim::SimConfig::new(960, 600)
-        .title("Twine desktop")
-        .format(ColorFormat::Xrgb8888);
-    twine_sim::run(window, move |cx| app(cx, ports));
+    let window = SimConfig::new(960, 600).title("Twine Player").format(ColorFormat::Xrgb8888);
+    twine_sim::run(window.theme(theme::theme()), app);
 }
 ```
 
@@ -267,8 +272,8 @@ Run any example with `cargo xtask sim <name>` (the same as `cargo run -p twine -
 
 | Example | Shows |
 |---------|-------|
-| `showcase` | a tabbed app: live gauge and chart, controls, a keyed task list, dark mode |
-| `desktop` | a desktop app: files, notes saved to disk, a clock and jobs on background threads |
+| `showcase` | a bedside patient monitor (demo, not a medical device): sweep waveforms redrawn column by column, prioritised alarms, trends, Day / Dark / Night |
+| `desktop` | Twine Player, a desktop music player: a virtualized, searchable, sortable library; generated cover art; a 32-band visualizer; a 10-band equalizer with its response curve; a keyed queue; keyboard shortcuts |
 | `hello`, `counter` | the smallest apps: one label; signals and click handlers |
 | `controls`, `core_widgets`, `selection`, `text_input` | every widget, in the default theme |
 | `navigation`, `when_demo` | typed navigation with screen animations and leave guards; conditional views |

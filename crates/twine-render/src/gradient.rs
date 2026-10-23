@@ -7,7 +7,7 @@
 
 use alloc::vec::Vec;
 
-use twine_core::math::{atan2, isqrt64};
+use twine_core::math::{atan2, div_rem_euclid_i128, div_rem_i128, isqrt64};
 use twine_core::{Angle, Color, Fraction, Opa, Point, Rect};
 
 use crate::caches::CacheStats;
@@ -570,7 +570,7 @@ impl GradSampler {
                         .wrapping_mul(dx)
                         .wrapping_add(y.wrapping_sub(sy).wrapping_mul(dy)),
                 );
-                (dot << 16).checked_div(i128::from(len2)).map(sat64)
+                div_rem_i128(dot << 16, i128::from(len2)).map(|(q, _)| sat64(q))
             }
             Geo::Radial {
                 fx,
@@ -607,7 +607,7 @@ impl GradSampler {
                     |t: i128| -> bool { r0.wrapping_mul(65536).wrapping_add(t.wrapping_mul(dr)) >= 0 };
                 if a == 0 {
                     // `b != 0` checked by the division (`None` for `b == 0`).
-                    let t = (c << 16).checked_div(b.wrapping_mul(2))?;
+                    let (t, _) = div_rem_i128(c << 16, b.wrapping_mul(2))?;
                     return root_ok(t).then_some(sat64(t));
                 }
                 let disc = b.wrapping_mul(b).wrapping_sub(a128.wrapping_mul(c));
@@ -615,18 +615,20 @@ impl GradSampler {
                     return None;
                 }
                 let s = i128::from(isqrt64(u64::try_from(disc).unwrap_or(u64::MAX)));
+                // The roots `(b ± s) · 2^16 / a`: `b + s ≥ b − s` and a truncating division is
+                // monotonic (increasing for `a > 0`, decreasing for `a < 0`), so the larger root
+                // is known before dividing; the smaller one is only computed when the larger
+                // does not qualify (one division per pixel in the common case).
                 // `a != 0` (the `a == 0` case returned above): the `?` is never taken.
                 // SAFE-ARITH: `|b| < 2^63` and `s < 2^32`, shifted below `2^80`.
-                let t1 = (b.wrapping_add(s) << 16).checked_div(a128)?;
-                let t2 = (b.wrapping_sub(s) << 16).checked_div(a128)?;
-                let (hi, lo) = if t1 >= t2 { (t1, t2) } else { (t2, t1) };
+                let (plus, minus) = (b.wrapping_add(s) << 16, b.wrapping_sub(s) << 16);
+                let (hi_num, lo_num) = if a > 0 { (plus, minus) } else { (minus, plus) };
+                let (hi, _) = div_rem_i128(hi_num, a128)?;
                 if root_ok(hi) {
-                    Some(sat64(hi))
-                } else if root_ok(lo) {
-                    Some(sat64(lo))
-                } else {
-                    None
+                    return Some(sat64(hi));
                 }
+                let (lo, _) = div_rem_i128(lo_num, a128)?;
+                root_ok(lo).then_some(sat64(lo))
             }
             Geo::Conical { cx, cy, start, span } => {
                 // SAFE-ARITH: `|x|, |y| < 2^28` and the clamped center is within `±2^26`, so
@@ -724,8 +726,8 @@ impl GradSampler {
                 );
                 let len = i128::from(len2);
                 let num = base << 16;
-                let q0 = num.checked_div_euclid(len).unwrap_or(0);
-                let mut r = sat64(num.checked_rem_euclid(len).unwrap_or(0));
+                let (q0, r) = div_rem_euclid_i128(num, len).unwrap_or((0, 0));
+                let mut r = sat64(r);
                 // The index of `q` only depends on `q` modulo two periods (or its clamp).
                 let mut q = self.equiv(q0, 17, 1 << 33);
                 let step = dx << 16;

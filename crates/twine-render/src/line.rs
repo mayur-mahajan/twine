@@ -11,7 +11,7 @@
 
 use core::num::NonZeroI128;
 
-use twine_core::math::isqrt64;
+use twine_core::math::{div_rem_i128, isqrt64};
 use twine_core::{Color, Opa, Point, Rect};
 
 use crate::Painter;
@@ -75,7 +75,8 @@ const K65536: NonZeroI128 = match NonZeroI128::new(65536) {
 };
 
 /// `⌊a / b⌋` (`b` is non-zero by its type; callers pass `|a| < 2^100`). Divides in `i64` when
-/// both values fit (the common case: a 128-bit division is a slow library call).
+/// both values fit (the common case, inline); otherwise in the shared out-of-line
+/// [`div_rem_i128`] (a 128-bit division is a long inline loop on 32-bit targets).
 #[inline]
 fn div_floor(a: i128, b: NonZeroI128) -> i128 {
     if let (Ok(a), Ok(b)) = (i64::try_from(a), i64::try_from(b.get())) {
@@ -87,10 +88,11 @@ fn div_floor(a: i128, b: NonZeroI128) -> i128 {
             return i128::from(if b < 0 && r != 0 { q.wrapping_sub(1) } else { q });
         }
     }
-    // `b != 0` and `a > i128::MIN`: the fallback is never taken.
-    a.checked_div_euclid(b.get()).map_or(0, |q| {
+    // `b != 0` and `a > i128::MIN`: the fallback is never taken. The truncated quotient is one
+    // above the floor when the remainder has the other sign than `b`.
+    div_rem_i128(a, b.get()).map_or(0, |(q, r)| {
         // SAFE-ARITH: `|q| ≤ |a| < 2^100`.
-        if b.get() < 0 && a.checked_rem_euclid(b.get()).unwrap_or(0) != 0 {
+        if r != 0 && (r < 0) != (b.get() < 0) {
             q.wrapping_sub(1)
         } else {
             q
@@ -262,9 +264,8 @@ impl Painter<'_> {
         let scale = |v: i128| -> i64 {
             // `l8 ≥ 1`: the fallback is never taken. `|v| < 2^66`, `· 2^32 < 2^98`.
             sat64(
-                v.wrapping_mul(1 << 32)
-                    .checked_div(i128::from(l8))
-                    .unwrap_or(0)
+                div_rem_i128(v.wrapping_mul(1 << 32), i128::from(l8))
+                    .map_or(0, |(q, _)| q)
                     .clamp(lim.wrapping_neg(), lim),
             )
         };

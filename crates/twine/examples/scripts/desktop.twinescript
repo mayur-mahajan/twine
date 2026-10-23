@@ -1,23 +1,75 @@
-# Visit each side tab (170 px bar, 150 px per tab): open a folder, type a note (not saved),
-# start three jobs on the worker thread. (Headless time runs ahead of the worker's real-time
-# sleeps, so the bars may still be empty here; in the window they fill up.)
+# Twine Player (960 x 600): a walk through the main flows. Inputs scheduled at the same time
+# as a `shot` are applied before that frame is drawn, so each shot is followed by a wait.
+wait 1200
+shot songs
+wait 16
+# Search: F focuses the search field (also Ctrl/Cmd+F), typing filters as you type.
+key f
+wait 150
+text "night"
+wait 600
+shot search
+wait 16
+# Esc clears the search and hands the keys back to the shortcuts.
+key Esc
+wait 300
+# Sort by title (click the header), then double-click the second row to play it.
+tap 300 103
+wait 400
+tap 400 191
+wait 100
+tap 400 191
+wait 700
+shot sorted_playing
+wait 16
+# The Up Next queue: move the first entry down, remove the new first one.
+tap 804 558
+wait 500
+shot queue
+wait 16
+tap 897 216
+wait 300
+tap 926 216
+wait 400
+shot queue_edited
+wait 16
+key Esc
+wait 400
+# Now Playing: the visualizer, then its radial mode (V).
+tap 100 300
 wait 1500
-shot overview
-tap 85 225
-wait 600
-shot files
-tap 85 375
-wait 600
-tap 565 300
-text "Twine runs on the desktop too."
+shot now_playing
+wait 16
+key v
+wait 1500
+shot radial
+wait 16
+key v
 wait 300
-shot notes
-tap 85 525
+# Equalizer: choose Bass Boost; the bands glide there and the curve follows.
+tap 100 338
+wait 400
+tap 760 50
+wait 400
+tap 730 213
+wait 700
+shot eq_bass_boost
+wait 16
+# Keyboard: Space pauses, arrows seek and change the volume.
+key " "
+key Right
+key Right
+key Up
+wait 800
+shot paused
+wait 16
+key " "
+wait 300
+# Albums and playlists.
+tap 100 147
 wait 600
-tap 704 64
-wait 300
-tap 704 64
-wait 300
-tap 704 64
-wait 900
-shot jobs
+shot albums
+wait 16
+tap 100 223
+wait 600
+shot playlists

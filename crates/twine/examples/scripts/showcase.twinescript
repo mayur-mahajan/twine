@@ -1,15 +1,78 @@
-# Tour the four tabs (bar at the bottom, 120 px per tab) and take a shot of each.
+# The bedside monitor (480 x 320, navigation bar at the bottom: Monitor 0-89, Alarms 89-178,
+# Trends 178-267, Setup 267-356, Silence 356-480). The simulated patient desaturates 3 s
+# after start and recovers at about 40 s.
+#
+# Watch the alarms rise: RR HIGH (medium, yellow) then SpO2 LOW (high, red, flashing).
+wait 11000
+shot monitor_alarm
+# Silence: audio paused for 2 min, the ring counts down.
+tap 418 302
+wait 900
+# The active alarms and their history.
+tap 125 302
+wait 1500
+shot alarms
+# Trends: 1 h, then 12 h (the desaturations of the night show at full depth).
+tap 215 302
 wait 1200
-shot dashboard
-tap 180 298
+tap 445 49
+wait 1300
+shot trends
+# Setup: switch to the Day display mode, back to the monitor.
+tap 308 302
+wait 800
+tap 322 167
+wait 700
+tap 40 302
+wait 1800
+shot monitor_day
+# (The README GIF ends here.)
+# The table view of the trends.
+tap 215 302
+wait 400
+tap 294 49
+wait 800
+shot trends_table
+# Setup: lower the SpO2 low limit to 88, back to Dark, edit the patient on the keyboard.
+tap 308 302
+wait 400
+tap 93 117
+wait 200
+tap 93 117
+wait 400
+tap 372 167
 wait 600
-shot controls
-tap 300 298
+shot setup
+tap 440 74
 wait 600
-shot tasks
-tap 420 298
+tap 228 85
+wait 200
+key Backspace
+key Backspace
+key Backspace
+key Backspace
+key Backspace
+key Backspace
+key Backspace
+key Backspace
+key Backspace
+key Backspace
+key Backspace
+key Backspace
+text "DOE, Jane"
+wait 400
+shot keyboard
+tap 430 39
 wait 600
-shot settings
-tap 414 58
+# Measure the blood pressure now: the cuff inflates and deflates, then the new reading.
+tap 40 302
+wait 300
+tap 160 255
+wait 4000
+shot nibp_measuring
+# Recovery: SpO2 back above 90 %, the alarms clear, the history keeps them.
+wait 28000
+shot recovered
+tap 125 302
 wait 600
-shot settings_dark
+shot alarms_after

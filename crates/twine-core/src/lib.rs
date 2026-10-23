@@ -12,7 +12,7 @@
 //! | Module | Contents |
 //! |--------|----------|
 //! | [`geometry`] | [`Point`], [`Size`], [`Rect`] (half-open), [`Insets`], [`Rotation`] |
-//! | [`math`] | [`Fx`] (16.16), [`Angle`] (0.1°), [`Scale`] (256 = 1.0), [`Fraction`] (255 = 1.0), [`AngularSpeed`] (°/s), sqrt, sin/cos/atan2, bezier, `udiv255`, `map` |
+//! | [`math`] | [`Fx`] (16.16), [`Angle`] (0.1°), [`Scale`] (256 = 1.0), [`Fraction`] (255 = 1.0), [`AngularSpeed`] (°/s), sqrt, sin/cos/atan2, bezier, `udiv255`, `map`, shared 128-bit division ([`math::div_rem_i128`]) |
 //! | [`transform`] | [`Transform`] (2-D affine, fixed point) |
 //! | [`color`] | [`Color`], [`Opa`], [`ColorFormat`], [`PixelFormat`] and format marker types, the WCAG [`ContrastRatio`](color::ContrastRatio) |
 //! | [`time`] | [`Instant`], [`Duration`] (µs) |
