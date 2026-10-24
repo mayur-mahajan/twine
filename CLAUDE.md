@@ -84,8 +84,16 @@ API, `no_std` + `alloc`). Low compute/power is the top priority.
 - `cargo xtask fuzz <target>` — cargo-fuzz targets in `fuzz/` (decoders; `tree_ops`,
   `input_events`, `reactive_ops`).
 - `cargo xtask nostd` — build no_std crates for all embedded targets (and the facade in the
-  safety profile for each target).
+  safety profile for each target), then `link-check`.
+- `cargo xtask link-check` — link `tools/link-fixtures` and check their symbols against
+  `fixtures.toml` (pay for what you use; `until = "R7.Sxx"` marks the known R7 baseline failures).
 - `cargo xtask firmware [board]` — build firmware crates.
+- `cargo xtask theme-size` — theme flash per part (styles, class chain, tables, icons, curves,
+  fonts) in the rp2040/F411 demo images, attributed by symbol.
+- `cargo xtask theme-recipes -- <cargo test args>` — run tests that call
+  `twine_testing::assert_theme_covers` and print the minimal recipe list of their UIs (for a
+  `DesignSystem`'s `RECIPES` or a built-in theme's `.recipes(&[..])`) and the widget classes
+  without a recipe.
 - `RUST_LOG=twine=debug` — enable logs in simulator/tests (`twine::refresh=trace` for invalidations).
 
 ## Hard rules

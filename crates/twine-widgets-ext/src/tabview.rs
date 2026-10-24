@@ -32,6 +32,22 @@ pub static TABVIEW_CONTENT_CLASS: WidgetClass = WidgetClass::new("tabview_conten
     .parts(twine_engine::OBJ_CLASS.parts)
     .default_flags(OBJ_FLAGS);
 
+/// A tab's button in the bar (`"tabview_tab_button"`): a [`Button`] based on
+/// [`BUTTON_CLASS`] (themes style it like a button unless they know it; LVGL's theme gives
+/// it the flat tab look, `lv_theme_default.c` lines 815-826).
+pub static TABVIEW_TAB_BUTTON_CLASS: WidgetClass = WidgetClass::new("tabview_tab_button")
+    .parts(BUTTON_CLASS.parts)
+    .default_flags(BUTTON_CLASS.default_flags)
+    .group_def(BUTTON_CLASS.group_def)
+    .base(&BUTTON_CLASS);
+/// A tab's page in the content (`"tabview_page"`): a plain object based on
+/// [`OBJ_CLASS`](twine_engine::OBJ_CLASS) (themes style it like an object unless they know
+/// it; LVGL's theme pads it instead of drawing a card, lines 758-808).
+pub static TABVIEW_PAGE_CLASS: WidgetClass = WidgetClass::new("tabview_page")
+    .parts(twine_engine::OBJ_CLASS.parts)
+    .default_flags(OBJ_FLAGS)
+    .base(&twine_engine::OBJ_CLASS);
+
 /// A tabview (LVGL `lv_tabview`): a bar of buttons (one per tab) and a content area whose
 /// pages scroll horizontally (vertically with the bar at the left or right) and snap one
 /// page at a time.
@@ -160,9 +176,16 @@ impl Tabview {
         log_set(TABVIEW_CLASS.name, cx.node(), "add_tab");
         let tv = cx.node();
         let e = cx.engine_mut();
-        let page = e.create(self.content, Box::new(twine_engine::Obj)).ok()?;
+        let page = e
+            .create(self.content, Box::new(ClassObj(&TABVIEW_PAGE_CLASS)))
+            .ok()?;
         e.set_size(page, Length::pct(100), Length::pct(100));
-        let btn = e.create(self.tab_bar, Box::new(Button::new())).ok()?;
+        let btn = e
+            .create(
+                self.tab_bar,
+                Box::new(Button::with_class(&TABVIEW_TAB_BUTTON_CLASS)),
+            )
+            .ok()?;
         e.set_flex_grow(btn, 1);
         e.set_size(btn, Length::pct(100), Length::pct(100));
         e.add_event_handler(btn, EventFilter::Code(EventCode::Clicked), move |ecx, ev| {
@@ -366,7 +389,7 @@ impl Tabview {
 fn is_tab_button(e: &Engine, b: NodeId) -> bool {
     e.tree()
         .node(b)
-        .is_some_and(|n| core::ptr::eq(n.class(), &raw const BUTTON_CLASS))
+        .is_some_and(|n| core::ptr::eq(n.class(), &raw const TABVIEW_TAB_BUTTON_CLASS))
 }
 
 /// The tab buttons of `bar`, in order (LVGL `lv_obj_get_child_by_type(.., &lv_button_class)`).

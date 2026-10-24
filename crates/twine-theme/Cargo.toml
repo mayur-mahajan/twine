@@ -1,6 +1,6 @@
 [package]
 name = "twine-theme"
-description = "Themes: default, simple, mono"
+description = "Themes: LVGL, simple, mono"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,7 +11,13 @@ repository.workspace = true
 workspace = true
 
 [features]
-default = ["assets"]
+default = ["assets", "lvgl"]
+## LVGL's default theme (`Lvgl`).
+lvgl = []
+## LVGL's monochrome theme for 1-bit displays (`Mono`).
+mono = []
+## LVGL's simple theme (`Simple`).
+simple = []
 ## The safety profile (`twine` feature `safety`, see `docs/safety/profile.md`): the
 ## safety lints of library code and the refusal of excluded features.
 safety = [
@@ -24,7 +30,7 @@ safety = [
     "twine-widgets/safety",
     "twine-widgets-ext/safety",
 ]
-## The ready-made constructors (`DefaultTheme::light()` …) with the built-in Montserrat 14 font.
+## The default element sets (`Lvgl::SET`, …) and tables with the built-in Montserrat 14 font.
 assets = ["dep:twine-assets"]
 ## std-only conveniences.
 std = [
@@ -71,7 +77,7 @@ twine-assets = { path = "../twine-assets", optional = true, features = ["montser
 defmt = { version = "1", optional = true }
 
 [dev-dependencies]
-twine-theme = { path = ".", features = ["std", "log"] }
+twine-theme = { path = ".", features = ["std", "log", "mono", "simple"] }
 twine-engine = { path = "../twine-engine", features = ["std", "debug-checks", "color-rgb565", "color-i1", "color-l8"] }
 twine-testing = { path = "../twine-testing", default-features = false, features = ["engine", "debug-checks"] }
 twine-hal = { path = "../twine-hal" }

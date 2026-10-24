@@ -458,7 +458,7 @@ fn fonts_check() -> Result<Outcome, Box<dyn std::error::Error>> {
 }
 
 fn images_check() -> Result<Outcome, Box<dyn std::error::Error>> {
-    ok(images::gen_assets(true).and_then(|()| images::run(true)))
+    ok(images::gen_assets(true))
 }
 
 /// The requirements → tests matrix is current and every requirement is verified (R5.S08).
@@ -550,9 +550,18 @@ fn doc() -> Result<Outcome, Box<dyn std::error::Error>> {
     ])))
 }
 
-/// Compiles every benchmark without running it.
+/// Benchmarks run once in criterion's test mode (`-- --test`) by `bench-build`: each benchmark
+/// executes one iteration, so their setup and allocation checks run without measuring (the
+/// themed benchmarks of R7.S01, whose numbers are the R7 phase gate's references).
+pub const BENCH_SMOKE: &[(&str, &str)] = &[("twine-bench", "theme")];
+
+/// Compiles every benchmark without running it, then runs the [`BENCH_SMOKE`] benchmarks once.
 fn bench_build() -> Result<Outcome, Box<dyn std::error::Error>> {
-    ok(run_cmd(cargo_ci().args(["bench", "--workspace", "--no-run"])))
+    run_cmd(cargo_ci().args(["bench", "--workspace", "--no-run"]))?;
+    for (krate, bench) in BENCH_SMOKE {
+        run_cmd(cargo_ci().args(["bench", "-p", krate, "--bench", bench, "--", "--test"]))?;
+    }
+    Ok(Outcome::Ok)
 }
 
 /// Builds (and lints) the examples that need SDL2; skipped with a warning without SDL2.

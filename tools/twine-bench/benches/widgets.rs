@@ -13,7 +13,7 @@ use twine_core::{Duration, Point, Rect};
 use twine_engine::{InvalidateReason, NodeId};
 use twine_style::Align;
 use twine_testing::EngineHarness;
-use twine_theme::DefaultTheme;
+use twine_theme::lvgl;
 use twine_widgets::prelude::*;
 use twine_widgets_ext::{dropdown, list, roller};
 
@@ -21,7 +21,7 @@ const PARAGRAPH: &str = "Twine draws widgets with integer arithmetic only. This 
 over several lines so that the label's line breaking and glyph loops run on every redraw.";
 
 fn harness() -> EngineHarness {
-    EngineHarness::new(320, 240).theme(DefaultTheme::light())
+    EngineHarness::new(320, 240).theme(&lvgl::THEME)
 }
 
 fn full_redraw(c: &mut Criterion, name: &str, h: &mut EngineHarness) {

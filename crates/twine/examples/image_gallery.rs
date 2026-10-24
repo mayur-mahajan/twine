@@ -13,9 +13,39 @@
 //! Every panel format works (`TWINE_SIM_FORMAT=rgb565swapped|rgb888|xrgb8888|argb8888|l8|i1`).
 #![allow(clippy::unreadable_literal)] // colors read best as 0xRRGGBB
 
-mod assets;
-
-use crate::assets as img;
+/// The logo (`assets/images/twine_logo.png`) in every color format and the photo, converted
+/// while the example compiles (`twine::include_image!`; the formats without alpha flatten the
+/// logo's transparent background onto white).
+mod img {
+    twine::include_image!(pub static LOGO_L8 = "../../assets/images/twine_logo.png", format = L8, background = 0xFFFFFF);
+    twine::include_image!(pub static LOGO_A1 = "../../assets/images/twine_logo.png", format = A1);
+    twine::include_image!(pub static LOGO_A2 = "../../assets/images/twine_logo.png", format = A2);
+    twine::include_image!(pub static LOGO_A4 = "../../assets/images/twine_logo.png", format = A4);
+    twine::include_image!(pub static LOGO_A8 = "../../assets/images/twine_logo.png", format = A8);
+    twine::include_image!(pub static LOGO_I1 = "../../assets/images/twine_logo.png", format = I1, dither = true);
+    twine::include_image!(pub static LOGO_I2 = "../../assets/images/twine_logo.png", format = I2, dither = true);
+    twine::include_image!(pub static LOGO_I4 = "../../assets/images/twine_logo.png", format = I4, dither = true);
+    twine::include_image!(pub static LOGO_I8 = "../../assets/images/twine_logo.png", format = I8, dither = true);
+    twine::include_image!(pub static LOGO_RGB565 = "../../assets/images/twine_logo.png", format = Rgb565, background = 0xFFFFFF);
+    twine::include_image!(
+        pub static LOGO_RGB565_SWAPPED = "../../assets/images/twine_logo.png",
+        format = Rgb565Swapped,
+        background = 0xFFFFFF,
+    );
+    twine::include_image!(pub static LOGO_RGB565A8 = "../../assets/images/twine_logo.png", format = Rgb565A8);
+    twine::include_image!(pub static LOGO_RGB888 = "../../assets/images/twine_logo.png", format = Rgb888, background = 0xFFFFFF);
+    twine::include_image!(pub static LOGO_ARGB8888 = "../../assets/images/twine_logo.png", format = Argb8888);
+    twine::include_image!(pub static LOGO_XRGB8888 = "../../assets/images/twine_logo.png", format = Xrgb8888, background = 0xFFFFFF);
+    twine::include_image!(
+        pub static LOGO_ARGB8888_PREMULTIPLIED = "../../assets/images/twine_logo.png",
+        format = Argb8888Premultiplied,
+    );
+    // Compressed: decoded into the image cache when drawn.
+    twine::include_image!(pub static LOGO_RLE = "../../assets/images/twine_logo.png", format = Rgb565A8, compress = Rle);
+    twine::include_image!(pub static LOGO_LZ4 = "../../assets/images/twine_logo.png", format = Argb8888, compress = Lz4);
+    twine::include_image!(pub static PHOTO_RLE = "../../assets/images/photo.png", format = Rgb565, compress = Rle);
+    twine::include_image!(pub static PHOTO_LZ4 = "../../assets/images/photo.png", format = Rgb565, compress = Lz4);
+}
 use twine::assets::fonts::{MONTSERRAT_10, MONTSERRAT_12, MONTSERRAT_16};
 use twine::core::{Angle, Color, ColorFormat, Duration, Instant, Opa, Point, Rect, Scale};
 use twine::engine::VfsFileSource;
@@ -52,25 +82,22 @@ static SPINNER_GIF: &[u8] = include_bytes!("../../../assets/images/spinner.gif")
 
 /// Every format of the logo, with its name.
 const FORMATS: [(&str, &Image); 16] = [
-    ("L8", &img::logo_l8::LOGO_L8),
-    ("A1", &img::logo_a1::LOGO_A1),
-    ("A2", &img::logo_a2::LOGO_A2),
-    ("A4", &img::logo_a4::LOGO_A4),
-    ("A8", &img::logo_a8::LOGO_A8),
-    ("I1", &img::logo_i1::LOGO_I1),
-    ("I2", &img::logo_i2::LOGO_I2),
-    ("I4", &img::logo_i4::LOGO_I4),
-    ("I8", &img::logo_i8::LOGO_I8),
-    ("RGB565", &img::logo_rgb565::LOGO_RGB565),
-    ("565 SWAP", &img::logo_rgb565_swapped::LOGO_RGB565_SWAPPED),
-    ("RGB565A8", &img::logo_rgb565a8::LOGO_RGB565A8),
-    ("RGB888", &img::logo_rgb888::LOGO_RGB888),
-    ("ARGB8888", &img::logo_argb8888::LOGO_ARGB8888),
-    ("XRGB8888", &img::logo_xrgb8888::LOGO_XRGB8888),
-    (
-        "PREMUL",
-        &img::logo_argb8888_premultiplied::LOGO_ARGB8888_PREMULTIPLIED,
-    ),
+    ("L8", &img::LOGO_L8),
+    ("A1", &img::LOGO_A1),
+    ("A2", &img::LOGO_A2),
+    ("A4", &img::LOGO_A4),
+    ("A8", &img::LOGO_A8),
+    ("I1", &img::LOGO_I1),
+    ("I2", &img::LOGO_I2),
+    ("I4", &img::LOGO_I4),
+    ("I8", &img::LOGO_I8),
+    ("RGB565", &img::LOGO_RGB565),
+    ("565 SWAP", &img::LOGO_RGB565_SWAPPED),
+    ("RGB565A8", &img::LOGO_RGB565A8),
+    ("RGB888", &img::LOGO_RGB888),
+    ("ARGB8888", &img::LOGO_ARGB8888),
+    ("XRGB8888", &img::LOGO_XRGB8888),
+    ("PREMUL", &img::LOGO_ARGB8888_PREMULTIPLIED),
 ];
 
 /// State shared by the pages.
@@ -185,7 +212,7 @@ fn checker(p: &mut Painter<'_>, area: Rect) {
 }
 
 fn logo() -> ImagePixels<'static> {
-    img::logo_argb8888::LOGO_ARGB8888.pixels().expect("valid logo")
+    img::LOGO_ARGB8888.pixels().expect("valid logo")
 }
 
 fn page_formats(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
@@ -213,7 +240,7 @@ fn page_formats(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
 
 fn page_effects(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
     // Tiled background: the RGB565 logo repeated, faded.
-    let bg = img::logo_rgb565::LOGO_RGB565.pixels().expect("valid logo");
+    let bg = img::LOGO_RGB565.pixels().expect("valid logo");
     p.image(
         Rect::new(0, TOP, W, H),
         &bg,
@@ -426,10 +453,10 @@ fn page_gif(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
 fn page_compressed(p: &mut Painter<'_>, cx: &mut Ctx<'_>) {
     checker(p, Rect::new(0, TOP, W, H - 40));
     let list: [(&str, &'static Image); 4] = [
-        ("RGB565A8 + RLE", &img::logo_rle::LOGO_RLE),
-        ("ARGB8888 + LZ4", &img::logo_lz4::LOGO_LZ4),
-        ("RGB565 + RLE", &img::photo_rle::PHOTO_RLE),
-        ("RGB565 + LZ4", &img::photo_lz4::PHOTO_LZ4),
+        ("RGB565A8 + RLE", &img::LOGO_RLE),
+        ("ARGB8888 + LZ4", &img::LOGO_LZ4),
+        ("RGB565 + RLE", &img::PHOTO_RLE),
+        ("RGB565 + LZ4", &img::PHOTO_LZ4),
     ];
     for (i, (name, img)) in list.into_iter().enumerate() {
         let x = 16 + i as i32 * 116;

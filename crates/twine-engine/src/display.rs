@@ -12,8 +12,8 @@ use twine_hal::{
 
 use crate::refresh::Refresher;
 use crate::{
-    DisplayId, Engine, EngineError, EventCode, EventParam, FaultRecord, InvalidateReason, NodeId, Obj,
-    ObjFlags, Widget, fmt_node_id,
+    DisplayId, DisplayTheme, Engine, EngineError, EventCode, EventParam, FaultRecord, InvalidateReason,
+    NodeId, Obj, ObjFlags, Widget, fmt_node_id,
 };
 
 /// Maximum number of displays per engine.
@@ -533,13 +533,20 @@ pub(crate) struct Display {
     pub(crate) draw_prev_over_act: bool,
     #[cfg(feature = "perf-monitor")]
     pub(crate) perf_overlay: Option<NodeId>,
-    /// The display's theme (LVGL `lv_display_set_theme`).
-    pub(crate) theme: Option<alloc::rc::Rc<dyn crate::ThemeHook>>,
+    /// The display's theme, fixed when the display is created (LVGL `lv_display_set_theme`).
+    pub(crate) theme: Option<&'static dyn crate::ThemeHook>,
     /// The theme's mode on this display.
     pub(crate) theme_mode: twine_style::ThemeMode,
+    /// The display's own design element values (`ThemeHook::metrics`), computed once when the
+    /// display is created.
+    pub(crate) metrics: Option<Box<twine_style::design::ElementTable>>,
+    /// What design elements resolve with: `design` merged over `metrics` in one indexed array
+    /// (`None` without a theme), built when the display is created and refilled in place on a
+    /// mode switch (no allocation: room for every listed mode is reserved).
+    pub(crate) elements: Option<twine_style::design::FlatElements>,
     /// The theme's design element table for `theme_mode` (resolved by the style resolver).
-    pub(crate) design: Option<alloc::rc::Rc<twine_style::design::ElementTable>>,
-    /// Bumped whenever `theme`, `theme_mode` or `design` change.
+    pub(crate) design: Option<&'static twine_style::design::ElementTable>,
+    /// Bumped whenever `theme_mode` (and so `design`) changes.
     pub(crate) design_epoch: u32,
     /// Flush health (consecutive errors, halted).
     pub(crate) health: crate::health::HealthTracker,
@@ -634,6 +641,7 @@ impl Engine {
         &mut self,
         driver: impl DisplayDriver + 'static,
         buffers: BufferMode,
+        theme: Option<DisplayTheme>,
     ) -> Result<DisplayId, EngineError> {
         if matches!(buffers, BufferMode::Full | BufferMode::Direct) {
             return Err(EngineError::BufferModeMismatch);
@@ -650,7 +658,7 @@ impl Engine {
         let (a, b) = buffers.into_partial(&info)?;
         let usage = DrawBufferUsage::of(heap, &a, b.as_ref());
         let refresher = Refresher::new_partial(&info, a, b)?;
-        self.push_display(Backend::Flush(Box::new(driver)), info, refresher, usage)
+        self.push_display(Backend::Flush(Box::new(driver)), info, refresher, usage, theme)
     }
 
     /// Registers a display without a driver, rendered through the chunk-level refresh API
@@ -674,7 +682,7 @@ impl Engine {
     /// use twine_hal::DisplayInfo;
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::Rgb565), 64 * 2 * 8).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::Rgb565), 64 * 2 * 8, None).unwrap();
     /// let mut buf = vec![0u8; 64 * 2 * 8];
     /// assert!(e.refresh_begin(twine_core::Instant::from_millis(0)).is_some());
     /// let mut chunks = 0;
@@ -689,6 +697,7 @@ impl Engine {
         &mut self,
         info: DisplayInfo,
         chunk_bytes: usize,
+        theme: Option<DisplayTheme>,
     ) -> Result<DisplayId, EngineError> {
         if self.displays.len() >= MAX_DISPLAYS {
             return Err(EngineError::TooManyDisplays);
@@ -696,7 +705,13 @@ impl Engine {
         self.check_display_nodes()?;
         self.check_draw_format(&info, true)?;
         let refresher = Refresher::new_external(&info, chunk_bytes)?;
-        self.push_display(Backend::External(()), info, refresher, DrawBufferUsage::default())
+        self.push_display(
+            Backend::External(()),
+            info,
+            refresher,
+            DrawBufferUsage::default(),
+            theme,
+        )
     }
 
     /// Registers a memory-mapped display (LTDC, RGB, Linux fb). `buffers` must be
@@ -720,6 +735,7 @@ impl Engine {
         &mut self,
         mut driver: impl FramebufferDisplay + 'static,
         buffers: BufferMode,
+        theme: Option<DisplayTheme>,
     ) -> Result<DisplayId, EngineError> {
         let full = match buffers {
             BufferMode::Full => true,
@@ -749,6 +765,7 @@ impl Engine {
             info,
             refresher,
             DrawBufferUsage::default(),
+            theme,
         )
     }
 
@@ -811,6 +828,7 @@ impl Engine {
         info: DisplayInfo,
         refresher: Refresher,
         draw_buffers: DrawBufferUsage,
+        theme: Option<DisplayTheme>,
     ) -> Result<DisplayId, EngineError> {
         let id = DisplayId(self.displays.len() as u8);
         let area = info.area();
@@ -846,6 +864,8 @@ impl Engine {
             perf_overlay: None,
             theme: None,
             theme_mode: twine_style::ThemeMode::Light,
+            metrics: None,
+            elements: None,
             design: None,
             design_epoch: 0,
             health: crate::health::HealthTracker::default(),
@@ -856,6 +876,15 @@ impl Engine {
         });
         if self.default_display.is_none() {
             self.default_display = Some(id);
+        }
+        if let Some(t) = theme {
+            if let Some(disp) = self.displays.last_mut() {
+                Engine::attach_theme(disp, t);
+            }
+            self.update_theme_font();
+            // The first screen is themed like every node created later (layers get no theme
+            // styles, as in LVGL).
+            self.apply_theme_on_create(active_screen);
         }
         twine_core::info!(
             target: "twine::engine",

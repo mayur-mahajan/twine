@@ -45,42 +45,44 @@ pub mod todos;
 #[cfg(feature = "vector")]
 pub mod vector;
 
-use twine::prelude::{AppConfig, DefaultTheme, IntoTheme};
+use twine::prelude::{AppConfig, ThemeHook, lvgl};
 
-/// The configuration every demo ships with: LVGL's light default theme and the default engine
-/// configuration, motion and budgets. Shared by the firmware (`Ui::builder(..).app_config(
-/// twine_demos::config())`, which adds its board hooks such as `hires_timer`), the simulator
-/// examples (`SimConfig::new(..).app_config(twine_demos::config())`) and the tests
-/// (`TestUi::new(..).app_config(twine_demos::config())`). A board may refine it; the OLED
-/// boards take it with their monochrome theme ([`config_with_theme`]).
+/// The configuration every demo ships with: the LVGL theme ([`lvgl::THEME`]: light first, all
+/// four modes, every recipe) and the default engine configuration, motion and budgets, as the
+/// simulator examples run it (`SimConfig::new(..).app_config(twine_demos::config())`). The
+/// firmware and the demos' tests take the same configuration with the demo's own theme
+/// ([`config_with_theme`]`(&counter::THEME)`, …: the LVGL theme with only the recipes that
+/// demo uses, so the firmware does not link the others), the OLED boards with their
+/// monochrome theme; a board adds its hooks such as `hires_timer`.
 ///
-/// Builds the theme (one `Rc`) on every call; call it once per UI. Never panics.
+/// Builds nothing but the configuration (the theme is a `static`); never panics.
 ///
 /// ```
 /// use twine::prelude::*;
 ///
 /// let cfg = twine_demos::config();
-/// assert!(cfg.theme.is_some());
+/// assert_eq!(cfg.theme.map(|t| t.name()), Some("lvgl"));
 /// assert_eq!(cfg.motion, Motion::Full);
 /// ```
 pub fn config() -> AppConfig {
-    config_with_theme(DefaultTheme::light())
+    config_with_theme(&lvgl::THEME)
 }
 
-/// [`config`] with `theme` instead of the default theme: what a board whose display needs
-/// another theme (the OLED boards' monochrome one) runs. Prefer it to replacing the theme of
-/// [`config`] afterwards: a theme that is built is linked — LVGL's default theme is ~14 KiB of
-/// flash — even when it is replaced before the UI is built.
+/// [`config`] with `theme` instead of the LVGL theme: what a board whose display needs another
+/// theme (the OLED boards' monochrome one) runs. A theme is linked only when it is named, so
+/// a board that passes its own theme here links neither the LVGL theme nor its tables.
 ///
 /// Builds nothing but the configuration; never panics.
 ///
 /// ```
 /// use twine::prelude::*;
 ///
-/// let cfg = twine_demos::config_with_theme(MonoTheme::builder().mode(ThemeMode::Dark).build());
-/// assert_eq!(cfg.theme.as_ref().map(|t| t.name()), Some("mono"));
+/// /// The LVGL theme in dark mode only (the other modes' tables are not linked).
+/// static DARK: Lvgl = Lvgl::new().modes(&[(ThemeMode::Dark, &lvgl::DARK)]);
+/// let cfg = twine_demos::config_with_theme(&DARK);
+/// assert_eq!(cfg.theme.map(|t| t.modes().len()), Some(1));
 /// assert_eq!(cfg.motion, twine_demos::config().motion);
 /// ```
-pub fn config_with_theme(theme: impl IntoTheme) -> AppConfig {
+pub fn config_with_theme(theme: &'static dyn ThemeHook) -> AppConfig {
     AppConfig::new().theme(theme)
 }

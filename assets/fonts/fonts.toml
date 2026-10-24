@@ -3,7 +3,9 @@
 #
 # Fields: name (static), feature (twine-assets cargo feature), file (output in
 # crates/twine-assets/src/fonts/), ttf, size (px), bpp, ranges, symbols ("fa" | "none"),
-# compress, kerning, subpx ("none" | "hor" | "ver", optional).
+# compress, kerning, subpx ("none" | "hor" | "ver", optional), hinting ("full" | "light" |
+# "none", optional, default "full"), gamma ("default" | "linear" | "<dark-on-light>,<light-on-dark>",
+# optional, default "default": 1.2 / 1.8).
 #
 # Montserrat: bitmaps up to 16 px are stored plain (faster to draw), larger ones compressed
 # (smaller flash) — the same trade-off as LVGL's built-in fonts.

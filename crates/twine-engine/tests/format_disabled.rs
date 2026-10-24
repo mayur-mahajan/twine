@@ -66,6 +66,7 @@ fn partial_display_in_a_disabled_format_is_an_error() {
     let r = e.add_display(
         MemoryDisplay::new(info),
         BufferMode::partial_single(leak(info.bytes_per_row() * 8)),
+        None,
     );
     assert_refused(&mut e, &r, ColorFormat::A8);
 }
@@ -74,7 +75,11 @@ fn partial_display_in_a_disabled_format_is_an_error() {
 fn framebuffer_display_in_a_disabled_format_is_an_error() {
     let mut e = engine();
     let info = DisplayInfo::new(W, H, ColorFormat::A8);
-    let r = e.add_framebuffer_display(MockFramebufferDisplay::new(info, false, 0), BufferMode::direct());
+    let r = e.add_framebuffer_display(
+        MockFramebufferDisplay::new(info, false, 0),
+        BufferMode::direct(),
+        None,
+    );
     assert_refused(&mut e, &r, ColorFormat::A8);
 }
 
@@ -82,7 +87,7 @@ fn framebuffer_display_in_a_disabled_format_is_an_error() {
 fn chunked_display_in_a_disabled_format_is_an_error() {
     let mut e = engine();
     let info = DisplayInfo::new(W, H, ColorFormat::A8);
-    let r = e.add_chunked_display(info, info.bytes_per_row() * 8);
+    let r = e.add_chunked_display(info, info.bytes_per_row() * 8, None);
     assert_refused(&mut e, &r, ColorFormat::A8);
 }
 
@@ -90,12 +95,13 @@ fn chunked_display_in_a_disabled_format_is_an_error() {
 fn a_refused_display_leaves_the_engine_usable() {
     let mut e = engine();
     let bad = DisplayInfo::new(W, H, ColorFormat::A8);
-    assert!(e.add_chunked_display(bad, bad.bytes_per_row() * 8).is_err());
+    assert!(e.add_chunked_display(bad, bad.bytes_per_row() * 8, None).is_err());
     let good = DisplayInfo::new(W, H, ColorFormat::Argb8888); // always compiled
     let d = e
         .add_display(
             MemoryDisplay::new(good),
             BufferMode::partial_single(leak(good.bytes_per_row() * 8)),
+            None,
         )
         .unwrap();
     assert_eq!(e.default_display(), Some(d));
@@ -114,16 +120,20 @@ fn every_format_is_accepted_iff_its_renderer_is_compiled() {
         let chunked_draw = if f == ColorFormat::I1 { ColorFormat::L8 } else { f };
 
         let mut e = engine();
-        let r = e.add_display(NullPanel(info, None), BufferMode::partial_single(leak(bytes)));
+        let r = e.add_display(
+            NullPanel(info, None),
+            BufferMode::partial_single(leak(bytes)),
+            None,
+        );
         check(&mut e, &r, chunked_draw, "partial");
 
         let mut e = engine();
-        let r = e.add_chunked_display(info, bytes);
+        let r = e.add_chunked_display(info, bytes, None);
         check(&mut e, &r, chunked_draw, "chunked");
 
         let mut e = engine();
         let fb = MockFramebufferDisplay::new(info, false, 0);
-        let r = e.add_framebuffer_display(fb, BufferMode::direct());
+        let r = e.add_framebuffer_display(fb, BufferMode::direct(), None);
         check(&mut e, &r, f, "framebuffer");
     }
 }

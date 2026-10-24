@@ -4,16 +4,17 @@
 
 mod common;
 
-use std::rc::Rc;
-
 use common::{Mode, center, class, count_events, get, harness, harness_with_group, has_state, values, with};
 use twine_core::{Color, Duration, Point, Size};
-use twine_engine::{EventCode, Key, NodeId, State, ThemeCx, ThemeHook, WidgetClass};
+use twine_engine::{
+    ComputedRecipe, DesignSystem, EventCode, Key, NodeId, RecipeRef, State, Theme, ThemeCx, ThemeHook,
+    WidgetClass,
+};
 use twine_image::ImageSource;
-use twine_style::{Align, Part, PropId, Selector, Side, StyleBuf};
+use twine_style::design::ElementTable;
+use twine_style::{Align, Part, PropId, Selector, Side, Style, ThemeMode, style};
 use twine_testing::{EngineHarness, capture_logs};
-use twine_text::Font;
-use twine_theme::{DefaultTheme, Palette};
+use twine_theme::{Lvgl, Palette, lvgl};
 use twine_widgets_ext::dropdown::{self, DROPDOWN_CLASS, DROPDOWN_LIST_CLASS, Dropdown};
 
 const CITIES: &str = "Berlin\nLondon\nMadrid\nParis\nRome\nVienna";
@@ -510,38 +511,28 @@ fn dd_setters_log() {
     );
 }
 
-/// The default theme plus a fade on the dropdown list.
-struct FadingTheme(DefaultTheme, Rc<StyleBuf>);
+static FADE: Style = style! { anim_duration: twine_core::Duration::ms(200) };
 
-impl ThemeHook for FadingTheme {
-    fn apply(&self, cx: &mut ThemeCx<'_>, class: &'static WidgetClass) {
-        self.0.apply(cx, class);
-        if class.is(&twine_widgets_ext::dropdown::DROPDOWN_LIST_CLASS) {
-            cx.add_style(Selector::MAIN, self.1.clone());
-        }
+/// Dropdown lists: the LVGL look, with a fade.
+fn fading_list(cx: &mut ThemeCx<'_>) {
+    if let Some(r) = lvgl::THEME.recipe(&DROPDOWN_LIST_CLASS) {
+        cx.add_recipe(r);
     }
-    fn font_normal(&self) -> &'static Font {
-        self.0.font_normal()
-    }
-    fn name(&self) -> &'static str {
-        "fading"
-    }
-    // A wrapping theme forwards the modes and the design elements of the theme it extends.
-    fn mode(&self) -> twine_style::ThemeMode {
-        ThemeHook::mode(&self.0)
-    }
-    fn modes(&self) -> &'static [twine_style::ThemeMode] {
-        self.0.modes()
-    }
-    fn design(
-        &self,
-        mode: twine_style::ThemeMode,
-        dpi: u16,
-        resolution: twine_core::Size,
-    ) -> Option<Rc<twine_style::design::ElementTable>> {
-        self.0.design(mode, dpi, resolution)
+    cx.add_style(Selector::MAIN, &FADE);
+}
+static FADING_LIST: ComputedRecipe = ComputedRecipe::new("FADING_LIST", &DROPDOWN_LIST_CLASS, fading_list);
+
+/// The LVGL theme plus a fade on the dropdown list.
+struct Fading;
+impl DesignSystem for Fading {
+    type Base = Lvgl;
+    const NAME: &'static str = "fading";
+    const MODES: &'static [(ThemeMode, &'static ElementTable)] = lvgl::MODES;
+    fn recipe(class: &'static WidgetClass) -> Option<RecipeRef> {
+        FADING_LIST.for_class(class)
     }
 }
+static FADING: Theme<Fading> = Theme::new();
 
 #[test]
 fn dd_open_close_animations() {
@@ -553,11 +544,7 @@ fn dd_open_close_animations() {
     with(&mut h, d, |w: &mut Dropdown, cx| w.close(cx));
     assert_eq!(h.engine().tree().len(), nodes);
     // With 200 ms: fade in, fade out, then deleted.
-    let theme = FadingTheme(
-        DefaultTheme::light(),
-        Rc::new(StyleBuf::new().anim_duration(twine_core::Duration::ms(200))),
-    );
-    let mut h = EngineHarness::new(320, 240).theme(theme);
+    let mut h = EngineHarness::new(320, 240).theme(&FADING);
     let screen = h.screen();
     let d = dropdown::create(h.engine_mut(), screen).unwrap();
     h.engine_mut().align(d, Align::TopMid, 0, 10);

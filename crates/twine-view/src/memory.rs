@@ -120,7 +120,7 @@ impl UiCore {
     /// use twine_view::UiCore;
     ///
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
-    /// let display = engine.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::Rgb565), 32 * 2 * 4).unwrap();
+    /// let display = engine.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::Rgb565), 32 * 2 * 4, None).unwrap();
     /// let core = UiCore::mount(Runtime::take().unwrap(), &mut engine, display, |_| label("hi")).unwrap();
     /// let m = core.memory_report(&engine);
     /// assert_eq!(m.engine, engine.memory_report());
@@ -194,7 +194,7 @@ impl UiCore {
     /// use twine_view::UiCore;
     ///
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
-    /// let display = engine.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::Rgb565), 32 * 2 * 4).unwrap();
+    /// let display = engine.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::Rgb565), 32 * 2 * 4, None).unwrap();
     /// let core = UiCore::mount(Runtime::take().unwrap(), &mut engine, display, |_| label("hi")).unwrap();
     /// let report = core.seal(&mut engine);
     /// assert!(alloc_guard::is_sealed(core.partition()));

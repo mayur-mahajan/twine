@@ -1,8 +1,6 @@
 //! One configuration everywhere (R3.S09): the `AppConfig` the firmware ships
 //! (`twine_demos::config()`) given to a `Ui`, to the simulator and to `TestUi` yields the same
-//! engine settings and the same pixels; every host takes a theme the same way (`IntoTheme`).
-
-use std::rc::Rc;
+//! engine settings and the same pixels; every host takes a theme the same way (a `static`).
 
 use twine::core::{ColorFormat, Rotation};
 use twine::engine::ThemeHook;
@@ -75,8 +73,8 @@ fn shared_config_gives_identical_settings_on_ui_and_test_ui() {
         assert_eq!(e.config().refr_period, Duration::ms(20));
         let d = e.default_display().unwrap();
         assert_eq!(
-            e.theme(d).map(|t| t.name()),
-            twine_demos::config().theme.map(|t| t.name())
+            e.theme(d).map(ThemeHook::name),
+            twine_demos::config().theme.map(ThemeHook::name)
         );
     }
     assert_eq!(ui.messages_per_channel(), 4);
@@ -104,7 +102,7 @@ fn shared_config_gives_identical_pixels_on_ui_sim_and_test_ui() {
 #[test]
 fn a_different_config_changes_the_pixels_everywhere() {
     // Guard against a vacuous comparison: the theme of the configuration reaches the pixels.
-    let dark = || config().theme(DefaultTheme::dark());
+    let dark = || config().theme(&lvgl::THEME).mode(ThemeMode::Dark);
     let mut light = ui_with(config());
     let mut night = ui_with(dark());
     light.update();
@@ -180,10 +178,10 @@ fn configured_fault_hook_is_installed_everywhere() {
 
 // ---- One theme parameter type -------------------------------------------------------------
 
+/// One theme for every host: a `static` (`&'static dyn ThemeHook`) and a start mode, attached
+/// when the display is created (R7.S04).
 #[test]
-fn every_host_takes_a_theme_value_or_a_shared_one() {
-    let shared: Rc<dyn ThemeHook> = Rc::new(DefaultTheme::dark());
-    let typed = Rc::new(DefaultTheme::dark());
+fn every_host_takes_a_static_theme() {
     let panel = || MemoryDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565));
     let build = |b: UiBuilder<twine::view::Partial<MemoryDisplay>>| {
         b.runtime(Runtime::current_thread())
@@ -191,49 +189,41 @@ fn every_host_takes_a_theme_value_or_a_shared_one() {
             .buffers(BufferMode::alloc(BufferSpec::default()))
             .build(|_| label("hi"))
     };
-    // A value, a typed `Rc`, an `Rc<dyn ThemeHook>`: the same call everywhere.
-    let by_value = build(Ui::builder(panel()).theme(DefaultTheme::dark()));
-    let by_typed = build(Ui::builder(panel()).theme(typed.clone()));
-    let by_shared = build(Ui::builder(panel()).theme(shared.clone()));
-    for ui in [&by_value, &by_typed, &by_shared] {
-        assert!(ui.engine().theme(ui.display()).is_some());
-    }
-    // A shared theme is installed as is (not copied).
-    assert!(Rc::ptr_eq(
-        by_shared.engine().theme(by_shared.display()).unwrap(),
-        &shared
-    ));
+    let same =
+        |t: Option<&'static dyn ThemeHook>| t.is_some_and(|t| core::ptr::addr_eq(t, &raw const lvgl::THEME));
+    let ui = build(Ui::builder(panel()).theme(&lvgl::THEME).mode(ThemeMode::Dark));
+    assert!(
+        same(ui.engine().theme(ui.display())),
+        "the static itself, not a copy"
+    );
+    assert_eq!(ui.engine().theme_mode(ui.display()), ThemeMode::Dark);
 
-    let t = TestUi::new(W, H).theme(shared.clone()).mount(|_| label("hi"));
-    assert!(Rc::ptr_eq(
-        t.engine().theme(t.engine().default_display().unwrap()).unwrap(),
-        &shared
-    ));
-    let _ = TestUi::new(W, H).theme(typed.clone()).mount(|_| label("hi"));
-    let _ = TestUi::new(W, H)
-        .theme(DefaultTheme::dark())
+    let t = TestUi::new(W, H)
+        .theme(&lvgl::THEME)
+        .mode(ThemeMode::Dark)
         .mount(|_| label("hi"));
+    let d = t.engine().default_display().unwrap();
+    assert!(same(t.engine().theme(d)));
+    assert_eq!(t.engine().theme_mode(d), ThemeMode::Dark);
 
-    for cfg in [
-        SimConfig::new(W, H).theme(DefaultTheme::dark()),
-        SimConfig::new(W, H).theme(typed.clone()),
-        SimConfig::new(W, H).theme(shared.clone()),
-    ] {
-        assert!(cfg.app.theme.is_some());
-    }
-    assert!(Rc::ptr_eq(
-        AppConfig::new().theme(shared.clone()).theme.as_ref().unwrap(),
-        &shared
-    ));
-    let aux = DisplayBuilder::new(panel()).theme(shared.clone());
-    let mut ui = by_value;
+    let cfg = SimConfig::new(W, H).theme(&lvgl::THEME).mode(ThemeMode::Dark);
+    assert!(same(cfg.app.theme));
+    assert!(same(AppConfig::new().theme(&lvgl::THEME).theme));
+
+    // A further display brings its own theme; each display switches its own mode.
+    let aux = DisplayBuilder::new(panel())
+        .theme(&lvgl::THEME)
+        .mode(ThemeMode::Night);
+    let mut ui = ui;
     let d = ui
         .mount_on(aux.buffers(BufferMode::alloc(BufferSpec::default())), |_| {
             label("aux")
         })
         .unwrap();
-    assert!(Rc::ptr_eq(ui.engine().theme(d).unwrap(), &shared));
-    ui.display_mut(d).unwrap().set_theme(typed); // run-time switch: same parameter type
-    ui.set_theme(shared.clone());
-    assert!(Rc::ptr_eq(ui.engine().theme(ui.display()).unwrap(), &shared));
+    assert!(same(ui.engine().theme(d)));
+    assert_eq!(ui.engine().theme_mode(d), ThemeMode::Night);
+    ui.display_mut(d).unwrap().set_theme_mode(ThemeMode::Light);
+    ui.update();
+    assert_eq!(ui.engine().theme_mode(d), ThemeMode::Light);
+    assert_eq!(ui.engine().theme_mode(ui.display()), ThemeMode::Dark);
 }

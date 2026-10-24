@@ -21,7 +21,7 @@ use twine_core::fault::{FaultCounts, FaultKind, Faults};
 use twine_core::{Duration, Fraction, Instant, Rect, Rotation};
 use twine_engine::{
     BufferMode, DisplayCmd, DisplayId, DisplayRequests, DisplayResponses, DriverErrorCode, Engine,
-    EngineConfig, EngineError, FaultHook, FaultRecord, IntoTheme, TimingReport, Wake,
+    EngineConfig, EngineError, FaultHook, FaultRecord, ThemeHook, ThemeMode, TimingReport, Wake,
 };
 use twine_hal::{
     AsyncDisplayDriver, AsyncInputWait, AsyncPlatform, DrawBufferMem, InputData, InputDevice, InputKind,
@@ -423,7 +423,8 @@ impl<D, W, R, P, B> AsyncUiBuilder<D, W, R, P, B> {
         }
     }
 
-    /// The theme of the display.
+    /// The theme of the display: a `static` theme, attached when the display is created
+    /// (sets `AppConfig::theme`).
     /// ```
     /// # use twine_core::{ColorFormat, Rect};
     /// # use twine_hal::{AsyncDisplayDriver, DisplayInfo};
@@ -436,11 +437,19 @@ impl<D, W, R, P, B> AsyncUiBuilder<D, W, R, P, B> {
     /// #     async fn flush(&mut self, _: Rect, _: &[u8]) -> Result<(), ()> { Ok(()) }
     /// # }
     /// # fn buf() -> &'static mut [u8] { Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice()) }
-    /// let ui = Ui::builder_async(Panel).runtime(Runtime::take().unwrap()).buffers(BufferMode::partial_single(buf())).platform(&MockPlatform::new()).theme(DefaultTheme::dark()).build(|_| label("hi"));
+    /// static THEME: Lvgl = Lvgl::new();
+    /// let ui = Ui::builder_async(Panel).runtime(Runtime::take().unwrap()).buffers(BufferMode::partial_single(buf())).platform(&MockPlatform::new()).theme(&THEME).mode(ThemeMode::Dark).build(|_| label("hi"));
     /// # let _ = ui;
     /// ```
-    pub fn theme(mut self, t: impl IntoTheme) -> Self {
-        self.settings.app.theme = Some(t.into_theme());
+    pub fn theme(mut self, theme: &'static dyn ThemeHook) -> Self {
+        self.settings.app.theme = Some(theme);
+        self
+    }
+
+    /// The mode the display starts in (sets `AppConfig::theme_mode`; example: see
+    /// [`theme`](Self::theme)).
+    pub fn mode(mut self, mode: ThemeMode) -> Self {
+        self.settings.app.theme_mode = Some(mode);
         self
     }
 
@@ -662,7 +671,7 @@ impl<D, W, R, P, B> AsyncUiBuilder<D, W, R, P, B> {
     ///     .runtime(Runtime::take().unwrap())
     ///     .buffers(BufferMode::partial_single(buf()))
     ///     .platform(&MockPlatform::new())
-    ///     .app_config(AppConfig::new().theme(DefaultTheme::dark()).motion(Motion::Reduced))
+    ///     .app_config(AppConfig::new().theme(&lvgl::THEME).mode(ThemeMode::Dark).motion(Motion::Reduced))
     ///     .build(|_| label("hi"));
     /// assert_eq!(ui.engine().motion(), Motion::Reduced);
     /// ```
@@ -746,8 +755,8 @@ impl<D, W, R, P, B> AsyncUiBuilder<D, W, R, P, B> {
         let parts = self.parts;
         let (engine, core) = self.settings.build(
             self.runtime.into_part(),
-            |e| {
-                let display = e.add_chunked_display(info, chunk_bytes)?;
+            |e, theme| {
+                let display = e.add_chunked_display(info, chunk_bytes, parts.display_theme().or(theme))?;
                 Ok((display, parts.install(e, display)?))
             },
             app,

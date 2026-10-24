@@ -93,7 +93,7 @@ fn buffered(rotation: Rotation, rows: usize) -> Vec<u8> {
         held: None,
     };
     let len = usize::from(W) * 2 * rows;
-    e.add_display(disp, BufferMode::partial_double(leak(len), leak(len)))
+    e.add_display(disp, BufferMode::partial_double(leak(len), leak(len)), None)
         .unwrap();
     scene(&mut e);
     let _ = e.step(Instant::from_millis(0));
@@ -107,7 +107,7 @@ fn chunked(rotation: Rotation, rows: usize) -> (Vec<u8>, u16) {
     let fb: Fb = Rc::new(RefCell::new(vec![0; usize::from(W) * usize::from(H) * 2]));
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     let len = usize::from(W) * 2 * rows;
-    let d = e.add_chunked_display(info, len).unwrap();
+    let d = e.add_chunked_display(info, len, None).unwrap();
     scene(&mut e);
     let now = Instant::from_millis(0);
     let wake = e.step(now);
@@ -155,7 +155,7 @@ fn chunk_api_matches_buffered_refresh_pixel_for_pixel() {
 fn next_frame_respects_refr_period_and_reports_due() {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     let len = usize::from(W) * 2 * 16;
-    let d = e.add_chunked_display(info(Rotation::Deg0), len).unwrap();
+    let d = e.add_chunked_display(info(Rotation::Deg0), len, None).unwrap();
     scene(&mut e);
     let t0 = Instant::from_millis(0);
     let _ = e.step(t0);
@@ -187,7 +187,7 @@ fn next_frame_respects_refr_period_and_reports_due() {
 fn unfinished_frame_is_redrawn_next_time() {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     let len = usize::from(W) * 2 * 8;
-    let _d = e.add_chunked_display(info(Rotation::Deg0), len).unwrap();
+    let _d = e.add_chunked_display(info(Rotation::Deg0), len, None).unwrap();
     scene(&mut e);
     let t0 = Instant::from_millis(0);
     let _ = e.step(t0);
@@ -206,5 +206,5 @@ fn unfinished_frame_is_redrawn_next_time() {
 #[test]
 fn chunk_buffer_too_small_is_rejected() {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
-    assert!(e.add_chunked_display(info(Rotation::Deg0), 10).is_err());
+    assert!(e.add_chunked_display(info(Rotation::Deg0), 10, None).is_err());
 }

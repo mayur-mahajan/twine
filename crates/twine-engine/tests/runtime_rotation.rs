@@ -45,7 +45,7 @@ fn scene(e: &mut Engine) -> NodeId {
 
 fn engine(panel: impl DisplayDriver + 'static, buffers: BufferMode) -> (Engine, DisplayId, NodeId) {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
-    let d = e.add_display(panel, buffers).unwrap();
+    let d = e.add_display(panel, buffers, None).unwrap();
     let b = scene(&mut e);
     e.step(t(0));
     (e, d, b)
@@ -223,7 +223,11 @@ fn rotation_waits_for_a_flush_in_flight() {
         .with_latency(3);
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     let d = e
-        .add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 32 }))
+        .add_display(
+            panel,
+            BufferMode::alloc(BufferSpec::PartialSingle { rows: 32 }),
+            None,
+        )
         .unwrap();
     scene(&mut e);
     e.step(t(0)); // one chunk, still in flight
@@ -427,6 +431,7 @@ fn inactive_for_and_the_idle_timeout() {
         .add_display(
             MemoryDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565)),
             alloc_buffers(),
+            None,
         )
         .unwrap();
     scene(&mut e);
@@ -460,6 +465,7 @@ fn inactive_for_and_the_idle_timeout() {
         .add_display(
             MemoryDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565)),
             alloc_buffers(),
+            None,
         )
         .unwrap();
     plain.step(t(0));
@@ -470,7 +476,7 @@ fn inactive_for_and_the_idle_timeout() {
 fn framebuffer_displays_cannot_rotate_at_run_time() {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     let fb = twine_testing::MockFramebufferDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565), true, 0);
-    let d = e.add_framebuffer_display(fb, BufferMode::full()).unwrap();
+    let d = e.add_framebuffer_display(fb, BufferMode::full(), None).unwrap();
     assert!(matches!(
         e.set_rotation(d, Rotation::Deg90),
         Err(twine_engine::EngineError::InvalidConfig(_))

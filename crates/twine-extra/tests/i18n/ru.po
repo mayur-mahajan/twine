@@ -1,0 +1,17 @@
+# Russian (gettext, ID-based: msgid is the key).
+msgid ""
+msgstr ""
+"Language: ru\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+msgid "hello"
+msgstr "Привет"
+
+msgid "moved"
+msgstr "{1}: перемещено {0}"
+
+msgid "items"
+msgid_plural "items"
+msgstr[0] "{count} вещь"
+msgstr[1] "{count} вещи"
+msgstr[2] "{count} вещей"

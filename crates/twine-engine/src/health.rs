@@ -75,7 +75,7 @@ pub enum DisplayState {
 /// use twine_hal::DisplayInfo;
 ///
 /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-/// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64).unwrap();
+/// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64, None).unwrap();
 /// let h = e.display_health(d).unwrap();
 /// assert_eq!((h.state, h.consecutive_errors, h.last_ok), (DisplayState::Healthy, 0, None));
 /// ```
@@ -127,7 +127,7 @@ impl Engine {
     /// use twine_hal::DisplayInfo;
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64, None).unwrap();
     /// let area = Rect::from_xywh(0, 0, 8, 8);
     /// e.report_flush(d, area, Err(DriverErrorCode::new(5))); // the driver's flush failed
     /// let h = e.display_health(d).unwrap();
@@ -178,7 +178,7 @@ impl Engine {
     ///     ..EngineConfig::default()
     /// };
     /// let mut e = Engine::new(config).unwrap();
-    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64, None).unwrap();
     /// e.report_flush(d, Rect::from_xywh(0, 0, 8, 8), Err(DriverErrorCode::NONE));
     /// assert_eq!(e.display_health(d).unwrap().state, DisplayState::Halted);
     /// e.recover_display(d).unwrap(); // the application reset the panel
@@ -225,7 +225,7 @@ impl Engine {
     /// use twine_hal::DisplayInfo;
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64, None).unwrap();
     /// let area = Rect::from_xywh(0, 0, 8, 4);
     /// e.report_flush(d, area, Err(DriverErrorCode::new(3))); // area redrawn by a later frame
     /// assert!(e.take_faults().contains(FaultKind::FlushError));
@@ -268,7 +268,7 @@ impl Engine {
     /// use twine_hal::DisplayInfo;
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64, None).unwrap();
     /// e.step(Instant::from_millis(0));
     /// e.refresh_begin(Instant::from_millis(0)).unwrap();
     /// let mut buf = [0u8; 64];

@@ -28,11 +28,12 @@ fn format_disabled_is_credited_to_the_engine_that_refused_the_display() {
         .add_display(
             MemoryDisplay::new(good),
             BufferMode::partial_single(leak(good.bytes_per_row() * 8)),
+            None,
         )
         .unwrap();
 
     let bad = DisplayInfo::new(32, 16, ColorFormat::A8); // never a draw format
-    let r = a.add_chunked_display(bad, bad.bytes_per_row() * 8);
+    let r = a.add_chunked_display(bad, bad.bytes_per_row() * 8, None);
     assert_eq!(r, Err(EngineError::FormatDisabled(ColorFormat::A8)));
 
     let _ = b.step(twine_core::Instant::from_millis(1));

@@ -1,15 +1,16 @@
-//! `DefaultTheme`: LVGL's default theme values, DPI and display-size scaling, focus
-//! outlines, theme chaining, and the look of a container (snapshots).
+//! `Lvgl`: LVGL's default theme values, DPI and display-size scaling, focus outlines,
+//! extension by a design system, and the look of a container (snapshots).
 #![allow(clippy::unreadable_literal)] // colors as LVGL writes them (0xRRGGBB)
 
-use std::rc::Rc;
-
 use twine_core::{Color, Opa};
-use twine_engine::{Engine, NodeId, OBJ_CLASS, Obj, ObjFlags, ThemeCx, ThemeHook, Widget, WidgetClass};
-use twine_style::{Part, PropId, Selector, State, StyleBuf};
+use twine_engine::{
+    ComputedRecipe, DesignSystem, Engine, NodeId, OBJ_CLASS, Obj, ObjFlags, RecipeRef, Theme, ThemeCx,
+    ThemeHook, Widget, WidgetClass,
+};
+use twine_style::design::{self, ElementTable};
+use twine_style::{Part, PropId, Selector, State, Style, style};
 use twine_testing::EngineHarness;
-use twine_text::Font;
-use twine_theme::{DefaultTheme, DisplaySize, Palette, Theme, ThemeMode};
+use twine_theme::{DisplaySize, Lvgl, Palette, ThemeMode, lvgl};
 
 /// A stand-in for the button widget: a class of its own, themed like a button (its base).
 struct FakeButton;
@@ -38,7 +39,7 @@ fn card_scene(h: EngineHarness) -> (EngineHarness, NodeId) {
 
 #[test]
 fn screen_bg_matches_lvgl_light() {
-    let h = EngineHarness::new(240, 160).theme(DefaultTheme::light());
+    let h = EngineHarness::new(240, 160).theme(&lvgl::THEME);
     let e = h.engine();
     let s = screen(e);
     // LIGHT_COLOR_SCR = lv_palette_lighten(LV_PALETTE_GREY, 4); LIGHT_COLOR_TEXT = darken(GREY, 4)
@@ -59,7 +60,9 @@ fn screen_bg_matches_lvgl_light() {
 
 #[test]
 fn screen_bg_matches_lvgl_dark() {
-    let h = EngineHarness::new(240, 160).theme(DefaultTheme::dark());
+    let h = EngineHarness::new(240, 160)
+        .theme(&lvgl::THEME)
+        .mode(ThemeMode::Dark);
     let e = h.engine();
     let s = screen(e);
     // DARK_COLOR_SCR = 0x15171A; DARK_COLOR_TEXT = lv_palette_lighten(GREY, 5)
@@ -101,11 +104,9 @@ fn card_matches_lvgl_small_display() {
 
 #[test]
 fn card_radius_scales_with_dpi() {
-    for (dpi, r) in [(130, 10), (260, 20)] {
-        let t = DefaultTheme::builder()
-            .dpi(dpi)
-            .display_size(DisplaySize::Large)
-            .build();
+    static T130: Lvgl = Lvgl::new().dpi(130).display_size(DisplaySize::Large);
+    static T260: Lvgl = Lvgl::new().dpi(260).display_size(DisplaySize::Large);
+    for (t, dpi, r) in [(&T130, 130, 10), (&T260, 260, 20)] {
         let (h, card) = card_scene(EngineHarness::new(240, 160).theme(t));
         // RADIUS_DEFAULT = LV_DPX_CALC(dpi, 12) on large displays.
         assert_eq!(
@@ -170,7 +171,9 @@ fn button_styles_match_lvgl() {
 
 #[test]
 fn dark_buttons_have_no_shadow() {
-    let mut h = EngineHarness::new(240, 160).theme(DefaultTheme::dark());
+    let mut h = EngineHarness::new(240, 160)
+        .theme(&lvgl::THEME)
+        .mode(ThemeMode::Dark);
     let s = screen(h.engine());
     let e = h.engine_mut();
     let b = e.create(s, Box::new(FakeButton)).unwrap();
@@ -184,113 +187,123 @@ fn dark_buttons_have_no_shadow() {
     assert!(e.compute_ext_draw(b) > 0);
 }
 
-/// A theme that makes every container red and counts its calls.
-struct RedCards(Rc<StyleBuf>);
-impl ThemeHook for RedCards {
-    fn apply(&self, cx: &mut ThemeCx<'_>, class: &'static WidgetClass) {
-        if class.is(&OBJ_CLASS) && cx.parent().is_some() {
-            cx.add_style(Selector::MAIN, self.0.clone());
-        }
-    }
-    fn font_normal(&self) -> &'static Font {
-        &twine_assets::fonts::MONTSERRAT_14
-    }
-}
-impl Theme for RedCards {
-    fn font_small(&self) -> &'static Font {
-        self.font_normal()
-    }
-    fn font_large(&self) -> &'static Font {
-        self.font_normal()
-    }
-}
-
+/// The button shadow is elevation level 1: LVGL's 3 dp wide, 3 dp down by default, and a
+/// mode table that retunes `ELEVATION_1_WIDTH` / `ELEVATION_1_OFFSET_Y` retunes the button
+/// with it (the style sets no spread, like LVGL).
 #[test]
-fn parent_theme_applied_first() {
-    let parent = Rc::new(RedCards(Rc::new(
-        StyleBuf::new().bg_color(Color::RED).shadow_width(9),
-    )));
-    let t = DefaultTheme::builder().parent(parent).build();
-    let (h, card) = card_scene(EngineHarness::new(240, 160).theme(t));
-    let e = h.engine();
-    // The child theme (default) wins where both set a property...
-    assert_eq!(e.style_color(card, Part::Main, PropId::BgColor), Color::WHITE);
-    // ...and the parent's other properties remain.
-    assert_eq!(e.style_i32(card, Part::Main, PropId::ShadowWidth), 9);
+fn button_shadow_is_elevation_level_1() {
+    use twine_style::Length;
+    use twine_style::design::{Elevation, ElevationLevel};
 
-    // A theme extending the default one: the child's styles win.
-    let child = RedChild(
-        Rc::new(DefaultTheme::light()),
-        Rc::new(StyleBuf::new().bg_color(Color::RED)),
-    );
-    let (h, card) = card_scene(EngineHarness::new(240, 160).theme(child));
+    static RAISED: ElementTable = Lvgl::SET.table(ThemeMode::Light).elevation(Elevation {
+        level_1: ElevationLevel {
+            width: Length::Px(9),
+            offset_y: Length::Px(5),
+            spread: Length::Px(2),
+        },
+        ..Elevation::NONE
+    });
+    static RAISED_THEME: Lvgl = Lvgl::new().modes(&[(ThemeMode::Light, &RAISED)]);
+    let mut h = EngineHarness::new(240, 160).theme(&lvgl::THEME);
+    let s = screen(h.engine());
+    let e = h.engine_mut();
+    let b = e.create(s, Box::new(FakeButton)).unwrap();
+    let d = e.default_display().unwrap();
+    let m = Part::Main;
+    let level = |el| match e.design_value(d, el) {
+        Some(Length::Px(px)) => px,
+        other => panic!("ELEVATION_1 element: {other:?}"),
+    };
     assert_eq!(
-        h.engine().style_color(card, Part::Main, PropId::BgColor),
-        Color::RED
+        e.style_i32(b, m, PropId::ShadowWidth),
+        level(design::ELEVATION_1_WIDTH)
     );
-    assert_eq!(h.engine().style_i32(card, Part::Main, PropId::BorderWidth), 2);
+    assert_eq!(
+        e.style_i32(b, m, PropId::ShadowOffsetY),
+        level(design::ELEVATION_1_OFFSET_Y)
+    );
+    assert_eq!(e.style_i32(b, m, PropId::ShadowWidth), 2); // LV_DPX_CALC(130, 3)
+    assert_eq!(e.style_i32(b, m, PropId::ShadowSpread), 0);
+
+    let mut h = EngineHarness::new(240, 160).theme(&RAISED_THEME);
+    let s = screen(h.engine());
+    let e = h.engine_mut();
+    let b = e.create(s, Box::new(FakeButton)).unwrap();
+    assert_eq!(e.style_i32(b, m, PropId::ShadowWidth), 9);
+    assert_eq!(e.style_i32(b, m, PropId::ShadowOffsetY), 5);
+    assert_eq!(e.style_i32(b, m, PropId::ShadowSpread), 0);
 }
 
-/// A user theme on top of the default theme (LVGL's documented extension pattern).
-struct RedChild(Rc<DefaultTheme>, Rc<StyleBuf>);
-impl ThemeHook for RedChild {
-    fn apply(&self, cx: &mut ThemeCx<'_>, class: &'static WidgetClass) {
-        self.0.apply(cx, class);
-        if class.is(&OBJ_CLASS) && cx.parent().is_some() {
-            cx.add_style(Selector::MAIN, self.1.clone());
-        }
+static RED: Style = style! { bg_color: Color::RED };
+
+/// Plain objects: the LVGL look (its recipe), red on top.
+fn red_obj(cx: &mut ThemeCx<'_>) {
+    if let Some(r) = lvgl::THEME.recipe(&OBJ_CLASS) {
+        cx.add_recipe(r);
     }
-    fn font_normal(&self) -> &'static Font {
-        self.0.font_normal()
+    if cx.parent().is_some() {
+        cx.add_style(Selector::MAIN, &RED);
     }
-    // A wrapping theme forwards the modes and the design elements of the theme it extends.
-    fn mode(&self) -> ThemeMode {
-        ThemeHook::mode(&*self.0)
+}
+static RED_OBJ: ComputedRecipe = ComputedRecipe::new("RED_OBJ", &OBJ_CLASS, red_obj);
+
+/// A design system extending the LVGL theme (LVGL's documented extension pattern): red plain
+/// objects, every other class LVGL's.
+struct RedCards;
+impl DesignSystem for RedCards {
+    type Base = Lvgl;
+    const NAME: &'static str = "red_cards";
+    const MODES: &'static [(ThemeMode, &'static ElementTable)] = lvgl::MODES;
+    fn recipe(class: &'static WidgetClass) -> Option<RecipeRef> {
+        RED_OBJ.for_class(class)
     }
-    fn modes(&self) -> &'static [ThemeMode] {
-        self.0.modes()
-    }
-    fn design(
-        &self,
-        mode: ThemeMode,
-        dpi: u16,
-        resolution: twine_core::Size,
-    ) -> Option<Rc<twine_style::design::ElementTable>> {
-        self.0.design(mode, dpi, resolution)
-    }
+}
+static RED_CARDS: Theme<RedCards> = Theme::new();
+
+#[test]
+fn design_system_extends_the_lvgl_theme() {
+    let (mut h, card) = card_scene(EngineHarness::new(240, 160).theme(&RED_CARDS));
+    let s = screen(h.engine());
+    let b = h.engine_mut().create(s, Box::new(FakeButton)).unwrap();
+    let e = h.engine();
+    // The design system's recipe wins where both set a property...
+    assert_eq!(e.style_color(card, Part::Main, PropId::BgColor), Color::RED);
+    // ...LVGL's other card properties remain (the recipe adds LVGL's first)...
+    assert_eq!(e.style_i32(card, Part::Main, PropId::BorderWidth), 2);
+    // ...the classes it does not restyle keep LVGL's look, and LVGL's metrics apply.
+    assert_eq!(
+        e.style_color(b, Part::Main, PropId::BgColor),
+        Palette::Blue.main()
+    );
+    assert_eq!(e.style_i32(b, Part::Main, PropId::ShadowWidth), 2);
+    assert_eq!(
+        e.style_color(s, Part::Main, PropId::BgColor),
+        Color::hex(0xF5F5F5),
+        "screens: the base's"
+    );
 }
 
 #[test]
-fn theme_mode_and_colors() {
-    let t = DefaultTheme::builder()
-        .primary(Palette::Teal)
-        .secondary(Palette::Amber)
-        .mode(ThemeMode::Dark)
+fn theme_colors_from_a_tuned_set() {
+    static TEAL_DARK: ElementTable = Lvgl::SET
+        .primary(Palette::Teal.main())
+        .secondary(Palette::Amber.main())
         .fonts(twine_theme::FontScale::uniform(
             &twine_assets::fonts::MONTSERRAT_14,
         ))
-        .build();
-    assert_eq!(t.mode(), ThemeMode::Dark);
-    assert_eq!(t.primary(), Palette::Teal.main());
-    assert_eq!(t.secondary(), Palette::Amber.main());
-    let table = t
-        .design(ThemeMode::Dark, 130, twine_core::Size::new(240, 160))
-        .unwrap();
+        .table(ThemeMode::Dark);
+    static TEAL: Lvgl = Lvgl::new().modes(&[(ThemeMode::Dark, &TEAL_DARK)]);
+    assert_eq!(ThemeHook::modes(&TEAL), &[ThemeMode::Dark]);
+    let table = TEAL.design(ThemeMode::Dark).unwrap();
+    assert_eq!(table.get(design::PRIMARY), Some(Palette::Teal.main()));
+    assert_eq!(table.get(design::SECONDARY), Some(Palette::Amber.main()));
+    assert_eq!(TEAL.name(), "lvgl");
+    let (h, card) = card_scene(EngineHarness::new(240, 160).theme(&TEAL));
+    assert_eq!(h.engine().theme_mode(h.display()), ThemeMode::Dark);
     assert_eq!(
-        table.get(twine_style::design::PRIMARY),
-        Some(Palette::Teal.main())
+        h.engine().style_color(card, Part::Main, PropId::BgColor),
+        Color::hex(0x282B30)
     );
-    assert_eq!(
-        table.get(twine_style::design::SECONDARY),
-        Some(Palette::Amber.main())
-    );
-    assert_eq!(t.name(), "default");
-    // Style sets are cached per (dpi, size).
-    let a = t.styles(130, twine_core::Size::new(240, 160));
-    let b = t.styles(130, twine_core::Size::new(240, 160));
-    assert!(Rc::ptr_eq(&a, &b));
-    let c = t.styles(130, twine_core::Size::new(800, 480));
-    assert!(!Rc::ptr_eq(&a, &c));
 }
 
 #[test]
@@ -301,6 +314,10 @@ fn snapshot_theme_default_container_light() {
 
 #[test]
 fn snapshot_theme_default_container_dark() {
-    let (mut h, _) = card_scene(EngineHarness::new(240, 160).theme(DefaultTheme::dark()));
+    let (mut h, _) = card_scene(
+        EngineHarness::new(240, 160)
+            .theme(&lvgl::THEME)
+            .mode(ThemeMode::Dark),
+    );
     h.assert_snapshot("theme_default_container_dark");
 }

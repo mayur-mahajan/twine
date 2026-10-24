@@ -7,11 +7,11 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use twine_engine::NodeId;
-use twine_style::design::ColorElement;
+use twine_style::design::{ColorElement, ElementTable};
 use twine_style::{StyleValue, ThemeMode};
 use twine_testing::alloc::{CountingAllocator, count_allocs};
 use twine_testing::{TestUi, by_id};
-use twine_theme::default::colors;
+use twine_theme::lvgl::colors;
 use twine_view::prelude::*;
 
 #[global_allocator]
@@ -22,14 +22,28 @@ const BOOST: ColorElement = ColorElement::custom(0);
 const BOOST_LIGHT: Color = Color::hex(0x00E6_5100);
 const BOOST_DARK: Color = Color::hex(0x00FF_B74D);
 
-fn theme() -> Rc<dyn twine_engine::ThemeHook> {
-    Rc::new(
-        DefaultTheme::builder()
-            .element(BOOST, BOOST_LIGHT)
-            .element_in(ThemeMode::Light, BOOST, BOOST_LIGHT)
-            .element_in(ThemeMode::Dark, BOOST, BOOST_DARK)
-            .build(),
-    )
+/// The LVGL theme's tables with the application element `BOOST`.
+static LIGHT: ElementTable = Lvgl::SET
+    .table(ThemeMode::Light)
+    .custom(&[Some(StyleValue::Color(BOOST_LIGHT))]);
+static DARK: ElementTable = Lvgl::SET
+    .table(ThemeMode::Dark)
+    .custom(&[Some(StyleValue::Color(BOOST_DARK))]);
+static NIGHT: ElementTable = Lvgl::SET
+    .table(ThemeMode::Night)
+    .custom(&[Some(StyleValue::Color(BOOST_LIGHT))]);
+static HIGH_CONTRAST: ElementTable = Lvgl::SET
+    .table(ThemeMode::HighContrast)
+    .custom(&[Some(StyleValue::Color(BOOST_LIGHT))]);
+static THEME: Lvgl = Lvgl::new().modes(&[
+    (ThemeMode::Light, &LIGHT),
+    (ThemeMode::Dark, &DARK),
+    (ThemeMode::Night, &NIGHT),
+    (ThemeMode::HighContrast, &HIGH_CONTRAST),
+]);
+
+fn theme() -> &'static dyn twine_engine::ThemeHook {
+    &THEME
 }
 
 static THEMED: Style = style! { bg: design::SURFACE, border: (2, design::OUTLINE) };
@@ -187,11 +201,7 @@ fn theme_mode_and_get_are_tracked() {
     t.run_until_idle();
     assert_eq!(t.find(by_id("mode")).text(), "Light");
     assert_eq!(use_theme(t.root_scope()).mode(), ThemeMode::Light);
-
-    // A new theme (same mode) re-evaluates `get`.
-    use_theme(t.root_scope()).set(DefaultTheme::builder().element(BOOST, Color::RED).build());
-    t.run_until_idle();
-    assert_eq!(t.find(by_id("boost")).text(), Color::RED.to_string());
+    assert_eq!(t.find(by_id("boost")).text(), BOOST_LIGHT.to_string());
 }
 
 #[test]
@@ -200,7 +210,7 @@ fn switching_modes_allocates_nothing_after_warm_up() {
     t.run_until_idle();
     let handle = use_theme(t.root_scope());
     assert_eq!(handle.modes(), &ThemeMode::ALL);
-    // Warm-up: the theme builds its table of each mode once.
+    // Warm-up: the engine's own buffers (the tables are `'static`).
     for mode in ThemeMode::ALL {
         handle.set_mode(mode);
         t.run_until_idle();
@@ -238,9 +248,13 @@ fn switching_modes_allocates_nothing_after_warm_up() {
 
 #[test]
 fn unsupported_mode_is_ignored() {
-    // The simple theme has no dark mode (light and high contrast only).
+    /// The simple theme listing light and high contrast only (no dark mode).
+    static TWO: twine_theme::Simple = twine_theme::Simple::new().modes(&[
+        (ThemeMode::Light, &simple::LIGHT),
+        (ThemeMode::HighContrast, &simple::HIGH_CONTRAST),
+    ]);
     let mut t = TestUi::new(100, 100)
-        .theme(SimpleTheme::new())
+        .theme(&TWO)
         .mount(|_| container(()).size(10, 10).bg(design::SURFACE).test_id("c"));
     t.run_until_idle();
     assert_eq!(

@@ -14,8 +14,7 @@
 
 use twine::prelude::*;
 
-use crate::assets::{frame0::FRAME0, frame1::FRAME1, frame2::FRAME2, frame3::FRAME3};
-use crate::assets::{power_off::POWER_OFF, power_on::POWER_ON};
+use crate::assets::{FRAME0, FRAME1, FRAME2, FRAME3, POWER_OFF, POWER_ON};
 
 /// The animation frames.
 static FRAMES: [ImageSource; 4] = [
@@ -55,6 +54,26 @@ fn titled_card(
         .padding(8)
         .gap(6)
 }
+
+/// The LVGL theme (every mode) with only the per-class recipes of the widget classes this demo
+/// creates: what the firmware links (pay for what you use — the other recipes and their
+/// styles are not in the image). The list is what `cargo xtask theme-recipes -- -p
+/// twine-demos --test controls` prints; the demo's tests run with this theme and check it with
+/// `twine_testing::assert_theme_covers` (and their snapshots, that it draws like the full
+/// theme).
+pub static THEME: Lvgl = Lvgl::new().recipes(&[
+    &lvgl::OBJ,
+    &lvgl::CARD,
+    &lvgl::LABEL,
+    &lvgl::SLIDER,
+    &lvgl::BAR,
+    &lvgl::ARC,
+    &lvgl::SWITCH,
+    &lvgl::LED,
+    &lvgl::IMAGE_BUTTON,
+    &lvgl::CHECKBOX,
+    &lvgl::LINE,
+]);
 
 /// The controls demo with the running spinner and image animation.
 ///

@@ -49,12 +49,12 @@ impl DisplayDriver for NullPanel {
 fn typed_statics_are_accepted_and_render_in_chunks() {
     let mut e = engine();
     let d = e
-        .add_display(panel(), BufferMode::partial_double_from(statics::<2>()))
+        .add_display(panel(), BufferMode::partial_double_from(statics::<2>()), None)
         .unwrap();
     e.step(twine_core::Instant::from_millis(0));
     assert_eq!(e.last_stats(d).chunks, 4, "32 rows in 8-row chunks");
     let mut e = engine();
-    e.add_display(panel(), BufferMode::partial_single_from(statics::<1>()))
+    e.add_display(panel(), BufferMode::partial_single_from(statics::<1>()), None)
         .unwrap();
 }
 
@@ -64,7 +64,11 @@ fn misaligned_caller_memory_is_refused_with_a_clear_error() {
     let off = mem.as_ptr().align_offset(4) + 1;
     let mut e = engine();
     let err = e
-        .add_display(panel(), BufferMode::partial_single(&mut mem[off..off + BYTES]))
+        .add_display(
+            panel(),
+            BufferMode::partial_single(&mut mem[off..off + BYTES]),
+            None,
+        )
         .unwrap_err();
     assert_eq!(err, EngineError::BufferMisaligned);
     let msg = err.to_string();
@@ -82,6 +86,7 @@ fn too_small_caller_memory_is_refused_with_sizes() {
         .add_display(
             panel(),
             BufferMode::partial_single(&mut statics::<1>()[0].as_mut_slice()[..10]),
+            None,
         )
         .unwrap_err();
     assert_eq!(err, EngineError::BufferTooSmall { needed: 128, got: 10 });
@@ -92,13 +97,13 @@ fn too_small_caller_memory_is_refused_with_sizes() {
 fn modes_must_match_the_display_kind() {
     let mut e = engine();
     assert_eq!(
-        e.add_display(panel(), BufferMode::Full).unwrap_err(),
+        e.add_display(panel(), BufferMode::Full, None).unwrap_err(),
         EngineError::BufferModeMismatch
     );
     let info = DisplayInfo::new(W, H, ColorFormat::Rgb565);
     let fb = MockFramebufferDisplay::new(info, true, 0);
     assert_eq!(
-        e.add_framebuffer_display(fb, BufferMode::alloc(BufferSpec::default()))
+        e.add_framebuffer_display(fb, BufferMode::alloc(BufferSpec::default()), None)
             .unwrap_err(),
         EngineError::BufferModeMismatch
     );
@@ -108,8 +113,12 @@ fn modes_must_match_the_display_kind() {
 fn alloc_sizes_the_buffers_for_the_display() {
     let mut e = engine();
     let (d, stats) = count_allocs(|| {
-        e.add_display(panel(), BufferMode::alloc(BufferSpec::PartialDouble { rows: 8 }))
-            .unwrap()
+        e.add_display(
+            panel(),
+            BufferMode::alloc(BufferSpec::PartialDouble { rows: 8 }),
+            None,
+        )
+        .unwrap()
     });
     assert!(stats.bytes >= 2 * BYTES as u64, "{stats:?}");
     e.step(twine_core::Instant::from_millis(0));
@@ -120,6 +129,7 @@ fn alloc_sizes_the_buffers_for_the_display() {
         .add_display(
             panel(),
             BufferMode::alloc(BufferSpec::PartialSingle { rows: 500 }),
+            None,
         )
         .unwrap();
     e.step(twine_core::Instant::from_millis(0));
@@ -133,25 +143,30 @@ fn regression_refused_display_allocates_no_buffers() {
     // A format whose renderer is never compiled in (`A8` is not a draw format).
     let mut e = engine();
     let a8 = NullPanel(DisplayInfo::new(320, 240, ColorFormat::A8), None);
-    let (r, stats) = count_allocs(|| e.add_display(a8, spec));
+    let (r, stats) = count_allocs(|| e.add_display(a8, spec, None));
     assert_eq!(r.unwrap_err(), EngineError::FormatDisabled(ColorFormat::A8));
     assert!(stats.bytes < 1024, "a refused display allocated {stats:?}");
     assert_eq!(stats.live, 0, "a refused display leaked {stats:?}");
 
     // A display whose row alignment exceeds its height.
     let tall_align = NullPanel(DisplayInfo::new(320, 4, ColorFormat::Rgb565).with_align(8), None);
-    let (r, stats) = count_allocs(|| e.add_display(tall_align, BufferMode::alloc(BufferSpec::default())));
+    let (r, stats) =
+        count_allocs(|| e.add_display(tall_align, BufferMode::alloc(BufferSpec::default()), None));
     assert!(matches!(r, Err(EngineError::BufferTooSmall { .. })), "{r:?}");
     assert_eq!((stats.allocs, stats.live), (0, 0), "{stats:?}");
 
     // Too many displays.
     let mut e = engine();
     for _ in 0..twine_engine::MAX_DISPLAYS {
-        e.add_display(panel(), BufferMode::alloc(BufferSpec::PartialSingle { rows: 1 }))
-            .unwrap();
+        e.add_display(
+            panel(),
+            BufferMode::alloc(BufferSpec::PartialSingle { rows: 1 }),
+            None,
+        )
+        .unwrap();
     }
     let fifth = panel();
-    let (r, stats) = count_allocs(|| e.add_display(fifth, BufferMode::alloc(BufferSpec::default())));
+    let (r, stats) = count_allocs(|| e.add_display(fifth, BufferMode::alloc(BufferSpec::default()), None));
     assert_eq!(r.unwrap_err(), EngineError::TooManyDisplays);
     // (The refused driver itself is dropped: `deallocs` may be non-zero.)
     assert_eq!((stats.allocs, stats.bytes), (0, 0), "{stats:?}");
@@ -177,7 +192,7 @@ fn regression_node_budget_refuses_display_before_allocating() {
         e.set_limits(&limits(3)).unwrap();
         let p = panel();
         let (r, stats) =
-            count_allocs(|| e.add_display(p, BufferMode::alloc(BufferSpec::PartialDouble { rows })));
+            count_allocs(|| e.add_display(p, BufferMode::alloc(BufferSpec::PartialDouble { rows }), None));
         assert_eq!(r.unwrap_err(), EngineError::TooManyNodes);
         assert!(e.take_faults().contains(twine_core::fault::FaultKind::Capacity));
         assert_eq!(e.default_display(), None, "nothing was added");
@@ -191,6 +206,6 @@ fn regression_node_budget_refuses_display_before_allocating() {
     // Exactly 4 free nodes are enough.
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     e.set_limits(&limits(4)).unwrap();
-    e.add_display(panel(), BufferMode::alloc(BufferSpec::default()))
+    e.add_display(panel(), BufferMode::alloc(BufferSpec::default()), None)
         .unwrap();
 }

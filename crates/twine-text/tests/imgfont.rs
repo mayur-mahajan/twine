@@ -122,7 +122,7 @@ fn imgfont_layout_includes_image_advances() {
     assert_eq!(with - without, S as i32, "image glyph advance = image width");
     let (from, g) = TEXT_WITH_EMOJI.glyph('😀', None).unwrap();
     assert!(core::ptr::eq(from, &EMOJI));
-    assert_eq!((g.bpp, g.box_w, g.box_h, g.ofs_y), (0, S as u16, S as u16, -2));
+    assert_eq!((g.bpp, g.box_w, g.box_h, g.ofs_y), (None, S as u16, S as u16, -2));
 }
 
 #[test]

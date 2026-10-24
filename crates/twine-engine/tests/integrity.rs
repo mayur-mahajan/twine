@@ -48,7 +48,7 @@ impl FrameObserver for Recorder {
 fn engine_with(info: DisplayInfo, spec: BufferSpec) -> (Engine, DisplayId) {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     let d = e
-        .add_display(MemoryDisplay::new(info), BufferMode::alloc(spec))
+        .add_display(MemoryDisplay::new(info), BufferMode::alloc(spec), None)
         .unwrap();
     (e, d)
 }
@@ -82,7 +82,7 @@ fn scene(e: &mut Engine) -> (NodeId, NodeId) {
             StyleProp::BgGradientDir(GradDir::Ver),
             StyleProp::BorderWidth(Length::Px(2).into()),
             StyleProp::BorderColor(Color::BLACK.into()),
-            StyleProp::ShadowWidth(8),
+            StyleProp::ShadowWidth(Length::Px(8).into()),
             StyleProp::ShadowColor(Color::BLACK.into()),
         ],
     );
@@ -132,7 +132,11 @@ fn observer_sees_framebuffer_areas_and_chunked_frames() {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     let info = DisplayInfo::new(64, 32, ColorFormat::Rgb565);
     let d = e
-        .add_framebuffer_display(MockFramebufferDisplay::new(info, true, 0), BufferMode::full())
+        .add_framebuffer_display(
+            MockFramebufferDisplay::new(info, true, 0),
+            BufferMode::full(),
+            None,
+        )
         .unwrap();
     let seen = Recorder::default();
     e.set_frame_observer(seen.clone());
@@ -153,7 +157,7 @@ fn observer_sees_framebuffer_areas_and_chunked_frames() {
 
     // Chunked display: one observation per `render_chunk`.
     let mut e = Engine::new(EngineConfig::default()).unwrap();
-    e.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::Rgb565), 32 * 2 * 4)
+    e.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::Rgb565), 32 * 2 * 4, None)
         .unwrap();
     let seen = Recorder::default();
     e.set_frame_observer(seen.clone());
@@ -225,7 +229,11 @@ fn render_region_to_errors() {
         let mut e = Engine::new(EngineConfig::default()).unwrap();
         let panel = MemoryDisplay::new(DisplayInfo::new(8, 8, ColorFormat::Rgb565)).without_read_back();
         let d = e
-            .add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }))
+            .add_display(
+                panel,
+                BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }),
+                None,
+            )
             .unwrap();
         (e, d)
     };

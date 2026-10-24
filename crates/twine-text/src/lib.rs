@@ -5,10 +5,14 @@
 //! - **Fonts.** A [`Font`] holds line metrics, a [`GlyphProvider`] and an optional fallback
 //!   font. The built-in provider is [`BitmapFont`], a bitmap format with the same capabilities
 //!   and semantics as LVGL's `lv_font_fmt_txt` (LVGL `src/font/lv_font_fmt_txt.h`): 1/2/4/8
-//!   bits per pixel, four cmap kinds, pair and class kerning, optional RLE compression with an
-//!   XOR row prefilter, and subpixel ([`Subpx`]) glyphs. Ready-made fonts (Montserrat with
-//!   Font Awesome [`Symbol`]s, unscii) live in the `twine-assets` crate; the `twine font`
-//!   generator (`twine-cli`) produces new ones from TTF files.
+//!   bits per pixel (a typed [`Bpp`], so no other depth can reach the glyph readers), four
+//!   cmap kinds, pair and class kerning, optional RLE compression with an XOR row prefilter,
+//!   and subpixel ([`Subpx`]) glyphs, and per-font text gamma ([`TextGamma`]).
+//!   Ready-made fonts (Montserrat with Font Awesome
+//!   [`Symbol`]s, unscii) live in the `twine-assets` crate; applications generate their own
+//!   from TrueType/OpenType files with the `twine-build` crate in `build.rs` (subset to the
+//!   characters of their translations and string literals), the `include_font!` macro of the
+//!   `twine` facade, or the `twine font` command (`twine-cli`).
 //! - **Glyph cache.** [`GlyphCache`] keeps decoded glyphs of compressed fonts in a fixed byte
 //!   budget (LRU) and owns the scratch memory of text drawing, so drawing never allocates.
 //! - **Layout.** [`TextLayout`] breaks text into lines (LVGL rules), measures it, aligns lines,
@@ -16,6 +20,11 @@
 //! - **Drawing.** [`draw_text`] draws text through a [`Painter`](twine_render::Painter) with
 //!   letter/line spacing, alignment, underline, strikethrough, selection, ellipsis and
 //!   subpixel fonts, processing only the lines inside the clip.
+//! - **Text gamma.** Stored coverage becomes opacity through the font's [`TextGamma`]: one
+//!   16-entry table per [`Polarity`] (dark-on-light, light-on-dark), picked once per text run
+//!   from the text and background colors (the engine passes the surface behind each text),
+//!   so thin light-on-dark text keeps its weight at no
+//!   per-pixel cost (module [`gamma`]).
 //!
 //! All metrics are integers: glyph advances are stored in 1/16 px and rounded **per glyph** to
 //! whole pixels exactly like LVGL (`(adv + 8) >> 4`), so layout and rendering are identical on
@@ -115,6 +124,7 @@ mod test_font;
 
 #[cfg(feature = "std")]
 pub mod encode;
+pub mod gamma;
 #[cfg(feature = "ttf")]
 mod ttf;
 
@@ -127,11 +137,13 @@ pub use cache::{
     BLOCK_BYTES, CacheStats, DEFAULT_BUDGET, GlyphCache, GlyphKey, MAX_ENTRIES, MAX_GLYPH_BYTES, MAX_ROW,
     WARN_CAP,
 };
+pub use decode::Bpp;
 pub use dir::TextDir;
 pub use draw::{TextDrawFlags, TextDsc, draw_text};
 pub use font::{
     EMPTY_FONT, Font, GlyphInfo, GlyphProvider, MAX_FALLBACK_DEPTH, Subpx, has_placeholder, provider_key,
 };
+pub use gamma::{GammaRamp, Polarity, TextGamma};
 pub use hit::{DOTS, Ellipsis, LongMode, TextAlign, TextDecor};
 pub use imgfont::{ImageFontProvider, ImageGlyphLookup};
 pub use twine_core::Symbol;

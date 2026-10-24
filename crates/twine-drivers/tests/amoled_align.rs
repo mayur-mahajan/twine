@@ -28,7 +28,7 @@ fn flushed_windows(
     let len = usize::from(spec.native_w.max(spec.native_h)) * 2 * rows;
     let buf: &'static mut [u8] = Box::leak(vec![0u8; len].into_boxed_slice());
     let mut e = Engine::new(EngineConfig::default()).unwrap();
-    let d = e.add_display(lcd, BufferMode::partial_single(buf)).unwrap();
+    let d = e.add_display(lcd, BufferMode::partial_single(buf), None).unwrap();
     e.step(Instant::from_millis(0));
     let _ = rec.take_ops();
     for a in dirty {

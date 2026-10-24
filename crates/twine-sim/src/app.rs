@@ -553,10 +553,11 @@ impl SimApp {
             engine.add_framebuffer_display(
                 SimFramebufferDisplay::new(cfg.width, cfg.height, cfg.format, cfg.rotation, full),
                 buffers,
+                cfg.app.display_theme(),
             )?
         } else {
             // `Alloc`: the engine allocates once it accepted the display.
-            engine.add_display(SimDisplay::from_config(&cfg), buffers)?
+            engine.add_display(SimDisplay::from_config(&cfg), buffers, cfg.app.display_theme())?
         };
         let devices = SimDevices::new();
         let inputs = register_inputs(&mut engine, display, &cfg, &devices)?;

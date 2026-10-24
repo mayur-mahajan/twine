@@ -6,6 +6,7 @@ mod common;
 use common::{Mode, get, harness, with};
 use twine_core::{Color, Duration, Fraction, Opa, Point, Rect, Size};
 use twine_engine::ObjFlags;
+use twine_style::Length;
 use twine_style::{Align, Part, PropId, Selector, StyleProp};
 use twine_testing::EngineHarness;
 use twine_widgets::led::{self, LED_BRIGHT_MAX, LED_BRIGHT_MIN, LED_CLASS, LED_DEFAULT_COLOR, Led};
@@ -183,7 +184,7 @@ fn line_content_size() {
     assert_eq!(h.engine().coords(l).size(), Size::new(60, 44));
     // The extra draw size is the line width.
     h.engine_mut()
-        .set_local_prop(l, Selector::MAIN, StyleProp::LineWidth(6));
+        .set_local_prop(l, Selector::MAIN, StyleProp::LineWidth(Length::Px(6).into()));
     h.run_until_idle();
     assert_eq!(h.engine().tree().node(l).unwrap().ext_draw(), 6);
 }
@@ -234,11 +235,11 @@ fn line_invalidates_old_and_new_bbox() {
 fn line_y_invert() {
     let (mut h, l) = line_scene(Mode::Light);
     h.engine_mut()
-        .set_local_prop(l, Selector::MAIN, StyleProp::LineWidth(2));
+        .set_local_prop(l, Selector::MAIN, StyleProp::LineWidth(Length::Px(2).into()));
     with(&mut h, l, |w: &mut Line, cx| w.set_y_invert(cx, true));
     h.run_until_idle();
     let c = h.engine().coords(l);
-    let text = twine_theme::default::colors::LIGHT_TEXT;
+    let text = twine_theme::lvgl::colors::LIGHT_TEXT;
     // The first point (0, 30) is now at the top-left, (25, 0) at the bottom.
     let dark = |p: Color| p.r < 128 && p.r.abs_diff(text.r) < 60;
     assert!(dark(h.pixel((c.x0 + 1) as u32, (c.y0 + 1) as u32)));
@@ -250,14 +251,14 @@ fn snapshot_line() {
     for m in Mode::ALL {
         let (mut h, l) = line_scene(m);
         let e = h.engine_mut();
-        e.set_local_prop(l, Selector::MAIN, StyleProp::LineWidth(3));
+        e.set_local_prop(l, Selector::MAIN, StyleProp::LineWidth(Length::Px(3).into()));
         e.set_local_prop(l, Selector::MAIN, StyleProp::LineDashWidth(6));
         e.set_local_prop(l, Selector::MAIN, StyleProp::LineDashGap(4));
         h.run_until_idle();
         h.assert_snapshot(&format!("line_polyline_dashed_{}", m.suffix()));
         let (mut h, l) = line_scene(m);
         let e = h.engine_mut();
-        e.set_local_prop(l, Selector::MAIN, StyleProp::LineWidth(10));
+        e.set_local_prop(l, Selector::MAIN, StyleProp::LineWidth(Length::Px(10).into()));
         e.set_local_prop(l, Selector::MAIN, StyleProp::LineRounded(true));
         e.set_local_prop(
             l,
@@ -273,12 +274,14 @@ fn snapshot_line() {
 #[test]
 fn led_takes_theme_primary_color() {
     use twine_style::design;
-    use twine_theme::{DefaultTheme, Palette};
-    let theme = DefaultTheme::builder()
-        .primary(Palette::Teal)
-        .secondary(Palette::Amber)
-        .build();
-    let mut h = EngineHarness::new(60, 60).theme(theme);
+    use twine_style::design::ElementTable;
+    use twine_theme::{Lvgl, Palette, ThemeMode};
+    static TEAL_LIGHT: ElementTable = Lvgl::SET
+        .primary(Palette::Teal.main())
+        .secondary(Palette::Amber.main())
+        .table(ThemeMode::Light);
+    static TEAL: Lvgl = Lvgl::new().modes(&[(ThemeMode::Light, &TEAL_LIGHT)]);
+    let mut h = EngineHarness::new(60, 60).theme(&TEAL);
     let screen = h.screen();
     let l = led::create(h.engine_mut(), screen).unwrap();
     assert_eq!(get::<Led>(&h, l).color(), Palette::Teal.main());
@@ -295,13 +298,11 @@ fn led_takes_theme_primary_color() {
 /// (not captured once): it follows Light, Dark, Night and High contrast.
 #[test]
 fn led_color_follows_every_theme_mode() {
-    use std::rc::Rc;
-    use twine_core::Size;
     use twine_engine::ThemeHook;
     use twine_style::{ThemeMode, design};
-    use twine_theme::DefaultTheme;
-    let theme = Rc::new(DefaultTheme::light());
-    let mut h = EngineHarness::new(60, 60).theme(theme.clone());
+    use twine_theme::lvgl;
+    let theme = &lvgl::THEME;
+    let mut h = EngineHarness::new(60, 60).theme(theme);
     let screen = h.screen();
     let l = led::create(h.engine_mut(), screen).unwrap();
     let alarm = led::create(h.engine_mut(), screen).unwrap();
@@ -321,7 +322,7 @@ fn led_color_follows_every_theme_mode() {
     ] {
         h.engine_mut().set_theme_mode(d, mode);
         h.run_until_idle();
-        let table = theme.design(mode, 130, Size::new(60, 60)).unwrap();
+        let table = theme.design(mode).unwrap();
         assert_eq!(
             get::<Led>(&h, l).color(),
             table.get(design::PRIMARY).unwrap(),
@@ -348,8 +349,8 @@ fn led_color_follows_every_theme_mode() {
 #[test]
 fn regression_led_pixels_follow_theme_mode_in_one_update() {
     use twine_style::ThemeMode;
-    use twine_theme::DefaultTheme;
-    let mut h = EngineHarness::new(60, 60).theme(DefaultTheme::light());
+    use twine_theme::lvgl;
+    let mut h = EngineHarness::new(60, 60).theme(&lvgl::THEME);
     let screen = h.screen();
     let l = led::create(h.engine_mut(), screen).unwrap();
     h.run_until_idle();

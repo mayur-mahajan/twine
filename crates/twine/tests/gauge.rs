@@ -11,13 +11,13 @@ mod gauge;
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gauge::{GAUGE_CLASS, GAUGE_DEFAULT_SIZE, Gauge, INDICATOR, LABEL, NEEDLE, TRACK, gauge, style_gauge};
+use gauge::{GAUGE_CLASS, GAUGE_DEFAULT_SIZE, GAUGE_THEME, Gauge, INDICATOR, LABEL, NEEDLE, TRACK, gauge};
 use twine::prelude::*;
 use twine_testing::{TestUi, by_id};
 
-/// The default theme with the gauge registered.
-fn theme() -> Rc<DefaultTheme> {
-    Rc::new(DefaultTheme::builder().class(&GAUGE_CLASS, style_gauge).build())
+/// The LVGL theme with the gauge's recipe.
+fn theme() -> &'static dyn ThemeHook {
+    &GAUGE_THEME
 }
 
 /// A test UI showing `app` with the gauge's theme.

@@ -1,29 +1,21 @@
-//! Library behind the `twine` command-line tool: the font generator (and, in the image module,
-//! the image converter). `cargo xtask` uses these functions in-process.
+//! Library behind the `twine` command-line tool: the font generator (module [`font`]), the
+//! image converter (module [`image`]) and the translation compiler (module [`i18n`]) — the
+//! command-line front ends of `twine_build::font::Font`, `twine_build::image::Image` and
+//! `twine_build::i18n` (which build scripts use directly). `cargo xtask` uses the argument
+//! parsers in-process.
 //!
-//! ```no_run
-//! use std::path::Path;
-//! use twine_cli::font::{FontOptions, Symbols, SubpxArg, generate};
+//! Text options are parsed into typed values when the command line is read: bit depths into
+//! `twine_text::Bpp`, `--range` specs into typed character ranges, formats into
+//! `ColorFormat`.
 //!
-//! let opts = FontOptions {
-//!     ttf: "assets/fonts/Montserrat-Medium.ttf".into(),
-//!     size: 14,
-//!     bpp: 4,
-//!     ranges: vec!["0x20-0x7E".into()],
-//!     chars_files: Vec::new(),
-//!     symbols: Symbols::None,
-//!     symbols_ttf: Vec::new(),
-//!     compress: false,
-//!     prefilter: true,
-//!     kerning: true,
-//!     subpx: SubpxArg::None,
-//!     name: "MY_FONT".into(),
-//!     out: "src/my_font.rs".into(),
-//! };
-//! let g = generate(&opts, Path::new(".")).unwrap();
-//! std::fs::write(&opts.out, g.source).unwrap();
+//! ```
+//! use twine_cli::font::parse_range;
+//!
+//! let digits = parse_range("0x30-0x39").unwrap();
+//! assert_eq!(digits.0, ['0'..='9']);
 //! ```
 #![forbid(unsafe_code)]
 
 pub mod font;
+pub mod i18n;
 pub mod image;

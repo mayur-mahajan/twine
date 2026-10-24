@@ -23,7 +23,7 @@ fn main() {
             .title("Spinner")
             .scale(3)
             .buffers(BufferMode::alloc(BufferSpec::PartialDouble { rows: 40 }))
-            .theme(DefaultTheme::light())
+            .theme(&lvgl::THEME)
             // The performance overlay's font.
             .engine_config(EngineConfig {
                 default_font: Some(&MONTSERRAT_12),

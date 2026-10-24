@@ -132,19 +132,28 @@ fn full_mode_rejects_single_buffer() {
     let info = DisplayInfo::new(W, H, ColorFormat::Rgb565);
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     assert_eq!(
-        e.add_framebuffer_display(MockFramebufferDisplay::new(info, false, 0), BufferMode::full()),
+        e.add_framebuffer_display(
+            MockFramebufferDisplay::new(info, false, 0),
+            BufferMode::full(),
+            None
+        ),
         Err(EngineError::BufferModeMismatch)
     );
     assert!(matches!(
         e.add_framebuffer_display(
             MockFramebufferDisplay::new(info, true, 0).with_buffer_len(100),
-            BufferMode::full()
+            BufferMode::full(),
+            None
         ),
         Err(EngineError::BufferTooSmall { .. })
     ));
     // Direct needs only one.
     assert!(
-        e.add_framebuffer_display(MockFramebufferDisplay::new(info, false, 0), BufferMode::direct())
-            .is_ok()
+        e.add_framebuffer_display(
+            MockFramebufferDisplay::new(info, false, 0),
+            BufferMode::direct(),
+            None
+        )
+        .is_ok()
     );
 }

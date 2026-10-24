@@ -12,7 +12,7 @@
 mod showcase;
 
 use showcase::{H, W, build, engine_config};
-use twine::theme::DefaultTheme;
+use twine::prelude::lvgl;
 use twine_sim::{SimConfig, run_engine};
 
 fn main() {
@@ -20,7 +20,7 @@ fn main() {
         .title("core widgets")
         .scale(2)
         .engine_config(engine_config())
-        .theme(DefaultTheme::light());
+        .theme(&lvgl::THEME);
     run_engine(cfg, |engine| {
         build(engine);
     });

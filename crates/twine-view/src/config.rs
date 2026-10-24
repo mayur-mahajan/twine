@@ -1,12 +1,12 @@
 //! [`AppConfig`]: the application's configuration, shared by the firmware, the simulator and
 //! the tests.
 
-use alloc::rc::Rc;
-
 use twine_anim::Motion;
 use twine_core::audit::{Audit, AuditSink, AuditValue, KeyValues};
 use twine_core::{Limits, Partition, Rotation};
-use twine_engine::{DisplayId, Engine, EngineConfig, EngineError, FaultHook, IntoTheme, ThemeHook};
+use twine_engine::{
+    DisplayId, DisplayTheme, Engine, EngineConfig, EngineError, FaultHook, ThemeHook, ThemeMode,
+};
 use twine_reactive::{Runtime, WakerLease};
 
 use crate::error::UiError;
@@ -32,7 +32,7 @@ use crate::error::UiError;
 /// (`cfg.engine.hires_timer = Some(..)`); the simulator installs its own timer.
 ///
 /// The fields are public; the chainable setters are the convenient way to write one. `Clone`
-/// is cheap (the theme is shared, not copied). [`audit_report`](Self::audit_report) dumps the
+/// is cheap (the theme is a `&'static` reference). [`audit_report`](Self::audit_report) dumps the
 /// whole configuration — limits, engine settings, caches, timeouts, theme, enabled features
 /// and profile flags — as machine-readable evidence for an audit.
 ///
@@ -43,9 +43,12 @@ use crate::error::UiError;
 /// use twine_view::prelude::*;
 ///
 /// /// The product's configuration (in a crate shared by firmware, simulator and tests).
+/// static THEME: Lvgl = Lvgl::new();
+///
 /// fn config() -> AppConfig {
 ///     AppConfig::new()
-///         .theme(DefaultTheme::dark())
+///         .theme(&THEME)
+///         .mode(ThemeMode::Dark)
 ///         .motion(Motion::Reduced)
 ///         .limits(Limits::DEFAULT.max_nodes(512))
 /// }
@@ -59,7 +62,8 @@ use crate::error::UiError;
 ///     .build(|_| label("hi"));
 /// assert_eq!(ui.motion(), Motion::Reduced);
 /// assert_eq!(ui.engine().limits().max_nodes, 512);
-/// assert_eq!(ui.engine().theme(ui.display()).map(|t| t.name()), config().theme.map(|t| t.name()));
+/// assert_eq!(ui.engine().theme(ui.display()).map(|t| t.name()), Some("lvgl"));
+/// assert_eq!(ui.engine().theme_mode(ui.display()), ThemeMode::Dark);
 /// ```
 #[derive(Clone)]
 #[must_use]
@@ -80,10 +84,15 @@ pub struct AppConfig {
     /// [`apply_limits`](Self::apply_limits) refuses a configuration for another partition
     /// than the token's. Default [`Partition::MAIN`].
     pub partition: Partition,
-    /// The theme of the (first) display. Default `None`: no theme — set one, or the widgets
-    /// get only their own styles (on every host alike). Further displays of a multi-display
-    /// `Ui` bring their own ([`DisplayBuilder::theme`](crate::DisplayBuilder::theme)).
-    pub theme: Option<Rc<dyn ThemeHook>>,
+    /// The theme of the (first) display: a `static` (one theme per display, fixed at compile
+    /// time), attached when the display is created. Default `None`: no theme — set one, or
+    /// the widgets get only their own styles (on every host alike). Further displays of a
+    /// multi-display `Ui` bring their own ([`DisplayBuilder::theme`](crate::DisplayBuilder::theme)).
+    pub theme: Option<&'static dyn ThemeHook>,
+    /// The mode the (first) display starts in. `None` (default): the theme's first listed
+    /// mode ([`ThemeHook::modes`]). Switch it at run time with `ThemeHandle::set_mode` /
+    /// [`Engine::set_theme_mode`].
+    pub theme_mode: Option<ThemeMode>,
     /// The initial motion preference ([`Motion`]). Default [`Motion::Full`].
     pub motion: Motion,
     /// The rotation the screens are designed for. `None` (default) keeps the display's own
@@ -104,7 +113,8 @@ impl core::fmt::Debug for AppConfig {
             .field("engine", &self.engine)
             .field("limits", &self.limits)
             .field("partition", &self.partition)
-            .field("theme", &self.theme.as_ref().map(|t| t.name()))
+            .field("theme", &self.theme.map(ThemeHook::name))
+            .field("theme_mode", &self.theme_mode)
             .field("motion", &self.motion)
             .field("rotation", &self.rotation)
             .field("fault_hook", &self.fault_hook.is_some())
@@ -137,6 +147,7 @@ impl AppConfig {
             limits: Limits::DEFAULT,
             partition: Partition::MAIN,
             theme: None,
+            theme_mode: None,
             motion: Motion::Full,
             rotation: None,
             fault_hook: None,
@@ -186,16 +197,32 @@ impl AppConfig {
         self
     }
 
-    /// Sets [`theme`](Self::theme): a theme value or a shared one ([`IntoTheme`]).
+    /// Sets [`theme`](Self::theme): a `static` theme (`static THEME: Lvgl = Lvgl::new();`).
     ///
     /// ```
     /// use twine_view::prelude::*;
     ///
-    /// let cfg = AppConfig::new().theme(DefaultTheme::light());
-    /// assert!(cfg.theme.is_some());
+    /// static THEME: Lvgl = Lvgl::new();
+    /// let cfg = AppConfig::new().theme(&THEME);
+    /// assert_eq!(cfg.theme.map(|t| t.name()), Some("lvgl"));
     /// ```
-    pub fn theme(mut self, theme: impl IntoTheme) -> Self {
-        self.theme = Some(theme.into_theme());
+    pub fn theme(mut self, theme: &'static dyn ThemeHook) -> Self {
+        self.theme = Some(theme);
+        self
+    }
+
+    /// Sets [`theme_mode`](Self::theme_mode): the mode the display starts in (a mode the
+    /// theme does not list starts in its first mode instead, with a warning).
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    ///
+    /// static THEME: Lvgl = Lvgl::new();
+    /// let cfg = AppConfig::new().theme(&THEME).mode(ThemeMode::Night);
+    /// assert_eq!(cfg.theme_mode, Some(ThemeMode::Night));
+    /// ```
+    pub fn mode(mut self, mode: ThemeMode) -> Self {
+        self.theme_mode = Some(mode);
         self
     }
 
@@ -204,11 +231,38 @@ impl AppConfig {
     /// ```
     /// use twine_view::prelude::*;
     ///
-    /// assert!(AppConfig::new().theme(DefaultTheme::light()).no_theme().theme.is_none());
+    /// static THEME: Lvgl = Lvgl::new();
+    /// assert!(AppConfig::new().theme(&THEME).no_theme().theme.is_none());
     /// ```
     pub fn no_theme(mut self) -> Self {
         self.theme = None;
         self
+    }
+
+    /// The theme the (first) display is created with: [`theme`](Self::theme) starting in
+    /// [`theme_mode`](Self::theme_mode). What hosts that create the engine themselves pass to
+    /// [`Engine::add_display`] and its siblings (the builders, the simulator and the test
+    /// harness do). `None` without a theme.
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::MemoryDisplay;
+    /// use twine_view::prelude::*;
+    ///
+    /// static THEME: Lvgl = Lvgl::new();
+    /// let cfg = AppConfig::new().theme(&THEME).mode(ThemeMode::Dark);
+    /// let mut engine = Engine::new(cfg.engine).unwrap();
+    /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
+    /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::default()), cfg.display_theme()).unwrap();
+    /// assert_eq!(engine.theme_mode(d), ThemeMode::Dark);
+    /// ```
+    #[must_use]
+    pub fn display_theme(&self) -> Option<DisplayTheme> {
+        self.theme.map(|theme| DisplayTheme {
+            theme,
+            mode: self.theme_mode,
+        })
     }
 
     /// Sets [`motion`](Self::motion).
@@ -250,15 +304,15 @@ impl AppConfig {
 
     /// Applies the configuration to an engine and its `display`, for hosts that create the
     /// engine themselves (the simulator, test harnesses, custom loops; the builders call it):
-    /// the fault hook, the motion preference, the theme (unless the display already has this
-    /// very theme) and the rotation (requested only when it differs from the display's).
+    /// the fault hook, the motion preference and the rotation (requested only when it differs
+    /// from the display's). The theme is not applied here: it is attached when the display
+    /// is created ([`display_theme`](Self::display_theme)).
     /// [`engine`](Self::engine) is not applied here — it is what the host creates the engine
     /// with ([`Engine::new`]) — and neither are the [`limits`](Self::limits) (they need the
     /// runtime too: [`apply_limits`](Self::apply_limits), which
     /// [`UiCore::mount_configured`](crate::UiCore::mount_configured) calls).
     ///
-    /// Idempotent. Never panics; costs one theme installation (O(nodes of the display)) when
-    /// the theme changes, nothing per frame.
+    /// Idempotent. Never panics; costs nothing per frame.
     ///
     /// # Errors
     /// [`EngineError::DisplayNotFound`] for an unknown display; [`EngineError::InvalidConfig`]
@@ -270,10 +324,11 @@ impl AppConfig {
     /// use twine_testing::MemoryDisplay;
     /// use twine_view::prelude::*;
     ///
-    /// let cfg = AppConfig::new().theme(DefaultTheme::light()).motion(Motion::None);
+    /// static THEME: Lvgl = Lvgl::new();
+    /// let cfg = AppConfig::new().theme(&THEME).motion(Motion::None);
     /// let mut engine = Engine::new(cfg.engine).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::default()), cfg.display_theme()).unwrap();
     /// cfg.configure_engine(&mut engine, d).unwrap();
     /// assert_eq!(engine.motion(), Motion::None);
     /// assert!(engine.theme(d).is_some());
@@ -354,7 +409,7 @@ impl AppConfig {
     /// | `engine` | every [`EngineConfig`] field: refresh, flush timeout and policy, cache budgets, input timings, idle timeout |
     /// | `fixed` | compile-time capacities: displays, input devices, focus groups, static waker slots |
     /// | `view` | motion, rotation, fault hook |
-    /// | `theme` | `theme.set`, then the theme's own entries ([`ThemeHook::audit`]: name, modes; R7 themes add their digest) |
+    /// | `theme` | `theme.set`, `theme.start_mode` (when [`theme_mode`](Self::theme_mode) is set), then the theme's own entries ([`ThemeHook::audit`]: name, modes; R7 themes add their digest) |
     /// | `audit` | `digest_crc32`, last: the CRC-32 of the text of every line before it ([`twine_core::audit::digest`]) — one number to compare with the reviewed configuration's |
     ///
     /// The report is the configuration, not the state: it does not depend on what the
@@ -364,9 +419,10 @@ impl AppConfig {
     /// ```
     /// use twine_view::prelude::*;
     ///
+    /// static THEME: Lvgl = Lvgl::new();
     /// let cfg = AppConfig::new()
     ///     .limits(Limits::DEFAULT.max_nodes(300).preallocated())
-    ///     .theme(DefaultTheme::light());
+    ///     .theme(&THEME);
     /// let report = cfg.audit_report().to_string();
     /// assert!(report.starts_with("audit.format=1\n"));
     /// assert!(report.contains("limits.max_nodes=300\n"));
@@ -385,7 +441,7 @@ impl AppConfig {
         KeyValues(self)
     }
 
-    /// The display part of [`configure_engine`](Self::configure_engine): theme and rotation.
+    /// The display part of [`configure_engine`](Self::configure_engine): the rotation.
     pub(crate) fn configure_display(
         &self,
         engine: &mut Engine,
@@ -394,12 +450,6 @@ impl AppConfig {
         let Some(info) = engine.display_info(display) else {
             return Err(EngineError::DisplayNotFound(display));
         };
-        if let Some(theme) = &self.theme {
-            let same = engine.theme(display).is_some_and(|t| Rc::ptr_eq(t, theme));
-            if !same {
-                engine.set_theme(display, theme.clone());
-            }
-        }
         if let Some(r) = self.rotation {
             if r != info.rotation {
                 engine.set_rotation(display, r)?;
@@ -487,7 +537,10 @@ impl Audit for Entries<'_> {
         );
         out.entry("view", "fault_hook", AuditValue::Bool(this.fault_hook.is_some()));
         out.entry("theme", "set", AuditValue::Bool(this.theme.is_some()));
-        if let Some(theme) = &this.theme {
+        if let Some(mode) = this.theme_mode {
+            out.entry("theme", "start_mode", AuditValue::Text(mode.name()));
+        }
+        if let Some(theme) = this.theme {
             theme.audit(out);
         }
     }

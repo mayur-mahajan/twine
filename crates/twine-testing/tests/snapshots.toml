@@ -5,4 +5,4 @@
 # Reference PNGs are not committed: `tests/snapshots/*.png` is a local cache used for diffs.
 
 [approved]
-counter_clicked_once = "320x240 xxh64:24877a64351b591a"
+counter_clicked_once = "320x240 xxh64:45bd69721e78f539"

@@ -12,6 +12,7 @@
 //! Kerning pairs: `A`→`B` −16, `B`→`A` +8 (scale 16).
 
 use crate::bitmap_font::{BitmapFont, BitmapFormat, Cmap, CmapKind, GlyphDsc, GlyphIdOfs, Kern, KernPairIds};
+use crate::decode::Bpp;
 use crate::font::{Font, Subpx};
 
 static BITMAP: [u8; 8] = [
@@ -118,7 +119,7 @@ static KERN_VALUES: [i8; 2] = [-16, 8];
 
 /// The test font's glyph data.
 pub(crate) static TEST_BITMAP: BitmapFont = BitmapFont {
-    bpp: 4,
+    bpp: Bpp::Four,
     bitmap: &BITMAP,
     glyphs: &GLYPHS,
     cmaps: &CMAPS,
@@ -128,6 +129,7 @@ pub(crate) static TEST_BITMAP: BitmapFont = BitmapFont {
     },
     kern_scale: 16,
     format: BitmapFormat::Plain,
+    gamma: &crate::gamma::LINEAR,
 };
 
 /// The test font: line height 10, baseline 2 px above the bottom.

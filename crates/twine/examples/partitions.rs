@@ -172,7 +172,10 @@ fn main() {
     let p1 = Partition::new(1).expect("feature `partitions`");
     let rt_b = Runtime::take_partition(p1).expect("partition 1");
     let config = |engine: EngineConfig, limits: Limits| {
-        let mut c = AppConfig::new().theme(DefaultTheme::dark()).limits(limits);
+        let mut c = AppConfig::new()
+            .theme(&lvgl::THEME)
+            .mode(ThemeMode::Dark)
+            .limits(limits);
         c.engine = engine;
         c
     };

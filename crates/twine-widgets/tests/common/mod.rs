@@ -3,7 +3,7 @@
 
 use twine_engine::{NodeId, Widget, WidgetCx};
 use twine_testing::EngineHarness;
-use twine_theme::DefaultTheme;
+use twine_theme::{ThemeMode, lvgl};
 
 /// Light or dark default theme, for snapshots of both variants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,13 +23,13 @@ impl Mode {
     }
 }
 
-/// A `w × h` harness with the default theme in `mode`.
+/// A `w × h` harness with the LVGL theme in `mode`.
 pub fn harness(w: u16, h: u16, mode: Mode) -> EngineHarness {
-    let t = match mode {
-        Mode::Light => DefaultTheme::light(),
-        Mode::Dark => DefaultTheme::dark(),
+    let m = match mode {
+        Mode::Light => ThemeMode::Light,
+        Mode::Dark => ThemeMode::Dark,
     };
-    EngineHarness::new(w, h).theme(t)
+    EngineHarness::new(w, h).theme(&lvgl::THEME).mode(m)
 }
 
 /// Calls a widget setter.

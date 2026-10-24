@@ -39,7 +39,7 @@ fn make_ui(clock: &MockClock, double: bool, text: &'static str) -> (Ui, Signal<&
     let ui = Ui::builder(MemoryDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565)))
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(spec))
-        .theme(DefaultTheme::light())
+        .theme(&lvgl::THEME)
         .clock(clock.clone())
         .limits(twine_testing::HARNESS_LIMITS)
         .try_build(move |cx| {

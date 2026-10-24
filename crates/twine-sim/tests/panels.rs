@@ -113,7 +113,7 @@ fn panels_redraw_and_step_independently() {
     let v = value.clone();
     let seen: Seen = Rc::default();
     let (s1, s2) = (seen.clone(), seen.clone());
-    let theme = || AppConfig::new().theme(DefaultTheme::light());
+    let theme = || AppConfig::new().theme(&lvgl::THEME);
     let panels = vec![
         SimPanel::new(W, H, Runtime::current_thread(), move |cx| {
             let n = cx.signal(0u32);

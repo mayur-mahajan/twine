@@ -2,7 +2,7 @@
 //!
 //! Every structure of Twine that grows with the application — the widget tree, the reactive
 //! graph, event handlers, timers, animations, queues, the navigation stack, keyed lists, the
-//! waker pool —
+//! nodes' theme classes, the waker pool —
 //! is bounded by a field of [`Limits`]. Reaching a bound is a
 //! [`FaultKind::Capacity`](crate::fault::FaultKind::Capacity) fault whose code
 //! ([`CapacityFault`](crate::fault::CapacityFault)) names the field, and the operation is
@@ -111,6 +111,12 @@ pub struct Limits {
     /// change — insert, remove, move — allocates nothing beyond the rows it creates). Size it
     /// for the longest list: the reservation is per collection.
     pub max_list_items: u16,
+    /// Nodes with a theme class of their own — a variant (`ButtonVariant::Tinted`) or a role
+    /// (`.role(&METRIC_TILE)`) set with `Engine::set_theme_class` — all nodes together
+    /// (default 65 535; `0` allows none). Enforced by `Engine::set_theme_class`
+    /// ([`CapacityFault::ThemeClasses`](crate::fault::CapacityFault::ThemeClasses)): the node
+    /// keeps its widget class's look. Preallocated: the engine's theme-class side table.
+    pub max_theme_classes: u16,
     /// Wakers the process-wide waker pool may allocate on the heap once its 4 static slots are
     /// leased (default 60, i.e. 64 `Ui`s alive at once; `0` forbids heap wakers). A heap waker
     /// is allocated once and never freed (it is reused), so this bounds that memory
@@ -161,6 +167,7 @@ impl Limits {
         engine_queue: 16,
         max_nav_depth: u8::MAX,
         max_list_items: u16::MAX,
+        max_theme_classes: u16::MAX,
         max_heap_wakers: 60,
         heap_budget: None,
         preallocate: false,
@@ -322,6 +329,18 @@ impl Limits {
         self
     }
 
+    /// Sets [`max_theme_classes`](Self::max_theme_classes).
+    ///
+    /// ```
+    /// use twine_core::Limits;
+    /// assert_eq!(Limits::DEFAULT.max_theme_classes(8).max_theme_classes, 8);
+    /// ```
+    #[must_use]
+    pub const fn max_theme_classes(mut self, n: u16) -> Self {
+        self.max_theme_classes = n;
+        self
+    }
+
     /// Sets [`max_heap_wakers`](Self::max_heap_wakers).
     ///
     /// ```
@@ -452,6 +471,7 @@ impl Audit for Limits {
             AuditValue::Uint(u64::from(self.max_nav_depth)),
         );
         out.entry("limits", "max_list_items", n(self.max_list_items));
+        out.entry("limits", "max_theme_classes", n(self.max_theme_classes));
         out.entry("limits", "max_heap_wakers", n(self.max_heap_wakers));
         out.entry(
             "limits",
@@ -496,6 +516,7 @@ mod tests {
         assert!(
             Limits::DEFAULT
                 .max_handlers(0)
+                .max_theme_classes(0)
                 .engine_queue(0)
                 .max_heap_wakers(0)
                 .preallocated()
@@ -507,7 +528,7 @@ mod tests {
     #[test]
     fn summary_lists_every_field_once() {
         let s = Limits::DEFAULT.summary().to_string();
-        assert_eq!(s.lines().count(), 16);
+        assert_eq!(s.lines().count(), 17);
         assert!(s.lines().all(|l| l.starts_with("limits.") && l.contains('=')));
         assert!(s.contains("limits.max_heap_wakers=60\n"));
     }

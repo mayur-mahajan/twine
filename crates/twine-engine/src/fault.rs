@@ -89,7 +89,7 @@ impl FaultRecord {
     /// use twine_hal::DisplayInfo;
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(8, 8, ColorFormat::L8), 64, None).unwrap();
     /// assert_eq!(FaultRecord::new(FaultKind::FlushError).display(d).display, Some(d));
     /// ```
     #[must_use]

@@ -17,7 +17,8 @@ default = []
 safety = ["twine-core/safety", "twine-render/safety", "display-integrity"]
 ## Display-integrity mechanisms: the glyph cache's fresh mode (`docs/safety/profile.md` § 11); implied by `safety`. Off: not linked.
 display-integrity = ["twine-render/display-integrity"]
-## std-only conveniences, including the font encoder helpers used by the font generator.
+## std-only conveniences, including the font encoder helpers used by the font generator
+## (`twine-build`).
 std = ["twine-core/std", "twine-render/std"]
 ## Log through the `log` crate.
 log = ["twine-core/log", "twine-render/log"]

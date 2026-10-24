@@ -1,0 +1,30 @@
+[package]
+name = "twine-link-fixtures"
+description = "Linking fixtures: minimal no_std images whose linked symbols `cargo xtask nostd` checks against what their source references (pay for what you use)"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Standalone (not a member of the library workspace): built only for an embedded target, by
+# `cargo xtask nostd` (see `fixtures.toml` and `tools/xtask/src/cmd/link_check.rs`).
+[workspace]
+
+[dependencies]
+# The facade as an application takes it: no default features, one colour format.
+twine = { path = "../../crates/twine", default-features = false, features = ["color-rgb565", "montserrat-20", "include-assets", "theme-lvgl", "theme-mono", "theme-simple"] }
+# The reactive runtime's channels take critical sections; the fixtures supply the implementation
+# like an application does (theirs has no interrupts: see `src/lib.rs`).
+critical-section = "1"
+
+# Like the example firmware: the image is optimized for size with fat LTO, so only what is
+# reachable from `Reset` is linked. No debug info is needed: the symbol table names the items.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = 0
+panic = "abort"
+
+[profile.dev]
+panic = "abort"

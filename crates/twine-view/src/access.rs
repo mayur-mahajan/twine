@@ -39,7 +39,7 @@ use twine_reactive::Runtime;
 /// calls behave identically and silently. Calls that defer instead (bindings, timers,
 /// animations and modals created outside `Ui::update`) or are queued on the `Ui` (scope
 /// cleanups, the other [`AnimController`](crate::AnimController) methods,
-/// [`ThemeHandle::set`](crate::ThemeHandle::set), [`ThemeHandle::set_mode`](crate::ThemeHandle::set_mode),
+/// [`ThemeHandle::set_mode`](crate::ThemeHandle::set_mode),
 /// [`MotionHandle::set`](crate::MotionHandle::set): see [`UiCore`](crate::UiCore) § Engine
 /// commands) are correct and never warn.
 ///

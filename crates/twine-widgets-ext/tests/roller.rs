@@ -111,8 +111,10 @@ fn roller_theme_styles() {
 
 #[test]
 fn roller_height_from_visible_rows() {
-    for dpi in [130u16, 260] {
-        let mut h = EngineHarness::new(320, 480).theme(twine_theme::DefaultTheme::builder().dpi(dpi).build());
+    static T130: twine_theme::Lvgl = twine_theme::Lvgl::new().dpi(130);
+    static T260: twine_theme::Lvgl = twine_theme::Lvgl::new().dpi(260);
+    for (theme, dpi) in [(&T130, 130u16), (&T260, 260)] {
+        let mut h = EngineHarness::new(320, 480).theme(theme);
         let screen = h.screen();
         let r = roller::create(h.engine_mut(), screen).unwrap();
         with(&mut h, r, |w: &mut Roller, cx| w.set_visible_row_count(cx, 4));

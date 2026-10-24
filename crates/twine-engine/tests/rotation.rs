@@ -139,6 +139,7 @@ fn counting_engine() -> (Engine, twine_engine::DisplayId) {
                 a: leak_buffer(usize::from(W) * 2 * 8),
                 b: Some(leak_buffer(usize::from(W) * 2 * 8)),
             },
+            None,
         )
         .unwrap();
     (e, d)

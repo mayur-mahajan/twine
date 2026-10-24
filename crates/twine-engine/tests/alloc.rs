@@ -49,7 +49,7 @@ fn steady_state_frame_allocates_nothing() {
             ];
             if i % 3 == 0 {
                 props.extend([
-                    StyleProp::ShadowWidth(10),
+                    StyleProp::ShadowWidth(Length::Px(10).into()),
                     StyleProp::ShadowOpacity(Opa::P50.into()),
                 ]);
             }
@@ -62,7 +62,7 @@ fn steady_state_frame_allocates_nothing() {
             if i % 5 == 2 {
                 props.extend([
                     StyleProp::BorderWidth(Length::Px(2).into()),
-                    StyleProp::OutlineWidth(1),
+                    StyleProp::OutlineWidth(Length::Px(1).into()),
                 ]);
             }
             styled_box(e, s, Rect::from_xywh(x, y, 24, 36), &props);

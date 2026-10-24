@@ -392,7 +392,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
-    /// # let display = e.add_display(Panel(None), BufferMode::partial_single(buf)).unwrap();
+    /// # let display = e.add_display(Panel(None), BufferMode::partial_single(buf), None).unwrap();
     /// let touch = e.add_input(Touch, display).unwrap();
     /// // Call from the main loop when the touch interrupt fired:
     /// e.notify_input(touch);
@@ -658,7 +658,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
-    /// # let display = e.add_display(Panel(None), BufferMode::partial_single(buf)).unwrap();
+    /// # let display = e.add_display(Panel(None), BufferMode::partial_single(buf), None).unwrap();
     /// let touch = e.add_input(Dead, display).unwrap();
     /// assert_eq!(e.input_health(touch), Some(DeviceHealth::Ok)); // not read yet
     /// e.read_inputs(twine_core::Instant::ZERO);

@@ -12,9 +12,7 @@ use twine_core::Duration;
 use twine_core::Instant;
 #[cfg(feature = "display-integrity")]
 use twine_core::validity::Validity;
-use twine_engine::{
-    DisplayId, Engine, EventCode, EventFilter, EventResult, IntoTheme, NodeId, ThemeHook, ThemeMode, Widget,
-};
+use twine_engine::{DisplayId, Engine, EventCode, EventFilter, EventResult, NodeId, ThemeMode, Widget};
 #[cfg(feature = "display-integrity")]
 use twine_reactive::Latest;
 use twine_reactive::{ReadSignal, Scope, Signal, StoredValue};
@@ -296,8 +294,9 @@ impl AnimController {
     }
 }
 
-/// The theme of the `Ui`'s display (see [`use_theme`]): switch the theme or its mode, read
-/// the mode and the values of [design elements](twine_style::design).
+/// The theme of the `Ui`'s display (see [`use_theme`]): switch its mode, read the mode and
+/// the values of [design elements](twine_style::design). The theme itself is fixed when the
+/// display is created (one `static` theme per display, design §2.0a).
 ///
 /// Styles that use design elements (`.bg(design::SURFACE)`) follow the theme by themselves:
 /// [`set_mode`](Self::set_mode) needs no binding or rebuild. [`mode`](Self::mode) and
@@ -310,54 +309,13 @@ pub struct ThemeHandle {
 }
 
 impl ThemeHandle {
-    /// Installs `theme` — a theme value or a shared one ([`IntoTheme`]: e.g. an
-    /// `Rc<dyn ThemeHook>` kept to switch back to) — on the scope's display (every node is
-    /// re-styled; the display is redrawn once). At once inside handlers, effects and timers
-    /// run by the `Ui`; called elsewhere (between updates) it is queued and takes effect at
-    /// the start of the next `Ui::update`.
-    /// Never panics. Cost: O(nodes of the display) (see
-    /// [`Engine::set_theme`](twine_engine::Engine::set_theme)); for light/dark switching prefer
-    /// [`set_mode`](Self::set_mode).
-    ///
-    /// ```
-    /// use std::rc::Rc;
-    /// use twine_engine::ThemeHook;
-    /// use twine_view::prelude::*;
-    ///
-    /// fn app(cx: Scope) -> impl View {
-    ///     let theme = use_theme(cx);
-    ///     let dark: Rc<dyn ThemeHook> = Rc::new(DefaultTheme::dark()); // shared, reused
-    ///     row((
-    ///         button(label("Simple")).on_click(move || theme.set(SimpleTheme::builder().build())),
-    ///         button(label("Dark")).on_click(move || theme.set(dark.clone())),
-    ///     ))
-    /// }
-    /// # let _ = app;
-    /// ```
-    pub fn set(&self, theme: impl IntoTheme) {
-        self.set_shared(theme.into_theme());
-    }
-
-    /// [`set`](Self::set) after the conversion (one copy of the body in the binary).
-    fn set_shared(self, theme: Rc<dyn ThemeHook>) {
-        let cx = self.cx;
-        let mut theme = Some(theme);
-        EngineAccess::with(self.cx, |e| {
-            if let (Some(d), Some(t)) = (display_of(cx, e), theme.take()) {
-                e.set_theme(d, t);
-            }
-        });
-        if let Some(t) = theme {
-            defer(cx, EngineCmd::set_theme(t));
-        }
-    }
-
     /// Switches the theme to `mode` (light, dark, night, high contrast): the display takes the
     /// theme's design element table for `mode` and every node is re-resolved once
     /// ([`Engine::set_theme_mode`]); views are not rebuilt and no binding re-runs, except
     /// those that read [`mode`](Self::mode), [`modes`](Self::modes) or [`get`](Self::get).
-    /// Allocates nothing once the theme has built its table for `mode`. Like
-    /// [`set`](Self::set), at once where the `Ui` runs code, else queued for the next update.
+    /// Allocates nothing (the mode tables are `'static`). At once inside handlers, effects and
+    /// timers run by the `Ui`; called elsewhere (between updates) it is queued and takes
+    /// effect at the start of the next `Ui::update`.
     /// A mode the theme does not support ([`modes`](Self::modes)) is refused: the display
     /// keeps its current mode and a warning is logged; never panics.
     ///
@@ -386,7 +344,7 @@ impl ThemeHandle {
     }
 
     /// The theme mode of the `Ui`'s display. **Tracked**: an effect, memo or closure property
-    /// that calls it re-runs when the mode changes (or the theme is replaced). Outside a `Ui`
+    /// that calls it re-runs when the mode changes. Outside a `Ui`
     /// (a scope without one) the engine's default display is read untracked, if the engine is
     /// available; else [`ThemeMode::Light`].
     /// ```
@@ -409,9 +367,8 @@ impl ThemeHandle {
             .unwrap_or_default()
     }
 
-    /// The modes the theme supports ([`ThemeHook::modes`], e.g. all four for `DefaultTheme`;
-    /// empty without a theme). **Tracked** like [`mode`](Self::mode) (it changes when the
-    /// theme is replaced), and read like it outside a `Ui` (empty if the engine is not
+    /// The modes the theme supports ([`ThemeHook::modes`](twine_engine::ThemeHook::modes), e.g. all four for `Lvgl::new()`;
+    /// empty without a theme). **Tracked** like [`mode`](Self::mode) (it is fixed for the display's theme), and read like it outside a `Ui` (empty if the engine is not
     /// available). Cycle through them with [`ThemeMode::next_in`] (example at
     /// [`set_mode`](Self::set_mode)).
     /// ```
@@ -464,14 +421,14 @@ impl ThemeHandle {
     }
 }
 
-/// The theme of the `Ui` owning `cx`: switch it or its mode, read the mode and design
-/// element values ([`ThemeHandle`]).
+/// The theme of the `Ui` owning `cx`: switch its mode, read the mode and design element
+/// values ([`ThemeHandle`]).
 ///
 /// ```
 /// use twine_view::prelude::*;
 ///
 /// fn app(cx: Scope) -> impl View {
-///     button(label("Dark")).on_click(move || use_theme(cx).set(DefaultTheme::dark()))
+///     button(label("Dark")).on_click(move || use_theme(cx).set_mode(ThemeMode::Dark))
 /// }
 /// # let _ = app;
 /// ```
@@ -567,7 +524,7 @@ pub fn use_motion(cx: Scope) -> MotionHandle {
 /// - engine side effects — the cleanups of a disposed scope (stopping its animations,
 ///   removing its timers, closing its modals, deleting its navigator's pages), the
 ///   [`AnimController`] methods,
-///   [`ThemeHandle::set`], [`ThemeHandle::set_mode`] and [`MotionHandle::set`] — are
+///   [`ThemeHandle::set_mode`] and [`MotionHandle::set`] — are
 ///   **queued** on the `Ui` that owns the scope and applied at the start of its next update
 ///   (bounded: see [`Limits::engine_queue`](twine_core::Limits::engine_queue);
 ///   a command that does not fit is dropped and reported as a

@@ -3,9 +3,10 @@
 //! # Bit format
 //!
 //! All glyph bitmaps store coverage values of `bpp` bits (1, 2, 4 or 8), **MSB first**: bit 7
-//! of the first byte is the first pixel's most significant bit. Values are mapped to A8 with
-//! LVGL's opacity tables (1 bpp `{0, 255}`, 2 bpp `{0, 85, 170, 255}`, 4 bpp `v × 17`, 8 bpp
-//! identity).
+//! of the first byte is the first pixel's most significant bit. Values are mapped to A8 through
+//! the font's [`GammaRamp`] of the run's polarity (`crate::gamma`; [`GammaRamp::LINEAR`] is
+//! LVGL's 2 bpp `{0, 85, 170, 255}` / 4 bpp `v × 17`); 1 bpp maps to `{0, 255}`, 8 bpp is
+//! used as stored.
 //!
 //! **Plain** bitmaps are not row-padded: rows follow each other bit-continuously, so row `y` of
 //! a `w`-pixel-wide glyph starts at bit `y × w × bpp` of the glyph's data.
@@ -26,46 +27,101 @@
 //!
 //! Reads past the end of the data return 0 and mark the stream corrupt; decoding never panics.
 
-/// A glyph bit depth: 1, 2, 4 or 8 bits per pixel, validated once per glyph by the font
-/// ([`BitmapFont`](crate::BitmapFont)'s `bpp` check) before any bitmap is read, so the bit reads
-/// below shift by amounts proven in range by this type rather than checked per pixel.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Bpp(u8);
+use crate::gamma::GammaRamp;
+
+/// The bit depth of a bitmap font's coverage values (LVGL `bpp`): 1, 2, 4 or 8 bits per pixel.
+///
+/// A typed depth instead of an integer: a [`BitmapFont`](crate::BitmapFont) cannot hold any
+/// other depth, so the glyph readers shift by amounts that are in range by construction and
+/// check nothing per glyph or pixel. Generators validate a depth once, where it is parsed
+/// ([`Bpp::new`]).
+///
+/// | Depth | Levels | A8 mapping | Typical use |
+/// |-------|-------:|------------|-------------|
+/// | [`One`](Bpp::One) | 2 | `0, 255` | monochrome displays, pixel fonts |
+/// | [`Two`](Bpp::Two) | 4 | the font's 2 bpp gamma table (linear: `v × 85`) | small flash budgets |
+/// | [`Four`](Bpp::Four) | 16 | the font's 4 bpp gamma table (linear: `v × 17`) | the default: anti-aliased text |
+/// | [`Eight`](Bpp::Eight) | 256 | identity | large text, runtime TrueType glyphs |
+///
+/// The gamma tables are the font's [`TextGamma`](crate::TextGamma), chosen per text run by
+/// [`Polarity`](crate::Polarity).
+///
+/// ```
+/// use twine_text::Bpp;
+///
+/// assert_eq!(Bpp::new(4), Some(Bpp::Four));
+/// assert_eq!(Bpp::new(3), None);
+/// assert_eq!(Bpp::Two.bits(), 2);
+/// assert_eq!(Bpp::Two.max_value(), 3);
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u8)]
+pub enum Bpp {
+    /// 1 bit per pixel: on or off.
+    One = 1,
+    /// 2 bits per pixel: 4 coverage levels.
+    Two = 2,
+    /// 4 bits per pixel: 16 coverage levels (the default).
+    #[default]
+    Four = 4,
+    /// 8 bits per pixel: 256 coverage levels.
+    Eight = 8,
+}
 
 impl Bpp {
-    /// `bits` if it is 1, 2, 4 or 8, else `None`.
+    /// Every depth, from 1 to 8 bits.
+    pub const ALL: [Bpp; 4] = [Bpp::One, Bpp::Two, Bpp::Four, Bpp::Eight];
+
+    /// The depth of `bits` bits per pixel, or `None` unless `bits` is 1, 2, 4 or 8.
+    ///
+    /// Never panics.
+    ///
+    /// ```
+    /// use twine_text::Bpp;
+    /// assert_eq!(Bpp::new(8), Some(Bpp::Eight));
+    /// assert_eq!(Bpp::new(0), None);
+    /// ```
     #[inline]
-    pub(crate) const fn new(bits: u8) -> Option<Bpp> {
+    #[must_use]
+    pub const fn new(bits: u8) -> Option<Bpp> {
         match bits {
-            1 | 2 | 4 | 8 => Some(Bpp(bits)),
+            1 => Some(Bpp::One),
+            2 => Some(Bpp::Two),
+            4 => Some(Bpp::Four),
+            8 => Some(Bpp::Eight),
             _ => None,
         }
     }
 
-    /// The bit count (1, 2, 4 or 8).
+    /// The number of bits per pixel: 1, 2, 4 or 8.
+    ///
+    /// ```
+    /// use twine_text::Bpp;
+    /// assert_eq!(Bpp::Four.bits(), 4);
+    /// ```
     #[inline]
-    pub(crate) const fn get(self) -> u8 {
-        self.0
+    #[must_use]
+    pub const fn bits(self) -> u8 {
+        self as u8
     }
-}
 
-/// Maps a `bpp`-bit coverage value to A8 (LVGL opacity tables).
-#[inline]
-#[must_use]
-pub(crate) const fn to_a8(v: u8, bpp: u8) -> u8 {
-    match bpp {
-        1 => {
-            if v & 1 == 0 {
-                0
-            } else {
-                255
-            }
+    /// The largest coverage value of this depth (`2^bits − 1`: 1, 3, 15 or 255).
+    ///
+    /// ```
+    /// use twine_text::Bpp;
+    /// assert_eq!(Bpp::One.max_value(), 1);
+    /// assert_eq!(Bpp::Eight.max_value(), 255);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn max_value(self) -> u8 {
+        match self {
+            Bpp::One => 1,
+            Bpp::Two => 3,
+            Bpp::Four => 15,
+            Bpp::Eight => 255,
         }
-        // SAFE-ARITH: `v & 3 ≤ 3` and `3 · 85 = 255`.
-        2 => (v & 3).wrapping_mul(85),
-        // SAFE-ARITH: `v & 15 ≤ 15` and `15 · 17 = 255`.
-        4 => (v & 15).wrapping_mul(17),
-        _ => v,
     }
 }
 
@@ -95,11 +151,19 @@ fn get_bits(buf: &[u8], pos: usize, n: u8) -> Option<u8> {
     Some((v & (1u32 << n).wrapping_sub(1)) as u8)
 }
 
-/// Expands `w` values of `bpp` bits starting at bit `bit_offset` of `src` into A8 `out[..w]`.
+/// Expands `w` values of `bpp` bits starting at bit `bit_offset` of `src` into A8 `out[..w]`,
+/// mapped through `ramp`.
 ///
 /// Returns `false` (the missing values are written as 0) when `src` is too short.
-pub(crate) fn expand_row(src: &[u8], bit_offset: usize, bpp: Bpp, w: usize, out: &mut [u8]) -> bool {
-    let bpp = bpp.get();
+pub(crate) fn expand_row(
+    src: &[u8],
+    bit_offset: usize,
+    depth: Bpp,
+    ramp: &GammaRamp,
+    w: usize,
+    out: &mut [u8],
+) -> bool {
+    let bpp = depth.bits();
     // A row buffer shorter than `w` is a caller bug: nothing is written and the row reported
     // as not decoded.
     let Some(out) = out.get_mut(..w) else {
@@ -134,7 +198,7 @@ pub(crate) fn expand_row(src: &[u8], bit_offset: usize, bpp: Bpp, w: usize, out:
             ok = false;
             0
         };
-        *o = to_a8(v, bpp);
+        *o = ramp.a8(v, depth);
         // SAFE-ARITH: `pos` ends at `bit_offset + w · bpp`, a bit position inside a glyph of
         // at most 255 × 255 values (`y · w · bpp + w · bpp < 2^20`).
         pos = pos.wrapping_add(usize::from(bpp));
@@ -196,7 +260,7 @@ impl<'a> Rle<'a> {
 
     /// The next value (in the `bpp` domain).
     pub(crate) fn next_value(&mut self) -> u8 {
-        let bpp = self.bpp.get();
+        let bpp = self.bpp.bits();
         match self.state {
             State::Single => {
                 let ret = self.bits(bpp);
@@ -258,7 +322,8 @@ impl<'a> Rle<'a> {
     }
 }
 
-/// Decodes a compressed glyph of `w × h` values, calling `sink(y, a8_row)` per row.
+/// Decodes a compressed glyph of `w × h` values, calling `sink(y, a8_row)` per row (values
+/// mapped through `ramp`).
 ///
 /// `cur` and `prev` are scratch rows of at least `w` bytes. Returns `false` when the data is
 /// corrupt (rows are still delivered, with zeros for missing data) or the scratch is too small.
@@ -266,6 +331,7 @@ impl<'a> Rle<'a> {
 pub(crate) fn decode_compressed(
     data: &[u8],
     bpp: Bpp,
+    ramp: &GammaRamp,
     w: usize,
     h: usize,
     prefilter: bool,
@@ -288,7 +354,7 @@ pub(crate) fn decode_compressed(
             prev.copy_from_slice(cur);
         }
         for c in cur.iter_mut() {
-            *c = to_a8(*c, bpp.get());
+            *c = ramp.a8(*c, bpp);
         }
         sink(y, cur);
     }
@@ -304,7 +370,14 @@ mod tests {
 
     // The tests name depths as integers.
     fn expand_row(src: &[u8], bit_offset: usize, bpp: u8, w: usize, out: &mut [u8]) -> bool {
-        super::expand_row(src, bit_offset, Bpp::new(bpp).unwrap(), w, out)
+        super::expand_row(
+            src,
+            bit_offset,
+            Bpp::new(bpp).unwrap(),
+            &GammaRamp::LINEAR,
+            w,
+            out,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -318,13 +391,28 @@ mod tests {
         prev: &mut [u8],
         sink: &mut dyn FnMut(usize, &[u8]),
     ) -> bool {
-        super::decode_compressed(data, Bpp::new(bpp).unwrap(), w, h, prefilter, cur, prev, sink)
+        super::decode_compressed(
+            data,
+            Bpp::new(bpp).unwrap(),
+            &GammaRamp::LINEAR,
+            w,
+            h,
+            prefilter,
+            cur,
+            prev,
+            sink,
+        )
     }
 
     #[test]
     fn bpp_accepts_only_glyph_depths() {
         for bits in 0..=u8::MAX {
             assert_eq!(Bpp::new(bits).is_some(), matches!(bits, 1 | 2 | 4 | 8), "{bits}");
+        }
+        for depth in Bpp::ALL {
+            assert_eq!(Bpp::new(depth.bits()), Some(depth));
+            assert_eq!(u32::from(depth.max_value()), (1u32 << depth.bits()) - 1);
+            assert_eq!(GammaRamp::LINEAR.a8(depth.max_value(), depth), 255);
         }
     }
 

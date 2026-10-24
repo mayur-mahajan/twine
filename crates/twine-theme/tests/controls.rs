@@ -3,7 +3,6 @@
 //! stood in for by classes whose base is the real class (themes style a class like its base).
 #![allow(clippy::unreadable_literal)]
 
-use std::rc::Rc;
 use twine_theme::{ThemeMode, Tone};
 
 use twine_core::{Color, Opa};
@@ -11,7 +10,7 @@ use twine_engine::{Engine, NodeId, ObjFlags, ThemeHook, Widget, WidgetClass};
 use twine_image::ImageSource;
 use twine_style::{Part, PropId, Radius, State};
 use twine_testing::EngineHarness;
-use twine_theme::{DefaultTheme, MonoTheme, Palette, SimpleTheme, default::colors};
+use twine_theme::{Palette, lvgl, lvgl::colors, mono, simple};
 
 macro_rules! fake {
     ($ty:ident, $class:ident, $name:literal, $base:path) => {
@@ -46,22 +45,18 @@ fake!(
 fake!(Led, LED, "fake_led", twine_widgets::led::LED_CLASS);
 fake!(Line, LINE, "fake_line", twine_widgets::line::LINE_CLASS);
 
-fn node(theme: Rc<dyn ThemeHook>, w: Box<dyn Widget>) -> (EngineHarness, NodeId) {
-    let mut h = EngineHarness::new(240, 160).theme(theme);
+fn node(theme: &'static dyn ThemeHook, mode: ThemeMode, w: Box<dyn Widget>) -> (EngineHarness, NodeId) {
+    let mut h = EngineHarness::new(240, 160).theme(theme).mode(mode);
     let e: &mut Engine = h.engine_mut();
     let s = e.active_screen(e.default_display().unwrap()).unwrap();
     let n = e.create(s, w).unwrap();
     (h, n)
 }
 
-fn light() -> Rc<dyn ThemeHook> {
-    Rc::new(DefaultTheme::light())
-}
-
 #[test]
 fn default_bar_and_slider() {
     for w in [Box::new(Bar) as Box<dyn Widget>, Box::new(Slider)] {
-        let (h, n) = node(light(), w);
+        let (h, n) = node(&lvgl::THEME, ThemeMode::Light, w);
         let e = h.engine();
         // bg_color_primary_muted + circle; indicator bg_color_primary + circle.
         assert_eq!(
@@ -79,7 +74,7 @@ fn default_bar_and_slider() {
             Some(Radius::Circle)
         );
     }
-    let (mut h, n) = node(light(), Box::new(Slider));
+    let (mut h, n) = node(&lvgl::THEME, ThemeMode::Light, Box::new(Slider));
     // knob: primary, pad dpx(6) = 5 at 130 dpi, circle; grows by dpx(3) when pressed.
     assert_eq!(h.engine().style_i32(n, Part::Knob, PropId::PaddingLeft), 5);
     assert_eq!(
@@ -99,7 +94,7 @@ fn default_bar_and_slider() {
 
 #[test]
 fn default_switch() {
-    let (mut h, n) = node(light(), Box::new(Switch));
+    let (mut h, n) = node(&lvgl::THEME, ThemeMode::Light, Box::new(Switch));
     let e = h.engine();
     assert_eq!(e.style_color(n, Part::Main, PropId::BgColor), colors::LIGHT_GREY);
     assert_eq!(e.style_i32(n, Part::Main, PropId::AnimDuration), 120);
@@ -119,7 +114,7 @@ fn default_switch() {
 
 #[test]
 fn default_checkbox() {
-    let (mut h, n) = node(light(), Box::new(Checkbox));
+    let (mut h, n) = node(&lvgl::THEME, ThemeMode::Light, Box::new(Checkbox));
     let e = h.engine();
     assert_eq!(e.style_i32(n, Part::Main, PropId::ColumnGap), 8); // pad_gap dpx(10)
     assert_eq!(e.style_i32(n, Part::Indicator, PropId::PaddingLeft), 2); // dpx(3)
@@ -152,7 +147,7 @@ fn default_arc_and_spinner() {
         (Box::new(Arc) as Box<dyn Widget>, true),
         (Box::new(Spinner), false),
     ] {
-        let (h, n) = node(light(), w);
+        let (h, n) = node(&lvgl::THEME, ThemeMode::Light, w);
         let e = h.engine();
         assert_eq!(e.style_i32(n, Part::Main, PropId::ArcWidth), 12); // dpx(15)
         assert_eq!(e.style_color(n, Part::Main, PropId::ArcColor), colors::LIGHT_GREY);
@@ -171,7 +166,7 @@ fn default_arc_and_spinner() {
 
 #[test]
 fn default_led_and_line() {
-    let (h, n) = node(light(), Box::new(Led));
+    let (h, n) = node(&lvgl::THEME, ThemeMode::Light, Box::new(Led));
     let e = h.engine();
     assert_eq!(e.style_color(n, Part::Main, PropId::BgColor), Color::WHITE);
     assert_eq!(
@@ -180,7 +175,7 @@ fn default_led_and_line() {
     );
     assert_eq!(e.style_i32(n, Part::Main, PropId::ShadowWidth), 12); // dpx(15)
     assert_eq!(e.style_i32(n, Part::Main, PropId::ShadowSpread), 4); // dpx(5)
-    let (h, n) = node(Rc::new(DefaultTheme::dark()), Box::new(Line));
+    let (h, n) = node(&lvgl::THEME, ThemeMode::Dark, Box::new(Line));
     let e = h.engine();
     assert_eq!(e.style_i32(n, Part::Main, PropId::LineWidth), 1);
     assert_eq!(e.style_color(n, Part::Main, PropId::LineColor), colors::DARK_TEXT);
@@ -188,8 +183,7 @@ fn default_led_and_line() {
 
 #[test]
 fn simple_theme_controls() {
-    let t = || Rc::new(SimpleTheme::new()) as Rc<dyn ThemeHook>;
-    let (h, n) = node(t(), Box::new(Slider));
+    let (h, n) = node(&simple::THEME, ThemeMode::Light, Box::new(Slider));
     let e = h.engine();
     assert_eq!(
         e.style_color(n, Part::Main, PropId::BgColor),
@@ -203,12 +197,12 @@ fn simple_theme_controls() {
         e.style_color(n, Part::Knob, PropId::BgColor),
         Palette::Grey.tone(Tone::D2)
     );
-    let (h, n) = node(t(), Box::new(Arc));
+    let (h, n) = node(&simple::THEME, ThemeMode::Light, Box::new(Arc));
     let e = h.engine();
     assert_eq!(e.style_i32(n, Part::Main, PropId::ArcWidth), 6); // arc_line
     assert_eq!(e.style_opa(n, Part::Main, PropId::BgOpacity), Opa::TRANSP); // transp
     assert_eq!(e.style_i32(n, Part::Knob, PropId::PaddingLeft), 5); // arc_knob
-    let (mut h, n) = node(t(), Box::new(Checkbox));
+    let (mut h, n) = node(&simple::THEME, ThemeMode::Light, Box::new(Checkbox));
     h.engine_mut().add_state(n, State::CHECKED);
     assert_eq!(
         h.engine().style_color(n, Part::Indicator, PropId::BgColor),
@@ -218,26 +212,18 @@ fn simple_theme_controls() {
 
 #[test]
 fn mono_theme_controls() {
-    let t = |dark| {
-        Rc::new(
-            MonoTheme::builder()
-                .mode(if dark { ThemeMode::Dark } else { ThemeMode::Light })
-                .font(&twine_assets::fonts::MONTSERRAT_14)
-                .build(),
-        ) as Rc<dyn ThemeHook>
-    };
-    let (h, n) = node(t(false), Box::new(Switch));
+    let (h, n) = node(&mono::THEME, ThemeMode::Light, Box::new(Switch));
     let e = h.engine();
     // card + radius_circle + pad_zero; indicator inverted; knob card.
     assert_eq!(e.style_i32(n, Part::Main, PropId::BorderWidth), 1);
     assert_eq!(e.style_i32(n, Part::Main, PropId::PaddingLeft), 0);
     assert_eq!(e.style_color(n, Part::Indicator, PropId::BgColor), Color::BLACK);
     assert_eq!(e.style_color(n, Part::Knob, PropId::BgColor), Color::WHITE);
-    let (h, n) = node(t(true), Box::new(Spinner));
+    let (h, n) = node(&mono::THEME, ThemeMode::Dark, Box::new(Spinner));
     let e = h.engine();
     assert_eq!(e.style_i32(n, Part::Indicator, PropId::ArcWidth), 8); // SPINNER_WIDTH
     assert_eq!(e.style_color(n, Part::Indicator, PropId::ArcColor), Color::WHITE);
-    let (mut h, n) = node(t(false), Box::new(Checkbox));
+    let (mut h, n) = node(&mono::THEME, ThemeMode::Light, Box::new(Checkbox));
     h.engine_mut().add_state(n, State::CHECKED);
     let e = h.engine();
     assert_eq!(e.style_color(n, Part::Indicator, PropId::BgColor), Color::BLACK);

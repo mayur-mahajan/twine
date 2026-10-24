@@ -6,43 +6,36 @@
 #![allow(clippy::float_arithmetic)] // the test recomputes the WCAG formulas in f64
 
 use std::fmt::Write as _;
-use std::rc::Rc;
 
 use twine_core::{Color, Size};
 use twine_engine::ThemeHook;
 use twine_style::ThemeMode;
-use twine_style::design::{self, ColorElement, ContrastPair, ElementTable};
+use twine_style::design::{self, ColorElement, ContrastPair, ElementTable, ElementType};
 use twine_testing::{EngineHarness, capture_logs};
-use twine_theme::{DefaultTheme, DisplaySize, MonoTheme, SimpleTheme};
+use twine_theme::{DisplaySize, Lvgl, Simple, lvgl, mono, simple};
 
 const SIZE: Size = Size::new(320, 240);
 
-/// The built-in themes (default in two display classes) and the modes they must support.
-fn themes() -> Vec<(&'static str, Rc<dyn ThemeHook>, &'static [ThemeMode])> {
-    let font = &twine_assets::fonts::MONTSERRAT_14;
+/// The LVGL theme on large displays.
+static LVGL_LARGE: Lvgl = Lvgl::new().display_size(DisplaySize::Large);
+
+/// The built-in themes (LVGL in two display classes) and the modes they must support.
+fn themes() -> Vec<(&'static str, &'static dyn ThemeHook, &'static [ThemeMode])> {
     vec![
-        ("default", Rc::new(DefaultTheme::light()), &ThemeMode::ALL),
-        (
-            "default large",
-            Rc::new(
-                DefaultTheme::builder()
-                    .mode(ThemeMode::Dark)
-                    .display_size(DisplaySize::Large)
-                    .build(),
-            ),
-            &ThemeMode::ALL,
-        ),
-        (
-            "mono",
-            Rc::new(MonoTheme::builder().font(font).build()),
-            &ThemeMode::ALL,
-        ),
-        (
-            "simple",
-            Rc::new(SimpleTheme::new()),
-            &[ThemeMode::Light, ThemeMode::HighContrast],
-        ),
+        ("lvgl", &lvgl::THEME, &ThemeMode::ALL),
+        ("lvgl large", &LVGL_LARGE, &ThemeMode::ALL),
+        ("mono", &mono::THEME, &ThemeMode::ALL),
+        ("simple", &simple::THEME, &ThemeMode::ALL),
     ]
+}
+
+/// What a display at 130 DPI of `SIZE` resolves with in `mode`: the mode's `'static` table
+/// over the display's metrics table.
+fn resolved(t: &dyn ThemeHook, mode: ThemeMode) -> Option<ElementTable> {
+    let table = t.design(mode)?;
+    let mut all = t.metrics(130, SIZE).unwrap_or_default();
+    all.overlay(table);
+    Some(all)
 }
 
 /// WCAG 2.x relative luminance in f64 (independent of `Color::relative_luminance`).
@@ -67,20 +60,17 @@ fn ratio(a: Color, b: Color) -> f64 {
 fn every_theme_defines_every_standard_element_in_every_mode() {
     for (name, t, modes) in themes() {
         assert_eq!(t.modes(), modes, "{name}");
-        assert!(
-            t.modes().contains(&t.mode()),
-            "{name}: starts in a supported mode"
-        );
         for mode in ThemeMode::ALL {
-            let a = t.design(mode, 130, SIZE);
+            let a = t.design(mode);
             if !modes.contains(&mode) {
                 assert!(a.is_none(), "{name} {mode:?} is not supported");
                 continue;
             }
             let a = a.unwrap_or_else(|| panic!("{name} {mode:?}"));
-            assert_eq!(a.missing_standard(), None, "{name} {mode:?}");
-            let b = t.design(mode, 130, SIZE).unwrap();
-            assert!(Rc::ptr_eq(&a, &b), "{name} {mode:?}: built once");
+            let b = t.design(mode).unwrap();
+            assert!(core::ptr::eq(a, b), "{name} {mode:?}: one static table");
+            let all = resolved(t, mode).unwrap();
+            assert_eq!(all.missing_standard(), None, "{name} {mode:?}");
         }
     }
 }
@@ -92,7 +82,7 @@ fn every_mode_meets_its_minimum_contrast_ratios() {
     let mut report = String::new();
     for (name, t, modes) in themes() {
         for &mode in modes {
-            let table = t.design(mode, 130, SIZE).unwrap();
+            let table = resolved(t, mode).unwrap();
             let _ = write!(report, "{name:<14} {:<13}", format!("{mode:?}"));
             for pair in ContrastPair::ALL {
                 let (fg, bg) = pair
@@ -126,23 +116,27 @@ fn every_mode_meets_its_minimum_contrast_ratios() {
     );
 }
 
-/// Night: every color of the default theme is dim (≤ 30 % relative luminance) and warm (blue
-/// at most half of red), and darker than the dark mode's text.
+/// Night: every color of the LVGL and simple themes is dim (≤ 30 % relative luminance) and
+/// warm (blue at most half of red), and much darker than the dark mode's text.
 #[test]
-fn default_night_is_dim_and_warm() {
-    let t = DefaultTheme::light();
-    let night = t.design(ThemeMode::Night, 130, SIZE).unwrap();
-    for e in (0..ColorElement::custom(0).id()).map(id) {
-        let c = night.get(e).unwrap();
-        assert!(luminance(c) <= 0.30, "{e:?} = {c}: {}", luminance(c));
-        assert!(c.b <= c.r / 2, "{e:?} = {c}: too blue");
+fn night_is_dim_and_warm() {
+    for t in [&lvgl::THEME as &dyn ThemeHook, &simple::THEME] {
+        let night = t.design(ThemeMode::Night).unwrap();
+        for e in (0..<Color as ElementType>::STANDARD).map(id) {
+            let c = night.get(e).unwrap();
+            assert!(luminance(c) <= 0.30, "{} {e:?} = {c}: {}", t.name(), luminance(c));
+            assert!(c.b <= c.r / 2, "{} {e:?} = {c}: too blue", t.name());
+        }
+        let dark = t.design(ThemeMode::Dark).unwrap();
+        let text = |t: &ElementTable| t.get(design::ON_SURFACE).unwrap().relative_luminance();
+        // LVGL: a third of its dark text at most; simple (brighter dark text): a half.
+        let factor = if t.name() == "lvgl" { 3 } else { 2 };
+        assert!(
+            text(night) < text(dark) / factor,
+            "{}: night text is 1/{factor} of dark text at most",
+            t.name()
+        );
     }
-    let dark = t.design(ThemeMode::Dark, 130, SIZE).unwrap();
-    let text = |t: &ElementTable| t.get(design::ON_SURFACE).unwrap().relative_luminance();
-    assert!(
-        text(&night) < text(&dark) / 3,
-        "night text is a third of dark text at most"
-    );
 }
 
 /// The standard color element with `id`.
@@ -168,6 +162,12 @@ fn id(id: u16) -> ColorElement {
         design::SCRIM,
         design::PLACEHOLDER,
         design::NEUTRAL,
+        design::ACCENT_TINT,
+        design::SEPARATOR,
+        design::GROUPED_BACKGROUND,
+        design::FILL_1,
+        design::FILL_2,
+        design::FILL_3,
     ];
     all[usize::from(id)]
 }
@@ -175,11 +175,10 @@ fn id(id: u16) -> ColorElement {
 /// An application that overrides a standard element can verify its table the same way.
 #[test]
 fn application_overrides_are_checked_too() {
-    let t = DefaultTheme::builder()
-        .element_in(ThemeMode::HighContrast, design::PRIMARY, Color::hex(0x0015_65C0))
-        .build();
-    let table: Rc<ElementTable> = t.design(ThemeMode::HighContrast, 130, SIZE).unwrap();
-    let v = table.check_contrast(ThemeMode::HighContrast).unwrap_err();
+    static HC: ElementTable = Lvgl::SET
+        .table(ThemeMode::HighContrast)
+        .color(design::PRIMARY, Color::hex(0x0015_65C0));
+    let v = HC.check_contrast(ThemeMode::HighContrast).unwrap_err();
     assert_eq!(v.pair, ContrastPair::OnPrimary); // black on dark blue
 }
 
@@ -187,7 +186,12 @@ fn application_overrides_are_checked_too() {
 /// is logged, nothing panics; supported modes switch.
 #[test]
 fn unsupported_mode_keeps_the_current_mode_and_warns() {
-    let mut h = EngineHarness::new(64, 48).theme(SimpleTheme::new());
+    /// The simple theme listing light and high contrast only.
+    static TWO: Simple = Simple::new().modes(&[
+        (ThemeMode::Light, &simple::LIGHT),
+        (ThemeMode::HighContrast, &simple::HIGH_CONTRAST),
+    ]);
+    let mut h = EngineHarness::new(64, 48).theme(&TWO);
     h.run_until_idle();
     let d = h.display();
     let epoch = h.engine().design_epoch(d);

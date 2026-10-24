@@ -8,7 +8,7 @@ use std::path::PathBuf;
 mod showcase;
 
 use showcase::{H, W, build, engine_config};
-use twine::theme::DefaultTheme;
+use twine::prelude::lvgl;
 use twine_sim::{Headless, SimConfig, run_engine_headless};
 use twine_testing::png_io::read_rgb_png;
 use twine_testing::{Tolerance, assert_rgb_snapshot, snapshot_config};
@@ -20,7 +20,7 @@ fn core_widgets_headless_matches_snapshot() {
     let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/scripts/core_widgets.twinescript");
     let cfg = SimConfig::new(W, H)
         .engine_config(engine_config())
-        .theme(DefaultTheme::light())
+        .theme(&lvgl::THEME)
         .headless(Some(Headless {
             frames: 1,
             script: Some(script),

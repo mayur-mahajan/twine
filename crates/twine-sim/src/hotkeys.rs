@@ -34,7 +34,7 @@ pub enum Hotkey {
     /// F10: start / stop recording frames.
     Record,
     /// F12: switch the theme to its next mode (light → dark → night → high contrast → light,
-    /// as far as the installed theme supports them; `Engine::set_theme_mode`).
+    /// as far as the display's theme lists them; `Engine::set_theme_mode`).
     CycleThemeMode,
 }
 

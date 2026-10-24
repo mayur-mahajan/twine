@@ -145,6 +145,9 @@ pub enum AllocSite {
     /// A style's property list (`StyleBuf`: a node's local style, a shared style) grew: a
     /// property was set on it for the first time.
     StyleProps = 27,
+    /// The engine's theme-class side table (variants and roles, `Engine::set_theme_class`)
+    /// grew (reserved for `Limits::max_theme_classes` with `preallocate`).
+    ThemeClass = 28,
     /// A widget's text buffer grew (label — with its password-mode and shaped copies —,
     /// checkbox, span, button-matrix button and popover, owned dropdown/roller options).
     Text = 30,
@@ -201,6 +204,7 @@ impl AllocSite {
             25 => AllocSite::EngineScratch,
             26 => AllocSite::DeleteScratch,
             27 => AllocSite::StyleProps,
+            28 => AllocSite::ThemeClass,
             30 => AllocSite::Text,
             31 => AllocSite::WidgetBuffer,
             40 => AllocSite::EngineQueue,
@@ -239,6 +243,7 @@ impl AllocSite {
             AllocSite::EngineScratch => "EngineScratch",
             AllocSite::DeleteScratch => "DeleteScratch",
             AllocSite::StyleProps => "StyleProps",
+            AllocSite::ThemeClass => "ThemeClass",
             AllocSite::Text => "Text",
             AllocSite::WidgetBuffer => "WidgetBuffer",
             AllocSite::EngineQueue => "EngineQueue",

@@ -1,13 +1,20 @@
 //! `cargo xtask fonts [--check]`: regenerates the built-in fonts of `twine-assets` from
-//! `assets/fonts/fonts.toml` with the `twine font` generator (called in-process).
+//! `assets/fonts/fonts.toml` with the font generator of `twine-build` (called in-process).
+//!
+//! The text fields are parsed into typed values when the file is read: `bpp` into a
+//! `twine_text::Bpp` (1, 2, 4 or 8), `ranges` into typed character ranges (the `twine font
+//! --range` syntax), the optional `hinting` (`full` by default) into a
+//! `twine_build::font::Hinting` and `gamma` (`default` by default) into a
+//! `twine_build::font::Gamma`.
 //!
 //! `--check` regenerates every font in memory and fails if a file in
 //! `crates/twine-assets/src/fonts/` differs (or is missing).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
-use twine_cli::font::{FontOptions, SubpxArg, Symbols, generate};
+use serde::{Deserialize, Deserializer};
+use twine_build::font::{BitmapFormat, Bpp, Font, Gamma, Hinting, Subpx};
+use twine_cli::font::{CharRanges, DEFAULT_SYMBOLS_TTF, parse_range};
 
 use crate::util::{R, warn, workspace_root};
 
@@ -30,10 +37,12 @@ pub struct FontEntry {
     pub ttf: String,
     /// Pixel size.
     pub size: u16,
-    /// Bits per pixel.
-    pub bpp: u8,
-    /// Code point ranges.
-    pub ranges: Vec<String>,
+    /// Bits per pixel (1, 2, 4 or 8).
+    #[serde(deserialize_with = "de_bpp")]
+    pub bpp: Bpp,
+    /// Code point ranges (`"0x20-0x7F"`, `"0xB0"`, `"chars:°•"`).
+    #[serde(deserialize_with = "de_ranges")]
+    pub ranges: Vec<CharRanges>,
     /// `"fa"` or `"none"`.
     pub symbols: String,
     /// RLE compression.
@@ -46,6 +55,32 @@ pub struct FontEntry {
     /// Optional file listing extra characters (e.g. a common CJK character list).
     #[serde(default)]
     pub chars_file: Option<String>,
+    /// `"full"` (default), `"light"` or `"none"`.
+    #[serde(default, deserialize_with = "de_hinting")]
+    pub hinting: Hinting,
+    /// `"default"` (default), `"linear"` or `"<dark-on-light>,<light-on-dark>"`.
+    #[serde(default, deserialize_with = "de_gamma")]
+    pub gamma: Gamma,
+}
+
+fn de_hinting<'de, D: Deserializer<'de>>(d: D) -> Result<Hinting, D::Error> {
+    String::deserialize(d)?.parse().map_err(serde::de::Error::custom)
+}
+
+fn de_gamma<'de, D: Deserializer<'de>>(d: D) -> Result<Gamma, D::Error> {
+    String::deserialize(d)?.parse().map_err(serde::de::Error::custom)
+}
+
+fn de_bpp<'de, D: Deserializer<'de>>(d: D) -> Result<Bpp, D::Error> {
+    let bits = u8::deserialize(d)?;
+    Bpp::new(bits).ok_or_else(|| serde::de::Error::custom(format!("bpp must be 1, 2, 4 or 8 (got {bits})")))
+}
+
+fn de_ranges<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<CharRanges>, D::Error> {
+    Vec::<String>::deserialize(d)?
+        .iter()
+        .map(|s| parse_range(s).map_err(serde::de::Error::custom))
+        .collect()
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,34 +95,46 @@ pub fn parse(text: &str) -> Result<Vec<FontEntry>, Box<dyn std::error::Error>> {
 }
 
 impl FontEntry {
-    /// The generator options of this entry.
-    pub fn options(&self) -> Result<FontOptions, Box<dyn std::error::Error>> {
-        let symbols = match self.symbols.as_str() {
-            "fa" => Symbols::Fa,
-            "none" => Symbols::None,
-            s => return Err(format!("{}: symbols must be \"fa\" or \"none\" (got {s:?})", self.name).into()),
-        };
+    /// The generator of this entry (files are read relative to `root`, the workspace root).
+    pub fn font(&self, root: &Path) -> Result<Font, Box<dyn std::error::Error>> {
         let subpx = match self.subpx.as_deref().unwrap_or("none") {
-            "none" => SubpxArg::None,
-            "hor" => SubpxArg::Hor,
-            "ver" => SubpxArg::Ver,
+            "none" => Subpx::None,
+            "hor" => Subpx::Hor,
+            "ver" => Subpx::Ver,
             s => return Err(format!("{}: subpx must be none/hor/ver (got {s:?})", self.name).into()),
         };
-        Ok(FontOptions {
-            ttf: PathBuf::from(&self.ttf),
-            size: self.size,
-            bpp: self.bpp,
-            ranges: self.ranges.clone(),
-            chars_files: self.chars_file.iter().map(PathBuf::from).collect(),
-            symbols,
-            symbols_ttf: Vec::new(),
-            compress: self.compress,
-            prefilter: true,
-            kerning: self.kerning,
-            subpx,
-            name: self.name.clone(),
-            out: PathBuf::from(FONTS_DIR).join(&self.file),
-        })
+        let mut f = Font::from_ttf(&self.ttf)
+            .root(root)
+            .size(self.size)
+            .bpp(self.bpp)
+            .format(if self.compress {
+                BitmapFormat::Compressed
+            } else {
+                BitmapFormat::Plain
+            })
+            .kerning(self.kerning)
+            .subpx(subpx)
+            .hinting(self.hinting)
+            .gamma(self.gamma)
+            .name(&self.name)
+            .crate_path("twine_text");
+        for r in &self.ranges {
+            f = f.chars_from(r.0.as_slice());
+        }
+        if let Some(file) = &self.chars_file {
+            f = f.chars_from_file(file);
+        }
+        match self.symbols.as_str() {
+            "fa" => f = f.symbol_fonts(DEFAULT_SYMBOLS_TTF.iter().copied()),
+            "none" => {}
+            s => return Err(format!("{}: symbols must be \"fa\" or \"none\" (got {s:?})", self.name).into()),
+        }
+        Ok(f)
+    }
+
+    /// The generated file, relative to the workspace root.
+    pub fn out(&self) -> PathBuf {
+        PathBuf::from(FONTS_DIR).join(&self.file)
     }
 }
 
@@ -98,19 +145,21 @@ pub fn run(check: bool) -> R {
     let mut stale = Vec::new();
     let mut table = Vec::new();
     for e in &entries {
-        let opts = e.options()?;
-        let g = generate(&opts, &root).map_err(|err| format!("{}: {err}", e.name))?;
+        let g = e
+            .font(&root)?
+            .build()
+            .map_err(|err| format!("{}: {err}", e.name))?;
         for w in &g.warnings {
             warn(&format!("{}: {w}", e.name));
         }
-        let path = root.join(&opts.out);
+        let rel = e.out();
+        let path = root.join(&rel);
         let current = std::fs::read_to_string(&path).ok();
         if current.as_deref() != Some(g.source.as_str()) {
-            stale.push(opts.out.display().to_string());
+            stale.push(rel.display().to_string());
             if !check {
-                std::fs::create_dir_all(path.parent().unwrap_or(&root))?;
-                std::fs::write(&path, &g.source)?;
-                println!("fonts: wrote {}", opts.out.display());
+                g.write(&path)?;
+                println!("fonts: wrote {}", rel.display());
             }
         }
         table.push((
@@ -152,7 +201,14 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), entries.len());
         for e in &entries {
-            e.options().unwrap();
+            assert_eq!(e.font(&workspace_root()).unwrap().static_name(), e.name);
         }
+        let bad = parse(
+            "[[font]]\nname = \"X\"\nfeature = \"x\"\nfile = \"x.rs\"\nttf = \"x.ttf\"\nsize = 8\nbpp = 3\nranges = []\nsymbols = \"none\"\ncompress = false\nkerning = true\n",
+        );
+        assert!(
+            bad.unwrap_err().to_string().contains("bpp must be 1, 2, 4 or 8"),
+            "bpp checked when parsed"
+        );
     }
 }

@@ -48,7 +48,9 @@
 //! - Every setter that changes something logs
 //!   `trace!(target: "twine::engine", "<class>#<node> set_<name>")`.
 //! - Look comes from styles only: widgets read their parts' resolved styles (themes set
-//!   the LVGL look, applications override with styles or local properties).
+//!   the LVGL look, applications override with styles or local properties). A widget's
+//!   variants are theme classes derived from its class, chosen with a typed
+//!   [`Variant`](twine_engine::Variant) ([`ButtonVariant`](button::ButtonVariant)).
 //! - Invalid input never panics in release builds: it logs `warn!` and is ignored (P7).
 //!
 //! ## Example

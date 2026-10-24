@@ -61,7 +61,11 @@ fn engine(cfg: EngineConfig) -> (Engine, DisplayId) {
     let mut e = Engine::new(cfg).unwrap();
     let panel = MemoryDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565)).never_complete();
     let d = e
-        .add_display(panel, BufferMode::partial_single(leak(usize::from(W) * 2 * ROWS)))
+        .add_display(
+            panel,
+            BufferMode::partial_single(leak(usize::from(W) * 2 * ROWS)),
+            None,
+        )
         .unwrap();
     paint(&mut e, d, Color::RED);
     (e, d)
@@ -236,6 +240,7 @@ fn cooperative_pending_flush_after_the_frame_times_out_too() {
         .add_display(
             panel,
             BufferMode::partial_single(leak(usize::from(W) * 2 * usize::from(H))),
+            None,
         )
         .unwrap();
     paint(&mut e, d, Color::RED);
@@ -259,6 +264,7 @@ fn hung_framebuffer_swap_times_out() {
         .add_framebuffer_display(
             MockFramebufferDisplay::new(info, true, u32::MAX),
             BufferMode::full(),
+            None,
         )
         .unwrap();
     paint(&mut e, d, Color::BLUE);
@@ -271,6 +277,38 @@ fn hung_framebuffer_swap_times_out() {
     assert_eq!(e.display_health(d).unwrap().state, DisplayState::Failed);
     assert_eq!(wake, Wake::At(ms(76)));
     assert_eq!(e.driver::<MockFramebufferDisplay>(d).unwrap().presents(), [1]);
+}
+
+/// A swap that completed while the engine slept (nothing to draw for longer than the
+/// timeout) must not be reported hung by the next frame: the engine settles finished swaps
+/// before measuring the pending one, as it reclaims finished partial buffers.
+#[test]
+fn regression_swap_done_during_idle_is_not_reported_hung() {
+    let info = DisplayInfo::new(W, H, ColorFormat::Rgb565);
+    let cfg = EngineConfig {
+        flush_timeout: Some(TIMEOUT),
+        ..EngineConfig::default()
+    };
+    let mut e = Engine::new(cfg).unwrap();
+    // The swap takes effect right away, but the engine only learns it when it polls
+    // `present_done`: the frame ends with the swap pending, as with a panel that switches
+    // buffers at its next vertical blank.
+    let d = e
+        .add_framebuffer_display(
+            MockFramebufferDisplay::new(info, true, 0),
+            BufferMode::full(),
+            None,
+        )
+        .unwrap();
+    paint(&mut e, d, Color::BLUE);
+    let _ = e.step(ms(0));
+    assert!(e.take_faults().is_empty());
+    // Idle for 4× the timeout, then a new frame.
+    paint(&mut e, d, Color::GREEN);
+    let _ = e.step(ms(200));
+    assert!(e.take_faults().is_empty(), "the swap finished long ago");
+    assert_eq!(e.display_health(d).unwrap().state, DisplayState::Healthy);
+    assert_eq!(e.driver::<MockFramebufferDisplay>(d).unwrap().presents(), [1, 0]);
 }
 
 #[test]
@@ -326,7 +364,11 @@ fn accelerator_timeouts_are_raised_and_drawn_in_software() {
     e.set_accel(TimingOut);
     let panel = MemoryDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565));
     let d = e
-        .add_display(panel, BufferMode::partial_single(leak(usize::from(W) * 2 * ROWS)))
+        .add_display(
+            panel,
+            BufferMode::partial_single(leak(usize::from(W) * 2 * ROWS)),
+            None,
+        )
         .unwrap();
     paint(&mut e, d, Color::RED);
     let _ = e.step(ms(0));

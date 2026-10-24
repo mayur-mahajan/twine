@@ -278,6 +278,10 @@ pub struct Tree {
     /// parent (see [`style_parent`](Self::style_parent)). Usually empty: one entry per open
     /// popup or modal.
     style_links: Vec<(NodeId, NodeId)>,
+    /// `(node, theme class)` for nodes themed as another class than their widget's (a variant
+    /// or a role, `Engine::set_theme_class`; bounded by `Limits::max_theme_classes`). Read
+    /// only when a theme is applied; usually short.
+    pub(crate) theme_classes: Vec<(NodeId, &'static WidgetClass)>,
     /// Post-order ids of the subtrees being deleted, one segment per (nested) deletion; kept
     /// to reuse its allocation, reserved for `Limits::max_nodes` with `preallocate`.
     scratch: Vec<NodeId>,
@@ -328,6 +332,9 @@ impl Tree {
             self.style_links
                 .capacity()
                 .saturating_mul(core::mem::size_of::<(NodeId, NodeId)>()),
+            self.theme_classes
+                .capacity()
+                .saturating_mul(core::mem::size_of::<(NodeId, &'static WidgetClass)>()),
         ];
         let own = vecs
             .into_iter()
@@ -343,6 +350,23 @@ impl Tree {
         self.nodes.reserve(n);
         let n = usize::from(n);
         self.scratch.reserve_exact(n.saturating_sub(self.scratch.len()));
+    }
+
+    /// The class `id` is themed as: its theme class (`Engine::set_theme_class`) if it has one,
+    /// else its widget's class; `None` for an unknown node. One branch without theme classes,
+    /// else O(nodes with a theme class).
+    #[must_use]
+    pub fn theme_class(&self, id: NodeId) -> Option<&'static WidgetClass> {
+        let own = self.node(id)?.class();
+        if self.theme_classes.is_empty() {
+            return Some(own);
+        }
+        Some(
+            self.theme_classes
+                .iter()
+                .find(|(n, _)| *n == id)
+                .map_or(own, |&(_, c)| c),
+        )
     }
 
     /// Levels between `id` and its root (a root is 0); `None` for an unknown node. O(depth).
@@ -490,6 +514,10 @@ impl Tree {
                 let handlers = node.handlers.as_ref().map_or(0, |h| h.len());
                 self.handler_count = self.handler_count.saturating_sub(handlers);
             }
+        }
+        if !self.theme_classes.is_empty() {
+            let nodes = &self.nodes;
+            self.theme_classes.retain(|&(n, _)| nodes.get(n).is_some());
         }
         if !self.style_links.is_empty() {
             let nodes = &self.nodes;
@@ -1110,6 +1138,18 @@ impl Tree {
                 "node count differs from linked nodes",
                 None,
             );
+        }
+        for (i, &(n, c)) in self.theme_classes.iter().enumerate() {
+            match self.nodes.get(n) {
+                None => return err(n, "theme class of a dead node", None),
+                Some(node) if !c.is_a(node.class) => {
+                    return err(n, "theme class does not derive from the widget class", None);
+                }
+                Some(_) => {}
+            }
+            if self.theme_classes.iter().take(i).any(|(m, _)| *m == n) {
+                return err(n, "duplicate theme class", None);
+            }
         }
         for (i, &(n, p)) in self.style_links.iter().enumerate() {
             if !self.contains(n) || !self.contains(p) {

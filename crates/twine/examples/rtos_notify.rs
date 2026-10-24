@@ -146,7 +146,7 @@ fn main() {
         .runtime(Runtime::take().expect("runtime already taken"))
         .platform(&platform)
         .buffers(BufferMode::alloc(BufferSpec::PartialSingle { rows: 16 }))
-        .theme(DefaultTheme::light())
+        .theme(&lvgl::THEME)
         .build(app);
     let mut wakes = 0;
     run::blocking_with(ui, &mut platform, |ui, event| match event {

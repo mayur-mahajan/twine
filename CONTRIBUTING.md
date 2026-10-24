@@ -30,7 +30,7 @@ Every PR must meet this **Definition of Done**:
    `safety` profile with its lint-status ratchet and the panic-inventory check), all tests, `no_std` builds for every
    embedded target (also in the `safety` profile), the check that the profile refuses its
    excluded parts and lacks the panicking convenience APIs, rustdoc, the layering check, the work-marker check,
-   the generated-fonts, generated-images and style-property-table checks, a benchmark build, snapshot tests, Miri and
+   the generated-fonts, sample-images and style-property-table checks, a benchmark build, snapshot tests, Miri and
    the example firmware builds. Use
    `cargo xtask ci --quick` while iterating.
 2. **Tests cover the change.** New behaviour has tests; bug fixes add a regression test named
@@ -48,13 +48,15 @@ Every PR must meet this **Definition of Done**:
    CI until approved with `--accept`). Never edit a manifest by hand.
 5. **Performance is considered.** For changes in rendering, layout, styles, input or the
    reactive runtime, run `cargo xtask bench` (renderer, text) and `cargo bench -p twine-bench`
-   (engine refresh, layout and animation frames) and mention the impact in the PR. Regressions
+   (engine refresh, layout and animation frames; `--bench theme` for themed resolution, state
+   changes and mode switches) and mention the impact in the PR. Regressions
    need a justification.
 6. **Generated files are regenerated, not edited.** Built-in fonts come from
    `assets/fonts/fonts.toml` via `cargo xtask fonts`; `cargo xtask fonts --check` fails when a
    generated file is out of date. Sample images in `assets/images/` are drawn by
-   `cargo xtask gen-assets` and converted from `assets/images/images.toml` by
-   `cargo xtask images` (both take `--check`). The style property table
+   `cargo xtask gen-assets` (`--check` too); examples, tests and demos convert images and
+   subset fonts while they build (`twine::include_image!`, `twine-build` in `build.rs`), so
+   no converted copies are committed. The style property table
    `crates/twine-style/PROPERTIES.md` is written by `cargo xtask style-props` (`--check` too). New asset files record their source URL, license and SHA-256
    in the `SOURCES.md` of their folder.
 7. **Nothing is left half-done.** No `todo!()`, `unimplemented!()`, placeholder return values,

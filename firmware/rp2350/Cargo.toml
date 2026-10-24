@@ -24,7 +24,7 @@ panel-st7789 = ["spi-panel", "twine/drivers-st7789"]
 ## ST7796S 320 × 480 SPI panel (turned to 480 × 320).
 panel-st7796 = ["spi-panel", "twine/drivers-st7796"]
 ## SSD1306 128 × 64 mono OLED on the I2C pins of the capacitive touch (no touch; mono theme).
-oled-ssd1306 = ["twine/drivers-ssd1306", "twine/drivers-i2c"]
+oled-ssd1306 = ["twine/drivers-ssd1306", "twine/drivers-i2c", "twine/theme-mono"]
 ## XPT2046 resistive touch on its own SPI bus.
 touch-xpt2046 = ["touch", "twine/drivers-xpt2046"]
 ## FT6x36 capacitive touch on I2C.

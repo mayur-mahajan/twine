@@ -488,10 +488,10 @@ fn btnm_theme_styles() {
     let e = h.engine();
     // Items: the button look (grey bg with a shadow in light mode), Main: a card.
     let p = e.style_prop(m, Part::Items, twine_style::PropId::ShadowWidth);
-    assert!(p.as_i32().unwrap_or(0) > 0);
+    assert!(p.as_px().unwrap_or(0) > 0);
     assert_eq!(
         e.style_color(m, Part::Main, twine_style::PropId::BgColor),
-        twine_theme::default::colors::LIGHT_CARD
+        twine_theme::lvgl::colors::LIGHT_CARD
     );
 }
 

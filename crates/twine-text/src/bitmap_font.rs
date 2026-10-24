@@ -1,11 +1,10 @@
 //! [`BitmapFont`]: the built-in bitmap font format, with the same capabilities and semantics as
 //! LVGL's `lv_font_fmt_txt_dsc_t` (cmaps, kerning, compression).
 
-use core::sync::atomic::{AtomicBool, Ordering};
-
 use crate::cache::GlyphCache;
 use crate::decode::{Bpp, decode_compressed, expand_row};
 use crate::font::{GlyphInfo, GlyphProvider, provider_key};
+use crate::gamma::{Polarity, TextGamma};
 
 /// Metrics and bitmap location of one glyph (LVGL `lv_font_fmt_txt_glyph_dsc_t`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -126,8 +125,8 @@ pub enum BitmapFormat {
 /// Glyph id 0 is reserved and means "missing".
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BitmapFont {
-    /// Bits per pixel of every glyph: 1, 2, 4 or 8.
-    pub bpp: u8,
+    /// Bit depth of every glyph's coverage values.
+    pub bpp: Bpp,
     /// All glyph bitmaps.
     pub bitmap: &'static [u8],
     /// Glyph descriptors indexed by glyph id (entry 0 is the reserved empty glyph).
@@ -140,9 +139,21 @@ pub struct BitmapFont {
     pub kern_scale: u16,
     /// Bitmap storage format.
     pub format: BitmapFormat,
+    /// Coverage → opacity curves, one per [`Polarity`] (see [`gamma`](crate::gamma)):
+    /// [`gamma::DEFAULT`](crate::gamma::DEFAULT) for generated fonts,
+    /// [`gamma::LINEAR`](crate::gamma::LINEAR) for LVGL's mapping.
+    pub gamma: &'static TextGamma,
 }
 
-static BAD_BPP_WARNED: AtomicBool = AtomicBool::new(false);
+/// The glyph-cache id of glyph `id` decoded for `polarity`: light-on-dark sets bit 31 (glyph
+/// ids of a [`BitmapFont`] are `u16`s, so the two never collide).
+#[inline]
+const fn glyph_key_id(id: u32, polarity: Polarity) -> u32 {
+    match polarity {
+        Polarity::DarkOnLight => id,
+        Polarity::LightOnDark => id | 0x8000_0000,
+    }
+}
 
 /// Copies `src` into row `y` of `w`-byte rows of `dst` (nothing when the row is outside
 /// `dst`; the callers size `dst` for every row). At most `w` bytes are copied.
@@ -255,20 +266,6 @@ impl BitmapFont {
         i32::from(v).wrapping_mul(i32::from(self.kern_scale)) >> 4
     }
 
-    /// The validated bit depth (checked once per glyph, before any bitmap is read), or `None`
-    /// with a warning (once) for an invalid one.
-    fn checked_bpp(&self) -> Option<Bpp> {
-        if let Some(bpp) = Bpp::new(self.bpp) {
-            return Some(bpp);
-        }
-        debug_assert!(false, "invalid bitmap font bpp {}", self.bpp);
-        if !BAD_BPP_WARNED.load(Ordering::Relaxed) {
-            BAD_BPP_WARNED.store(true, Ordering::Relaxed);
-            twine_core::warn!(target: "twine::text", "bitmap font with invalid bpp {}; glyphs treated as missing", self.bpp);
-        }
-        None
-    }
-
     fn dsc(&self, info: &GlyphInfo) -> Option<&GlyphDsc> {
         let d = self.glyphs.get(info.id as usize)?;
         (u16::from(d.box_w) == info.box_w && u16::from(d.box_h) == info.box_h).then_some(d)
@@ -281,11 +278,17 @@ impl BitmapFont {
         }
     }
 
-    /// Streams rows of the glyph (`sink(y, a8_row)`); the shared core of both render paths.
-    fn rows(&self, info: &GlyphInfo, cache: &mut GlyphCache, sink: &mut dyn FnMut(usize, &[u8])) -> bool {
-        let Some(depth) = self.checked_bpp() else {
-            return false;
-        };
+    /// Streams rows of the glyph (`sink(y, a8_row)`, coverage mapped through the gamma ramp of
+    /// `polarity`); the shared core of both render paths.
+    fn rows(
+        &self,
+        info: &GlyphInfo,
+        polarity: Polarity,
+        cache: &mut GlyphCache,
+        sink: &mut dyn FnMut(usize, &[u8]),
+    ) -> bool {
+        let depth = self.bpp;
+        let ramp = self.gamma.ramp(polarity);
         let Some(d) = self.dsc(info) else {
             return false;
         };
@@ -298,7 +301,7 @@ impl BitmapFont {
             self.warn_corrupt(cache);
             return false;
         };
-        let bpp = depth.get();
+        let bpp = depth.bits();
         match self.format {
             BitmapFormat::Plain if bpp == 8 => {
                 // SAFE-ARITH: `w, h ≤ 255` (`u8` box sizes).
@@ -317,7 +320,7 @@ impl BitmapFont {
                 for y in 0..h {
                     // SAFE-ARITH: `y < h ≤ 255`, `w ≤ 255`, `bpp ≤ 8`.
                     let bit = y.wrapping_mul(w).wrapping_mul(usize::from(bpp));
-                    ok &= expand_row(data, bit, depth, w, &mut row);
+                    ok &= expand_row(data, bit, depth, ramp, w, &mut row);
                     // The row buffer holds `MAX_ROW ≥ 255 ≥ w` bytes.
                     sink(y, row.get(..w).unwrap_or_default());
                 }
@@ -329,7 +332,9 @@ impl BitmapFont {
             }
             BitmapFormat::Compressed | BitmapFormat::CompressedNoPrefilter => {
                 let prefilter = self.format == BitmapFormat::Compressed;
-                let key = (provider_key(self), info.id);
+                // Decoded glyphs are cached per polarity (bit 31 of the id: glyph ids are
+                // `u16`s), since the gamma ramp is applied while decoding.
+                let key = (provider_key(self), glyph_key_id(info.id, polarity));
                 if let Some(bmp) = cache.get(key) {
                     for (y, row) in bmp.chunks_exact(w).take(h).enumerate() {
                         sink(y, row);
@@ -340,9 +345,10 @@ impl BitmapFont {
                 let mut a = core::mem::take(&mut cache.row_a);
                 let mut b = core::mem::take(&mut cache.row_b);
                 let ok = if let Some(slot) = cache.insert(key, w, h) {
-                    let ok = decode_compressed(data, depth, w, h, prefilter, &mut a, &mut b, &mut |y, r| {
-                        copy_row(slot, y, w, r);
-                    });
+                    let ok =
+                        decode_compressed(data, depth, ramp, w, h, prefilter, &mut a, &mut b, &mut |y, r| {
+                            copy_row(slot, y, w, r);
+                        });
                     if ok {
                         for (y, row) in slot.chunks_exact(w).enumerate() {
                             sink(y, row);
@@ -350,7 +356,7 @@ impl BitmapFont {
                     }
                     ok
                 } else {
-                    decode_compressed(data, depth, w, h, prefilter, &mut a, &mut b, sink)
+                    decode_compressed(data, depth, ramp, w, h, prefilter, &mut a, &mut b, sink)
                 };
                 cache.row_a = a;
                 cache.row_b = b;
@@ -366,7 +372,6 @@ impl BitmapFont {
 
 impl GlyphProvider for BitmapFont {
     fn glyph_info(&self, cp: char, next: Option<char>) -> Option<GlyphInfo> {
-        self.checked_bpp()?;
         let id = self.glyph_id(cp)?;
         let d = self.glyphs.get(usize::from(id))?;
         let kern = match (self.kern, next) {
@@ -382,13 +387,19 @@ impl GlyphProvider for BitmapFont {
             box_h: u16::from(d.box_h),
             ofs_x: i16::from(d.ofs_x),
             ofs_y: i16::from(d.ofs_y),
-            bpp: self.bpp,
+            bpp: Some(self.bpp),
             id: u32::from(id),
             is_placeholder: false,
         })
     }
 
-    fn render_a8(&self, info: &GlyphInfo, out: &mut [u8], cache: &mut GlyphCache) -> bool {
+    fn render_a8(
+        &self,
+        info: &GlyphInfo,
+        polarity: Polarity,
+        out: &mut [u8],
+        cache: &mut GlyphCache,
+    ) -> bool {
         let w = usize::from(info.box_w);
         // SAFE-ARITH: two `u16`s: the product is below 2^32.
         let n = w.wrapping_mul(usize::from(info.box_h));
@@ -401,21 +412,24 @@ impl GlyphProvider for BitmapFont {
             );
             return false;
         }
-        self.rows(info, cache, &mut |y, row| copy_row(out, y, w, row))
+        self.rows(info, polarity, cache, &mut |y, row| copy_row(out, y, w, row))
     }
 
     fn render_rows(
         &self,
         info: &GlyphInfo,
+        polarity: Polarity,
         cache: &mut GlyphCache,
         sink: &mut dyn FnMut(usize, &[u8]),
     ) -> bool {
-        self.rows(info, cache, sink)
+        self.rows(info, polarity, cache, sink)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use core::sync::atomic::Ordering;
+
     use super::*;
     use crate::font::{FALLBACK_CYCLE_WARNED, Font, Subpx};
     use crate::test_font::*;
@@ -631,7 +645,75 @@ mod tests {
         let mut cache = GlyphCache::new(0);
         let info = TEST_BITMAP.glyph_info('A', None).unwrap();
         let mut out = [0u8; 6];
-        assert!(TEST_BITMAP.render_a8(&info, &mut out, &mut cache));
+        assert!(TEST_BITMAP.render_a8(&info, Polarity::DarkOnLight, &mut out, &mut cache));
         assert_eq!(out, [0, 255, 0, 17 * 8, 255, 17]);
+    }
+
+    /// The font's gamma ramp of the run's polarity replaces the linear `× 17` expansion.
+    #[test]
+    fn render_maps_coverage_through_the_polarity_ramp() {
+        let f = BitmapFont {
+            gamma: &crate::gamma::DEFAULT,
+            ..TEST_BITMAP
+        };
+        let info = f.glyph_info('A', None).unwrap();
+        let mut cache = GlyphCache::new(0);
+        for polarity in [Polarity::DarkOnLight, Polarity::LightOnDark] {
+            let t = crate::gamma::DEFAULT.ramp(polarity).table4();
+            let mut out = [0u8; 6];
+            assert!(f.render_a8(&info, polarity, &mut out, &mut cache));
+            assert_eq!(out, [0, 255, 0, t[8], 255, t[1]], "{polarity:?}");
+        }
+    }
+
+    /// Compressed glyphs are cached after the ramp is applied, so the cache keeps one entry
+    /// per polarity and never returns one polarity's opacity for the other.
+    #[test]
+    fn compressed_cache_is_keyed_by_polarity() {
+        use std::sync::OnceLock;
+        use std::vec::Vec;
+        static GLYPHS: [GlyphDsc; 2] = [
+            GlyphDsc {
+                bitmap_index: 0,
+                adv_w: 0,
+                box_w: 0,
+                box_h: 0,
+                ofs_x: 0,
+                ofs_y: 0,
+            },
+            GlyphDsc {
+                bitmap_index: 0,
+                adv_w: 48,
+                box_w: 3,
+                box_h: 2,
+                ofs_x: 0,
+                ofs_y: 0,
+            },
+        ];
+        static BITMAP: OnceLock<Vec<u8>> = OnceLock::new();
+        static FONT: OnceLock<BitmapFont> = OnceLock::new();
+        // Glyph 'A' of the test font (3 × 2, 4 bpp) re-encoded compressed.
+        let f = FONT.get_or_init(|| BitmapFont {
+            bitmap: BITMAP.get_or_init(|| {
+                crate::encode::encode_glyph(&[0, 15, 0, 8, 15, 1], 3, Bpp::Four, BitmapFormat::Compressed)
+            }),
+            glyphs: &GLYPHS,
+            format: BitmapFormat::Compressed,
+            kern: Kern::None,
+            gamma: &crate::gamma::DEFAULT,
+            ..TEST_BITMAP
+        });
+        let info = f.glyph_info('A', None).unwrap();
+        let mut cache = GlyphCache::new(1024);
+        for _pass in 0..2 {
+            for polarity in [Polarity::DarkOnLight, Polarity::LightOnDark] {
+                let t = crate::gamma::DEFAULT.ramp(polarity).table4();
+                let mut out = [0u8; 6];
+                assert!(f.render_a8(&info, polarity, &mut out, &mut cache));
+                assert_eq!(out, [0, 255, 0, t[8], 255, t[1]], "{polarity:?}");
+            }
+        }
+        assert_eq!(cache.stats().misses, 2, "one decode per polarity");
+        assert_eq!(cache.stats().hits, 2);
     }
 }

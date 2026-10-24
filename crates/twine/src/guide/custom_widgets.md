@@ -3,7 +3,7 @@ Writing a custom widget: a gauge, step by step.
 This guide builds a round **gauge** outside Twine, the way an application or a widget
 library would: a [`Widget`](crate::engine::Widget) with its own
 [`WidgetClass`](crate::engine::WidgetClass) and parts, drawn with the renderer, themed through
-a theme builder registration with [design elements](crate::style::design) (so it follows all
+a design system extending the LVGL theme, with [design elements](crate::style::design) (so it follows all
 four [theme modes](crate::style::design::ThemeMode)), wrapped in a view with typed
 modifiers, animated within the [motion preference](crate::anim::Motion), adjustable with a
 keypad or an encoder, and tested with `twine-testing`.
@@ -66,7 +66,8 @@ pub static GAUGE_CLASS: WidgetClass = WidgetClass::new("gauge")
 # use twine::core::math::{TRIG_SHIFT, cos, sin};
 # use twine::engine::{AnimId, AnimProp, Editable, EventParam, GroupDef, OBJ_FLAGS};
 # use twine::prelude::*;
-# use twine::theme::ClassCx;
+# use twine::engine::{ComputedRecipe, DesignSystem, RecipeRef, Theme, ThemeCx};
+# use twine::style::design::ElementTable;
 # use twine::view::{BuildOp, event_value, on_value_changed};
 # use twine::widgets::container::CARD_CLASS;
 #
@@ -211,7 +212,8 @@ impl Gauge {
 # use twine::core::math::{TRIG_SHIFT, cos, sin};
 # use twine::engine::{AnimId, AnimProp, Editable, EventParam, GroupDef, OBJ_FLAGS};
 # use twine::prelude::*;
-# use twine::theme::ClassCx;
+# use twine::engine::{ComputedRecipe, DesignSystem, RecipeRef, Theme, ThemeCx};
+# use twine::style::design::ElementTable;
 # use twine::view::{BuildOp, event_value, on_value_changed};
 # use twine::widgets::container::CARD_CLASS;
 #
@@ -389,7 +391,8 @@ impl Widget for Gauge {
 # use twine::core::math::{TRIG_SHIFT, cos, sin};
 # use twine::engine::{AnimId, AnimProp, Editable, EventParam, GroupDef, OBJ_FLAGS};
 # use twine::prelude::*;
-# use twine::theme::ClassCx;
+# use twine::engine::{ComputedRecipe, DesignSystem, RecipeRef, Theme, ThemeCx};
+# use twine::style::design::ElementTable;
 # use twine::view::{BuildOp, event_value, on_value_changed};
 # use twine::widgets::container::CARD_CLASS;
 #
@@ -511,10 +514,10 @@ style is resolved. That is what makes the gauge follow the theme's mode (light, 
 high contrast) when it switches at run time: nothing is rebuilt and no binding runs. A fixed
 [`Color`](crate::core::Color) would stay the same in every mode.
 
-The registration function adds them to a node of the gauge's class through a
-[`ClassCx`](crate::theme::ClassCx). It is generic over the theme's style set `S`, so the same
-function works with every built-in theme; `cx.styles()` gives that style set (e.g. the
-default theme's `card`, `btn`, `pressed`) when a widget wants to reuse the theme's own looks.
+`style_gauge` adds them to a node of the gauge's class through the
+[`ThemeCx`](crate::engine::ThemeCx) a theme styles nodes with. A widget that wants to reuse a
+theme's own looks spreads its public `static` styles (`..lvgl::styles::CARD`,
+`lvgl::styles::BTN`, `lvgl::styles::PRESSED`, …) into its own with `style!`.
 State styles use the [state precedence](crate::style::State#precedence): `DISABLED` beats the
 default look; application states (`State::custom`) beat both.
 
@@ -533,7 +536,8 @@ static FOCUS_STYLE: Style = style! {
 # use twine::core::math::{TRIG_SHIFT, cos, sin};
 # use twine::engine::{AnimId, AnimProp, Editable, EventParam, GroupDef, OBJ_FLAGS};
 # use twine::prelude::*;
-# use twine::theme::ClassCx;
+# use twine::engine::{ComputedRecipe, DesignSystem, RecipeRef, Theme, ThemeCx};
+# use twine::style::design::ElementTable;
 # use twine::view::{BuildOp, event_value, on_value_changed};
 # use twine::widgets::container::CARD_CLASS;
 #
@@ -561,9 +565,13 @@ static FOCUS_STYLE: Style = style! {
 #     .base(&CARD_CLASS);
 ```
 
-Register it with the theme builder of the theme you install: the registration runs after the
-theme's own styles for nodes of the class (and of classes derived from it), so it wins over
-the base class's look.
+A theme is a `static` fixed at compile time, so the gauge joins one through a
+[`DesignSystem`](crate::engine::DesignSystem) that extends it (`type Base = Lvgl`): its
+recipe for the gauge's class — a [`ComputedRecipe`](crate::engine::ComputedRecipe) that adds
+the LVGL card look (the base class's) and then `style_gauge` — styles gauges, and every other
+class keeps the LVGL look. The application gives the display that theme
+(`AppConfig::new().theme(&GAUGE_THEME)`); `type Base = Mono` would do the same on the mono
+theme.
 
 ```rust
 # #[allow(dead_code)]
@@ -571,12 +579,11 @@ the base class's look.
 #     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/gauge/gauge.rs"));
 # }
 # use twine::prelude::*;
-use std::rc::Rc;
-use gauge::{GAUGE_CLASS, style_gauge};
+use gauge::{GAUGE_CLASS, GAUGE_THEME};
 
-let theme = DefaultTheme::builder().class(&GAUGE_CLASS, style_gauge).build();
-let mono = MonoTheme::builder().class(&GAUGE_CLASS, style_gauge).build();
-# let _ = (Rc::new(theme), Rc::new(mono));
+let cfg = AppConfig::new().theme(&GAUGE_THEME);
+assert_eq!(GAUGE_THEME.recipe(&GAUGE_CLASS).map(|r| r.name()), Some("GAUGE"));
+# let _ = cfg;
 ```
 
 # 5. The view
@@ -695,7 +702,7 @@ Check, for every custom widget:
 
 [TestUi]: https://docs.rs/twine-testing/latest/twine_testing/ui/struct.TestUi.html
 
-- **Defaults** and the class: parts, size, the base look, the registration's styles.
+- **Defaults** and the class: parts, size, the base look, the gauge recipe's styles.
 - **Idempotent setters:** set a signal to its current value and `assert_idle()` — nothing is
   redrawn, the update returns `Wake::Idle`.
 - **Part styling** through `.part(..)` (constant and reactive values).
@@ -712,13 +719,12 @@ Check, for every custom widget:
 # mod gauge {
 #     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/gauge/gauge.rs"));
 # }
-use gauge::{GAUGE_CLASS, Gauge, INDICATOR, gauge, style_gauge};
+use gauge::{GAUGE_THEME, Gauge, INDICATOR, gauge};
 use twine::prelude::*;
 use twine_testing::{TestUi, by_id};
 
-let theme = DefaultTheme::builder().class(&GAUGE_CLASS, style_gauge).build();
 let mut t = TestUi::new(200, 160)
-    .theme(theme)
+    .theme(&GAUGE_THEME)
     .mount(|_| gauge(50).on_change(|_| {}).test_id("g"));
 t.run_until_idle();
 let g = t.find(by_id("g")).id();
@@ -858,8 +864,8 @@ let _v = gauge_card("Engine", 3200, 0..=8000).padding(8);
 - Drawing: resolved part styles (`*_dsc`), integer math, no allocation, no formatting.
 - Animations through the engine, durations from styles: the motion preference applies.
 - Input: `post` the `ValueChanged`, never call the handlers from `event`.
-- Theme: `static` styles with design elements, registered with
-  `.class(&CLASS, style_fn)`; no fixed colours.
+- Theme: `static` styles with design elements, in a recipe of a design system extending the
+  theme (`type Base = Lvgl`); no fixed colours.
 - A view newtype implementing [`View`](crate::view::View) and
   [`ViewExt`](crate::view::ViewExt), typed modifiers taking
   [`IntoProp`](crate::view::IntoProp).

@@ -67,6 +67,12 @@ std = [
 ## rendered chunk by chunk while the previous chunk is transferred (DMA). Run it with
 ## `twine-embassy`. Also enables `Outbox::recv` (`twine-reactive/async`).
 async = ["twine-hal/async", "twine-reactive/async"]
+## LVGL's default theme in the prelude (`Lvgl`; `twine-theme/lvgl`).
+theme-lvgl = ["twine-theme/lvgl"]
+## LVGL's monochrome theme in the prelude (`Mono`; `twine-theme/mono`).
+theme-mono = ["twine-theme/mono"]
+## LVGL's simple theme in the prelude (`Simple`; `twine-theme/simple`).
+theme-simple = ["twine-theme/simple"]
 ## `vector_canvas`: vector graphics redrawn from signals (`twine-vector`).
 vector = ["dep:twine-vector", "twine-widgets-ext/vector"]
 ## SVG images (`image(ImageSource::Svg(..))`, `.svg_cache`).
@@ -128,13 +134,13 @@ hashbrown = { version = "0.15", default-features = false, features = ["default-h
 defmt = { version = "1", optional = true }
 
 [dev-dependencies]
-twine-view = { path = ".", features = ["std", "log", "vector"] }
+twine-view = { path = ".", features = ["std", "log", "vector", "theme-lvgl", "theme-mono", "theme-simple"] }
 twine-engine = { path = "../twine-engine", features = ["std", "debug-checks", "color-rgb565"] }
 twine-testing = { path = "../twine-testing", features = ["debug-checks"] }
 twine-hal = { path = "../twine-hal", features = ["platform-std"] }
 # `debug-checks`: the interrupt-context assertion of the runtime (tests/platform.rs).
 twine-reactive = { path = "../twine-reactive", features = ["std", "debug-checks"] }
-twine-theme = { path = "../twine-theme" }
+twine-theme = { path = "../twine-theme", features = ["mono", "simple"] }
 twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-20"] }
 critical-section = { version = "1", features = ["std"] }
 proptest = "1"

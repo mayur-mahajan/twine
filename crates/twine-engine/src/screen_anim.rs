@@ -311,7 +311,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
-    /// # let d = e.add_display(Panel(None), BufferMode::partial_single(buf)).unwrap();
+    /// # let d = e.add_display(Panel(None), BufferMode::partial_single(buf), None).unwrap();
     /// let first = e.active_screen(d).unwrap();
     /// let second = e.create_screen(d).unwrap();
     /// e.load_screen_anim(second, ScreenAnim::MoveLeft(Duration::ms(100)).auto_delete(true));
@@ -460,7 +460,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
-    /// # let d = e.add_display(Panel(None), BufferMode::partial_single(buf)).unwrap();
+    /// # let d = e.add_display(Panel(None), BufferMode::partial_single(buf), None).unwrap();
     /// let first = e.active_screen(d).unwrap();
     /// let second = e.create_screen(d).unwrap();
     /// e.load_screen_anim(second, ScreenAnim::FadeIn(Duration::ms(100)).delay(Duration::ms(50)).auto_delete(true));

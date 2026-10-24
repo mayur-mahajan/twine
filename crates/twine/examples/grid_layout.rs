@@ -134,7 +134,7 @@ impl Playground {
                 CELL_ALIGNS[c.y_align],
             );
             let w = if i == self.cfg.selected { 2 } else { 0 };
-            e.set_local_prop(n, Selector::MAIN, StyleProp::OutlineWidth(w));
+            e.set_local_prop(n, Selector::MAIN, StyleProp::OutlineWidth(Length::Px(w).into()));
         }
         twine_sim::set_title(&self.describe());
     }
@@ -195,7 +195,7 @@ fn scene(e: &mut Engine) -> Playground {
             Selector::MAIN,
             StyleProp::OutlineColor(Color::hex(0x21_21_21).into()),
         );
-        e.set_local_prop(t, Selector::MAIN, StyleProp::OutlineOffset(1));
+        e.set_local_prop(t, Selector::MAIN, StyleProp::OutlineOffset(Length::Px(1).into()));
         // Content-sized with a minimum, so `Content` tracks follow the labels.
         e.set_local_prop(t, Selector::MAIN, StyleProp::MinWidth(Length::Px(24).into()));
         e.set_local_prop(t, Selector::MAIN, StyleProp::MinHeight(Length::Px(24).into()));

@@ -25,7 +25,7 @@ use twine_engine::{
 use twine_image::ImageSource;
 use twine_style::{CrossAlign, FlexFlow, Length, MainAlign};
 use twine_text::Symbol;
-use twine_widgets::button::Button;
+use twine_widgets::button::{BUTTON_CLASS, Button};
 use twine_widgets::image::Image;
 use twine_widgets::label::{Label, LabelText};
 
@@ -84,6 +84,14 @@ pub static MENU_SIDEBAR_HEADER_CONTAINER_CLASS: WidgetClass =
                 .union(ObjFlags::EVENT_BUBBLE)
                 .difference(ObjFlags::CLICKABLE),
         );
+/// The back button of a menu's headers (`"menu_back_button"`): a [`Button`] based on
+/// [`BUTTON_CLASS`] (themes style it like a button unless they know it; LVGL's theme makes
+/// it flat, `lv_theme_default.c` lines 840-845).
+pub static MENU_BACK_BUTTON_CLASS: WidgetClass = WidgetClass::new("menu_back_button")
+    .parts(BUTTON_CLASS.parts)
+    .default_flags(BUTTON_CLASS.default_flags)
+    .group_def(BUTTON_CLASS.group_def)
+    .base(&BUTTON_CLASS);
 
 /// LVGL `lv_menu_class`: `LV_DPI_DEF * 3 / 2` by `LV_DPI_DEF * 2`.
 pub const MENU_DEFAULT_SIZE: (i32, i32) = (util::DPI_DEF * 3 / 2, util::DPI_DEF * 2);
@@ -592,7 +600,7 @@ fn create_header(
     e.set_size(header, Length::pct(100), Length::Content);
     util::set_flex(e, header, FlexFlow::ROW);
     e.set_flex_align(header, MainAlign::Start, CrossAlign::Center, MainAlign::Center);
-    let back = e.create(header, Box::new(Button::new()))?;
+    let back = e.create(header, Box::new(Button::with_class(&MENU_BACK_BUTTON_CLASS)))?;
     e.set_flag(back, ObjFlags::EVENT_BUBBLE, true);
     util::set_flex(e, back, FlexFlow::ROW);
     let icon = e.create(back, Box::new(Image::new()))?;

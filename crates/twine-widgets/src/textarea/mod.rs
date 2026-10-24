@@ -42,6 +42,16 @@ const TEXTAREA_FLAGS: ObjFlags = OBJ_FLAGS
     .union(ObjFlags::SCROLL_ON_FOCUS)
     .difference(ObjFlags::SCROLL_WITH_ARROW);
 
+/// The class of a [`Textarea`]'s text: `"textarea_label"`, a [`Label`] based on
+/// [`LABEL_CLASS`](label::LABEL_CLASS) (themes style it like a label unless they know it:
+/// LVGL's theme gives it the primary selection color, `lv_theme_default.c` lines 1086-1090).
+/// Its own class lets a theme style it without checking every label's parent, so the look
+/// is linked only into images that create a textarea.
+pub static TEXTAREA_LABEL_CLASS: WidgetClass = WidgetClass::new("textarea_label")
+    .parts(label::LABEL_CLASS.parts)
+    .default_flags(label::LABEL_CLASS.default_flags)
+    .base(&label::LABEL_CLASS);
+
 /// The class of [`Textarea`]: `"textarea"`, parts `Main`, `Scrollbar`, `Selected`, `Cursor`
 /// and [`PLACEHOLDER`], editable with an encoder and always in the default focus group (LVGL
 /// `lv_textarea_class`).
@@ -927,12 +937,14 @@ pub fn create(engine: &mut Engine, parent: NodeId) -> Result<NodeId, EngineError
 }
 
 impl Textarea {
-    /// LVGL `lv_textarea_constructor`: the label child and the default size.
-    pub(crate) fn construct(&mut self, cx: &mut WidgetCx<'_>) {
+    /// LVGL `lv_textarea_constructor`: the label child (of `label_class`:
+    /// [`TEXTAREA_LABEL_CLASS`] for a textarea, `LABEL_CLASS` for a spinbox's, as LVGL's theme
+    /// tells them apart) and the default size.
+    pub(crate) fn construct(&mut self, cx: &mut WidgetCx<'_>, label_class: &'static WidgetClass) {
         let id = cx.node();
         let e = cx.engine_mut();
         e.set_size(id, TEXTAREA_DEFAULT_WIDTH, TEXTAREA_DEFAULT_HEIGHT);
-        let Ok(label) = label::create_with(e, id, "") else {
+        let Ok(label) = e.create(id, Box::new(Label::new("").with_class(label_class))) else {
             return;
         };
         e.set_width(label, Length::Pct(100));
@@ -1106,7 +1118,7 @@ impl Widget for Textarea {
     }
 
     fn init(&mut self, cx: &mut WidgetCx<'_>) {
-        self.construct(cx);
+        self.construct(cx, &TEXTAREA_LABEL_CLASS);
     }
 
     fn draw(&self, cx: &mut DrawCx<'_, '_>) {

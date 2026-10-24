@@ -8,17 +8,19 @@
 //!
 //! **How it is wired.** The colors are [design elements](twine::style::design): the standard
 //! ones (`BACKGROUND`, `SURFACE`, `ON_SURFACE`, `PRIMARY`, …) are overridden and the app's own
-//! ([`SIDEBAR`], [`RAISED`], [`LINE`], …) are added to Twine's `DefaultTheme` in dark mode, so
-//! the built-in widgets the app keeps (slider, dropdown, text field, scrollbars) pick the
+//! ([`SIDEBAR`], [`RAISED`], [`LINE`], …) are added to the LVGL theme's dark table ([`DARK`]),
+//! so the built-in widgets the app keeps (slider, dropdown, text field, scrollbars) pick the
 //! palette up through the theme, and views refer to colors by role, never by value. The
 //! dropdown's pop-up list is created by the widget at run time, so it is restyled through a
-//! theme class registration ([`style_dropdown_list`]) rather than a view modifier. The custom
+//! recipe of the app's design system ([`Player`], extending the LVGL theme) rather than a view
+//! modifier. The custom
 //! drawn widgets (artwork, visualizer, response curve, meters) read the plain [`palette`]
 //! constants, which are the same values.
 
+use twine::engine::{ComputedRecipe, DesignSystem, RecipeRef, Theme, ThemeCx};
 use twine::prelude::*;
-use twine::style::design::ColorElement;
-use twine::theme::ClassCx;
+use twine::style::StyleValue;
+use twine::style::design::{ColorElement, ElementTable};
 use twine::widgets_ext::dropdown::DROPDOWN_LIST_CLASS;
 
 /// The raw colors, for the custom-drawn widgets (views use the design elements below).
@@ -80,44 +82,53 @@ pub static CAPTION: &Font = &fonts::MONTSERRAT_12;
 /// Column headers and section labels (upper case, spaced out).
 pub static OVERLINE: &Font = &fonts::MONTSERRAT_10;
 
-/// The app's theme: Twine's default theme in dark mode with the palette above.
-pub fn theme() -> DefaultTheme {
-    use palette::{
-        ACCENT, BG, FAINT as FAINT_C, GREEN, LINE as LINE_C, MUTED, RAISED as RAISED_C, RED, SURFACE, TEXT,
-        VIOLET,
-    };
-    DefaultTheme::builder()
-        .mode(ThemeMode::Dark)
-        .primary(ACCENT)
-        .secondary(VIOLET)
-        .fonts(FontScale {
-            small: CAPTION,
-            normal: BODY,
-            large: TITLE,
-        })
-        .element(design::BACKGROUND, BG)
-        .element(design::SURFACE, SURFACE)
-        .element(design::SURFACE_VARIANT, RAISED_C)
-        .element(design::ON_SURFACE, TEXT)
-        .element(design::ON_SURFACE_MUTED, MUTED)
-        .element(design::PLACEHOLDER, FAINT_C)
-        .element(design::OUTLINE, LINE_C)
-        .element(design::NEUTRAL, palette::PRESSED)
-        .element(design::PRIMARY, ACCENT)
-        .element(design::ON_PRIMARY, Color::hex(0x1A_0D_0B))
-        .element(design::SCROLLBAR, Color::hex(0x3A_3C_4A))
-        .element(design::FOCUS_RING, ACCENT)
-        .element(design::OK, GREEN)
-        .element(design::DANGER, RED)
-        .element(SIDEBAR, palette::SIDEBAR)
-        .element(RAISED, palette::RAISED)
-        .element(LINE, palette::LINE)
-        .element(FAINT, palette::FAINT)
-        .element(PRESSED, palette::PRESSED)
-        .element(AMBER, palette::AMBER)
-        .class(&DROPDOWN_LIST_CLASS, style_dropdown_list)
-        .build()
+/// The app's only mode: the LVGL theme's dark table with the palette above, the type scale
+/// and the app's own elements (`const`, in flash).
+pub static DARK: ElementTable = Lvgl::SET
+    .primary(palette::ACCENT)
+    .secondary(palette::VIOLET)
+    .fonts(FontScale {
+        small: &fonts::MONTSERRAT_12,
+        normal: &fonts::MONTSERRAT_14,
+        large: &fonts::MONTSERRAT_16,
+    })
+    .table(ThemeMode::Dark)
+    .color(design::BACKGROUND, palette::BG)
+    .color(design::SURFACE, palette::SURFACE)
+    .color(design::SURFACE_VARIANT, palette::RAISED)
+    .color(design::ON_SURFACE, palette::TEXT)
+    .color(design::ON_SURFACE_MUTED, palette::MUTED)
+    .color(design::PLACEHOLDER, palette::FAINT)
+    .color(design::OUTLINE, palette::LINE)
+    .color(design::NEUTRAL, palette::PRESSED)
+    .color(design::ON_PRIMARY, Color::hex(0x1A_0D_0B))
+    .color(design::SCROLLBAR, Color::hex(0x3A_3C_4A))
+    .color(design::OK, palette::GREEN)
+    .color(design::DANGER, palette::RED)
+    .custom(&[
+        Some(StyleValue::Color(palette::SIDEBAR)),
+        Some(StyleValue::Color(palette::RAISED)),
+        Some(StyleValue::Color(palette::LINE)),
+        Some(StyleValue::Color(palette::FAINT)),
+        Some(StyleValue::Color(palette::PRESSED)),
+        Some(StyleValue::Color(palette::AMBER)),
+    ]);
+
+/// Twine Player's design system: the LVGL theme ([`DARK`] only) with the dropdown list
+/// restyled ([`style_dropdown_list`]).
+pub struct Player;
+
+impl DesignSystem for Player {
+    type Base = Lvgl;
+    const NAME: &'static str = "player";
+    const MODES: &'static [(ThemeMode, &'static ElementTable)] = &[(ThemeMode::Dark, &DARK)];
+    fn recipe(class: &'static WidgetClass) -> Option<RecipeRef> {
+        DROPDOWN_LIST.for_class(class)
+    }
 }
+
+/// The app's theme.
+pub static THEME: Theme<Player> = Theme::new();
 
 /// The dropdown's open list: a raised panel with a soft shadow, the selected row in the
 /// accent color.
@@ -143,8 +154,9 @@ static LIST_SELECTED_STYLE: Style = style! {
     text_color: design::PRIMARY,
 };
 
-/// Theme registration for [`DROPDOWN_LIST_CLASS`].
-pub fn style_dropdown_list<S>(cx: &mut ClassCx<'_, '_, S>) {
+/// The recipe of [`DROPDOWN_LIST_CLASS`]: the LVGL look, then the app's.
+pub fn style_dropdown_list(cx: &mut ThemeCx<'_>) {
+    lvgl::THEME.apply(cx, &DROPDOWN_LIST_CLASS);
     cx.add_style(Selector::MAIN, &LIST_STYLE);
     cx.add_style(Selector::part(Part::Selected), &LIST_SELECTED_STYLE);
     cx.add_style(
@@ -152,3 +164,6 @@ pub fn style_dropdown_list<S>(cx: &mut ClassCx<'_, '_, S>) {
         &LIST_SELECTED_STYLE,
     );
 }
+
+static DROPDOWN_LIST: ComputedRecipe =
+    ComputedRecipe::new("DROPDOWN_LIST", &DROPDOWN_LIST_CLASS, style_dropdown_list);

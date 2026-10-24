@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/twine-core",
     "crates/twine-macros",
+    "crates/twine-build",
     "crates/twine-hal",
     "crates/twine-reactive",
     "crates/twine-anim",

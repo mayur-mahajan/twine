@@ -1,17 +1,18 @@
 //! The multilang demo: every language renders without warnings (no missing glyph, the file
 //! avatar found, no cache thrashing) and looks right (one snapshot per language).
 
-use twine_demos::multilang::{self, CODES};
-use twine_testing::{TestUi, by_id, capture_logs};
+use twine_demos::multilang::{self, Lang};
+use twine_testing::{TestUi, assert_theme_covers, by_id, capture_logs};
 
 #[test]
 fn multilang_smoke() {
     let ((), logs) = capture_logs(|| {
         let mut t = TestUi::new(480, 320)
-            .app_config(twine_demos::config())
+            .app_config(twine_demos::config_with_theme(&multilang::THEME))
             .mount(multilang::app);
         t.run_until_idle();
-        for (i, code) in CODES.iter().enumerate() {
+        for (i, lang) in Lang::ALL.iter().enumerate() {
+            let code = lang.code();
             if i > 0 {
                 t.find(by_id("next")).click();
                 t.run_until_idle();
@@ -37,7 +38,7 @@ fn multilang_smoke() {
 fn multilang_cards_scroll_without_warnings() {
     let ((), logs) = capture_logs(|| {
         let mut t = TestUi::new(480, 320)
-            .app_config(twine_demos::config())
+            .app_config(twine_demos::config_with_theme(&multilang::THEME))
             .mount(multilang::app);
         t.run_until_idle();
         // Scroll the list to the end: the RTL and CJK cards are built and drawn.
@@ -61,15 +62,16 @@ fn multilang_cards_scroll_without_warnings() {
 #[test]
 fn multilang_snapshots_per_language() {
     let mut t = TestUi::new(480, 320)
-        .app_config(twine_demos::config())
+        .app_config(twine_demos::config_with_theme(&multilang::THEME))
         .mount(multilang::app);
     t.run_until_idle();
-    for (i, code) in CODES.iter().enumerate() {
+    for (i, lang) in Lang::ALL.iter().enumerate() {
         if i > 0 {
             t.find(by_id("next")).click();
             t.run_until_idle();
         }
-        t.assert_snapshot(&format!("multilang_{code}"));
+        t.assert_snapshot(&format!("multilang_{}", lang.code()));
+        assert_theme_covers(&t.engine());
     }
 }
 
@@ -77,7 +79,7 @@ fn multilang_snapshots_per_language() {
 fn multilang_language_list_draws_every_script() {
     let ((), logs) = capture_logs(|| {
         let mut t = TestUi::new(480, 320)
-            .app_config(twine_demos::config())
+            .app_config(twine_demos::config_with_theme(&multilang::THEME))
             .mount(multilang::app);
         t.run_until_idle();
         let dd = t.find(by_id("language"));

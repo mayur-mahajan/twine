@@ -40,7 +40,7 @@ use alloc::rc::Rc;
 use core::cell::{Cell, RefCell};
 
 use twine_anim::{AnimId, Motion, TimerId};
-use twine_engine::{DisplayId, Engine, GroupId, NodeId, ThemeHook, ThemeMode};
+use twine_engine::{DisplayId, Engine, GroupId, NodeId, ThemeMode};
 use twine_reactive::{Scope, UiWaker};
 
 #[cfg(doc)]
@@ -70,8 +70,6 @@ pub(crate) enum CmdArg {
     Modal(Option<NodeId>, Option<(GroupId, Option<GroupId>)>),
     /// An [`AnimController`] and the method called.
     Ctl(AnimController, AnimOp),
-    /// A theme (installed on the `Ui`'s display).
-    Theme(Rc<dyn ThemeHook>),
     /// A theme mode (switched on the `Ui`'s display).
     Mode(ThemeMode),
     /// A motion preference (set on the engine).
@@ -131,19 +129,6 @@ impl EngineCmd {
                 }
             },
             arg: CmdArg::Ctl(ctl, op),
-        }
-    }
-
-    /// Installs `theme` on the `Ui`'s display ([`ThemeHandle::set`](crate::ThemeHandle::set)).
-    #[inline]
-    pub(crate) fn set_theme(theme: Rc<dyn ThemeHook>) -> EngineCmd {
-        EngineCmd {
-            run: |e, display, arg| {
-                if let CmdArg::Theme(t) = arg {
-                    e.set_theme(display, t);
-                }
-            },
-            arg: CmdArg::Theme(theme),
         }
     }
 

@@ -35,7 +35,7 @@ fn ui(panel: MemoryDisplay, clock: &MockClock) -> Ui {
         .runtime(Runtime::current_thread())
         .clock(clock.clone())
         .buffers(BufferMode::alloc(BufferSpec::PartialDouble { rows: 16 }))
-        .theme(DefaultTheme::light())
+        .theme(&lvgl::THEME)
         .reserve_rotation()
         .limits(twine_testing::HARNESS_LIMITS)
         .try_build(scene)

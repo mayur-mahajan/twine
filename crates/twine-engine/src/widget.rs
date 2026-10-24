@@ -106,6 +106,10 @@ pub trait Widget: AsAny {
     }
 
     /// Text content for queries and tree dumps. Default `None`.
+    ///
+    /// Return the logical text (as the application set it): not a display form such as
+    /// shaped or reordered text, so a query finds the same text whatever text features are
+    /// enabled. Hide what must not leak (a masked password returns its bullets).
     fn text(&self) -> Option<&str> {
         None
     }
@@ -608,11 +612,13 @@ impl<'a> MeasureCx<'a> {
             .rect_dsc(self.node, part, self.engine.opa_recursive(self.node))
     }
 
-    /// The text style of `part`, as [`DrawCx::text_dsc`] would build it.
+    /// The text style of `part`, as [`DrawCx::text_dsc`] would build it but without the
+    /// [`background`](TextDsc::background) (`None`): measuring and hit testing need no colors,
+    /// so layout does not look for the surface behind the text.
     #[must_use]
     pub fn text_dsc(&self, part: Part) -> TextDsc {
         self.engine
-            .text_dsc(self.node, part, self.engine.opa_recursive(self.node))
+            .text_layout_dsc(self.node, part, self.engine.opa_recursive(self.node))
     }
 
     /// The rectangle style of `part` as if the node were in `state`, as

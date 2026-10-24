@@ -5,9 +5,7 @@ use twine_sim::SimConfig;
 
 fn main() {
     twine_sim::run(
-        SimConfig::new(320, 240)
-            .title("hello")
-            .theme(DefaultTheme::light()),
+        SimConfig::new(320, 240).title("hello").theme(&lvgl::THEME),
         |_cx| label("Hello, twine!"),
     );
 }

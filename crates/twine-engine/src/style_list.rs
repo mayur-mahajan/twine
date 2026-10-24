@@ -403,7 +403,7 @@ impl Engine {
     /// use twine_style::{Length, PropId, StyleValue};
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::L8).with_dpi(320), 64).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::L8).with_dpi(320), 64, None).unwrap();
     /// let screen = e.active_screen(d).unwrap();
     /// let v = e.finish_style_value(screen, PropId::Width, StyleValue::Length(Length::Dp(10)));
     /// assert_eq!(v, StyleValue::Length(Length::Px(20))); // 10 dp at 320 DPI
@@ -814,7 +814,9 @@ mod tests {
         static PRESSED_PAD: Style = Style::new(&[StyleProp::PaddingTop(
             ::twine_style::design::DesignValue::Fixed(Length::Px(3)),
         )]);
-        static PRESSED_SHADOW: Style = Style::new(&[StyleProp::ShadowWidth(3)]);
+        static PRESSED_SHADOW: Style = Style::new(&[StyleProp::ShadowWidth(
+            ::twine_style::design::DesignValue::Fixed(Length::Px(3)),
+        )]);
         let e = |s: &'static Style| StyleEntry::new(Selector::state(State::PRESSED), s, EntryKind::Normal);
         let d = State::DEFAULT;
         let p = State::PRESSED;

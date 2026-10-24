@@ -3,12 +3,20 @@
 
 mod common;
 
-#[path = "../../twine/examples/assets/logo_argb8888.rs"]
-mod logo_argb8888;
-#[path = "../../twine/examples/assets/logo_rgb565.rs"]
-mod logo_rgb565;
-#[path = "../../twine/examples/assets/logo_rgb565a8.rs"]
-mod logo_rgb565a8;
+// The logo (`assets/images/twine_logo.png`) converted while the test compiles.
+mod logo_argb8888 {
+    twine_macros::include_image!(pub static LOGO_ARGB8888 = "../../assets/images/twine_logo.png", format = Argb8888);
+}
+mod logo_rgb565 {
+    twine_macros::include_image!(
+        pub static LOGO_RGB565 = "../../assets/images/twine_logo.png",
+        format = Rgb565,
+        background = 0xFFFFFF,
+    );
+}
+mod logo_rgb565a8 {
+    twine_macros::include_image!(pub static LOGO_RGB565A8 = "../../assets/images/twine_logo.png", format = Rgb565A8);
+}
 
 use std::collections::HashMap;
 

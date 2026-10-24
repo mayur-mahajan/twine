@@ -63,9 +63,10 @@ async fn main(spawner: Spawner) {
         defmt::warn!("stmpe811: init failed (touch disabled)");
     }
 
-    // The demos' configuration — the one their simulator examples and tests run — plus this
+    // The demos' configuration with the demo's own theme (the LVGL theme trimmed to the
+    // recipes of the classes it creates, `twine_demos::<demo>::THEME`: pay for what you use) plus this
     // board's hooks.
-    let mut config = twine_demos::config();
+    let mut config = twine_demos::config_with_theme(&demo::THEME);
     config.engine.mem_info = Some(mem_info);
     config.engine.hires_timer = Some(twine::embassy::hires_now);
     // The runtime belongs to this task: the `!Send` token keeps the UI and every reactive
@@ -145,9 +146,9 @@ impl embedded_hal::digital::InputPin for IntLevel {
 /// The demo selected by cargo feature.
 mod demo {
     #[cfg(feature = "demo-controls")]
-    pub use twine_demos::controls::app;
+    pub use twine_demos::controls::{THEME, app};
     #[cfg(not(feature = "demo-controls"))]
-    pub use twine_demos::counter::app;
+    pub use twine_demos::counter::{THEME, app};
 
     /// Name of the demo (for the log).
     pub const NAME: &str = if cfg!(feature = "demo-controls") {

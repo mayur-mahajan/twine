@@ -1,0 +1,5 @@
+# Chinese (TOML): no plural forms.
+hello = "你好"
+greeting = "你好，{name}！"
+ok = "确定"
+items = "{count} 个"

@@ -16,9 +16,9 @@ default = []
 [dependencies]
 twine-core = { path = "../twine-core", features = ["std", "log"] }
 twine-hal = { path = "../twine-hal", features = ["log"] }
-twine-view = { path = "../twine-view", features = ["std", "log"] }
+twine-view = { path = "../twine-view", features = ["std", "log", "theme-lvgl"] }
 twine-reactive = { path = "../twine-reactive", features = ["std", "log"] }
-twine-theme = { path = "../twine-theme", features = ["std", "log"] }
+twine-theme = { path = "../twine-theme", features = ["std", "log", "mono", "simple"] }
 twine-engine = { path = "../twine-engine", features = [
     "std",
     "log",

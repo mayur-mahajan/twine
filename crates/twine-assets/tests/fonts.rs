@@ -1,7 +1,7 @@
 //! Every built-in font has the glyphs it promises.
 
 use twine_assets::fonts::*;
-use twine_text::{Font, GlyphCache, Symbol, has_placeholder};
+use twine_text::{Font, GlyphCache, Polarity, Symbol, has_placeholder};
 
 const MONTSERRAT: &[(&str, &Font)] = &[
     ("8", &MONTSERRAT_8),
@@ -55,7 +55,8 @@ fn check_renders(name: &str, font: &'static Font, c: char, cache: &mut GlyphCach
         .unwrap_or_else(|| panic!("{name}: missing {c:?}"));
     let mut out = vec![0u8; usize::from(info.box_w) * usize::from(info.box_h)];
     assert!(
-        f.provider.render_a8(&info, &mut out, cache),
+        f.provider
+            .render_a8(&info, Polarity::DarkOnLight, &mut out, cache),
         "{name}: {c:?} does not decode"
     );
 }

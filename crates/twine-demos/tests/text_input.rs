@@ -263,11 +263,11 @@ fn rotation_while_open_keeps_the_field_visible() {
 
 #[test]
 fn snapshots_keyboard_open() {
-    for (name, theme) in [
-        ("text_input_keyboard_open_light", DefaultTheme::light()),
-        ("text_input_keyboard_open_dark", DefaultTheme::dark()),
+    for (name, mode) in [
+        ("text_input_keyboard_open_light", ThemeMode::Light),
+        ("text_input_keyboard_open_dark", ThemeMode::Dark),
     ] {
-        let mut t = TestUi::new(320, 240).theme(theme).mount(app);
+        let mut t = TestUi::new(320, 240).theme(&lvgl::THEME).mode(mode).mount(app);
         t.run_until_idle();
         let form = t.root_scope().expect_context::<Form>();
         form.name.set(String::from("Ada"));

@@ -5,8 +5,8 @@
 //! plus the monitor's own — one colour per parameter, the alarm colours and a few neutrals.
 //! Styles and views name the element, never a colour, so switching the display between
 //! **Day**, **Dark** and **Night** (`ThemeMode::Light` / `Dark` / `Night`) is a single
-//! `set_mode` call: the display swaps its element table and every node re-resolves. No view is
-//! rebuilt, no binding runs, nothing is allocated once each table has been built.
+//! `set_mode` call: the display swaps its element table (a `static`) and every node
+//! re-resolves. No view is rebuilt, no binding runs, nothing is allocated.
 //!
 //! **The palette** follows bedside-monitor convention so a clinician reads it at a glance: ECG
 //! and heart rate green, SpO2 and pleth cyan, blood pressure red, respiration yellow,
@@ -18,11 +18,13 @@
 //! **Typography** is Montserrat throughout: 12 px captions and units, 14 px body, large
 //! tabular numerals (24–48 px) for the vitals — the hierarchy is the numbers.
 
+use twine::engine::{DesignSystem, Recipe, Theme};
 use twine::prelude::*;
-use twine::style::design::ColorElement;
+use twine::style::StyleValue;
+use twine::style::design::{ColorElement, ElementTable};
 
-use crate::trend_plot::{TREND_CLASS, style_trend};
-use crate::waveform::{WAVEFORM_CLASS, style_waveform};
+use crate::trend_plot::TREND_RECIPE;
+use crate::waveform::WAVEFORM_RECIPE;
 
 /// Heart rate and ECG (green).
 pub const HR: ColorElement = ColorElement::custom(0);
@@ -74,28 +76,79 @@ const PALETTE: [(ColorElement, u32, u32, u32); 23] = [
     (design::NEUTRAL, 0x00B8_C2CD, 0x0030_3B47, 0x0018_1D22),
 ];
 
-/// The application theme: the default theme's widgets, re-coloured by [`PALETTE`] in Day,
-/// Dark and Night, with Montserrat 12/14/20 as its small/body/large fonts, starting in Dark.
-/// The custom widgets register their looks here, so they theme like built-in ones.
-pub fn monitor_theme() -> DefaultTheme {
-    let builder = DefaultTheme::builder()
-        .mode(ThemeMode::Dark)
+/// The number of the monitor's own elements (`custom(0)` … `custom(10)`).
+const OWN: usize = 11;
+
+/// The column of `mode` in [`PALETTE`] (Day, Dark, Night).
+const fn column(entry: &(ColorElement, u32, u32, u32), mode: usize) -> Color {
+    Color::hex(match mode {
+        0 => entry.1,
+        1 => entry.2,
+        _ => entry.3,
+    })
+}
+
+/// The monitor's own elements of `mode` (a column of [`PALETTE`]) as table slots.
+const fn own(mode: usize) -> [Option<StyleValue>; OWN] {
+    let mut slots = [None; OWN];
+    let mut rest: &[(ColorElement, u32, u32, u32)] = &PALETTE;
+    while let [entry, tail @ ..] = rest {
+        if entry.0.is_custom() {
+            // Evaluated while compiling: an index out of range does not compile.
+            slots[entry.0.index() as usize] = Some(StyleValue::Color(column(entry, mode)));
+        }
+        rest = tail;
+    }
+    slots
+}
+
+/// The LVGL theme's table of `mode` with the standard elements of [`PALETTE`]'s column `col`,
+/// Montserrat 12/14/20 as small/body/large fonts, and the monitor's elements `own`.
+const fn table(mode: ThemeMode, col: usize, own: &'static [Option<StyleValue>]) -> ElementTable {
+    let mut t = Lvgl::SET
         .fonts(FontScale {
             small: &fonts::MONTSERRAT_12,
             normal: &fonts::MONTSERRAT_14,
             large: &fonts::MONTSERRAT_20,
         })
-        .class(&WAVEFORM_CLASS, style_waveform)
-        .class(&TREND_CLASS, style_trend);
-    PALETTE
-        .iter()
-        .fold(builder, |b, &(element, day, dark, night)| {
-            b.element_in(ThemeMode::Light, element, Color::hex(day))
-                .element_in(ThemeMode::Dark, element, Color::hex(dark))
-                .element_in(ThemeMode::Night, element, Color::hex(night))
-        })
-        .build()
+        .table(mode);
+    let mut rest: &[(ColorElement, u32, u32, u32)] = &PALETTE;
+    while let [entry, tail @ ..] = rest {
+        // The monitor's own elements are not standard: `color` leaves them to `custom`.
+        t = t.color(entry.0, column(entry, col));
+        rest = tail;
+    }
+    t.custom(own)
 }
+
+static DAY_OWN: [Option<StyleValue>; OWN] = own(0);
+static DARK_OWN: [Option<StyleValue>; OWN] = own(1);
+static NIGHT_OWN: [Option<StyleValue>; OWN] = own(2);
+/// Day ([`PALETTE`]'s first column).
+pub static DAY: ElementTable = table(ThemeMode::Light, 0, &DAY_OWN);
+/// Dark, the default ([`PALETTE`]'s second column).
+pub static DARK: ElementTable = table(ThemeMode::Dark, 1, &DARK_OWN);
+/// Night ([`PALETTE`]'s third column).
+pub static NIGHT: ElementTable = table(ThemeMode::Night, 2, &NIGHT_OWN);
+
+/// The monitor's design system: the LVGL theme's widgets, re-coloured by [`PALETTE`] in Day,
+/// Dark and Night (in that order, Dark first: the start mode), with the custom widgets'
+/// recipes, so they theme like built-in ones.
+pub struct Monitor;
+
+impl DesignSystem for Monitor {
+    type Base = Lvgl;
+    const NAME: &'static str = "monitor";
+    const MODES: &'static [(ThemeMode, &'static ElementTable)] = &[
+        (ThemeMode::Dark, &DARK),
+        (ThemeMode::Light, &DAY),
+        (ThemeMode::Night, &NIGHT),
+    ];
+    const RECIPES: &'static [&'static Recipe] = &[&WAVEFORM_RECIPE, &TREND_RECIPE];
+}
+
+/// The application theme.
+pub static MONITOR_THEME: Theme<Monitor> = Theme::new();
 
 // ---- Shared styles ------------------------------------------------------------------------
 // `static`s (in flash on a device) built only from design elements, so they follow the mode.

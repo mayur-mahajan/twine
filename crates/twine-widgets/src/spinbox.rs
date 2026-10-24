@@ -496,7 +496,8 @@ impl Widget for Spinbox {
     }
 
     fn init(&mut self, cx: &mut WidgetCx<'_>) {
-        self.ta.construct(cx);
+        // A spinbox's text is a plain label (LVGL's theme styles only a textarea's).
+        self.ta.construct(cx, &crate::label::LABEL_CLASS);
         let id = cx.node();
         cx.engine_mut().set_width(id, Length::Px(SPINBOX_DEFAULT_WIDTH));
         self.ta.set_one_line(cx, true);

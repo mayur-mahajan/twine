@@ -11,17 +11,17 @@
 //! the sweep waveform (`waveform.rs`) — so a 3-minute desaturation 8 hours ago still shows at
 //! its true depth instead of being averaged away, and drawing costs one fill per column.
 //!
-//! **Parts** (themed in `style_trend`, coloured per plot by the view): `Main` the plot area,
+//! **Parts** (themed by `TREND_RECIPE`, coloured per plot by the view): `Main` the plot area,
 //! [`Part::Indicator`] the series (`line_color`, `line_width`, `bg_opacity` of the fill below
 //! it), [`GRID`] the grid lines (`line_color`), [`BAND`] the region beyond the alarm limits
 //! (`bg_color`, `bg_opacity`) and the limit lines (`line_*`, dashed).
 
 use core::ops::RangeInclusive;
 
+use twine::engine::recipe;
 use twine::prelude::*;
 use twine::reactive::StoredValue;
 use twine::render::LineDsc;
-use twine::theme::ClassCx;
 
 use crate::patient::TrendPoint;
 use crate::store::Trends;
@@ -48,11 +48,13 @@ static BAND_STYLE: Style = style! {
     line_dash_gap: 4,
 };
 
-/// Styles trend plots in the application theme (registered in `theme.rs`).
-pub fn style_trend<S>(cx: &mut ClassCx<'_, '_, S>) {
-    cx.add_style(Selector::part(Part::Indicator), &SERIES_STYLE);
-    cx.add_style(Selector::part(GRID), &GRID_STYLE);
-    cx.add_style(Selector::part(BAND), &BAND_STYLE);
+recipe! {
+    /// The look of trend plots in the application theme (listed in `theme.rs`).
+    pub static TREND_RECIPE for TREND_CLASS {
+        Part::Indicator => { ..SERIES_STYLE },
+        GRID => { ..GRID_STYLE },
+        BAND => { ..BAND_STYLE },
+    }
 }
 
 /// Picks the plotted value out of a trend point.

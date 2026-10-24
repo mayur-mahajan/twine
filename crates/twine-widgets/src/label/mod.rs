@@ -784,9 +784,14 @@ impl Widget for Label {
         EventResult::Continue
     }
 
-    /// The text as drawn (masked text shows its bullets).
+    /// The logical text, as set (never the Arabic/Persian contextual forms of the
+    /// `arabic-shaping` feature, so queries do not depend on features); masked text shows
+    /// its bullets, so a password never reaches a query or a tree dump.
     fn text(&self) -> Option<&str> {
-        Some(self.shown_text())
+        Some(match &self.mask {
+            Some(m) => &m.shown,
+            None => self.text.as_str(),
+        })
     }
 
     fn anim_custom(&mut self, cx: &mut WidgetCx<'_>, id: u16, v: i32) {

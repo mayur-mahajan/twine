@@ -101,6 +101,15 @@ fn over32(fg: Color32, bg: Color32) -> Color32 {
     r
 }
 
+/// `c` under the accumulated recolor `rc` (unchanged when `rc` is transparent).
+fn recolor_by(rc: Color32, c: Color) -> Color {
+    if rc.alpha == 0 {
+        c
+    } else {
+        Color::mix(rc.color, c, Opa::from_raw(rc.alpha))
+    }
+}
+
 /// Resolves the properties of one node for a descriptor: in its current state (through the
 /// engine's resolver and caches), or as if it were in another state with transitions skipped
 /// (LVGL sets `obj->state` and `skip_trans` temporarily, e.g. for button matrix buttons).
@@ -339,13 +348,7 @@ impl Engine {
                 )
             };
         let rc = self.recolor_with(props, part);
-        let recolor = |c: Color| {
-            if rc.alpha == 0 {
-                c
-            } else {
-                Color::mix(rc.color, c, Opa::from_raw(rc.alpha))
-            }
-        };
+        let recolor = |c: Color| recolor_by(rc, c);
         let o = |p| props.opa(part, p).mul(opa);
         let bg_opa = bg_opa.mul(opa);
         let bg_grad = props.get(part, PropId::BgGradient).get::<&'static Gradient>();
@@ -420,16 +423,29 @@ impl Engine {
     }
 
     fn recolored(&self, id: NodeId, part: Part, c: Color) -> Color {
-        let rc = self.recolor_recursive(id, part);
-        if rc.alpha == 0 {
-            c
-        } else {
-            Color::mix(rc.color, c, Opa::from_raw(rc.alpha))
-        }
+        recolor_by(self.recolor_recursive(id, part), c)
     }
 
     /// The text style of `part` of `id` (LVGL `lv_obj_init_draw_label_dsc`): `Text*`
-    /// properties (inherited ones included), opacity multiplied by `opa`, color recolored.
+    /// properties (inherited ones included), opacity multiplied by `opa`, color recolored, and
+    /// [`TextDsc::background`] set to the surface the text is drawn over (see
+    /// [`text_background`](Self::text_background)), so the run gets the text gamma of its
+    /// real [polarity](twine_text::Polarity).
+    ///
+    /// ```
+    /// use twine_core::{Color, Opa};
+    /// use twine_engine::{Engine, EngineConfig, Obj};
+    /// use twine_style::{Part, Selector, StyleProp};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let card = e.create_root(Box::new(Obj)).unwrap();
+    /// e.set_local_prop(card, Selector::MAIN, StyleProp::BgColor(Color::hex(0x282B30).into()));
+    /// e.set_local_prop(card, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER.into()));
+    /// let text = e.create(card, Box::new(Obj)).unwrap();
+    /// e.set_local_prop(text, Selector::MAIN, StyleProp::BgOpacity(Opa::TRANSP.into()));
+    /// let d = e.text_dsc(text, Part::Main, Opa::COVER);
+    /// assert_eq!(d.background, Some(Color::hex(0x282B30))); // the card behind the text
+    /// ```
     #[must_use]
     pub fn text_dsc(&self, id: NodeId, part: Part, opa: Opa) -> TextDsc {
         self.text_dsc_with(
@@ -440,11 +456,98 @@ impl Engine {
             },
             part,
             opa,
+            true,
         )
     }
 
+    /// [`text_dsc`](Self::text_dsc) without the [`background`](TextDsc::background) (`None`):
+    /// for measuring and hit testing, which need no colors, so layout does not walk the
+    /// ancestors.
+    pub(crate) fn text_layout_dsc(&self, id: NodeId, part: Part, opa: Opa) -> TextDsc {
+        self.text_dsc_with(
+            Props {
+                e: self,
+                id,
+                state: None,
+            },
+            part,
+            opa,
+            false,
+        )
+    }
+
+    /// The color of the surface the text of `part` of `id` is drawn over: the background of
+    /// `part` itself when it is opaque (a button-matrix item, a selected option, a block
+    /// cursor), else the `Main` background of the nearest node — `id` itself first, then its
+    /// ancestors — whose background is opaque (`BgOpacity` ≥ 253, LVGL's `LV_OPA_MAX`), with
+    /// `id`'s recolor applied like the text's. `None` when nothing behind the text is opaque
+    /// (the text color alone then decides its [polarity](twine_text::Polarity)).
+    ///
+    /// Gradients count with their `BgColor`; background images and translucent layers are
+    /// ignored (the polarity only needs to know which side of the text's luminance the
+    /// surface is). Reads the nodes' style caches: chosen once per text run, nothing per
+    /// pixel. Never panics.
+    ///
+    /// ```
+    /// use twine_core::{Color, Opa};
+    /// use twine_engine::{Engine, EngineConfig, Obj};
+    /// use twine_style::{Part, Selector, StyleProp};
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let screen = e.create_root(Box::new(Obj)).unwrap();
+    /// e.set_local_prop(screen, Selector::MAIN, StyleProp::BgOpacity(Opa::TRANSP.into()));
+    /// let label = e.create(screen, Box::new(Obj)).unwrap();
+    /// assert_eq!(e.text_background(label, Part::Main), None); // nothing opaque behind
+    /// e.set_local_prop(screen, Selector::MAIN, StyleProp::BgColor(Color::WHITE.into()));
+    /// e.set_local_prop(screen, Selector::MAIN, StyleProp::BgOpacity(Opa::COVER.into()));
+    /// assert_eq!(e.text_background(label, Part::Main), Some(Color::WHITE));
+    /// ```
+    #[must_use]
+    pub fn text_background(&self, id: NodeId, part: Part) -> Option<Color> {
+        let props = Props {
+            e: self,
+            id,
+            state: None,
+        };
+        let rc = self.recolor_with(props, part);
+        self.surface_behind(props, part).map(|c| recolor_by(rc, c))
+    }
+
+    /// The nearest opaque background behind the text of `part` (see
+    /// [`text_background`](Self::text_background)), not recolored.
+    fn surface_behind(&self, props: Props<'_>, part: Part) -> Option<Color> {
+        let opaque = |o: Opa| o.raw() >= OPA_MAX;
+        if part != Part::Main && opaque(props.opa(part, PropId::BgOpacity)) {
+            return Some(props.color(part, PropId::BgColor));
+        }
+        let (color, opa) = if props.state.is_none() {
+            let m = self.cached_main(props.id);
+            (m.bg_color, m.bg_opa)
+        } else {
+            (
+                props.color(Part::Main, PropId::BgColor),
+                props.opa(Part::Main, PropId::BgOpacity),
+            )
+        };
+        if opaque(opa) {
+            return Some(color);
+        }
+        let mut cur = self.tree.parent(props.id);
+        while let Some(n) = cur {
+            let m = self.cached_main(n);
+            if opaque(m.bg_opa) {
+                return Some(m.bg_color);
+            }
+            cur = self.tree.parent(n);
+        }
+        None
+    }
+
     /// The text style of `part` of `id` as if the node were in `state`, with transitions
-    /// ignored (see [`rect_dsc_for_state`](Self::rect_dsc_for_state)).
+    /// ignored (see [`rect_dsc_for_state`](Self::rect_dsc_for_state)); the
+    /// [`background`](TextDsc::background) is `part`'s or the node's `Main` background in
+    /// `state` when opaque, else the nearest opaque ancestor's (see
+    /// [`text_background`](Self::text_background)).
     #[must_use]
     pub fn text_dsc_for_state(&self, id: NodeId, part: Part, state: State, opa: Opa) -> TextDsc {
         self.text_dsc_with(
@@ -455,18 +558,19 @@ impl Engine {
             },
             part,
             opa,
+            true,
         )
     }
 
-    fn text_dsc_with(&self, props: Props<'_>, part: Part, opa: Opa) -> TextDsc {
+    /// The text descriptor; `background`: also find the surface behind the text (drawing),
+    /// else leave it `None` (measuring).
+    fn text_dsc_with(&self, props: Props<'_>, part: Part, opa: Opa, background: bool) -> TextDsc {
         let mut d = TextDsc::new(props.font(part));
         let rc = self.recolor_with(props, part);
-        let c = props.color(part, PropId::TextColor);
-        d.color = if rc.alpha == 0 {
-            c
-        } else {
-            Color::mix(rc.color, c, Opa::from_raw(rc.alpha))
-        };
+        d.color = recolor_by(rc, props.color(part, PropId::TextColor));
+        if background {
+            d.background = self.surface_behind(props, part).map(|c| recolor_by(rc, c));
+        }
         d.opa = props.opa(part, PropId::TextOpacity).mul(opa);
         d.align = props
             .get(part, PropId::TextAlign)

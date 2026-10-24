@@ -7,6 +7,7 @@ use twine_render::{ImageDsc, Painter, SubpxOrder};
 use crate::cache::GlyphCache;
 use crate::dir::TextDir;
 use crate::font::{Font, Subpx};
+use crate::gamma::Polarity;
 use crate::hit::{DOTS, TextAlign, TextDecor};
 use crate::layout::{Pen, TextFlags, TextLayout};
 
@@ -35,6 +36,14 @@ pub struct TextDsc {
     pub font: &'static Font,
     /// Text color.
     pub color: Color,
+    /// The color the text is drawn over, when the caller knows it (default `None`): with
+    /// [`color`](Self::color) it decides the run's [`Polarity`], which picks the font's text
+    /// gamma curve ([`Polarity::of`]). Without it the text color alone decides (light text is
+    /// taken to be on a dark background). Widgets drawing through the engine get it filled
+    /// in: `twine_engine::DrawCx::text_dsc` sets the nearest opaque background behind the
+    /// text. Selected characters use
+    /// [`sel_color`](Self::sel_color) over [`sel_bg_color`](Self::sel_bg_color).
+    pub background: Option<Color>,
     /// Opacity of everything drawn.
     pub opa: Opa,
     /// Line alignment inside the area.
@@ -70,12 +79,14 @@ pub struct TextDsc {
 }
 
 impl TextDsc {
-    /// Black, opaque, left-aligned text without decorations, spacing or selection.
+    /// Black, opaque, left-aligned text without decorations, spacing or selection, over an
+    /// unknown background.
     #[must_use]
     pub fn new(font: &'static Font) -> Self {
         Self {
             font,
             color: Color::BLACK,
+            background: None,
             opa: Opa::COVER,
             align: TextAlign::Left,
             decor: TextDecor::empty(),
@@ -125,6 +136,7 @@ fn draw_char(
     pen_x: i32,
     line_top: i32,
     color: Color,
+    polarity: Polarity,
     opa: Opa,
     order: SubpxOrder,
     cache: &mut GlyphCache,
@@ -153,7 +165,7 @@ fn draw_char(
     if info.box_w == 0 || info.box_h == 0 {
         return;
     }
-    if info.bpp == 0 {
+    if info.bpp.is_none() {
         // Image glyph (image fonts): drawn with the text's opacity, not its color.
         let Some(img) = gfont.provider.glyph_image(c, next) else {
             return;
@@ -195,7 +207,7 @@ fn draw_char(
     let provider = gfont.provider;
     match gfont.subpx {
         Subpx::None => {
-            provider.render_rows(&info, cache, &mut |y, row| {
+            provider.render_rows(&info, polarity, cache, &mut |y, row| {
                 let gy = area.y0.saturating_add(y as i32);
                 if gy >= clip.y0 && gy < clip.y1 {
                     p.glyph_a8(Rect::from_xywh(area.x0, gy, w_px, 1), row, row.len(), color, opa);
@@ -206,7 +218,7 @@ fn draw_char(
             let mut lcd = core::mem::take(&mut cache.lcd_row);
             // SAFE-ARITH: `w_px ≤ (2^16 + 1) / 3`.
             lcd.resize((w_px as usize).wrapping_mul(3), 0);
-            provider.render_rows(&info, cache, &mut |y, row| {
+            provider.render_rows(&info, polarity, cache, &mut |y, row| {
                 let gy = area.y0.saturating_add(y as i32);
                 if gy >= clip.y0 && gy < clip.y1 {
                     lcd.fill(0);
@@ -231,7 +243,7 @@ fn draw_char(
             lcd.resize((w_px as usize).wrapping_mul(3), 0);
             lcd.fill(0);
             let rows = bh as usize;
-            provider.render_rows(&info, cache, &mut |y, row| {
+            provider.render_rows(&info, polarity, cache, &mut |y, row| {
                 let t = y % 3;
                 // Sub-pixel `t` of pixel `x` is byte `3x + t`.
                 for (px, v) in lcd.chunks_exact_mut(3).zip(row) {
@@ -270,7 +282,9 @@ fn draw_char(
 /// `line_top + ascent − underline_position`, strikethrough at
 /// `line_top + ascent × 2 / 3 + underline_thickness / 2`, both `max(1, thickness)` px tall and
 /// as wide as the line's glyphs. Missing characters are drawn as a 1 px outlined box
-/// (`line_height / 2` × `ascent`) and logged once. Never allocates.
+/// (`line_height / 2` × `ascent`) and logged once. Glyph coverage becomes opacity through the
+/// font's text gamma of the run's [`Polarity`] (from `dsc.color` and `dsc.background`, decided
+/// once per call). Never allocates.
 ///
 /// ```
 /// use twine_assets::fonts::MONTSERRAT_14;
@@ -311,6 +325,9 @@ fn draw_clipped(p: &mut Painter<'_>, area: Rect, text: &str, dsc: &TextDsc, cach
         _ => None,
     };
     let thick = i32::from(font.underline_thickness).max(1);
+    // The text gamma of the run (and of its selection), chosen once.
+    let polarity = Polarity::of(dsc.color, dsc.background);
+    let sel_polarity = Polarity::of(dsc.sel_color, Some(dsc.sel_bg_color));
     #[cfg(feature = "bidi")]
     let base = crate::bidi::resolve_dir(dsc.base_dir, text);
     #[cfg(not(feature = "bidi"))]
@@ -423,8 +440,24 @@ fn draw_clipped(p: &mut Painter<'_>, area: Rect, text: &str, dsc: &TextDsc, cach
                 p.fill(Rect::from_xywh(pen_x, y, a, font_lh), dsc.sel_bg_color, dsc.opa);
             }
             if pen_x.saturating_add(a).saturating_add(font_lh) >= clip.x0 {
-                let color = if selected { dsc.sel_color } else { dsc.color };
-                draw_char(p, font, c, next, pen_x, y, color, dsc.opa, dsc.subpx_order, cache);
+                let (color, pol) = if selected {
+                    (dsc.sel_color, sel_polarity)
+                } else {
+                    (dsc.color, polarity)
+                };
+                draw_char(
+                    p,
+                    font,
+                    c,
+                    next,
+                    pen_x,
+                    y,
+                    color,
+                    pol,
+                    dsc.opa,
+                    dsc.subpx_order,
+                    cache,
+                );
             }
             pen.add(a, ls);
         }

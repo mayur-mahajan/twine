@@ -328,7 +328,7 @@ impl crate::Engine {
     /// }
     /// let mut e = Engine::new(EngineConfig { hires_timer: Some(hires), ..EngineConfig::default() }).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// e.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// e.add_display(panel, BufferMode::alloc(BufferSpec::default()), None).unwrap();
     /// e.step(Instant::from_millis(0));
     /// let t = e.timing();
     /// assert!(t.worst_update_us > 0 && t.worst_render_us > 0 && t.worst_flush_us > 0);

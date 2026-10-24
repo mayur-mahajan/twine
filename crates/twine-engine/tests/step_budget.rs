@@ -14,7 +14,11 @@ fn framebuffer_frame_spread_over_steps_presents_once() {
     let mut engine = Engine::new(EngineConfig::default()).unwrap();
     let info = DisplayInfo::new(64, 48, ColorFormat::Rgb565);
     let d = engine
-        .add_framebuffer_display(MockFramebufferDisplay::new(info, true, 0), BufferMode::full())
+        .add_framebuffer_display(
+            MockFramebufferDisplay::new(info, true, 0),
+            BufferMode::full(),
+            None,
+        )
         .unwrap();
     let presents = |e: &Engine| e.driver::<MockFramebufferDisplay>(d).unwrap().presents().len();
     let mut now = Instant::from_millis(0);
@@ -67,7 +71,11 @@ fn engine(config: EngineConfig) -> (Engine, twine_engine::DisplayId) {
     let mut e = Engine::new(config).unwrap();
     let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
     let d = e
-        .add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }))
+        .add_display(
+            panel,
+            BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }),
+            None,
+        )
         .unwrap();
     (e, d)
 }
@@ -210,7 +218,7 @@ fn on_chunk_runs_for_the_chunk_level_api() {
     .unwrap();
     let info = DisplayInfo::new(64, 32, ColorFormat::Rgb565);
     let chunk = 64 * 2 * 8;
-    e.add_chunked_display(info, chunk).unwrap();
+    e.add_chunked_display(info, chunk, None).unwrap();
     let _ = e.step(Instant::from_millis(0));
     assert!(e.refresh_begin(Instant::from_millis(0)).is_some());
     let mut buf = vec![0u8; chunk];

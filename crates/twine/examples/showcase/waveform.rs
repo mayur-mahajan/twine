@@ -28,9 +28,9 @@
 
 use core::ops::RangeInclusive;
 
+use twine::engine::recipe;
 use twine::prelude::*;
 use twine::reactive::StoredValue;
-use twine::theme::ClassCx;
 
 /// Columns a trace remembers: more than the widest strip, so the whole sweep is always there.
 pub const RING_COLUMNS: usize = 512;
@@ -120,9 +120,11 @@ pub static WAVEFORM_CLASS: WidgetClass = WidgetClass::new("waveform").parts(&[Pa
 /// here — each strip gives its own (`design` elements of `theme.rs`, so it follows the mode).
 static TRACE_STYLE: Style = style! { line_width: 2, bg_opacity: Opa::P20 };
 
-/// Styles waveform nodes in the application theme (registered in `theme.rs`).
-pub fn style_waveform<S>(cx: &mut ClassCx<'_, '_, S>) {
-    cx.add_style(Selector::part(Part::Indicator), &TRACE_STYLE);
+recipe! {
+    /// The look of waveforms in the application theme (listed in `theme.rs`).
+    pub static WAVEFORM_RECIPE for WAVEFORM_CLASS {
+        Part::Indicator => { ..TRACE_STYLE },
+    }
 }
 
 /// A sweep waveform reading one [`Trace`] (see the module docs).

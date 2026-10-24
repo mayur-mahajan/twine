@@ -188,7 +188,7 @@ fn main() {
             .title("Twine Player")
             .scale(1)
             .format(ColorFormat::Xrgb8888)
-            .theme(theme::theme()),
+            .theme(&theme::THEME),
         app,
     );
 }

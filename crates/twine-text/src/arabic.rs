@@ -47,7 +47,13 @@ const fn ap(offset: u8, end: u16, beginning: i8, middle: i8, isolated: i8, prev:
     }
 }
 
-/// LVGL's `ap_chars_map` (same order and values; the end-of-list sentinel omitted).
+/// LVGL's `ap_chars_map` (same order; the end-of-list sentinel omitted).
+///
+/// Two entries differ from LVGL, whose unused form offsets alias other characters (the
+/// lookup also maps every form back to its letter): ة has no medial form (LVGL's `2` named
+/// U+FE96, the final teh), and ۰ has no contextual forms (LVGL's `-1` / `2` named U+06EF and
+/// U+06F2, so the Persian digit two was drawn as zero). Every code point of the table belongs
+/// to exactly one entry (checked by a unit test).
 pub static AP_CHARS_MAP: [ApChar; 52] = [
     ap(0, 0xFE81, 0, 0, 0, 0, 0),     // آ
     ap(1, 0xFE84, -1, 0, -1, 1, 0),   // أ
@@ -90,8 +96,8 @@ pub static AP_CHARS_MAP: [ApChar; 52] = [
     ap(39, 0xFEF0, 0, 0, -1, 1, 0),   // ى
     ap(40, 0xFEF2, 1, 2, -1, 1, 1),   // ي
     ap(170, 0xFBFD, 1, 2, -1, 1, 1),  // ی
-    ap(7, 0xFE94, -1, 2, -1, 1, 0),   // ة
-    ap(206, 0x06F0, -1, 2, 0, 0, 0),  // ۰
+    ap(7, 0xFE94, -1, 0, -1, 1, 0),   // ة (LVGL: medial 2)
+    ap(206, 0x06F0, 0, 0, 0, 0, 0),   // ۰ (LVGL: initial -1, medial 2)
     ap(207, 0x06F1, 0, 0, 0, 0, 0),   // ۱
     ap(208, 0x06F2, 0, 0, 0, 0, 0),   // ۲
     ap(209, 0x06F3, 0, 0, 0, 0, 0),   // ۳
@@ -288,6 +294,47 @@ mod tests {
         // Mixed: only the Arabic word changes; a space breaks joining.
         assert_eq!(cps(&shape("a بب b")), [0x61, 0x20, 0xFE91, 0xFE90, 0x20, 0x62]);
         assert!(needs_shaping("a بب"));
+    }
+
+    #[test]
+    fn regression_persian_digits_pass_through_unchanged() {
+        // LVGL's table gave ۰ a "medial form" of U+06F2, so ۲ was looked up as ۰ and drawn as
+        // ۰ (a localized "۱٬۲۳۴" showed "۱٬۰۳۴").
+        let digits = "۰۱۲۳۴۵۶۷۸۹";
+        assert_eq!(shape(digits), digits);
+        assert_eq!(shape("۱٬۲۳۴٬۵۶۷٫۸۹"), "۱٬۲۳۴٬۵۶۷٫۸۹");
+        assert_eq!(cps(&shape("ب۲")), [0xFE8F, 0x06F2], "a digit does not join");
+        // U+06EF (LVGL's "initial form" of ۰) is not a digit and passes through.
+        assert_eq!(shape("\u{6EF}"), "\u{6EF}");
+    }
+
+    #[test]
+    fn regression_teh_marbuta_has_no_medial_alias() {
+        // LVGL's ة "medial form" was U+FE96, the final teh: no entry may claim another's form.
+        assert_eq!(cps(&shape("بة")), [0xFE91, 0xFE94]);
+        assert_eq!(cps(&shape("ة")), [0xFE93]);
+    }
+
+    #[test]
+    fn every_code_point_of_the_table_belongs_to_one_entry() {
+        for a in &AP_CHARS_MAP {
+            let forms = [
+                a.base(),
+                u32::from(a.end),
+                a.form(a.beginning),
+                a.form(a.middle),
+                a.form(a.isolated),
+            ];
+            for cp in forms {
+                let c = char::from_u32(cp).unwrap();
+                assert!(
+                    core::ptr::eq(entry_of(c).unwrap(), a),
+                    "U+{cp:04X} of the entry for U+{:04X} resolves to U+{:04X}",
+                    a.base(),
+                    entry_of(c).unwrap().base()
+                );
+            }
+        }
     }
 
     #[test]

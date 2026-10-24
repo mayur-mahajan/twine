@@ -530,9 +530,10 @@ impl WidgetView<Line> {
         self.bind(on, |l: &mut Line, cx, on| l.set_y_invert(cx, on))
     }
 
-    /// The stroke width (`line_width`). This shadows [`StyleExt::width`] on line views.
+    /// The stroke width (`line_width`: pixels, a `Length` or a length design element). This
+    /// shadows [`StyleExt::width`] on line views.
     #[must_use]
-    pub fn width<M>(self, w: impl IntoProp<i32, M>) -> Self {
+    pub fn width<M>(self, w: impl IntoProp<twine_style::design::LengthValue, M>) -> Self {
         self.style_prop(w, StyleProp::LineWidth)
     }
 

@@ -63,7 +63,7 @@ use crate::{DisplayId, Engine, EngineError, FaultRecord, InvalidateReason, NodeI
 ///
 /// let mut e = Engine::new(EngineConfig::default()).unwrap();
 /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-/// e.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 })).unwrap();
+/// e.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }), None).unwrap();
 /// let seen = Rc::new(RefCell::new(Monitor::default()));
 /// e.set_frame_observer(Shared(seen.clone()));
 /// e.step(Instant::from_millis(0));
@@ -111,7 +111,7 @@ impl<'a> FrameChunk<'a> {
     /// use twine_hal::DisplayInfo;
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// let d = e.add_chunked_display(DisplayInfo::new(4, 4, ColorFormat::L8), 16).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(4, 4, ColorFormat::L8), 16, None).unwrap();
     /// let px = [1u8, 2, 3, 4, 5, 6];
     /// let c = FrameChunk::new(d, Rect::from_xywh(0, 0, 2, 2), ColorFormat::L8, &px, 3);
     /// let rows: Vec<&[u8]> = c.rows().collect();
@@ -295,7 +295,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 })).unwrap();
+    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }), None).unwrap();
     /// let n = e.create(e.active_screen(d).unwrap(), Box::new(Obj)).unwrap();
     /// e.set_pos(n, 4, 4);
     /// e.set_size(n, 10, 6);
@@ -350,7 +350,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 })).unwrap();
+    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }), None).unwrap();
     /// let n = e.create(e.active_screen(d).unwrap(), Box::new(Obj)).unwrap();
     /// e.set_pos(n, 4, 4);
     /// e.set_size(n, 10, 6);
@@ -450,7 +450,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(16, 16, ColorFormat::Rgb565));
-    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 })).unwrap();
+    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }), None).unwrap();
     /// e.step(Instant::from_millis(0)); // the (white) screen is drawn
     /// let mut buf = [0u8; 2 * 2 * 2];
     /// e.read_back(d, Rect::from_xywh(0, 0, 2, 2), &mut buf).unwrap();
@@ -522,7 +522,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(32, 16, ColorFormat::Rgb565));
-    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 })).unwrap();
+    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }), None).unwrap();
     /// let n = e.create(e.active_screen(d).unwrap(), Box::new(Obj)).unwrap();
     /// e.set_size(n, 8, 8);
     /// e.step(Instant::from_millis(0));
@@ -691,7 +691,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(32, 16, ColorFormat::Rgb565));
-    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 })).unwrap();
+    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }), None).unwrap();
     /// let safe = e.create_screen(d).unwrap();
     /// e.set_fail_safe_screen(d, safe).unwrap();
     /// e.enter_fail_safe(d, 7).unwrap();

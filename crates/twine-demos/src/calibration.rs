@@ -133,6 +133,14 @@ fn crosshair(x: impl Fn() -> i32 + Clone + 'static, y: impl Fn() -> i32 + Clone 
     .test_id("target")
 }
 
+/// The LVGL theme (every mode) with only the per-class recipes of the widget classes this demo
+/// creates: what the firmware links (pay for what you use — the other recipes and their
+/// styles are not in the image). The list is what `cargo xtask theme-recipes -- -p
+/// twine-demos --test calibration` prints; the demo's tests run with this theme and check it with
+/// `twine_testing::assert_theme_covers` (and their snapshots, that it draws like the full
+/// theme).
+pub static THEME: Lvgl = Lvgl::new().recipes(&[&lvgl::LABEL, &lvgl::OBJ]);
+
 /// The calibration application reading raw taps from `raw`; logs the result (see the
 /// [module documentation](self) for an example). Never panics.
 pub fn app(cx: Scope, raw: &'static RawTaps) -> impl View {

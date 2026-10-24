@@ -69,6 +69,19 @@ fn sample(cx: Scope, i: usize) -> impl ViewExt<Widget = Obj> {
     .padding(6)
 }
 
+/// The LVGL theme (every mode) with only the per-class recipes of the widget classes this demo
+/// creates: what the firmware links (pay for what you use). The Lottie widget itself has no
+/// recipe in the built-in themes (it draws its animation, nothing else); the demo's test runs
+/// with this theme and its snapshot shows it draws like the full theme.
+pub static THEME: Lvgl = Lvgl::new().recipes(&[
+    &lvgl::OBJ,
+    &lvgl::CARD,
+    &lvgl::LABEL,
+    &lvgl::BUTTON,
+    &lvgl::SWITCH,
+    &lvgl::SLIDER,
+]);
+
 /// The Lottie demo.
 ///
 /// ```

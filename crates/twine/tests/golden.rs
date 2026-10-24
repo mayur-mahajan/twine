@@ -7,7 +7,7 @@
 //!   images and have their own snapshots; `vector_view` needs the application's drawing.
 //! - **States:** default, pressed, focused, disabled, and the R5.S06 validity looks `STALE`
 //!   (sparse hatch) and `INVALID` (cross-hatch); `CHECKED` for the checkable widgets.
-//! - **Theme modes:** `Light`, `Dark`, `Night`, `HighContrast` of `DefaultTheme`.
+//! - **Theme modes:** `Light`, `Dark`, `Night`, `HighContrast` of the LVGL theme (`Lvgl`).
 //! - **Rotation × colour format:** a sheet (button, checked checkbox, slider, switch, bar, a stale
 //!   and an invalid label) in all four rotations and every colour format the renderer offers.
 //!
@@ -20,7 +20,7 @@ use twine::core::Duration;
 use twine::core::{ColorFormat, Rotation};
 use twine::engine::{Engine, NodeId, ObjFlags};
 use twine::style::{Align, State, ThemeMode};
-use twine::theme::DefaultTheme;
+use twine::theme::lvgl;
 use twine::widgets::{
     arc, bar, button, buttonmatrix, checkbox, container, keyboard, label, led, slider, spinbox, spinner,
     switch, textarea,
@@ -248,13 +248,9 @@ const WIDGETS: &[(&str, Make, bool)] = &[
     ),
 ];
 
-fn theme(mode: ThemeMode) -> DefaultTheme {
-    DefaultTheme::builder().mode(mode).build()
-}
-
 /// A 200×120 RGB565 scene with `make`'s widget centred, in `state`.
 fn widget_scene(mode: ThemeMode, make: Make, state: State) -> EngineHarness {
-    let mut h = EngineHarness::new(200, 120).theme(theme(mode));
+    let mut h = EngineHarness::new(200, 120).theme(&lvgl::THEME).mode(mode);
     let screen = h.screen();
     let e = h.engine_mut();
     let w = make(e, screen);
@@ -333,7 +329,8 @@ fn golden_sheet_rotations_formats_modes() {
         for (rotation, r) in ROTATIONS {
             for (format, f) in FORMATS {
                 let mut h = EngineHarness::new(160, 120)
-                    .theme(theme(mode))
+                    .theme(&lvgl::THEME)
+                    .mode(mode)
                     .format(format)
                     .rotation(rotation);
                 let screen = h.screen();

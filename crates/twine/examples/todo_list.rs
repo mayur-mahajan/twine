@@ -10,7 +10,7 @@
 
 use std::time::Duration as StdDuration;
 
-use twine::prelude::{Channel, DefaultTheme};
+use twine::prelude::{Channel, lvgl};
 use twine_demos::todos::{Ports, Remote, app};
 use twine_sim::SimConfig;
 
@@ -32,7 +32,7 @@ fn main() {
         SimConfig::new(320, 240)
             .title("todo list")
             .scale(2)
-            .theme(DefaultTheme::light()),
+            .theme(&lvgl::THEME),
         move |cx| app(cx, ports),
     );
 }

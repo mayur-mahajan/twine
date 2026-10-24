@@ -27,8 +27,8 @@ fn bg_border_outline(e: &mut Engine) {
             StyleProp::Radius(Radius::Px(10).into()),
             StyleProp::BorderWidth(Length::Px(4).into()),
             StyleProp::BorderColor(Color::hex(0x0D_47_A1).into()),
-            StyleProp::OutlineWidth(3),
-            StyleProp::OutlineOffset(3),
+            StyleProp::OutlineWidth(Length::Px(3).into()),
+            StyleProp::OutlineOffset(Length::Px(3).into()),
             StyleProp::OutlineColor(Color::hex(0xE5_39_35).into()),
         ],
     );
@@ -44,10 +44,10 @@ fn shadow(e: &mut Engine) {
             StyleProp::BgColor(Color::hex(0xFF_EE_58).into()),
             StyleProp::BgOpacity(Opa::COVER.into()),
             StyleProp::Radius(Radius::Px(8).into()),
-            StyleProp::ShadowWidth(16),
-            StyleProp::ShadowOffsetX(4),
-            StyleProp::ShadowOffsetY(6),
-            StyleProp::ShadowSpread(2),
+            StyleProp::ShadowWidth(Length::Px(16).into()),
+            StyleProp::ShadowOffsetX(Length::Px(4).into()),
+            StyleProp::ShadowOffsetY(Length::Px(6).into()),
+            StyleProp::ShadowSpread(Length::Px(2).into()),
             StyleProp::ShadowOpacity(Opa::P70.into()),
         ],
     );
@@ -112,7 +112,7 @@ fn bg_image(e: &mut Engine) {
         &[
             StyleProp::BgColor(Color::hex(0xDD_DD_DD).into()),
             StyleProp::BgOpacity(Opa::COVER.into()),
-            StyleProp::BgImage(&CHECKER_SRC),
+            StyleProp::BgImage((&CHECKER_SRC).into()),
             StyleProp::BorderWidth(Length::Px(2).into()),
         ],
     );
@@ -120,7 +120,10 @@ fn bg_image(e: &mut Engine) {
         e,
         s,
         Rect::from_xywh(50, 10, 30, 30),
-        &[StyleProp::BgImage(&CHECKER_SRC), StyleProp::BgImageTiled(true)],
+        &[
+            StyleProp::BgImage((&CHECKER_SRC).into()),
+            StyleProp::BgImageTiled(true),
+        ],
     );
 }
 

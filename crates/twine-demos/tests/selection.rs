@@ -5,11 +5,13 @@
 use twine::core::{Duration, Point};
 use twine::engine::NodeId;
 use twine::prelude::*;
-use twine_demos::selection::{CITIES, Selection, app};
-use twine_testing::{TestUi, by_class, by_id};
+use twine_demos::selection::{self, CITIES, Selection, app};
+use twine_testing::{TestUi, assert_theme_covers, by_class, by_id};
 
 fn ui() -> (TestUi, Selection) {
-    let mut t = TestUi::new(320, 240).app_config(twine_demos::config()).mount(app);
+    let mut t = TestUi::new(320, 240)
+        .app_config(twine_demos::config_with_theme(&selection::THEME))
+        .mount(app);
     t.run_until_idle();
     let s = t.root_scope().expect_context::<Selection>();
     (t, s)
@@ -55,6 +57,8 @@ fn dropdown_and_roller_stay_in_sync() {
     let d = node(&t, "dropdown");
     t.tap(center(&t, d));
     t.run_until_idle();
+    // The demo's theme has a recipe for the open list's classes too.
+    assert_theme_covers(&t.engine());
     // The list opens scrolled to the selected city; the next one is in view.
     t.tap(option_point(&t, 2));
     t.run_until_idle();
@@ -138,6 +142,7 @@ fn about_box_opens_and_closes() {
     t.run_until_idle();
     assert_eq!(s.about_opened.get_untracked(), 1);
     assert_eq!(t.find_all(by_class("msgbox")).len(), 1);
+    assert_theme_covers(&t.engine());
     // The backdrop blocks the tabs.
     let close = t.find(by_class("msgbox_header_button")).id();
     t.tap(center(&t, close));
@@ -163,6 +168,8 @@ fn menu_pages_load_from_the_sidebar() {
     let page = m.cur_main_page().unwrap();
     assert_eq!(e.widget::<MenuPage>(page).unwrap().title(), Some("Sound"));
     assert!(t.node(row).state().contains(State::CHECKED));
+    drop(e);
+    assert_theme_covers(&t.engine());
 }
 
 #[test]
@@ -196,14 +203,19 @@ fn heap_stable_after_20_open_close_cycles() {
 
 #[test]
 fn snapshot_selection() {
-    for (theme, name) in [(DefaultTheme::light(), "light"), (DefaultTheme::dark(), "dark")] {
-        let mut t = TestUi::new(320, 240).theme(theme).mount(app);
+    for (mode, name) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+        let mut t = TestUi::new(320, 240)
+            .theme(&selection::THEME)
+            .mode(mode)
+            .mount(app);
         t.run_until_idle();
         let s = t.root_scope().expect_context::<Selection>();
         for (tab, tab_name) in [(0usize, "pickers"), (1, "lists"), (2, "tiles")] {
             s.tab.set(tab);
             t.run_until_idle();
             t.assert_snapshot(&format!("selection_{tab_name}_{name}"));
+            // Every class each tab shows has a recipe in the demo's (trimmed) theme.
+            assert_theme_covers(&t.engine());
         }
     }
 }

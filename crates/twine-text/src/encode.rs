@@ -4,11 +4,12 @@
 //! [`FontData::leak`].
 //!
 //! ```
+//! use twine_text::Bpp;
 //! use twine_text::encode::{rle_encode, rle_decode};
 //! let values = [3u8, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 1];
-//! let bytes = rle_encode(&values, 2);
+//! let bytes = rle_encode(&values, Bpp::Two);
 //! assert!(bytes.len() < values.len() * 2 / 8 + 1);
-//! assert_eq!(rle_decode(&bytes, 2, values.len()), values);
+//! assert_eq!(rle_decode(&bytes, Bpp::Two, values.len()), values);
 //! ```
 
 use std::boxed::Box;
@@ -18,6 +19,7 @@ use std::vec::Vec;
 use crate::bitmap_font::{BitmapFont, BitmapFormat, Cmap, CmapKind, GlyphDsc, GlyphIdOfs, Kern, KernPairIds};
 use crate::decode::{Bpp, Rle};
 use crate::font::{Font, Subpx};
+use crate::gamma::TextGamma;
 
 /// Writes values MSB-first into a growing byte vector.
 #[derive(Debug, Default, Clone)]
@@ -73,12 +75,18 @@ impl BitWriter {
     }
 }
 
-/// Packs `values` (each `< 1 << bpp`) MSB-first without padding between rows.
+/// Packs `values` (each at most [`Bpp::max_value`]) MSB-first without padding between rows.
+///
+/// ```
+/// use twine_text::Bpp;
+/// use twine_text::encode::pack_bits;
+/// assert_eq!(pack_bits(&[1, 2, 3, 0], Bpp::Two), [0b01_10_11_00]);
+/// ```
 #[must_use]
-pub fn pack_bits(values: &[u8], bpp: u8) -> Vec<u8> {
+pub fn pack_bits(values: &[u8], bpp: Bpp) -> Vec<u8> {
     let mut w = BitWriter::new();
     for &v in values {
-        w.write(v, bpp);
+        w.write(v, bpp.bits());
     }
     w.finish()
 }
@@ -97,7 +105,7 @@ pub fn prefilter(values: &[u8], w: usize) -> Vec<u8> {
     out
 }
 
-/// LVGL-compatible RLE encoding of `values` (each `< 1 << bpp`), the inverse of the decoder:
+/// LVGL-compatible RLE encoding of `values` (each at most [`Bpp::max_value`]), the inverse of the decoder:
 ///
 /// 1. *Single*: write a literal; if it equals the previous literal and is not the first value,
 ///    switch to *Repeated* with count 0.
@@ -108,12 +116,13 @@ pub fn prefilter(values: &[u8], w: usize) -> Vec<u8> {
 ///
 /// The final byte is zero-padded.
 #[must_use]
-pub fn rle_encode(values: &[u8], bpp: u8) -> Vec<u8> {
+pub fn rle_encode(values: &[u8], depth: Bpp) -> Vec<u8> {
     #[derive(PartialEq)]
     enum St {
         Single,
         Repeated,
     }
+    let bpp = depth.bits();
     let mut w = BitWriter::new();
     let mut st = St::Single;
     let mut prev = 0u8;
@@ -167,20 +176,16 @@ pub fn rle_encode(values: &[u8], bpp: u8) -> Vec<u8> {
 
 /// Decodes `n` RLE values (bpp domain) — the counterpart of [`rle_encode`] for tests and tools.
 ///
-/// `bpp` must be 1, 2, 4 or 8; any other depth decodes nothing (`n` zeros) and logs a warning.
+/// Values past the end of `bytes` decode as 0.
 ///
 /// ```
+/// use twine_text::Bpp;
 /// use twine_text::encode::{rle_decode, rle_encode};
-/// assert_eq!(rle_decode(&rle_encode(&[2, 2, 1], 2), 2, 3), [2, 2, 1]);
-/// assert_eq!(rle_decode(&[0xFF], 3, 2), [0, 0]); // not a glyph depth
+/// assert_eq!(rle_decode(&rle_encode(&[2, 2, 1], Bpp::Two), Bpp::Two, 3), [2, 2, 1]);
 /// ```
 #[must_use]
-pub fn rle_decode(bytes: &[u8], bpp: u8, n: usize) -> Vec<u8> {
+pub fn rle_decode(bytes: &[u8], bpp: Bpp, n: usize) -> Vec<u8> {
     let mut out = vec![0; n];
-    let Some(bpp) = Bpp::new(bpp) else {
-        twine_core::warn!(target: "twine::text", "rle_decode: invalid bpp {}", bpp);
-        return out;
-    };
     let mut r = Rle::new(bytes, bpp);
     r.decode_row(&mut out);
     out
@@ -188,7 +193,7 @@ pub fn rle_decode(bytes: &[u8], bpp: u8, n: usize) -> Vec<u8> {
 
 /// Encodes one glyph's quantized values (`w` per row) in `format`.
 #[must_use]
-pub fn encode_glyph(values: &[u8], w: usize, bpp: u8, format: BitmapFormat) -> Vec<u8> {
+pub fn encode_glyph(values: &[u8], w: usize, bpp: Bpp, format: BitmapFormat) -> Vec<u8> {
     match format {
         BitmapFormat::Plain => pack_bits(values, bpp),
         BitmapFormat::Compressed => rle_encode(&prefilter(values, w), bpp),
@@ -254,8 +259,8 @@ pub struct FontData {
     pub underline_thickness: u8,
     /// Subpixel layout.
     pub subpx: Subpx,
-    /// Bits per pixel.
-    pub bpp: u8,
+    /// Bit depth of the coverage values.
+    pub bpp: Bpp,
     /// Bitmap storage format.
     pub format: BitmapFormat,
     /// All glyph bitmaps.
@@ -268,6 +273,10 @@ pub struct FontData {
     pub kern: KernData,
     /// Kerning scale (12.4).
     pub kern_scale: u16,
+    /// Coverage → opacity curves ([`gamma::DEFAULT`](crate::gamma::DEFAULT) or
+    /// [`gamma::LINEAR`](crate::gamma::LINEAR) are referenced by generated code, other curves
+    /// are written out).
+    pub gamma: TextGamma,
 }
 
 fn leak<T>(v: Vec<T>) -> &'static [T] {
@@ -314,6 +323,7 @@ impl FontData {
             kern,
             kern_scale: self.kern_scale,
             format: self.format,
+            gamma: Box::leak(Box::new(self.gamma)),
         }));
         Box::leak(Box::new(Font {
             line_height: self.line_height,
@@ -349,7 +359,7 @@ mod tests {
 
     #[test]
     fn encoder_matches_hand_vector() {
-        assert_eq!(rle_encode(&[5, 5, 5, 7], 4), vec![0x55, 0x9C]);
+        assert_eq!(rle_encode(&[5, 5, 5, 7], Bpp::Four), vec![0x55, 0x9C]);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! `twine`: Twine's font and image converters.
+//! `twine`: Twine's font and image converters and translation compiler.
 
 use clap::{Parser, Subcommand};
 
@@ -16,6 +16,9 @@ enum Cmd {
     Font(twine_cli::font::FontArgs),
     /// Convert an image (PNG, JPEG, BMP, GIF, QOI) into a Rust `Image` in any color format.
     Image(twine_cli::image::ImageArgs),
+    /// Compile translation files (`.ftl`, `.po`, `.toml`) into a Rust catalog for
+    /// `twine_extra::i18n`.
+    I18n(twine_cli::i18n::I18nArgs),
 }
 
 fn main() {
@@ -23,6 +26,7 @@ fn main() {
     let result = match &cli.cmd {
         Cmd::Font(args) => twine_cli::font::run(args),
         Cmd::Image(args) => twine_cli::image::run(args),
+        Cmd::I18n(args) => twine_cli::i18n::run(args),
     };
     if let Err(e) = result {
         eprintln!("error: {e}");

@@ -204,7 +204,7 @@ fn creating_after_seal_raises_alloc_after_seal_at_the_next_update() {
 fn audit_report_dumps_the_whole_configuration() {
     let cfg = AppConfig::new()
         .limits(product_limits().heap_budget(Some(40 * 1024)))
-        .theme(DefaultTheme::light())
+        .theme(&lvgl::THEME)
         .motion(Motion::Reduced)
         .rotation(Rotation::Deg90);
     let text = cfg.audit_report().to_string();

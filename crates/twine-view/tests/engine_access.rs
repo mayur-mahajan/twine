@@ -76,7 +76,7 @@ fn handles_warn_once_per_call_site() {
             // Queued for the next update (F1): no warning.
             ctl.pause();
             ctl.set_playing(true);
-            theme.set(DefaultTheme::dark());
+            theme.set_mode(ThemeMode::Dark);
             // Needs the engine to answer.
             assert!(!ctl.is_playing());
         }
@@ -146,7 +146,7 @@ fn release_builds_do_not_warn() {
         assert!(r.with_mut(|l: &mut Label, wcx| l.set_text(wcx, "no")).is_none());
         ctl.pause();
         assert!(!ctl.is_playing());
-        use_theme(t.root_scope()).set(DefaultTheme::dark());
+        use_theme(t.root_scope()).set_mode(ThemeMode::Dark);
     });
     assert!(engine_warnings(&logs).is_empty(), "{logs:?}");
 }

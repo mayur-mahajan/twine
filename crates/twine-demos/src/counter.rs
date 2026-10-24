@@ -6,6 +6,14 @@
 
 use twine::prelude::*;
 
+/// The LVGL theme (every mode) with only the per-class recipes of the widget classes this demo
+/// creates: what the firmware links (pay for what you use — the other recipes and their
+/// styles are not in the image). The list is what `cargo xtask theme-recipes -- -p
+/// twine-demos --test counter` prints; the demo's tests run with this theme and check it with
+/// `twine_testing::assert_theme_covers` (and their snapshots, that it draws like the full
+/// theme).
+pub static THEME: Lvgl = Lvgl::new().recipes(&[&lvgl::OBJ, &lvgl::LABEL, &lvgl::BUTTON]);
+
 /// The counter application.
 ///
 /// ```

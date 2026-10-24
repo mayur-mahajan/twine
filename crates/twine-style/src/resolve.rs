@@ -7,7 +7,7 @@ use twine_core::{Angle, Color, Opa, Scale};
 use twine_text::Font;
 
 use crate::design::{ElementKind, ElementRef};
-use crate::prop::{PROP_COUNT, PropId};
+use crate::prop::{PROP_COUNT, PropId, StyleProp};
 use crate::selector::{Part, Selector, State};
 use crate::style::StyleRef;
 use crate::value::{PropValue, StyleValue};
@@ -152,18 +152,23 @@ pub enum TraceEvent<Id> {
     Default(StyleValue),
 }
 
-/// LVGL `get_prop_core`: the winning entry of one node, as `(index, value)`.
+/// LVGL `get_prop_core`: the winning entry of one node, as `(index, property)`.
 ///
 /// Transition entries match by part only and win immediately; other entries must match part
 /// and state; the highest weight wins, ties go to the earlier entry; an entry whose state
 /// equals the node state exactly ends the search.
+///
+/// Returns a reference to the winning [`StyleProp`], not its [`StyleValue`]: the caller
+/// converts the one value it uses ([`StyleProp::value`]). A value per candidate entry, built
+/// and copied out of the style lookup, was the largest cost of resolving a themed widget's
+/// property (R7.S04a speed pass: a button's 12 uncached properties 354 → 295 ns).
 fn own_value(
     entries: &[StyleEntry],
     state: State,
     part: Part,
     prop: PropId,
     skip_transitions: bool,
-) -> Option<(usize, StyleValue)> {
+) -> Option<(usize, &StyleProp)> {
     let group = prop.group_bit();
     let mut best = None;
     let mut weight: i32 = -1;
@@ -175,7 +180,7 @@ fn own_value(
             if skip_transitions || !e.selector.part_matches(part) {
                 continue;
             }
-            if let Some(v) = e.style.get(prop) {
+            if let Some(v) = e.style.get_prop(prop) {
                 return Some((i, v));
             }
             continue;
@@ -187,7 +192,7 @@ fn own_value(
         if w <= weight {
             continue; // only better candidates
         }
-        if let Some(v) = e.style.get(prop) {
+        if let Some(v) = e.style.get_prop(prop) {
             // LVGL: `state_act == state`. No matching entry can weigh more (the weight of a
             // state set is its bits, see `Selector::weight`).
             if w == i32::from(state.bits()) {
@@ -283,22 +288,22 @@ pub fn resolve_with<S: StyleSource>(
     opts: ResolveOptions,
 ) -> StyleValue {
     let state = opts.state.unwrap_or_else(|| src.state(id));
-    let v = 'found: {
-        if let Some((_, v)) = own_value(src.entries(id), state, part, prop, opts.skip_transitions) {
-            break 'found v;
+    let found = 'found: {
+        if let Some((_, p)) = own_value(src.entries(id), state, part, prop, opts.skip_transitions) {
+            break 'found p;
         }
         if prop.meta().inherited {
             if part != Part::Main {
-                if let Some((_, v)) =
+                if let Some((_, p)) =
                     own_value(src.entries(id), state, Part::Main, prop, opts.skip_transitions)
                 {
-                    break 'found v;
+                    break 'found p;
                 }
             }
             let mut node = src.parent(id);
             while let Some(n) = node {
-                if let Some((_, v)) = own_value(src.entries(n), src.state(n), Part::Main, prop, false) {
-                    break 'found v;
+                if let Some((_, p)) = own_value(src.entries(n), src.state(n), Part::Main, prop, false) {
+                    break 'found p;
                 }
                 node = src.parent(n);
             }
@@ -306,7 +311,8 @@ pub fn resolve_with<S: StyleSource>(
         // Defaults are never elements or `Dp`.
         return default_value(prop, *defaults);
     };
-    finish(src, id, prop, defaults, v)
+    // The one conversion to a value, for the winning property only.
+    finish(src, id, prop, defaults, found.value())
 }
 
 /// The tracks of grid template property `prop` (`GridColumnTracks` / `GridRowTracks`) for
@@ -362,6 +368,15 @@ fn finish<S: StyleSource>(
     v: StyleValue,
 ) -> StyleValue {
     if v.needs_source() {
+        // The common case of a themed UI inline: an element the table defines as a value
+        // that needs nothing more (one indexed read in the engine's table).
+        if let StyleValue::Element(e) = v {
+            if let Some(x) = src.design_value(id, e) {
+                if !x.is_dp() {
+                    return x;
+                }
+            }
+        }
         finish_with_source(src, id, prop, *defaults, v)
     } else {
         v
@@ -464,7 +479,7 @@ pub fn resolve_local_only<S: StyleSource>(
     prop: PropId,
 ) -> Option<StyleValue> {
     own_value(src.entries(id), src.state(id), part, prop, false)
-        .map(|(_, v)| finish(src, id, prop, &StyleDefaults::default(), v))
+        .map(|(_, p)| finish(src, id, prop, &StyleDefaults::default(), p.value()))
 }
 
 fn trace_node<Id>(
@@ -495,7 +510,7 @@ fn trace_node<Id>(
             chosen: found.is_some_and(|(w, _)| w == i),
         }));
     }
-    found.map(|(_, v)| v)
+    found.map(|(_, p)| p.value())
 }
 
 /// [`resolve`] reporting every examined entry, inheritance step and the default to `trace`
@@ -1571,6 +1586,8 @@ mod tests {
     #[test]
     fn design_elements_resolve_with_the_source_table() {
         use crate::design::{self, ColorElement, ElementTable};
+        static SPEC: twine_anim::AnimSpec = twine_anim::AnimSpec::new(twine_core::Duration::ms(90));
+        static CHECK: twine_image::ImageSource = twine_image::ImageSource::Symbol("v");
         use twine_core::Opa;
         const BRAND: ColorElement = ColorElement::custom(0);
         let (mut t, root) = one(
@@ -1595,6 +1612,10 @@ mod tests {
                         StyleProp::Radius(design::RADIUS_FULL.into()),
                         StyleProp::BorderColor(BRAND.into()),
                         StyleProp::OutlineColor(ColorElement::custom(9).into()),
+                        StyleProp::Font(design::FONT_BODY.into()),
+                        StyleProp::Anim(design::MOTION_FAST.into()),
+                        StyleProp::BgImage(design::ICON_CHECK.into()),
+                        StyleProp::MarginTop(design::LengthElement::private(1).into()),
                     ],
                 ),
                 entry(
@@ -1611,7 +1632,11 @@ mod tests {
             .with(design::SCRIM_OPACITY, Opa::P50)
             .with(design::SPACE_M, Length::Dp(8))
             .with(design::RADIUS_FULL, crate::Radius::Circle)
-            .with(BRAND, Color::hex(0x0062_00EE));
+            .with(BRAND, Color::hex(0x0062_00EE))
+            .with(design::FONT_BODY, &twine_text::EMPTY_FONT)
+            .with(design::MOTION_FAST, &SPEC)
+            .with(design::ICON_CHECK, &CHECK)
+            .with(design::LengthElement::private(1), Length::Px(3));
         let src = Themed(&t, 320, &table);
         let r = |p| resolve(&src, n, Part::Main, p, &D);
         assert_eq!(r(PropId::BgColor), StyleValue::Color(Color::WHITE));
@@ -1623,6 +1648,11 @@ mod tests {
             Some(crate::Radius::Circle)
         );
         assert_eq!(r(PropId::BorderColor), StyleValue::Color(Color::hex(0x0062_00EE)));
+        // Every element kind: fonts, motions, icons, and a theme-private element.
+        assert_eq!(r(PropId::Font), StyleValue::Font(&twine_text::EMPTY_FONT));
+        assert_eq!(r(PropId::Anim), StyleValue::AnimSpec(&SPEC));
+        assert_eq!(r(PropId::BgImage), StyleValue::Image(&CHECK));
+        assert_eq!(r(PropId::MarginTop), StyleValue::Length(Length::Px(3)));
         // Inherited through an element on the parent.
         assert_eq!(r(PropId::TextColor), StyleValue::Color(Color::hex(0x0021_2121)));
         // Undefined element: the property's default (outline color: black), never a panic.

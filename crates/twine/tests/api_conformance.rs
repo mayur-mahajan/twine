@@ -473,24 +473,29 @@ fn s4_styles() {
 
 // ---- §5 Themes ------------------------------------------------------------------------------
 
+/// LVGL's colors and fonts, tuned with const builders (one theme per image, fixed at compile
+/// time).
+static DARK: twine::style::design::ElementTable = Lvgl::SET
+    .primary(Palette::Blue.main())
+    .secondary(Palette::Red.main())
+    .fonts(FontScale::uniform(&fonts::MONTSERRAT_14))
+    .table(ThemeMode::Dark);
+static THEME: Lvgl = Lvgl::new().modes(&[(ThemeMode::Dark, &DARK), (ThemeMode::Light, &lvgl::LIGHT)]);
+
 fn s5_themes<D: twine::hal::DisplayDriver + 'static>(display: D, clock: impl twine::hal::Clock + 'static) {
     let app = |_cx: Scope| label("themed");
     let ui = Ui::builder(display)
         .runtime(Runtime::current_thread())
         .buffers(BufferMode::alloc(BufferSpec::default()))
         .clock(clock)
-        .theme(
-            DefaultTheme::builder()
-                .primary(Palette::Blue)
-                .secondary(Palette::Red)
-                .mode(ThemeMode::Dark)
-                .fonts(FontScale::uniform(&fonts::MONTSERRAT_14))
-                .build(),
-        )
+        .theme(&THEME)
+        .mode(ThemeMode::Dark)
         .build(app);
     let mut ui = ui;
-    // Switch at runtime: ui.set_theme(...) or from a view: use_theme(cx).set(...)
-    ui.set_theme(DefaultTheme::light());
+    // The theme is fixed; its mode switches at run time: from a view, use_theme(cx).set_mode(..).
+    ui.display_mut(ui.display())
+        .unwrap()
+        .set_theme_mode(ThemeMode::Light);
 }
 
 #[test]
@@ -696,7 +701,7 @@ fn super_loop<D: twine::hal::DisplayDriver + 'static>(
         .buffers(BufferMode::partial_double(buf_a, buf_b))
         .input(touch) // impl InputDevice (any number)
         .clock(clock) // impl Clock
-        .theme(DefaultTheme::light())
+        .theme(&lvgl::THEME)
         .build(app);
     for _ in 0..rounds {
         match ui.update() {

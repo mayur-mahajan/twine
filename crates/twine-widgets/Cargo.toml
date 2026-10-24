@@ -71,8 +71,10 @@ twine-engine = { path = "../twine-engine", features = ["std", "debug-checks", "c
 twine-fs = { path = "../twine-fs" }
 twine-image = { path = "../twine-image", features = ["img-qoi"] }
 twine-testing = { path = "../twine-testing", default-features = false, features = ["engine", "debug-checks"] }
-twine-theme = { path = "../twine-theme" }
+twine-theme = { path = "../twine-theme", features = ["mono", "simple"] }
 twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-20", "dejavu-16-persian-hebrew"] }
 twine-hal = { path = "../twine-hal" }
 proptest = "1"
 log = "0.4"
+# `include_image!`: the image tests convert the logo while they compile.
+twine-macros = { path = "../twine-macros", features = ["assets"] }

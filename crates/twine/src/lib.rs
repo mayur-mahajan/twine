@@ -72,12 +72,20 @@
 //!   `fonts-latin-medium` (12–24 px), `fonts-latin-all`, `fonts-mono` (unscii), `fonts-rtl`
 //!   (Hebrew, Arabic, Persian), `fonts-cjk`, `fonts-all`; and one feature per font
 //!   (`montserrat-20`, `unscii-8`, …) for precise flash budgets.
+//! - `include-assets`: [`include_font!`] and [`include_image!`], bitmap fonts and images
+//!   generated from TrueType/OpenType and PNG/JPEG/… files while the application compiles
+//!   (host-only proc macros; a build script with the `twine-build` crate does the same for
+//!   many assets, and subsets fonts to the characters of the translations).
 //! - `bidi`, `arabic-shaping`: right-to-left and Arabic/Persian text; `ttf`: runtime TrueType
 //!   fonts; `fs`: the file system (`fs` module) and file images; `vector`: vector graphics
 //!   (`vector` module, `vector_canvas`); `svg`: SVG images drawn as vectors (implies
 //!   `vector`).
+//! - Themes ([`theme`]): `theme-lvgl` (default; `Lvgl`, LVGL's default theme), `theme-mono`
+//!   (`Mono`, 1-bit displays), `theme-simple` (`Simple`). A display's theme is a `static`
+//!   named in the application (`AppConfig::new().theme(&lvgl::THEME)`): a theme, a mode table
+//!   or a style is linked only when it is named; the features only compile them.
 //! - `full`: every optional, platform-neutral part above (all pixel formats, decoders, fonts,
-//!   `vector`, `svg`, `ttf`, `fs`, `bidi`, `arabic-shaping`, `async`, `perf-monitor`, `display-integrity`) — for
+//!   the three themes, `vector`, `svg`, `ttf`, `include-assets`, `fs`, `bidi`, `arabic-shaping`, `async`, `perf-monitor`, `display-integrity`) — for
 //!   hosts, simulators, tests and documentation. It leaves out `std`, the logging backends,
 //!   platforms, drivers and the debugging aids; firmware enables only what it uses.
 //!
@@ -253,7 +261,7 @@
 //! use twine::prelude::*;
 //!
 //! fn config() -> AppConfig {
-//!     AppConfig::new().theme(DefaultTheme::light()).motion(Motion::Reduced)
+//!     AppConfig::new().theme(&lvgl::THEME).motion(Motion::Reduced)
 //! }
 //!
 //! // Firmware (plus its board hooks, e.g. `cfg.engine.hires_timer = Some(..)`):
@@ -456,6 +464,31 @@ pub use twine_view::draw_buffers;
 /// [custom-widget guide](guide::custom_widgets#8-components).
 #[doc(inline)]
 pub use twine_view::component;
+
+/// Compile-time assets (feature `include-assets`): `twine::include_font!(pub static BODY =
+/// "assets/Inter.ttf", size = 16, bpp = 4, chars = '\u{20}'..='\u{7E}');` generates a bitmap
+/// [`text::Font`] and `twine::include_image!(pub static LOGO = "assets/logo.png", format =
+/// Rgb565);` an [`image::Image`] while the application compiles, without a build script. Build
+/// scripts use the `twine-build` crate instead (translation catalogs, glyph subsetting from
+/// them, many assets).
+#[cfg(feature = "include-assets")]
+#[doc(inline)]
+pub use twine_macros::{include_font, include_image};
+
+/// Application design elements: `twine::elements! { pub struct Alarm { HIGH: Color, LOW: Color } }`
+/// declares a struct of values (one per theme mode) and an element constant per field
+/// (`Alarm::HIGH`) to use in styles like `design::PRIMARY`. Also in the [`prelude`]. See
+/// [`style::elements!`](twine_style::elements) and [`style::design`].
+#[doc(inline)]
+pub use twine_style::elements;
+
+/// Recipes: `twine::recipe! { pub static TILE for TILE_CLASS { Part::Main => { ..CARD, bg:
+/// design::SURFACE }, State::PRESSED => { bg_opacity: Opa::pct(80) } } }` declares a `static`
+/// [`engine::Recipe`] — a widget class's look as data, one `style!` per selector — for a
+/// [`engine::DesignSystem`]. Also in the [`prelude`]. See
+/// [`engine::recipe!`](twine_engine::recipe).
+#[doc(inline)]
+pub use twine_engine::recipe;
 
 /// Run loops: [`run::blocking`] / [`run::blocking_with`] step a `Ui` and sleep on a
 /// [`Platform`](hal::Platform) (bare metal, an RTOS task, a host thread). The embassy adapter

@@ -1,252 +1,29 @@
-//! `twine image`: every format round-trips through `twine-image` and the renderer, compression,
-//! determinism and the palette quantizer.
+//! `twine image`: the command writes the source, sidecar and `.tbin` files and reads them back
+//! (`--info`), and the procedurally drawn logo (`cargo xtask gen-assets`). The conversion
+//! itself is tested in `twine-build` (`tests/image.rs`).
 
-use twine_cli::image::{CompressArg, Emit, FORMAT_NAMES, ImageOptions, generate_rgba, median_cut, summary};
-use twine_core::{ColorFormat, Rect};
-use twine_image::{Image, ImageData, ImageFlags, pixels_of};
-use twine_render::ImageDsc;
-use twine_testing::RenderHarness;
+use twine_core::ColorFormat;
+use twine_image::ImageFlags;
 
 const W: u32 = 32;
 const H: u32 = 32;
 
-/// A pattern with at most `colors` distinct opaque/translucent RGBA values.
+/// A pattern with at most `colors` distinct RGBA values, translucent in the lower half.
 fn pattern(colors: u32) -> Vec<u8> {
-    pattern_alpha(colors, true)
-}
-
-fn pattern_alpha(colors: u32, alpha: bool) -> Vec<u8> {
     let mut v = Vec::new();
     for y in 0..H {
         for x in 0..W {
             let k = (x / 4 + (y / 4) * 8) % colors.max(1);
-            let r = (k * 97 % 256) as u8;
-            let g = (k * 53 % 256) as u8;
-            let b = (255 - k * 31 % 256) as u8;
-            let a = if alpha && y >= H / 2 {
-                (255 - x * 6) as u8
-            } else {
-                255
-            };
-            v.extend_from_slice(&[r, g, b, a]);
+            let a = if y >= H / 2 { (255 - x * 6) as u8 } else { 255 };
+            v.extend_from_slice(&[
+                (k * 97 % 256) as u8,
+                (k * 53 % 256) as u8,
+                (255 - k * 31 % 256) as u8,
+                a,
+            ]);
         }
     }
     v
-}
-
-fn opts(format: ColorFormat, compress: CompressArg) -> ImageOptions {
-    ImageOptions {
-        input: "test.png".into(),
-        format,
-        compress,
-        dither: false,
-        premultiply: false,
-        background: None,
-        name: "TEST".into(),
-        out: "test.rs".into(),
-        crate_path: "twine_image".into(),
-        bin: false,
-    }
-}
-
-/// Renders `data` over opaque white and returns RGB.
-fn render(header: twine_image::ImageHeader, data: &[u8]) -> Vec<u8> {
-    let px = pixels_of(&header, data).expect("valid converted data");
-    let mut h = RenderHarness::new(W as u16, H as u16, ColorFormat::Argb8888);
-    h.paint(|p| {
-        p.image(
-            Rect::from_xywh(0, 0, W as i32, H as i32),
-            &px,
-            &ImageDsc::default(),
-        );
-    });
-    h.rgb888()
-}
-
-fn over_white(c: u8, a: u8) -> u8 {
-    ((u32::from(c) * u32::from(a) + 255 * (255 - u32::from(a)) + 127) / 255) as u8
-}
-
-#[test]
-fn convert_every_format_roundtrips_through_twine_image() {
-    for (name, f) in FORMAT_NAMES {
-        // Indexed formats get exactly as many colors as their palette holds.
-        let colors = if f.is_indexed() {
-            f.palette_len() as u32
-        } else {
-            64
-        };
-        let src = pattern_alpha(colors.min(64), !f.is_indexed());
-        let g = generate_rgba(&src, W, H, "0", &opts(f, CompressArg::None)).unwrap();
-        let img = Image::new_owned(g.header, g.data.clone().into_boxed_slice());
-        img.validate().unwrap();
-        let got = render(g.header, &g.data);
-        let bpp = u32::from(f.bpp());
-        let tol: u8 = match f {
-            ColorFormat::Rgb565 | ColorFormat::Rgb565Swapped | ColorFormat::Rgb565A8 => 6,
-            ColorFormat::A1 | ColorFormat::A2 | ColorFormat::A4 => (255 / ((1 << bpp) - 1) / 2 + 2) as u8,
-            ColorFormat::Argb8888Premultiplied => 3,
-            _ => 2,
-        };
-        for (i, s) in src.chunks_exact(4).enumerate() {
-            let expected: [u8; 3] = match f {
-                ColorFormat::A1 | ColorFormat::A2 | ColorFormat::A4 | ColorFormat::A8 => {
-                    [over_white(0, s[3]); 3]
-                }
-                ColorFormat::L8 => {
-                    let l =
-                        ((u32::from(s[0]) * 77 + u32::from(s[1]) * 150 + u32::from(s[2]) * 29) >> 8) as u8;
-                    [l; 3]
-                }
-                ColorFormat::Rgb565
-                | ColorFormat::Rgb565Swapped
-                | ColorFormat::Rgb888
-                | ColorFormat::Xrgb8888 => [s[0], s[1], s[2]],
-                _ => [
-                    over_white(s[0], s[3]),
-                    over_white(s[1], s[3]),
-                    over_white(s[2], s[3]),
-                ],
-            };
-            let px = &got[i * 3..i * 3 + 3];
-            let worst = px.iter().zip(expected).map(|(a, b)| a.abs_diff(b)).max().unwrap();
-            assert!(worst <= tol, "{name}: pixel {i} got {px:?} expected {expected:?}");
-        }
-    }
-}
-
-#[test]
-fn rle_and_lz4_outputs_decompress() {
-    let src = pattern(16);
-    for f in [
-        ColorFormat::Rgb565A8,
-        ColorFormat::Argb8888,
-        ColorFormat::I4,
-        ColorFormat::A2,
-        ColorFormat::Rgb888,
-    ] {
-        let plain = generate_rgba(&src, W, H, "0", &opts(f, CompressArg::None)).unwrap();
-        for c in [CompressArg::Rle, CompressArg::Lz4] {
-            let g = generate_rgba(&src, W, H, "0", &opts(f, c)).unwrap();
-            assert!(g.header.flags.contains(ImageFlags::COMPRESSED));
-            if f.bpp() >= 8 {
-                assert!(g.bin.len() < plain.bin.len(), "{f} {c:?} compresses");
-            }
-            let img = Image {
-                header: g.header,
-                data: ImageData::Compressed {
-                    method: if c == CompressArg::Rle {
-                        twine_image::Compression::Rle
-                    } else {
-                        twine_image::Compression::Lz4
-                    },
-                    data: Box::leak(g.bin.clone().into_boxed_slice()),
-                    decompressed_size: g.data.len() as u32,
-                },
-            };
-            let mut out = vec![0u8; g.data.len()];
-            let h = img.decompress_into(&mut out).unwrap();
-            assert_eq!(out, plain.data, "{f} {c:?}");
-            assert_eq!(h, plain.header);
-            assert!(g.source.contains("ImageData::Compressed"));
-        }
-    }
-}
-
-/// `--background`: composited over the color with rounding (straight alpha), opaque in every
-/// format, recorded in the command line; rejected for alpha-only formats.
-#[test]
-fn background_flattens_exactly() {
-    // A half-transparent orange pixel and a transparent one, over #102030.
-    let src = [200, 100, 50, 128, 0, 0, 0, 0];
-    let mut o = opts(ColorFormat::Rgb888, CompressArg::None);
-    o.background = Some(twine_core::Color::hex(0x10_2030));
-    let g = generate_rgba(&src, 2, 1, "", &o).unwrap();
-    // (c·128 + bg·127 + 127) / 255 = 108, 66, 49; stored as B, G, R.
-    assert_eq!(g.data, [49, 66, 108, 0x30, 0x20, 0x10]);
-    assert!(
-        g.source.contains("--background #102030"),
-        "recorded in the command"
-    );
-    o.format = ColorFormat::Argb8888;
-    let g = generate_rgba(&src, 2, 1, "", &o).unwrap();
-    assert_eq!(
-        g.data,
-        [49, 66, 108, 255, 0x30, 0x20, 0x10, 255],
-        "opaque with alpha too"
-    );
-    o.format = ColorFormat::A8;
-    assert!(
-        generate_rgba(&src, 2, 1, "", &o).is_err(),
-        "alpha-only formats refuse it"
-    );
-}
-
-/// Without `--background` the source's alpha goes through unchanged (the conversion is the
-/// plain `convert` of the pixels) and the command line does not mention it.
-#[test]
-fn no_background_keeps_alpha() {
-    let src = pattern(8);
-    for f in [
-        ColorFormat::Rgb565,
-        ColorFormat::Argb8888,
-        ColorFormat::L8,
-        ColorFormat::I4,
-    ] {
-        let g = generate_rgba(&src, W, H, "", &opts(f, CompressArg::None)).unwrap();
-        let plain = twine_cli::image::convert(&src, W as u16, H as u16, f, false, false).unwrap();
-        assert_eq!(g.data, plain.data, "{f:?}");
-        assert!(!g.source.contains("--background"));
-    }
-}
-
-#[test]
-fn deterministic_output() {
-    let src = pattern(200);
-    for f in [ColorFormat::I8, ColorFormat::Rgb565, ColorFormat::A4] {
-        let mut o = opts(f, CompressArg::Rle);
-        o.dither = true;
-        let a = generate_rgba(&src, W, H, "abc", &o).unwrap();
-        let b = generate_rgba(&src, W, H, "abc", &o).unwrap();
-        assert_eq!(a.source, b.source);
-        assert_eq!(a.bin, b.bin);
-    }
-    let g = generate_rgba(&src, W, H, "abc", &opts(ColorFormat::Rgb565, CompressArg::None)).unwrap();
-    assert!(g.source.contains("// Input SHA-256: abc"));
-    assert!(g.source.contains("include_bytes!(\"test.bin\")"));
-    assert!(g.source.contains("pub static TEST: twine_image::Image"));
-    let e = Emit {
-        name: "X",
-        crate_path: "twine_image",
-        command: "",
-        input_sha256: "",
-        header: g.header,
-        compress: CompressArg::None,
-        bin_name: "x.bin",
-        stored_len: 2048,
-        data_len: 2048,
-    };
-    assert_eq!(
-        summary(&e),
-        "// twine-image: format=RGB565 w=32 h=32 stride=64 flags=0x00 compression=none stored=2048 size=2048"
-    );
-}
-
-#[test]
-fn median_cut_palette_is_stable() {
-    let src: Vec<[u8; 4]> = pattern(64)
-        .chunks_exact(4)
-        .map(|c| [c[0], c[1], c[2], c[3]])
-        .collect();
-    let pal = median_cut(&src, 16);
-    assert_eq!(pal.len(), 16);
-    // Independent of pixel order.
-    let mut shuffled = src.clone();
-    shuffled.reverse();
-    shuffled.rotate_left(97);
-    assert_eq!(median_cut(&shuffled, 16), pal);
-    // And of repetition.
-    assert_eq!(median_cut(&[src.clone(), src].concat(), 16), pal);
 }
 
 #[test]
@@ -312,7 +89,7 @@ fn cli_writes_files_and_info_reads_them() {
 }
 
 /// `twine image --bin` writes a `.tbin` file; decoded by the registry (as the engine does for
-/// `ImageSource::File`) it renders exactly like the static image of the same conversion.
+/// `ImageSource::File`) it holds exactly the pixels of the static image of the same conversion.
 #[test]
 fn tbin_roundtrip_via_cli_output() {
     let dir = std::env::temp_dir().join(format!("twine-image-tbin-{}", std::process::id()));
@@ -343,20 +120,20 @@ fn tbin_roundtrip_via_cli_output() {
         let mut decoded = Vec::new();
         let header = registry.decode(&file, &mut decoded).unwrap();
         let method = match compress {
-            "rle" => CompressArg::Rle,
-            "lz4" => CompressArg::Lz4,
-            _ => CompressArg::None,
+            "rle" => twine_build::image::Compression::Rle,
+            "lz4" => twine_build::image::Compression::Lz4,
+            _ => twine_build::image::Compression::None,
         };
-        let cf = twine_cli::image::parse_format(format).unwrap();
-        let g = generate_rgba(&pattern(8), W, H, "", &opts(cf, method)).unwrap();
+        let cf: ColorFormat = twine_cli::image::parse_format(format).unwrap();
+        let g = twine_build::image::Image::from_rgba(W, H, pattern(8))
+            .format(cf)
+            .compress(method)
+            .build()
+            .unwrap();
         let mut static_header = g.header;
         static_header.flags.remove(ImageFlags::COMPRESSED);
         assert_eq!(header, static_header, "{format} {compress}");
-        assert_eq!(
-            render(header, &decoded),
-            render(static_header, &g.data),
-            "{format} {compress}"
-        );
+        assert_eq!(decoded, g.data, "{format} {compress}");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

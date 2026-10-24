@@ -120,7 +120,11 @@ fn chain(depth: usize, scene: Scene) -> (Engine, twine_engine::DisplayId) {
     e.set_limits(&HARNESS_LIMITS).unwrap();
     let panel = MemoryDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565));
     let d = e
-        .add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: H }))
+        .add_display(
+            panel,
+            BufferMode::alloc(BufferSpec::PartialSingle { rows: H }),
+            None,
+        )
         .unwrap();
     let mut parent = e.active_screen(d).unwrap();
     for level in 1..=depth {
@@ -274,7 +278,11 @@ fn recursion_depth_is_bounded_by_the_tree_depth_limit() {
     e.set_limits(&HARNESS_LIMITS.max_tree_depth(8)).unwrap();
     let panel = MemoryDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565));
     let d = e
-        .add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: H }))
+        .add_display(
+            panel,
+            BufferMode::alloc(BufferSpec::PartialSingle { rows: H }),
+            None,
+        )
         .unwrap();
     let mut parent = e.active_screen(d).unwrap();
     for _ in 0..8 {

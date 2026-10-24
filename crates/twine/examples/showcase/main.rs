@@ -88,7 +88,7 @@ fn main() {
         SimConfig::new(480, 320)
             .title("Twine bedside monitor (demo)")
             .scale(2)
-            .theme(theme::monitor_theme()),
+            .theme(&theme::MONITOR_THEME),
         app,
     );
 }

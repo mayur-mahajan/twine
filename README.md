@@ -27,8 +27,12 @@ an ESP32-S3 driving a QSPI AMOLED and in a window on Linux, macOS or Windows.
   atomic compare-and-swap). An integer-only, deterministic renderer draws identical pixels on
   every platform; partial rendering and DMA double buffering keep the bus busy while the CPU
   renders the next chunk.
-- **Pay for what you use.** Widgets, image decoders, color formats, fonts, vector graphics,
-  Lottie and drivers are cargo features; what you don't enable isn't linked.
+- **Pay for what you use.** Code for widgets your app never creates isn't linked (the
+  linker drops it), and a theme can be trimmed to the per-class recipes your UI uses
+  (`Lvgl::new().recipes(&[..])`, checked by `twine_testing::assert_theme_covers`). Image
+  decoders, color formats, fonts, vector graphics and SVG, run-time TrueType, the file system,
+  themes and drivers are cargo features of `twine`, and Lottie is a crate of its own
+  (`twine-lottie`): what you don't enable isn't compiled.
 - **No OS, executor or chip assumed.** Run it bare metal (`twine::run::blocking`), on
   [embassy](https://embassy.dev) (`twine::embassy::run`), on an RTOS task, or on a desktop
   host. Other tasks and interrupts talk to the UI through interrupt-safe `Channel`s,
@@ -200,14 +204,14 @@ With embassy, `twine::embassy::run(ui).await` replaces the blocking loop.
 |------|--------------|
 | **Widgets** | label, button, image button, checkbox, switch, slider, bar, arc, LED, spinner, line, dropdown, roller, list, menu, tab view, tile view, window, message box, text area, on-screen keyboard, spinbox, span group (rich text), vector canvas, button matrix, animated image, Lottie, QR code and barcode — plus your own widgets ([guide](crates/twine/src/guide/custom_widgets.md)) and `#[component]` functions |
 | **Layout** | flex (direction, wrap, grow, alignment, gaps) and grid (`Px`, `Content`, `Fr` tracks, spans), scrolling with momentum, snapping, elastic ends and scroll chaining |
-| **Styles & themes** | every LVGL style property, typed and per state and part; design elements (`design::PRIMARY`, `SPACE_M`, `RADIUS_L`, …) so apps follow the theme; built-in LVGL-style, monochrome and simple themes in light, dark, night and high-contrast modes, switchable at run time |
+| **Styles & themes** | every LVGL style property, typed and per state and part; design elements (`design::PRIMARY`, `SPACE_M`, `RADIUS_L`, …) so apps follow the theme; built-in LVGL-style, monochrome and simple themes (`Lvgl`, `Mono`, `Simple`: `static` data, one per display, fixed at compile time) in light, dark, night and high-contrast modes, switchable at run time; design systems as `const` data (`DesignSystem`, `recipe!` recipes, the zero-sized `Theme<D>`) with variants and roles (`ButtonVariant`, `.role(&CLASS)`) |
 | **Animation** | tweens, timelines, easing curves (including overshoot and bounce), style transitions, screen-load animations, a global motion preference (reduced motion) |
-| **Text** | Montserrat at 8–48 px, DejaVu, Source Han Sans (CJK), Font Awesome symbols, font fallback, bidirectional text, Arabic and Persian shaping, compile-time translations (`tr!`), selection and editing |
+| **Text** | Montserrat at 8–48 px, DejaVu, Source Han Sans (CJK), Font Awesome symbols — hinted at build time (crisp one-pixel stems) with text gamma by polarity —, your own fonts generated at build time (`twine-build`, `include_font!`) and subset to the characters your translations and strings use, font fallback, bidirectional text, Arabic and Persian shaping, compile-time translations (Fluent / `.po` / TOML compiled by `twine-build`; `tr!` with compile-time checked arguments, CLDR plurals, per-language direction and font), selection and editing |
 | **Images & graphics** | QOI, PNG, JPEG, GIF, BMP and LZ4 decoders, rotation, scaling and recoloring; gradients, shadows, masks, rounded corners; vector paths, strokes, dashes and SVG icons |
 | **Displays & input** | RGB565, RGB888, XRGB8888, ARGB8888, L8 and 1-bit formats; hardware or software rotation; partial, double-buffered, full-frame and direct buffer modes; pointer, keypad, encoder and button inputs with focus groups and gestures |
 | **Drivers** | ILI9341, ILI9342, ILI9488, ST7735, ST7789, ST7796, GC9A01, SH8601, CO5300, RM67162, JD9853, SSD1306 and SH1106 panels; XPT2046, FT6x36, GT911, CST816S, AXS5106L and STMPE811 touch; SPI, SPI+DMA, QSPI, I80 and I2C buses; DMA2D on STM32; an `embedded-graphics` adapter |
 | **Data flow** | signals, memos, effects, scopes; `Channel`, `Latest` and `Outbox` between the UI and interrupts, tasks or threads; typed navigation with leave guards; modals; context for app-wide stores ([guide](crates/twine/src/guide/app_state.md)) |
-| **Tooling** | a desktop simulator with bus-speed emulation, time control and debug overlays; headless scripted runs; `TestUi`; golden-image tests; a performance monitor; font and image converters (`twine-cli`) |
+| **Tooling** | a desktop simulator with bus-speed emulation, time control and debug overlays; headless scripted runs; `TestUi`; golden-image tests; a performance monitor; font and image generators and translation compiler for build scripts (`twine-build`; `include_font!` / `include_image!`; the `twine` command of `twine-cli`) |
 
 ## Runs everywhere
 
@@ -253,7 +257,7 @@ fn app(cx: Scope) -> impl View {
 
 fn main() {
     let window = SimConfig::new(960, 600).title("Twine Player").format(ColorFormat::Xrgb8888);
-    twine_sim::run(window.theme(theme::theme()), app);
+    twine_sim::run(window.theme(&theme::THEME), app);
 }
 ```
 
@@ -353,13 +357,15 @@ enforces this). Applications depend on the `twine` facade only.
 | `twine-theme`, `twine-widgets`, `twine-widgets-ext` | themes, basic and complex widgets |
 | `twine-extra`, `twine-lottie` | QR codes, barcodes, translations; Lottie animations |
 | `twine-view` | declarative view layer, `Ui` runtime and the blocking run loop (`twine::run`) |
-| `twine-macros` | `#[component]` (host-only proc macro, re-exported by `twine-view` and the facade) |
+| `twine-macros` | `#[component]` (host-only proc macro, re-exported by `twine-view` and the facade); `include_font!` / `include_image!` (feature `assets`, facade feature `include-assets`) |
+| `twine-build` | build-script helpers (host-only): compile-time translation catalogs for `twine-extra`'s `i18n`, bitmap fonts (typed `Bpp`, glyph subsetting from translations and string literals) and images generated into `OUT_DIR` |
 | `twine` | facade: re-exports and `prelude` |
 | `twine-drivers`, `twine-embassy`, `twine-esp`, `twine-accel-stm32`, `twine-embedded-graphics` | drivers, embassy run loop (`Ui` and `AsyncUi`), esp-hal QSPI adapter, DMA2D, embedded-graphics adapter |
 | `twine-sim`, `twine-testing`, `twine-demos` | desktop simulator and window host, test harnesses, demo apps |
 
-Tools: `twine-cli` (font and image converters), `twine-bench` (benchmarks), `xtask`
-(CI and project commands).
+Tools: `twine-cli` (the `twine` command: `twine font`, `twine image`, `twine i18n` — front ends of `twine-build`), `twine-bench` (benchmarks), `link-fixtures`
+(minimal images whose linked symbols `cargo xtask link-check` checks), `xtask` (CI and project
+commands).
 
 ## Building
 
@@ -380,8 +386,11 @@ Commands:
 | `cargo xtask sim <example>` | run a simulator example (`--release`, `--headless`, `--script <file>`) |
 | `cargo xtask sim-smoke` | run every simulator example headless |
 | `cargo xtask snapshots [--check\|--propose\|--accept]` | run the golden-image tests against the committed hash manifests / propose and approve new references (review diffs first) |
-| `cargo xtask nostd` | build the `no_std` crates for all embedded targets |
+| `cargo xtask nostd` | build the `no_std` crates for all embedded targets, then `link-check` |
+| `cargo xtask link-check` | link the fixture images of `tools/link-fixtures` and check that none links a theme, mode table, font or icon its source does not reference |
 | `cargo xtask firmware [example] [--strict]` | build the example firmware and print flash/RAM sizes |
+| `cargo xtask theme-size` | build the rp2040/STM32F411 demo images and print each theme's flash by part (symbol-attributed) |
+| `cargo xtask theme-recipes -- <cargo test args>` | run tests calling `twine_testing::assert_theme_covers` and print the minimal recipe list of their UIs |
 | `cargo xtask coverage [--mcdc]` | per-crate line coverage with thresholds; MC/DC of the core crates (nightly) |
 | `cargo xtask traceability` | requirements → tests matrix of the safety profile |
 | `cargo xtask miri [crate…]` | run tests under Miri (nightly) to detect undefined behaviour |

@@ -30,7 +30,7 @@ fn transparent(e: &mut Engine, n: NodeId) {
         StyleProp::PaddingLeft(Length::Px(0).into()),
         StyleProp::PaddingRight(Length::Px(0).into()),
         StyleProp::Radius(Radius::Px(0).into()),
-        StyleProp::ShadowWidth(0),
+        StyleProp::ShadowWidth(twine_style::Length::Px(0).into()),
     ] {
         e.set_local_prop(n, Selector::MAIN, p);
     }
@@ -376,8 +376,8 @@ pub fn container(children: impl ViewSeq) -> Container {
 /// like one whatever the theme does for plain containers — with its children in a column. It
 /// is a [`Flex`], so [`Flex::wrap`], [`Flex::justify`], [`Flex::align_items`], … and every
 /// modifier (`.padding(..)`, `.gap(..)`, `.layout(..)`) refine it. Applications restyle all
-/// cards through their theme's `.class(&CARD_CLASS, ..)`
-/// ([`CARD_CLASS`](twine_widgets::container::CARD_CLASS)).
+/// cards with a recipe for [`CARD_CLASS`](twine_widgets::container::CARD_CLASS) in a design
+/// system extending their theme (`twine_engine::DesignSystem`, `type Base = Lvgl`).
 ///
 /// Laid out like `container(children).layout(Layout::column())`.
 ///

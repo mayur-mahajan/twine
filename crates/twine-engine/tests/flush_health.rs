@@ -47,7 +47,11 @@ fn engine(policy: FlushPolicy, max_errors: u16) -> (Engine, DisplayId) {
     let mut e = Engine::new(cfg).unwrap();
     let panel = MemoryDisplay::new(DisplayInfo::new(W, H, ColorFormat::Rgb565));
     let d = e
-        .add_display(panel, BufferMode::partial_single(leak(usize::from(W) * 2 * ROWS)))
+        .add_display(
+            panel,
+            BufferMode::partial_single(leak(usize::from(W) * 2 * ROWS)),
+            None,
+        )
         .unwrap();
     paint(&mut e, d, Color::RED);
     (e, d)
@@ -171,7 +175,10 @@ fn bogus() -> DisplayId {
     let mut last = None;
     for _ in 0..2 {
         let p = MemoryDisplay::new(DisplayInfo::new(8, 8, ColorFormat::L8));
-        last = Some(e.add_display(p, BufferMode::partial_single(leak(64))).unwrap());
+        last = Some(
+            e.add_display(p, BufferMode::partial_single(leak(64)), None)
+                .unwrap(),
+        );
     }
     last.unwrap()
 }
@@ -181,7 +188,11 @@ fn failed_present_is_not_swapped_and_is_redrawn() {
     let info = DisplayInfo::new(W, H, ColorFormat::Rgb565);
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     let d = e
-        .add_framebuffer_display(MockFramebufferDisplay::new(info, true, 0), BufferMode::full())
+        .add_framebuffer_display(
+            MockFramebufferDisplay::new(info, true, 0),
+            BufferMode::full(),
+            None,
+        )
         .unwrap();
     paint(&mut e, d, Color::BLUE);
     e.driver_mut::<MockFramebufferDisplay>(d)
@@ -212,7 +223,11 @@ fn failed_direct_present_is_redrawn() {
     let info = DisplayInfo::new(W, H, ColorFormat::Rgb565);
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     let d = e
-        .add_framebuffer_display(MockFramebufferDisplay::new(info, false, 0), BufferMode::direct())
+        .add_framebuffer_display(
+            MockFramebufferDisplay::new(info, false, 0),
+            BufferMode::direct(),
+            None,
+        )
         .unwrap();
     paint(&mut e, d, Color::BLUE);
     e.driver_mut::<MockFramebufferDisplay>(d)

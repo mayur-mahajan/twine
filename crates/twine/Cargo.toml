@@ -17,7 +17,7 @@ features = ["full", "std", "embassy", "platform-std", "platform-embassy", "drive
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["color-rgb565", "color-rgb565-swapped", "img-qoi", "perf-monitor", "log"]
+default = ["color-rgb565", "color-rgb565-swapped", "img-qoi", "perf-monitor", "log", "theme-lvgl"]
 #! Every feature of a Twine crate that the facade offers under the same name (`std`, `log`,
 #! `defmt`, `async`, …) is forwarded to **every** crate of the facade that has it, directly;
 #! `cargo xtask layers` checks this (`feature_forwarding`), so no crate is left without it.
@@ -258,6 +258,10 @@ vector = ["dep:twine-vector", "twine-view/vector", "twine-widgets-ext/vector"]
 svg = ["vector", "twine-vector/svg", "twine-engine/svg", "twine-widgets/svg", "twine-view/svg"]
 ## Runtime TrueType fonts (`twine::text::TtfFont`).
 ttf = ["twine-text/ttf"]
+## `twine::include_font!` / `twine::include_image!`: bitmap fonts and images generated from
+## TrueType/OpenType and PNG/JPEG/… files while the application compiles (proc macros running
+## `twine-build` on the host; only the generated statics reach the firmware).
+include-assets = ["dep:twine-macros", "twine-macros/assets"]
 ## File system (`twine::fs`) and file images (`Engine::set_vfs`).
 fs = ["dep:twine-fs", "twine-engine/fs"]
 
@@ -308,15 +312,27 @@ dejavu-16-persian-hebrew = ["twine-assets/dejavu-16-persian-hebrew"]
 source-han-sans-sc-14-cjk = ["twine-assets/source-han-sans-sc-14-cjk"]
 source-han-sans-sc-16-cjk = ["twine-assets/source-han-sans-sc-16-cjk"]
 
+#! ### Themes
+## LVGL's default theme (`Lvgl`; default). A theme's code and data are linked only when the
+## application names it; the feature only compiles it.
+theme-lvgl = ["twine-theme/lvgl", "twine-view/theme-lvgl"]
+## LVGL's monochrome theme for 1-bit displays (`Mono`).
+theme-mono = ["twine-theme/mono", "twine-view/theme-mono"]
+## LVGL's simple theme (`Simple`).
+theme-simple = ["twine-theme/simple", "twine-view/theme-simple"]
+
 #! ### Everything
 ## Every optional, platform-neutral part of the facade: all pixel formats, image decoders, vector
-## graphics and SVG, runtime TrueType fonts, the file system, bidirectional text and Arabic shaping,
+## graphics and SVG, runtime TrueType fonts, compile-time fonts and images, the file system, bidirectional text and Arabic shaping,
 ## the async runtime and every built-in font. For hosts, simulators, tests and documentation;
 ## firmware picks only what it uses. Logging backends (`log`/`defmt`), `std`, platforms, drivers
 ## and the debugging aids (`debug-checks`, `test-ids`) are not included: they are platform or
 ## build choices.
 full = [
     "async",
+    "theme-lvgl",
+    "theme-mono",
+    "theme-simple",
     "display-integrity",
     "perf-monitor",
     "color-rgb565",
@@ -337,6 +353,7 @@ full = [
     "vector",
     "svg",
     "ttf",
+    "include-assets",
     "fs",
     "fonts-all",
 ]
@@ -352,7 +369,7 @@ twine-image = { path = "../twine-image" }
 twine-style = { path = "../twine-style" }
 twine-layout = { path = "../twine-layout" }
 twine-engine = { path = "../twine-engine" }
-twine-theme = { path = "../twine-theme" }
+twine-theme = { path = "../twine-theme", default-features = false, features = ["assets"] }
 twine-widgets = { path = "../twine-widgets" }
 twine-widgets-ext = { path = "../twine-widgets-ext" }
 twine-view = { path = "../twine-view" }
@@ -361,6 +378,8 @@ twine-fs = { path = "../twine-fs", optional = true }
 twine-vector = { path = "../twine-vector", optional = true }
 twine-drivers = { path = "../twine-drivers", optional = true }
 twine-embassy = { path = "../twine-embassy", optional = true }
+# `include_font!` / `include_image!` (feature `include-assets`; host-only proc macros).
+twine-macros = { path = "../twine-macros", optional = true }
 
 # Tests and the simulator examples (`examples/`, run with `cargo run -p twine --example <name>`
 # or `cargo xtask sim <name>`). Dev-dependencies only: they never reach firmware builds.

@@ -8,8 +8,7 @@ use std::rc::Rc;
 use twine_core::Partition;
 use twine_core::{ColorFormat, Duration, Point, Rect};
 use twine_engine::{
-    BufferSpec, Engine, EngineConfig, IntoTheme, InvalidateReason, NodeId, ObjFlags, RefreshStats, State,
-    Wake,
+    BufferSpec, Engine, EngineConfig, InvalidateReason, NodeId, ObjFlags, RefreshStats, State, Wake,
 };
 use twine_hal::Key;
 use twine_reactive::{Channel, Latest, Outbox, Runtime, Scope, UiWaker};
@@ -219,24 +218,34 @@ impl TestUi {
         self.map_harness(|h| h.format(f))
     }
 
-    /// Uses `t` as the display's theme (and as [`AppConfig::theme`] after
-    /// [`app_config`](Self::app_config)): a theme value or a shared one ([`IntoTheme`]).
+    /// Uses `theme` (a `static`) as the display's theme (and as [`AppConfig::theme`] after
+    /// [`app_config`](Self::app_config)), starting in its first listed mode.
     ///
     /// ```
     /// use twine_testing::TestUi;
     /// use twine_view::prelude::*;
     ///
-    /// let t = TestUi::new(64, 32).theme(DefaultTheme::dark()).mount(|_| label("hi"));
+    /// let t = TestUi::new(64, 32).theme(&lvgl::THEME).mode(ThemeMode::Dark).mount(|_| label("hi"));
     /// let d = t.engine().default_display().unwrap();
     /// assert_eq!(t.engine().theme_mode(d), ThemeMode::Dark);
     /// ```
     #[must_use]
-    pub fn theme(mut self, t: impl IntoTheme) -> Self {
-        let theme = t.into_theme();
+    pub fn theme(mut self, theme: &'static dyn twine_engine::ThemeHook) -> Self {
         if let Some(app) = &mut self.app {
-            app.theme = Some(theme.clone());
+            app.theme = Some(theme);
+            app.theme_mode = None;
         }
         self.map_harness(|h| h.theme(theme))
+    }
+
+    /// Starts the display's theme in `mode` (also [`AppConfig::theme_mode`] after
+    /// [`app_config`](Self::app_config)). Example: see [`theme`](Self::theme).
+    #[must_use]
+    pub fn mode(mut self, mode: twine_engine::ThemeMode) -> Self {
+        if let Some(app) = &mut self.app {
+            app.theme_mode = Some(mode);
+        }
+        self.map_harness(|h| h.mode(mode))
     }
 
     /// Uses no theme (also clears [`AppConfig::theme`] after [`app_config`](Self::app_config)):
@@ -300,7 +309,7 @@ impl TestUi {
     ///
     /// /// Shared by the firmware's `main`, the simulator example and the tests.
     /// fn config() -> AppConfig {
-    ///     AppConfig::new().theme(DefaultTheme::dark()).motion(Motion::Reduced)
+    ///     AppConfig::new().theme(&lvgl::THEME).mode(ThemeMode::Dark).motion(Motion::Reduced)
     /// }
     ///
     /// let t = TestUi::new(120, 40).app_config(config()).mount(|_| label("hi").test_id("l"));
@@ -322,7 +331,7 @@ impl TestUi {
         let (engine, limits, theme, rotation) = (
             config.engine,
             config.limits,
-            config.theme.clone(),
+            config.display_theme(),
             config.rotation,
         );
         let mut t = self.map_harness(|h| h.configure(engine, limits, theme, rotation));

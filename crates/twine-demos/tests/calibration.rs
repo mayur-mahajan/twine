@@ -5,8 +5,8 @@ use twine::core::Point;
 use twine::core::{ColorFormat, Rotation};
 use twine::hal::{DisplayInfo, TouchTransform};
 use twine::hal::{InputData, InputDevice, InputKind, PointerData};
-use twine_demos::calibration::{RawTaps, RawTouch, RawTouchInput, app, solve, targets, verify_targets};
-use twine_testing::{TestUi, by_id};
+use twine_demos::calibration::{self, RawTaps, RawTouch, RawTouchInput, app, solve, targets, verify_targets};
+use twine_testing::{TestUi, assert_theme_covers, by_id};
 
 /// Raw reading of screen point `(x, y)` for a panel mounted with swapped, mirrored axes (like a
 /// landscape XPT2046 module): raw = f(screen).
@@ -132,10 +132,11 @@ fn calibration_flow_through_its_own_channel() {
     let raw: &'static RawTaps = TestUi::channel();
     // The demo: three raw taps → the calibration is shown; then verification errors.
     let mut t = TestUi::new(320, 240)
-        .app_config(twine_demos::config())
+        .app_config(twine_demos::config_with_theme(&calibration::THEME))
         .mount(move |cx| app(cx, raw));
     assert_eq!(t.find(by_id("calibration")).text(), "Tap the center of the cross");
     t.assert_snapshot("calibration_first_target");
+    assert_theme_covers(&t.engine());
     for (x, y) in targets(320, 240) {
         let (rx, ry) = raw_of(x, y);
         raw.try_send(RawTouch { x: rx, y: ry }).unwrap();
@@ -145,6 +146,7 @@ fn calibration_flow_through_its_own_channel() {
     assert!(text.starts_with("Calibration { a: "), "{text}");
     assert_eq!(t.find_all(by_id("target")).len(), 5, "verification page");
     t.assert_snapshot("calibration_verify");
+    assert_theme_covers(&t.engine());
     let expected = solve(targets(320, 240).map(|(x, y)| raw_of(x, y)), &landscape()).unwrap();
     assert!(text.contains(&format!("div: {}", expected.div)));
     // A tap 3 px right of the center target.

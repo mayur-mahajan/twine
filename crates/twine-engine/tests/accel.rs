@@ -49,6 +49,7 @@ fn frame(accel: Option<Counting>) -> Vec<u8> {
     e.add_chunked_display(
         DisplayInfo::new(W, H, ColorFormat::Rgb565),
         stride * usize::from(H),
+        None,
     )
     .unwrap();
     let s = white_screen(&mut e);

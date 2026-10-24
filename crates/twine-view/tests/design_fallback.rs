@@ -14,7 +14,7 @@ fn missing_element_falls_back_to_the_default_and_warns_once() {
     const MISSING_TOO: ColorElement = ColorElement::custom(41);
     const NO_SPACE: LengthElement = LengthElement::custom(3);
     let (t, logs) = capture_logs(|| {
-        let mut t = TestUi::new(100, 100).theme(DefaultTheme::light()).mount(|_| {
+        let mut t = TestUi::new(100, 100).theme(&lvgl::THEME).mount(|_| {
             column((
                 container(())
                     .size(10, 10)
@@ -46,7 +46,9 @@ fn missing_element_falls_back_to_the_default_and_warns_once() {
     // Once per kind (color, length), although resolved many times.
     assert_eq!(warnings.len(), 2, "{warnings:?}");
     assert!(
-        warnings.iter().any(|l| l.message.contains("color element #60")),
+        warnings
+            .iter()
+            .any(|l| l.message.contains("custom color element #40")),
         "{warnings:?}"
     );
 

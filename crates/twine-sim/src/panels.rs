@@ -123,7 +123,7 @@ pub type PanelHook = Box<dyn FnMut(&mut PanelCx<'_>)>;
 ///
 /// let panel = SimPanel::new(160, 120, Runtime::current_thread(), |_| label("hi"))
 ///     .title("main")
-///     .app_config(AppConfig::new().theme(DefaultTheme::dark()));
+///     .app_config(AppConfig::new().theme(&lvgl::THEME).mode(ThemeMode::Dark));
 /// assert_eq!(panel.size(), (160, 120));
 /// assert_eq!(panel.name(), "main");
 /// ```
@@ -379,7 +379,11 @@ impl PanelsProgram {
             let display = SimDisplay::new(p.width, p.height, cfg.format, Rotation::Deg0)
                 .with_bus_hz(cfg.bus_hz)
                 .with_mono_colors(cfg.mono_colors.0, cfg.mono_colors.1);
-            let display = engine.add_display(display, BufferMode::alloc(BufferSpec::default()))?;
+            let display = engine.add_display(
+                display,
+                BufferMode::alloc(BufferSpec::default()),
+                p.config.display_theme(),
+            )?;
             let devices = SimDevices::new();
             let inputs = register_inputs(&mut engine, display, cfg, &devices)?;
             let ui = (p.mount)(&mut engine, display, p.config)?;

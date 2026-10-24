@@ -154,7 +154,7 @@ fn controller_and_theme_calls_between_updates_take_effect_at_the_next_update() {
     let d = t.engine().default_display().unwrap();
     let mode = |t: &TestUi| t.engine().theme_mode(d);
     assert_eq!(mode(&t), ThemeMode::Light);
-    use_theme(t.root_scope()).set(DefaultTheme::dark());
+    use_theme(t.root_scope()).set_mode(ThemeMode::Dark);
     assert_eq!(mode(&t), ThemeMode::Light);
     t.update();
     assert_eq!(mode(&t), ThemeMode::Dark);
@@ -261,7 +261,7 @@ fn commands_go_to_the_ui_that_owns_the_scope() {
         container(()).width(x)
     });
     sub_a.dispose();
-    use_theme(a.root_scope()).set(DefaultTheme::dark());
+    use_theme(a.root_scope()).set_mode(ThemeMode::Dark);
     b.update();
     assert_eq!(b.engine().anim_count(), 1, "B keeps its animation");
     assert_eq!(a.engine().anim_count(), 1, "A's command waits for A's update");
@@ -288,14 +288,13 @@ fn queuing_allocates_nothing() {
     t.update();
     let ctl = ctl.get().unwrap();
     let theme = use_theme(t.root_scope());
-    let dark: Rc<dyn twine_engine::ThemeHook> = Rc::new(DefaultTheme::dark());
     let ((), stats) = count_allocs(|| {
         for _ in 0..4 {
             ctl.pause();
             ctl.resume();
             ctl.set_playing(false);
         }
-        theme.set(dark.clone());
+        theme.set_mode(ThemeMode::Dark);
     });
     assert_eq!(stats.allocs, 0, "{stats:?}");
     t.update();

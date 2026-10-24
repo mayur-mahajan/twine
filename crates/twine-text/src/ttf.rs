@@ -15,6 +15,7 @@ use alloc::vec::Vec;
 
 use crate::cache::GlyphCache;
 use crate::font::{Font, GlyphInfo, GlyphProvider, Subpx, provider_key};
+use crate::gamma::Polarity;
 
 /// Errors of [`TtfFont`] / [`TtfProvider`] creation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -208,19 +209,27 @@ impl GlyphProvider for TtfProvider {
             box_h: m.height.min(usize::from(u16::MAX)) as u16,
             ofs_x: m.xmin.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16,
             ofs_y: m.ymin.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16,
-            bpp: 8,
+            bpp: Some(crate::Bpp::Eight),
             id: u32::from(id),
             is_placeholder: false,
         })
     }
 
-    fn render_a8(&self, info: &GlyphInfo, out: &mut [u8], _cache: &mut GlyphCache) -> bool {
+    /// 8-bit coverage as rasterized: no gamma table applies (`polarity` is ignored).
+    fn render_a8(
+        &self,
+        info: &GlyphInfo,
+        _polarity: Polarity,
+        out: &mut [u8],
+        _cache: &mut GlyphCache,
+    ) -> bool {
         self.rasterize(info, out)
     }
 
     fn render_rows(
         &self,
         info: &GlyphInfo,
+        _polarity: Polarity,
         cache: &mut GlyphCache,
         sink: &mut dyn FnMut(usize, &[u8]),
     ) -> bool {

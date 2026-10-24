@@ -166,7 +166,7 @@ pub fn run_engine(cfg: SimConfig, setup: impl FnOnce(&mut twine_engine::Engine))
 ///     label("Hello, twine!")
 /// }
 ///
-/// twine_sim::run(SimConfig::new(320, 240).title("hello").theme(DefaultTheme::light()), hello);
+/// twine_sim::run(SimConfig::new(320, 240).title("hello").theme(&lvgl::THEME), hello);
 /// ```
 pub fn run<V: twine_view::View>(cfg: SimConfig, app: impl FnOnce(twine_reactive::Scope) -> V) -> ! {
     init_logging();

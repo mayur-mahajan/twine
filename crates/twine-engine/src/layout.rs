@@ -793,23 +793,24 @@ impl Engine {
     /// style can still override it. Never panics (an unknown node is ignored).
     ///
     /// ```
-    /// use std::rc::Rc;
-    /// use twine_core::{ColorFormat, Size};
-    /// use twine_engine::{Engine, EngineConfig, Obj, ThemeCx, ThemeHook, WidgetClass};
+    /// use twine_core::ColorFormat;
+    /// use twine_engine::{DisplayTheme, Engine, EngineConfig, Obj, ThemeCx, ThemeHook, WidgetClass};
     /// use twine_hal::DisplayInfo;
     /// use twine_style::design::{self, ElementTable};
     /// use twine_style::{Length, ThemeMode};
     ///
     /// /// A theme that only defines the `SPACE_L` design length.
-    /// struct Spacing(Rc<ElementTable>);
+    /// struct Spacing;
+    /// static TABLE: ElementTable = ElementTable::new().length(design::SPACE_L, Length::Px(48));
     /// impl ThemeHook for Spacing {
     ///     fn apply(&self, _: &mut ThemeCx<'_>, _: &'static WidgetClass) {}
     ///     fn font_normal(&self) -> &'static twine_text::Font { &twine_text::EMPTY_FONT }
-    ///     fn design(&self, _: ThemeMode, _: u16, _: Size) -> Option<Rc<ElementTable>> { Some(self.0.clone()) }
+    ///     fn design(&self, _: ThemeMode) -> Option<&'static ElementTable> { Some(&TABLE) }
     /// }
+    /// static THEME: Spacing = Spacing;
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// let d = e.add_chunked_display(DisplayInfo::new(200, 100, ColorFormat::L8).with_dpi(320), 200).unwrap();
-    /// e.set_theme(d, Spacing(Rc::new(ElementTable::new().with(design::SPACE_L, Length::Px(48)))));
+    /// let info = DisplayInfo::new(200, 100, ColorFormat::L8).with_dpi(320);
+    /// let d = e.add_chunked_display(info, 200, Some(DisplayTheme::new(&THEME))).unwrap();
     /// let screen = e.active_screen(d).unwrap();
     /// let a = e.create(screen, Box::new(Obj)).unwrap();
     /// let b = e.create(screen, Box::new(Obj)).unwrap();

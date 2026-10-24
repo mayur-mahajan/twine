@@ -1,37 +1,29 @@
-//! The engine's theme hook: themes are applied before `Widget::init`, have the lowest
-//! priority, and `set_theme` re-applies them with a single full-screen invalidation.
+//! The engine's theme hook: themes are attached when the display is created, applied before
+//! `Widget::init`, have the lowest priority; a mode switch swaps the `'static` mode table and
+//! keeps the display's metrics table.
 
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-use twine_core::{Color, Rect};
+use twine_core::{Color, Rect, Size};
 use twine_engine::{Engine, InvalidateReason, Obj, ThemeCx, ThemeHook, Widget, WidgetClass, WidgetCx};
-use twine_style::{Part, PropId, Selector, StyleBuf, StyleProp};
+use twine_style::design::{self, ElementTable, LengthElement};
+use twine_style::{Length, Part, PropId, Selector, Style, StyleBuf, StyleProp, ThemeMode, style};
 use twine_testing::EngineHarness;
 use twine_text::Font;
 
 /// Gives every non-screen node a background color and counts its calls.
 struct Toy {
-    style: Rc<StyleBuf>,
-    calls: Rc<Cell<u32>>,
-}
-
-impl Toy {
-    fn new(c: Color) -> (Rc<Toy>, Rc<Cell<u32>>) {
-        let calls = Rc::new(Cell::new(0));
-        let t = Rc::new(Toy {
-            style: Rc::new(StyleBuf::new().bg_color(c).radius(3)),
-            calls: calls.clone(),
-        });
-        (t, calls)
-    }
+    style: &'static Style,
+    calls: &'static AtomicU32,
 }
 
 impl ThemeHook for Toy {
     fn apply(&self, cx: &mut ThemeCx<'_>, _class: &'static WidgetClass) {
-        self.calls.set(self.calls.get() + 1);
+        self.calls.fetch_add(1, Ordering::Relaxed);
         if cx.parent().is_some() {
-            cx.add_style(Selector::MAIN, self.style.clone());
+            cx.add_style(Selector::MAIN, self.style);
         }
     }
     fn font_normal(&self) -> &'static Font {
@@ -41,6 +33,8 @@ impl ThemeHook for Toy {
         "toy"
     }
 }
+
+static RED_STYLE: Style = style! { bg_color: Color::RED, radius: 3 };
 
 /// Records the background color it sees in `init`.
 struct Probe(Rc<Cell<Option<Color>>>);
@@ -60,8 +54,12 @@ fn screen(e: &Engine) -> twine_engine::NodeId {
 
 #[test]
 fn theme_applied_before_init() {
-    let (toy, _) = Toy::new(Color::RED);
-    let mut h = EngineHarness::new(64, 48).theme(toy);
+    static CALLS: AtomicU32 = AtomicU32::new(0);
+    static THEME: Toy = Toy {
+        style: &RED_STYLE,
+        calls: &CALLS,
+    };
+    let mut h = EngineHarness::new(64, 48).theme(&THEME);
     let seen = Rc::new(Cell::new(None));
     let s = screen(h.engine());
     h.engine_mut().create(s, Box::new(Probe(seen.clone()))).unwrap();
@@ -70,8 +68,12 @@ fn theme_applied_before_init() {
 
 #[test]
 fn theme_styles_have_lowest_priority() {
-    let (toy, _) = Toy::new(Color::RED);
-    let mut h = EngineHarness::new(64, 48).theme(toy);
+    static CALLS: AtomicU32 = AtomicU32::new(0);
+    static THEME: Toy = Toy {
+        style: &RED_STYLE,
+        calls: &CALLS,
+    };
+    let mut h = EngineHarness::new(64, 48).theme(&THEME);
     let s = screen(h.engine());
     let e = h.engine_mut();
     let n = e.create(s, Box::new(Obj)).unwrap();
@@ -86,48 +88,24 @@ fn theme_styles_have_lowest_priority() {
     assert_eq!(e.style_i32(s, Part::Main, PropId::Radius), 0);
 }
 
+/// R7.S04: the theme is attached when the display is created — its first screen is themed
+/// (the layers get nothing) — and every node created afterwards is themed once.
 #[test]
-fn set_theme_reapplies_and_invalidates_once() {
-    let (red, _) = Toy::new(Color::RED);
-    let (blue, calls) = Toy::new(Color::BLUE);
-    let mut h = EngineHarness::new(64, 48).theme(red);
-    let s = screen(h.engine());
-    let (a, b) = {
-        let e = h.engine_mut();
-        let a = e.create(s, Box::new(Obj)).unwrap();
-        e.set_pos(a, 2, 2);
-        e.set_size(a, 20, 10);
-        let b = e.create(a, Box::new(Obj)).unwrap();
-        e.set_size(b, 5, 5);
-        (a, b)
+fn theme_attached_at_creation_themes_each_node_once() {
+    static CALLS: AtomicU32 = AtomicU32::new(0);
+    static THEME: Toy = Toy {
+        style: &RED_STYLE,
+        calls: &CALLS,
     };
-    h.run_until_idle();
+    let mut h = EngineHarness::new(64, 48).theme(&THEME);
     let d = h.display();
-    h.engine_mut().set_theme(d, blue);
-    // Screen + two nodes (layers get no theme).
-    assert_eq!(calls.get(), 3);
-    for n in [a, b] {
-        assert_eq!(
-            h.engine().style_color(n, Part::Main, PropId::BgColor),
-            Color::BLUE
-        );
-        let theme_entries = h
-            .engine()
-            .tree()
-            .node(n)
-            .unwrap()
-            .styles()
-            .entries()
-            .iter()
-            .filter(|e| e.kind == twine_style::EntryKind::Theme)
-            .count();
-        assert_eq!(theme_entries, 1, "the old theme's styles were removed");
-    }
-    h.update();
-    let screen_area = Rect::from_xywh(0, 0, 64, 48);
-    assert_eq!(h.invalidations(), &[(screen_area, InvalidateReason::StyleChange)]);
-    h.run_until_idle();
-    h.assert_idle();
+    assert_eq!(h.engine().theme(d).map(ThemeHook::name), Some("toy"));
+    // The harness rebuilt its engine with the theme: count from here.
+    let before = CALLS.load(Ordering::Relaxed);
+    let s = screen(h.engine());
+    let n = h.engine_mut().create(s, Box::new(Obj)).unwrap();
+    h.engine_mut().create(n, Box::new(Obj)).unwrap();
+    assert_eq!(CALLS.load(Ordering::Relaxed) - before, 2);
 }
 
 #[test]
@@ -150,8 +128,12 @@ fn nodes_without_theme_use_prop_defaults() {
 
 #[test]
 fn default_font_comes_from_the_theme() {
-    let (toy, _) = Toy::new(Color::RED);
-    let mut h = EngineHarness::new(64, 48).theme(toy);
+    static CALLS: AtomicU32 = AtomicU32::new(0);
+    static THEME: Toy = Toy {
+        style: &RED_STYLE,
+        calls: &CALLS,
+    };
+    let mut h = EngineHarness::new(64, 48).theme(&THEME);
     let d = h.display();
     let s = screen(h.engine());
     let e = h.engine_mut();
@@ -164,59 +146,102 @@ fn default_font_comes_from_the_theme() {
         e.style_font(n, Part::Main),
         &raw const twine_assets::fonts::MONTSERRAT_14
     ));
-    e.remove_theme(d);
-    assert!(core::ptr::eq(
-        e.style_font(n, Part::Main),
-        &raw const twine_text::EMPTY_FONT
-    ));
-    assert_eq!(
-        e.style_prop(n, Part::Main, PropId::Radius),
-        PropId::Radius.meta().default
-    );
 }
 
-/// Supplies design elements in two modes and counts `apply` calls (R2.S02).
+/// Supplies design elements in two modes and a per-display metrics table, and counts
+/// `apply` and `metrics` calls (R2.S02, R7.S04).
 struct TwoModes {
-    light: Rc<twine_style::design::ElementTable>,
-    dark: Rc<twine_style::design::ElementTable>,
-    calls: Rc<Cell<u32>>,
+    calls: &'static AtomicU32,
+    metrics_calls: &'static AtomicU32,
 }
+
+static LIGHT: ElementTable = ElementTable::new()
+    .color(design::SURFACE, Color::WHITE)
+    .length(design::SPACE_M, Length::Px(4));
+static DARK: ElementTable = ElementTable::new().color(design::SURFACE, Color::BLACK);
+/// A theme-private length of the metrics table: 10 px at 160 DPI.
+const GAP: LengthElement = LengthElement::private(0);
 
 impl ThemeHook for TwoModes {
     fn apply(&self, _: &mut ThemeCx<'_>, _: &'static WidgetClass) {
-        self.calls.set(self.calls.get() + 1);
+        self.calls.fetch_add(1, Ordering::Relaxed);
     }
     fn font_normal(&self) -> &'static Font {
         &twine_assets::fonts::MONTSERRAT_14
     }
-    fn design(
-        &self,
-        mode: twine_style::ThemeMode,
-        _: u16,
-        _: twine_core::Size,
-    ) -> Option<Rc<twine_style::design::ElementTable>> {
+    fn design(&self, mode: ThemeMode) -> Option<&'static ElementTable> {
         match mode {
-            twine_style::ThemeMode::Light => Some(self.light.clone()),
-            twine_style::ThemeMode::Dark => Some(self.dark.clone()),
-            twine_style::ThemeMode::Night | twine_style::ThemeMode::HighContrast => None,
+            ThemeMode::Light => Some(&LIGHT),
+            ThemeMode::Dark => Some(&DARK),
+            ThemeMode::Night | ThemeMode::HighContrast => None,
         }
     }
-    fn modes(&self) -> &'static [twine_style::ThemeMode] {
-        &[twine_style::ThemeMode::Light, twine_style::ThemeMode::Dark]
+    fn metrics(&self, dpi: u16, _: Size) -> Option<ElementTable> {
+        self.metrics_calls.fetch_add(1, Ordering::Relaxed);
+        Some(
+            ElementTable::new()
+                .with(GAP, Length::Px(twine_style::dpx(10, dpi)))
+                .with(design::SPACE_M, Length::Px(99))
+                .with(design::SPACE_S, Length::Px(7)),
+        )
     }
+    fn modes(&self) -> &'static [ThemeMode] {
+        &[ThemeMode::Light, ThemeMode::Dark]
+    }
+}
+
+/// R7.S04: the mode table wins over the metrics table, an element only the metrics table
+/// defines comes from it, and it is computed once per display — a mode switch keeps it.
+#[test]
+fn metrics_table_is_looked_up_after_the_mode_table() {
+    static CALLS: AtomicU32 = AtomicU32::new(0);
+    static METRICS: AtomicU32 = AtomicU32::new(0);
+    static THEME: TwoModes = TwoModes {
+        calls: &CALLS,
+        metrics_calls: &METRICS,
+    };
+    let mut h = EngineHarness::new(64, 48).dpi(320).theme(&THEME);
+    let d = h.display();
+    let built = METRICS.load(Ordering::Relaxed);
+    let e = h.engine_mut();
+    assert_eq!(
+        e.design_value(d, design::SPACE_M),
+        Some(Length::Px(4)),
+        "the mode table wins"
+    );
+    assert_eq!(
+        e.design_value(d, design::SPACE_S),
+        Some(Length::Px(7)),
+        "the metrics table's"
+    );
+    assert_eq!(e.design_value(d, GAP), Some(Length::Px(20)), "scaled for 320 DPI");
+    let s = screen(e);
+    let n = e.create(s, Box::new(Obj)).unwrap();
+    e.set_local_prop(n, Selector::MAIN, StyleProp::PaddingTop(GAP.into()));
+    assert_eq!(e.style_i32(n, Part::Main, PropId::PaddingTop), 20);
+    e.set_theme_mode(d, ThemeMode::Dark);
+    assert_eq!(
+        e.design_value(d, design::SPACE_M),
+        Some(Length::Px(99)),
+        "Dark has none"
+    );
+    assert_eq!(e.style_i32(n, Part::Main, PropId::PaddingTop), 20);
+    assert_eq!(
+        METRICS.load(Ordering::Relaxed),
+        built,
+        "not rebuilt by a mode switch"
+    );
 }
 
 #[test]
 fn set_theme_mode_swaps_the_table_and_invalidates_once() {
-    use twine_style::ThemeMode;
-    use twine_style::design::{self, ElementTable};
-    let calls = Rc::new(Cell::new(0));
-    let theme = Rc::new(TwoModes {
-        light: Rc::new(ElementTable::new().with(design::SURFACE, Color::WHITE)),
-        dark: Rc::new(ElementTable::new().with(design::SURFACE, Color::BLACK)),
-        calls: calls.clone(),
-    });
-    let mut h = EngineHarness::new(64, 48).theme(theme);
+    static CALLS: AtomicU32 = AtomicU32::new(0);
+    static METRICS: AtomicU32 = AtomicU32::new(0);
+    static THEME: TwoModes = TwoModes {
+        calls: &CALLS,
+        metrics_calls: &METRICS,
+    };
+    let mut h = EngineHarness::new(64, 48).theme(&THEME);
     let s = screen(h.engine());
     let n = {
         let e = h.engine_mut();
@@ -233,9 +258,13 @@ fn set_theme_mode_swaps_the_table_and_invalidates_once() {
     h.run_until_idle();
     let d = h.display();
     assert_eq!(h.engine().cached_main(n).bg_color, Color::WHITE);
-    let (applied, epoch) = (calls.get(), h.engine().design_epoch(d));
+    let (applied, epoch) = (CALLS.load(Ordering::Relaxed), h.engine().design_epoch(d));
     h.engine_mut().set_theme_mode(d, ThemeMode::Dark);
-    assert_eq!(calls.get(), applied, "the theme's styles are not re-applied");
+    assert_eq!(
+        CALLS.load(Ordering::Relaxed),
+        applied,
+        "the theme's styles are not re-applied"
+    );
     assert_ne!(h.engine().design_epoch(d), epoch);
     assert_eq!(h.engine().theme_mode(d), ThemeMode::Dark);
     // The cached hot properties were refreshed too.
@@ -265,8 +294,17 @@ fn set_theme_mode_swaps_the_table_and_invalidates_once() {
         "{logs:?}"
     );
     h.assert_idle();
-    // Without a theme: a warning, nothing changes, no panic.
-    h.engine_mut().remove_theme(d);
+}
+
+/// A display created without a theme refuses a mode switch: nothing changes, no panic.
+#[test]
+fn set_theme_mode_without_a_theme_is_refused() {
+    let mut h = EngineHarness::new(64, 48).no_theme();
+    let d = h.display();
+    let s = screen(h.engine());
+    let n = h.engine_mut().create(s, Box::new(Obj)).unwrap();
+    h.engine_mut()
+        .set_local_prop(n, Selector::MAIN, StyleProp::BgColor(design::SURFACE.into()));
     h.run_until_idle();
     h.engine_mut().set_theme_mode(d, ThemeMode::Dark);
     assert_eq!(h.engine().theme_mode(d), ThemeMode::Light);
@@ -275,5 +313,25 @@ fn set_theme_mode_swaps_the_table_and_invalidates_once() {
         h.engine().style_color(n, Part::Main, PropId::BgColor),
         Color::WHITE,
         "an element without a table gives the property's default"
+    );
+    h.assert_idle();
+}
+
+/// R7.S04: a start mode the theme does not list starts in its first mode, with a warning.
+#[test]
+fn unlisted_start_mode_falls_back_to_the_first_mode() {
+    static CALLS: AtomicU32 = AtomicU32::new(0);
+    static METRICS: AtomicU32 = AtomicU32::new(0);
+    static THEME: TwoModes = TwoModes {
+        calls: &CALLS,
+        metrics_calls: &METRICS,
+    };
+    let (h, logs) =
+        twine_testing::capture_logs(|| EngineHarness::new(64, 48).theme(&THEME).mode(ThemeMode::Night));
+    assert_eq!(h.engine().theme_mode(h.display()), ThemeMode::Light);
+    assert!(
+        logs.iter()
+            .any(|l| l.level == log::Level::Warn && l.message.contains("has no Night mode")),
+        "{logs:?}"
     );
 }

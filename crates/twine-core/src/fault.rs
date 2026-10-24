@@ -551,11 +551,15 @@ pub enum CapacityFault {
     /// bound): the items beyond it were not shown (a `for_each` shows the first ones, a
     /// `virtual_list` the first visible ones). `node` = the collection.
     ListItems = 14,
+    /// The nodes with a theme class of their own reached
+    /// [`Limits::max_theme_classes`](crate::Limits::max_theme_classes): the variant or role was
+    /// not set and the node keeps its widget class's look. `node` = the node.
+    ThemeClasses = 15,
 }
 
 impl CapacityFault {
     /// Every bound, in code order.
-    pub const ALL: [CapacityFault; 15] = [
+    pub const ALL: [CapacityFault; 16] = [
         CapacityFault::Nodes,
         CapacityFault::EngineQueue,
         CapacityFault::WakerPool,
@@ -571,6 +575,7 @@ impl CapacityFault {
         CapacityFault::NavDepth,
         CapacityFault::HeapBudget,
         CapacityFault::ListItems,
+        CapacityFault::ThemeClasses,
     ];
 
     /// The stable numeric code (the fault record's `code`).
@@ -608,6 +613,7 @@ impl CapacityFault {
             12 => CapacityFault::NavDepth,
             13 => CapacityFault::HeapBudget,
             14 => CapacityFault::ListItems,
+            15 => CapacityFault::ThemeClasses,
             _ => return None,
         })
     }
@@ -636,6 +642,7 @@ impl CapacityFault {
             CapacityFault::NavDepth => "NavDepth",
             CapacityFault::HeapBudget => "HeapBudget",
             CapacityFault::ListItems => "ListItems",
+            CapacityFault::ThemeClasses => "ThemeClasses",
         }
     }
 }

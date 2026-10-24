@@ -57,7 +57,7 @@ fn burn(us: u64) {
 fn config(engine: EngineConfig, limits: Limits) -> AppConfig {
     let mut c = AppConfig::new()
         .limits(profile_limits(limits))
-        .theme(DefaultTheme::light());
+        .theme(&lvgl::THEME);
     c.engine = EngineConfig {
         hires_timer: Some(hires),
         ..engine

@@ -274,12 +274,13 @@ impl Engine {
     /// (screens and layers included), [`max_tree_depth`](twine_core::Limits::max_tree_depth),
     /// [`max_text_len`](twine_core::Limits::max_text_len),
     /// [`max_handlers`](twine_core::Limits::max_handlers),
+    /// [`max_theme_classes`](twine_core::Limits::max_theme_classes),
     /// [`max_timers`](twine_core::Limits::max_timers) and
     /// [`max_anims`](twine_core::Limits::max_anims) bound creations from now on (each refusal
     /// raises [`FaultKind::Capacity`](twine_core::fault::FaultKind::Capacity) with its
     /// [`CapacityFault`](twine_core::fault::CapacityFault) code). With
     /// [`preallocate`](twine_core::Limits::preallocate) it also reserves the node arena, the
-    /// delete scratch and the timer and animation tables, so staying within the limits
+    /// delete scratch, the theme-class table and the timer and animation tables, so staying within the limits
     /// allocates nothing there. Lowering a bound below the current count refuses further
     /// creations until enough are deleted — except `max_tree_depth`: drawing, hit testing and
     /// layout recurse over the tree, and their stack bound
@@ -326,6 +327,10 @@ impl Engine {
         self.anim.timers.set_limit(limits.max_timers);
         if limits.preallocate {
             self.tree.reserve(limits.max_nodes);
+            let classes = usize::from(limits.max_theme_classes);
+            self.tree
+                .theme_classes
+                .reserve_exact(classes.saturating_sub(self.tree.theme_classes.len()));
             self.anim.timeline.reserve(limits.max_anims);
             self.anim.timers.reserve(limits.max_timers);
         }

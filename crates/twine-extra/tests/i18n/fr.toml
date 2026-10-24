@@ -1,0 +1,3 @@
+# French (TOML).
+hello = "Bonjour"
+total = "Total : {amount}"

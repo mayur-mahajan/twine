@@ -6,6 +6,7 @@ use common::{boxed, style, white_screen};
 use twine_core::{Color, ColorFormat, Duration, Rect};
 use twine_engine::{BufferMode, Engine, EngineConfig, EngineError, InvalidateReason, NodeId, Obj, ObjFlags};
 use twine_hal::DisplayInfo;
+use twine_style::Length;
 use twine_style::StyleProp;
 use twine_testing::{EngineHarness, MemoryDisplay, MockFramebufferDisplay, leak_buffer};
 
@@ -57,11 +58,11 @@ fn add_display_rejects_mismatched_buffer_mode() {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     let info = DisplayInfo::new(10, 10, ColorFormat::Rgb565);
     assert_eq!(
-        e.add_display(MemoryDisplay::new(info), BufferMode::full()),
+        e.add_display(MemoryDisplay::new(info), BufferMode::full(), None),
         Err(EngineError::BufferModeMismatch)
     );
     assert_eq!(
-        e.add_display(MemoryDisplay::new(info), BufferMode::direct()),
+        e.add_display(MemoryDisplay::new(info), BufferMode::direct(), None),
         Err(EngineError::BufferModeMismatch)
     );
     assert_eq!(
@@ -70,7 +71,8 @@ fn add_display_rejects_mismatched_buffer_mode() {
             BufferMode::Partial {
                 a: leak_buffer(200),
                 b: None
-            }
+            },
+            None
         ),
         Err(EngineError::BufferModeMismatch)
     );
@@ -89,6 +91,7 @@ fn too_many_displays() {
                     a: leak_buffer(16 * 8),
                     b: None,
                 },
+                None,
             )
             .unwrap();
         assert_eq!(d.index(), i);
@@ -99,7 +102,8 @@ fn too_many_displays() {
             BufferMode::Partial {
                 a: leak_buffer(128),
                 b: None
-            }
+            },
+            None
         ),
         Err(EngineError::TooManyDisplays)
     );
@@ -213,10 +217,10 @@ fn ext_draw_includes_shadow_and_outline() {
         &mut e,
         n,
         &[
-            StyleProp::ShadowWidth(20),
-            StyleProp::ShadowOffsetX(3),
-            StyleProp::ShadowOffsetY(-5),
-            StyleProp::ShadowSpread(2),
+            StyleProp::ShadowWidth(Length::Px(20).into()),
+            StyleProp::ShadowOffsetX(Length::Px(3).into()),
+            StyleProp::ShadowOffsetY(Length::Px(-5).into()),
+            StyleProp::ShadowSpread(Length::Px(2).into()),
         ],
     );
     // width / 2 + max(|ofs|) + spread
@@ -224,7 +228,10 @@ fn ext_draw_includes_shadow_and_outline() {
     style(
         &mut e,
         n,
-        &[StyleProp::OutlineWidth(15), StyleProp::OutlineOffset(10)],
+        &[
+            StyleProp::OutlineWidth(Length::Px(15).into()),
+            StyleProp::OutlineOffset(Length::Px(10).into()),
+        ],
     );
     assert_eq!(e.tree().node(n).unwrap().ext_draw(), 25);
     style(
@@ -232,7 +239,7 @@ fn ext_draw_includes_shadow_and_outline() {
         n,
         &[
             StyleProp::ShadowOpacity(twine_core::Opa::TRANSP.into()),
-            StyleProp::OutlineWidth(1),
+            StyleProp::OutlineWidth(Length::Px(1).into()),
         ],
     );
     assert_eq!(e.tree().node(n).unwrap().ext_draw(), 11);

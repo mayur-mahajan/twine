@@ -43,7 +43,8 @@
 //! | tree | [`Tree`], [`Node`], [`NodeId`], iterators, [`Tree::check_invariants`] |
 //! | widgets | [`Widget`], [`WidgetClass`] (identity, [`WidgetClass::base`], [`WidgetClass::is_a`], [`WidgetClass::lineage`], [`Lineage`], [`MAX_CLASS_DEPTH`]), [`Obj`], [`MeasureCx`], [`WidgetCx`], [`DrawCx`] |
 //! | styles | [`Engine::add_style`], [`Engine::set_local_prop`], [`Engine::set_local_transition`], [`Engine::style_prop`], [`Engine::finish_style_value`], [`MainStyle`] |
-//! | themes | [`ThemeHook`], [`IntoTheme`], [`Engine::set_theme`], [`Engine::set_theme_mode`], [`Engine::theme_mode`], [`Engine::theme_modes`], [`Engine::design_value`], [`Engine::resolve_design_value`], [`Engine::design_table`], [`Engine::design_epoch`] ([design elements](twine_style::design)) |
+//! | themes | [`ThemeHook`], [`DisplayTheme`] (the `&'static` theme a display is created with), [`Engine::theme`], [`Engine::set_theme_mode`], [`Engine::theme_mode`], [`Engine::theme_modes`], [`Engine::design_value`], [`Engine::resolve_design_value`], [`Engine::design_table`], [`Engine::design_epoch`] ([design elements](twine_style::design)), [`Engine::themed_nodes`] |
+//! | design systems | [`DesignSystem`], [`Theme`], [`ThemeBase`] / [`NoBase`] (extending a theme), recipes ([`Recipe`], [`ComputedRecipe`], [`RecipeRef`], [`recipe!`], [`ThemeCx::add_recipe`], [`ThemeHook::recipe`]), theme classes ([`Engine::set_theme_class`], [`Engine::theme_class`], [`Engine::reapply_theme`], [`Variant`]) |
 //! | displays | [`Engine::add_display`], [`Engine::add_framebuffer_display`], [`Engine::add_chunked_display`], [`BufferMode`], [`BufferSpec`], [`DisplayId`] |
 //! | display control | [`Engine::set_rotation`], [`Engine::set_display_brightness`], [`Engine::set_display_sleep`], [`Engine::display_command`], [`DisplayCmd`], [`Engine::reserve_rotation`], [`DisplayControlFault`] |
 //! | refresh | [`Engine::step`], [`Engine::step_budgeted`], [`StepBudget`] ([`EngineConfig::step_budget`], [`EngineConfig::on_chunk`]), [`Wake`] ([`Wake::IdleFor`]), [`RefreshStats`], [`PerfMonitor`], [`InvalidateReason`] |
@@ -56,7 +57,7 @@
 //! | faults | [`Engine::raise_fault`], [`Engine::take_faults`], [`Engine::set_fault_hook`], [`Engine::raise_alloc_after_seal`], [`FaultRecord`], [`FaultKind`](twine_core::fault::FaultKind), [`CapacityFault`](twine_core::fault::CapacityFault) |
 //! | scrolling | [`Engine::scroll_by`], [`Engine::scroll_to`], [`Engine::scroll_to_view`], [`Engine::scroll_to_view_after_layout`], [`Engine::scroll_top`], [`Engine::set_scroll_snap_x`], [`Engine::update_snap`], [`Engine::scrollbar_areas`], [`ScrollbarMode`] |
 //! | memory | [`Engine::memory_report`], [`EngineMemory`], [`HeapPeak`], [`MemInfo`], [`Engine::with_layer_buf`] |
-//! | bounds | [`Engine::set_limits`], [`Engine::limits`] ([`Limits`](twine_core::Limits): nodes, tree depth, text length, handlers, timers, animations; preallocation), [`WidgetCx::fit_text`], [`EngineError::TooDeep`] |
+//! | bounds | [`Engine::set_limits`], [`Engine::limits`] ([`Limits`](twine_core::Limits): nodes, tree depth, text length, handlers, theme classes, timers, animations; preallocation), [`WidgetCx::fit_text`], [`EngineError::TooDeep`] |
 //! | display integrity | [`Engine::heartbeat`], [`Engine::now`]; with the `display-integrity` feature: `FrameObserver`, `FrameChunk`, `FrameReport`, `Engine::set_frame_observer`, `Engine::region`, `Engine::render_region_to`, `Engine::read_back`, `Engine::check_region` (`IntegrityCheck`), `ObjFlags::SAFETY_CRITICAL`, `Engine::critical_nodes`, `Engine::critical_report` (`CriticalReport`, `Widget::value_digest`), `Engine::set_fail_safe_screen`, `Engine::enter_fail_safe`, `Engine::leave_fail_safe`, `Engine::fail_safe` |
 //! | partitions | [`Engine::set_partition`], [`Engine::partition`], [`WidgetCx::partition`], [`MeasureCx::partition`]: the seal domain the engine's growth is noted in ([`Partition`](twine_core::Partition), ADR-001) |
 //! | audit | `impl Audit for EngineConfig` ([`twine_core::audit`]), [`audit_features`], [`ThemeHook::audit`] |
@@ -100,7 +101,7 @@
 //!
 //! let mut engine = Engine::new(EngineConfig::default()).unwrap();
 //! let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
-//! let display = engine.add_display(Panel(None), BufferMode::partial_single(buf)).unwrap();
+//! let display = engine.add_display(Panel(None), BufferMode::partial_single(buf), None).unwrap();
 //! let screen = engine.active_screen(display).unwrap();
 //! let boxed = engine.create(screen, Box::new(Obj)).unwrap();
 //! engine.set_pos(boxed, 8, 8); // laid out by the next `step`
@@ -146,6 +147,7 @@ extern crate std;
 mod accel;
 mod anim;
 mod config;
+mod design_system;
 mod display;
 mod display_control;
 mod draw_cx;
@@ -171,6 +173,7 @@ mod obj;
 mod outside;
 #[cfg(feature = "perf-monitor")]
 mod perf_overlay;
+mod recipe;
 mod refresh;
 mod reparent;
 mod screen_anim;
@@ -190,6 +193,7 @@ mod widget;
 
 pub use anim::{AnimProp, Deferred, defer};
 pub use config::EngineConfig;
+pub use design_system::{DesignSystem, NoBase, Theme, ThemeBase, Variant};
 pub use display::{BufferMode, BufferSpec, MAX_DISPLAYS};
 pub use display_control::{DisplayCmd, DisplayControlFault, DisplayRequests, DisplayResponses};
 pub use draw_cx::DrawCx;
@@ -215,13 +219,14 @@ pub use memory::EngineMemory;
 pub use obj::{OBJ_CLASS, OBJ_FLAGS, Obj};
 #[cfg(feature = "perf-monitor")]
 pub use perf_overlay::{PERF_OVERLAY_CLASS, PerfOverlay};
+pub use recipe::{ComputedRecipe, Recipe, RecipeRef};
 pub use refresh::{FrameInfo, RefreshOutcome};
 pub use screen_anim::{ScreenAnim, ScreenLoad};
 pub use scroll::{SCROLL_ANIM_TIME_MAX, SCROLL_ANIM_TIME_MIN, SCROLL_ELASTIC_FACTOR};
 pub use stats::{HeapPeak, MemInfo, PerfMonitor, RefreshStats, TimingReport};
 pub use style_cache::MainStyle;
 pub use style_list::StyleList;
-pub use theme_hook::{IntoTheme, ThemeCx, ThemeHook};
+pub use theme_hook::{DisplayTheme, ThemeCx, ThemeHook, ThemedNodes};
 pub use tree::{Ancestors, Children, ChildrenRev, Descendants, Node, Tree};
 pub use twine_anim::{Anim, AnimId, AnimSpec, Easing, Motion, Repeat, TimerId};
 pub use twine_hal::{InputKind, Key};
@@ -232,6 +237,13 @@ pub use widget::{
     AsAny, Editable, GroupDef, Lineage, MAX_CLASS_DEPTH, MeasureCx, Widget, WidgetClass, WidgetCx,
     default_covers, default_hit_test,
 };
+
+/// Names used by [`recipe!`] (not a public API).
+#[doc(hidden)]
+pub mod __private {
+    pub use crate::recipe::__SelectorArg as SelectorArg;
+    pub use twine_style::style;
+}
 
 /// Writes the engine's cargo features of this build as `build.engine_<feature>=<bool>`
 /// entries of an audit report (`AppConfig::audit_report` calls it): `debug-checks`,

@@ -14,9 +14,6 @@ use crate::util::{R, cargo, output};
 /// Crate → layer. A crate may only depend on crates in lower layers.
 pub const LAYERS: &[(&str, u8)] = &[
     ("twine-core", 0),
-    // Host-only proc macros (`#[component]`); they name no Twine crate (the generated code
-    // does, through the crate using them).
-    ("twine-macros", 0),
     ("twine-hal", 1),
     ("twine-reactive", 1),
     ("twine-anim", 1),
@@ -39,6 +36,14 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("twine-extra", 11),
     ("twine-lottie", 11),
     ("twine-assets", 4),
+    // Host-only build-script helpers (`build.rs` code generators: translation catalogs, bitmap
+    // fonts, images). The font and image generators use the encoders and data model of the
+    // text, image and core crates; nothing of this crate is linked into firmware.
+    ("twine-build", 4),
+    // Host-only proc macros (`#[component]`; with feature `assets`, `include_font!` /
+    // `include_image!`, which run `twine-build`). The generated code names the runtime crates
+    // through the crate using them.
+    ("twine-macros", 5),
     // The embassy run loop sits on the view layer; the facade re-exports it (`twine::embassy`).
     ("twine-embassy", 11),
     ("twine", 12),

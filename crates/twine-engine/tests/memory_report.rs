@@ -120,7 +120,11 @@ fn draw_buffers_are_reported_by_where_they_live() {
     let mut heap_engine = Engine::new(EngineConfig::default()).unwrap();
     let (_, heap) = count_allocs(|| {
         heap_engine
-            .add_display(Panel, BufferMode::alloc(BufferSpec::PartialDouble { rows: 8 }))
+            .add_display(
+                Panel,
+                BufferMode::alloc(BufferSpec::PartialDouble { rows: 8 }),
+                None,
+            )
             .unwrap()
     });
     let mut static_engine = Engine::new(EngineConfig::default()).unwrap();
@@ -128,7 +132,7 @@ fn draw_buffers_are_reported_by_where_they_live() {
     let (a, b) = (aligned(a, W as usize * 2 * 8), aligned(b, W as usize * 2 * 8));
     let (_, statik) = count_allocs(|| {
         static_engine
-            .add_display(Panel, BufferMode::partial_double(a, b))
+            .add_display(Panel, BufferMode::partial_double(a, b), None)
             .unwrap()
     });
     let (h, s) = (heap_engine.memory_report(), static_engine.memory_report());
@@ -158,7 +162,7 @@ fn static_layer_buffer_draws_layers_without_the_heap() {
             None => Engine::new(EngineConfig::default()).unwrap(),
             Some(buf) => Engine::with_layer_buf(EngineConfig::default(), buf).unwrap(),
         };
-        let d = e.add_chunked_display(info(), CHUNK).unwrap();
+        let d = e.add_chunked_display(info(), CHUNK, None).unwrap();
         layered_scene(&mut e);
         let mut buf = vec![0u8; CHUNK];
         render(&mut e, &mut buf, 0);

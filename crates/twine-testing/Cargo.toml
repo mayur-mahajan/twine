@@ -56,7 +56,7 @@ twine-style = { path = "../twine-style", optional = true, features = ["std", "lo
 twine-theme = { path = "../twine-theme", optional = true, features = ["std", "log"] }
 twine-assets = { path = "../twine-assets", optional = true }
 twine-reactive = { path = "../twine-reactive", optional = true, features = ["std", "log"] }
-twine-view = { path = "../twine-view", optional = true, features = ["std", "log"] }
+twine-view = { path = "../twine-view", optional = true, features = ["std", "log", "theme-lvgl"] }
 twine-widgets = { path = "../twine-widgets", optional = true, features = ["std", "log"] }
 twine-text = { path = "../twine-text", optional = true, features = ["std", "log"] }
 # Host implementation of `critical-section` (used by reactive channels) for test binaries.

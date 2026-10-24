@@ -458,10 +458,10 @@ mod tests {
         static TRACKS: [GridTrack; 2] = [GridTrack::Px(10), GridTrack::Fr(1)];
         match id.type_name() {
             "&'static Gradient" => StyleValue::Grad(&GRAD),
-            "&'static ImageSource" => StyleValue::Image(&IMG),
+            "&'static ImageSource" | "IconValue" => StyleValue::Image(&IMG),
             "&'static ImageColorkey" => StyleValue::Colorkey(&KEY),
             "&'static ColorFilter" => StyleValue::ColorFilter(&FILTER),
-            "&'static AnimSpec" => StyleValue::AnimSpec(&ANIM),
+            "&'static AnimSpec" | "MotionValue" => StyleValue::AnimSpec(&ANIM),
             "TransitionRef" => StyleValue::Transition(TransitionRef::Static(&TR)),
             "TracksRef" => StyleValue::GridTracks(crate::TracksRef::Static(&TRACKS)),
             _ => id.meta().default,

@@ -149,11 +149,11 @@ fn engine_hotkeys_toggle_overlays() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// R2.S03: F12 switches the installed theme to its next mode (`Engine::set_theme_mode`),
+/// R2.S03: F12 switches the display's theme to its next mode (`Engine::set_theme_mode`),
 /// cycling through the modes the theme supports.
 #[test]
 fn f12_cycles_the_theme_modes() {
-    use twine_theme::{DefaultTheme, SimpleTheme};
+    use twine_theme::{lvgl, simple};
     let script = "wait 16\nshot m0\nhotkey F12\nwait 32\nshot m1\nhotkey F12\nwait 32\nshot m2\n\
                   hotkey F12\nwait 32\nshot m3\nhotkey F12\nwait 32\nshot m4\n";
     let screen_bg = |dir: &PathBuf, shot: &str| png_pixel(&dir.join(format!("{shot}.png")), 0, 0);
@@ -163,11 +163,7 @@ fn f12_cycles_the_theme_modes() {
         [c.r, c.g, c.b]
     };
     // The default theme: light → dark → night → high contrast → light (screen backgrounds).
-    let (cfg, dir) = headless(
-        SimConfig::new(32, 16).theme(DefaultTheme::light()),
-        "modes",
-        Some(script),
-    );
+    let (cfg, dir) = headless(SimConfig::new(32, 16).theme(&lvgl::THEME), "modes", Some(script));
     SimApp::engine(cfg, |_| {}).unwrap().run_headless().unwrap();
     assert_eq!(screen_bg(&dir, "m0"), q(0x00F5_F5F5));
     assert_eq!(screen_bg(&dir, "m1"), q(0x0015_171A));
@@ -175,15 +171,17 @@ fn f12_cycles_the_theme_modes() {
     assert_eq!(screen_bg(&dir, "m3"), q(0x0000_0000));
     assert_eq!(screen_bg(&dir, "m4"), q(0x00F5_F5F5));
     let _ = std::fs::remove_dir_all(dir);
-    // The simple theme: light ↔ high contrast (white screen) only.
+    // The simple theme: light → dark → night → high contrast (white screen) → light.
     let (cfg, dir) = headless(
-        SimConfig::new(32, 16).theme(SimpleTheme::new()),
+        SimConfig::new(32, 16).theme(&simple::THEME),
         "modes-simple",
         Some(script),
     );
     SimApp::engine(cfg, |_| {}).unwrap().run_headless().unwrap();
     assert_eq!(screen_bg(&dir, "m0"), q(0x00F5_F5F5));
-    assert_eq!(screen_bg(&dir, "m1"), q(0x00FF_FFFF));
-    assert_eq!(screen_bg(&dir, "m2"), q(0x00F5_F5F5));
+    assert_eq!(screen_bg(&dir, "m1"), q(0x0012_1212));
+    assert_eq!(screen_bg(&dir, "m2"), q(0x0000_0000));
+    assert_eq!(screen_bg(&dir, "m3"), q(0x00FF_FFFF));
+    assert_eq!(screen_bg(&dir, "m4"), q(0x00F5_F5F5));
     let _ = std::fs::remove_dir_all(dir);
 }

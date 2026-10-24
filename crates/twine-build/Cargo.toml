@@ -1,0 +1,48 @@
+[package]
+name = "twine-build"
+description = "Build-script helpers for Twine applications: translation catalogs, bitmap fonts and images compiled on the host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["font", "image"]
+## Bitmap fonts from TrueType/OpenType files (`font::Font`).
+font = ["dep:ab_glyph_rasterizer", "dep:fontdue", "dep:skrifa", "dep:ttf-parser", "dep:twine-text"]
+## Images from PNG, JPEG, BMP, GIF or QOI files (`image::Image`).
+image = ["dep:image", "dep:lz4_flex", "dep:twine-core", "dep:twine-image"]
+
+[dependencies]
+# TOML translation files (the same version the workspace's xtask uses).
+toml = "0.9"
+# `font`: rasterization, GPOS kerning and `post` underline metrics (fontdue only reads the
+# legacy `kern` table), and the bitmap-font encoder of the runtime crate (with its shaping and
+# mirroring tables: the forms a subset font must add, `font::implied_chars`).
+fontdue = { version = "0.9", optional = true }
+# `font`: grid-fitting with FreeType's auto-hinter (pure Rust) and rasterization of the
+# hinted outlines (`font::Hinting`).
+skrifa = { version = "0.49", optional = true }
+ab_glyph_rasterizer = { version = "0.1", optional = true }
+ttf-parser = { version = "0.25", default-features = false, features = ["std", "opentype-layout"], optional = true }
+twine-text = { path = "../twine-text", features = ["std", "bidi", "arabic-shaping"], optional = true }
+# `image`: input decoding, the image model, RLE/LZ4 compression.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "qoi"], optional = true }
+lz4_flex = { version = "0.11", default-features = false, features = ["safe-encode", "std"], optional = true }
+twine-core = { path = "../twine-core", features = ["std"], optional = true }
+twine-image = { path = "../twine-image", features = ["std"], optional = true }
+
+[dev-dependencies]
+# Round-trip tests render converted images and decode `.tbin` files.
+twine-core = { path = "../twine-core", features = ["std"] }
+twine-image = { path = "../twine-image", features = ["std", "img-lz4"] }
+twine-render = { path = "../twine-render", features = ["color-argb8888"] }
+twine-testing = { path = "../twine-testing", default-features = false, features = ["render"] }
+proptest = "1"
+
+[package.metadata.docs.rs]
+all-features = true

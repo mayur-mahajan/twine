@@ -1,6 +1,6 @@
 [package]
 name = "twine-cli"
-description = "Twine font and image converters"
+description = "The `twine` command: font and image converters and translation compiler (front end of twine-build)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -22,19 +22,14 @@ workspace = true
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-fontdue = "0.9"
-# GPOS kerning and `post` underline metrics (fontdue only reads the legacy `kern` table).
-ttf-parser = { version = "0.25", default-features = false, features = ["std", "opentype-layout"] }
+# The generators: `twine font`, `twine image` and `twine i18n` are its command-line front ends.
+twine-build = { path = "../../crates/twine-build" }
 twine-text = { path = "../../crates/twine-text", features = ["std"] }
-# `twine image`: input decoding, the image model, RLE/LZ4 compression.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "qoi"] }
 twine-core = { path = "../../crates/twine-core", features = ["std"] }
-twine-image = { path = "../../crates/twine-image", features = ["std"] }
-lz4_flex = { version = "0.11", default-features = false, features = ["safe-encode", "std"] }
+# `cargo xtask gen-assets`: the procedurally drawn sample images (PNG, GIF and QOI encoders).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "qoi"] }
 
 [dev-dependencies]
-proptest = "1"
-# `twine image` round-trip tests render converted images.
+# `twine image --bin` output is decoded as the engine does for `ImageSource::File`.
 twine-image = { path = "../../crates/twine-image", features = ["std", "img-lz4"] }
-twine-render = { path = "../../crates/twine-render", features = ["color-argb8888"] }
-twine-testing = { path = "../../crates/twine-testing", default-features = false, features = ["render"] }
+twine-build = { path = "../../crates/twine-build" }

@@ -9,11 +9,8 @@
 Everything is anti-aliased with 4x4 supersampling. Run from the repository root:
 
     python3 crates/twine-demos/assets/gen_frames.py
-    for n in frame0 frame1 frame2 frame3 power_off power_on; do
-      N=$(echo $n | tr a-z A-Z)
-      cargo run -p twine-cli -- image --in crates/twine-demos/assets/$n.png --format argb8888 \
-        --name $N --crate-path twine::image --out crates/twine-demos/src/assets/$n.rs
-    done
+
+The crate's `build.rs` converts the PNGs to ARGB8888 (`twine-build`) when it builds.
 """
 import math
 import os

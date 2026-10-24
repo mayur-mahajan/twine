@@ -264,7 +264,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)).with_power_control();
-    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default()), None).unwrap();
     /// e.set_display_brightness(d, Fraction::pct(40)).unwrap();
     /// e.step(Instant::from_millis(0));
     /// assert_eq!(e.display_brightness(d), Some(Fraction::pct(40)));
@@ -291,7 +291,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)).with_power_control();
-    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default()), None).unwrap();
     /// e.set_display_sleep(d, true).unwrap();
     /// // The first frame is drawn before the request is taken, then the panel sleeps.
     /// let wake = e.step(Instant::from_millis(0));
@@ -323,7 +323,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)).with_rotation_control();
-    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default()), None).unwrap();
     /// e.set_rotation(d, Rotation::Deg90).unwrap();
     /// e.step(Instant::from_millis(0));
     /// let info = e.display_info(d).unwrap();
@@ -357,7 +357,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)).with_power_control();
-    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default()), None).unwrap();
     /// e.display_command(d, DisplayCmd::Sleep).unwrap();
     /// e.step(Instant::from_millis(0));
     /// assert!(e.display_asleep(d));
@@ -382,7 +382,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)).with_power_control();
-    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default()), None).unwrap();
     /// assert!(!e.display_asleep(d));
     /// e.set_display_sleep(d, true).unwrap();
     /// assert!(!e.display_asleep(d)); // requested, applied by the next step
@@ -407,7 +407,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)).with_power_control();
-    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default()), None).unwrap();
     /// assert_eq!(e.display_brightness(d), None); // nothing applied yet
     /// e.set_display_brightness(d, Fraction::HALF).unwrap();
     /// e.step(Instant::from_millis(0));
@@ -431,7 +431,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)).with_power_control();
-    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default()), None).unwrap();
     /// e.set_display_brightness(d, Fraction::HALF).unwrap();
     /// assert!(e.display_requests_pending(d));
     /// e.step(Instant::from_millis(0));
@@ -465,7 +465,7 @@ impl Engine {
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
     /// // A panel without hardware rotation.
-    /// let d = e.add_display(MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)), BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let d = e.add_display(MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)), BufferMode::alloc(BufferSpec::default()), None).unwrap();
     /// e.reserve_rotation(d).unwrap();
     /// e.set_rotation(d, Rotation::Deg270).unwrap();
     /// e.step(Instant::from_millis(0));
@@ -506,7 +506,7 @@ impl Engine {
     /// use twine_hal::DisplayInfo;
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::Rgb565), 64 * 2 * 8).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::Rgb565), 64 * 2 * 8, None).unwrap();
     /// e.set_display_brightness(d, Fraction::HALF).unwrap();
     /// let now = Instant::from_millis(0);
     /// let req = e.take_display_requests(d, now).unwrap();
@@ -543,7 +543,7 @@ impl Engine {
     /// use twine_hal::DisplayInfo;
     ///
     /// let mut e = Engine::new(EngineConfig::default()).unwrap();
-    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::Rgb565), 64 * 2 * 8).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::Rgb565), 64 * 2 * 8, None).unwrap();
     /// e.set_display_sleep(d, true).unwrap();
     /// let now = Instant::from_millis(0);
     /// let req = e.take_display_requests(d, now).unwrap();

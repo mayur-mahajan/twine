@@ -244,15 +244,15 @@ async fn main(_spawner: embassy_executor::Spawner) -> ! {
     let touch = twine_demos::calibration::RawTouchInput::new(touch, &demo::RAW);
 
     // The UI, drawing into the two DMA-pipelined `BUFS` (declared with `draw_buffers!` below).
-    // The demos' configuration — the one their simulator examples and tests run — plus this
-    // board's hooks. An OLED build takes it with the monochrome theme (white on black: lit
-    // pixels are the foreground), so the default theme is not linked.
+    // The demos' configuration with the demo's own theme (the LVGL theme trimmed to the
+    // recipes of the classes it creates, `twine_demos::<demo>::THEME`: pay for what you use) plus this
+    // board's hooks. An OLED build takes it with the monochrome theme in its dark mode only
+    // (white on black: lit pixels are the foreground), so neither the LVGL theme nor the other
+    // mono tables are linked.
     #[cfg(not(feature = "oled-ssd1306"))]
-    let mut config = twine_demos::config();
+    let mut config = twine_demos::config_with_theme(&demo::THEME);
     #[cfg(feature = "oled-ssd1306")]
-    let mut config = twine_demos::config_with_theme(
-        MonoTheme::builder().mode(ThemeMode::Dark).font(&twine::assets::fonts::MONTSERRAT_14).build(),
-    );
+    let mut config = twine_demos::config_with_theme(&OLED_THEME);
     config.engine.mem_info = Some(mem_info);
     config.engine.hires_timer = Some(twine::embassy::hires_now);
     // The runtime belongs to this task: the `!Send` token keeps the UI and every reactive
@@ -366,7 +366,9 @@ twine::draw_buffers! {
 #[cfg(feature = "touch-xpt2046")]
 const CALIBRATE: bool = cfg!(feature = "demo-calibrate");
 
-/// The demo selected by cargo feature (the counter without a `demo-*` feature).
+/// The demo selected by cargo feature (the counter without a `demo-*` feature), with its theme
+/// (an OLED build uses its monochrome theme instead of the demo's `THEME`).
+#[cfg_attr(feature = "oled-ssd1306", allow(unused_imports))]
 mod demo {
     /// The raw taps of the calibration demo (ports pattern): owned here, passed to
     /// `RawTouchInput` and to the demo.
@@ -378,12 +380,15 @@ mod demo {
     pub fn app(cx: twine::prelude::Scope) -> impl twine::prelude::View {
         twine_demos::calibration::app(cx, &RAW)
     }
+    /// The calibration demo's theme (its recipes only).
+    #[cfg(feature = "demo-calibrate")]
+    pub use twine_demos::calibration::THEME;
     #[cfg(feature = "demo-controls")]
-    pub use twine_demos::controls::app;
+    pub use twine_demos::controls::{THEME, app};
     #[cfg(feature = "demo-selection")]
-    pub use twine_demos::selection::app;
+    pub use twine_demos::selection::{THEME, app};
     #[cfg(not(any(feature = "demo-controls", feature = "demo-calibrate", feature = "demo-selection")))]
-    pub use twine_demos::counter::app;
+    pub use twine_demos::counter::{THEME, app};
 
     /// Name of the demo (for the log).
     pub const NAME: &str = if cfg!(feature = "demo-calibrate") {
@@ -406,3 +411,9 @@ fn mem_info() -> MemInfo {
     }
     m
 }
+
+/// The OLED's theme: the monochrome theme in its dark mode only (one `static`, fixed at compile
+/// time; the other modes' tables are not linked).
+#[cfg(feature = "oled-ssd1306")]
+static OLED_THEME: twine::theme::Mono =
+    twine::theme::Mono::new().modes(&[(ThemeMode::Dark, &twine::theme::mono::DARK)]);

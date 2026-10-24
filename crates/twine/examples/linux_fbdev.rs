@@ -63,7 +63,7 @@ mod hosted {
             .platform(&platform)
             .waker(&WAKER)
             .buffers(BufferMode::alloc(BufferSpec::PartialDouble { rows: 40 }))
-            .theme(DefaultTheme::light());
+            .theme(&lvgl::THEME);
         let builder = match Evdev::open(&input) {
             Ok(pointer) => builder.input(pointer.with_notify(wake)),
             Err(e) => {

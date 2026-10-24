@@ -1,8 +1,7 @@
 //! The text input branches of the three themes (button matrix, textarea, keyboard, spinbox,
-//! a label inside a textarea) with LVGL's values. Stand-in widgets have the real classes as
+//! a textarea's label) with LVGL's values. Stand-in widgets have the real classes as
 //! their base (themes style a class like its base).
 
-use std::rc::Rc;
 use twine_theme::{ThemeMode, Tone};
 
 use twine_core::{Color, Opa};
@@ -10,7 +9,7 @@ use twine_engine::{Engine, NodeId, OBJ_FLAGS, ThemeHook, Widget, WidgetClass};
 use twine_style::dpx;
 use twine_style::{BorderSide, Part, PropId, State};
 use twine_testing::EngineHarness;
-use twine_theme::{DefaultTheme, MonoTheme, Palette, SimpleTheme};
+use twine_theme::{Palette, lvgl, mono, simple};
 
 macro_rules! fake {
     ($ty:ident, $class:ident, $name:literal, $base:path) => {
@@ -51,23 +50,29 @@ fake!(
     twine_widgets::spinbox::SPINBOX_CLASS
 );
 fake!(FakeLabel, LABEL, "fake_label", twine_widgets::label::LABEL_CLASS);
+fake!(
+    FakeTaLabel,
+    TA_LABEL,
+    "fake_textarea_label",
+    twine_widgets::textarea::TEXTAREA_LABEL_CLASS
+);
 
-fn scene(theme: Rc<dyn ThemeHook>) -> (EngineHarness, [NodeId; 6]) {
-    let mut h = EngineHarness::new(320, 240).theme(theme);
+fn scene(theme: &'static dyn ThemeHook, mode: ThemeMode) -> (EngineHarness, [NodeId; 6]) {
+    let mut h = EngineHarness::new(320, 240).theme(theme).mode(mode);
     let e: &mut Engine = h.engine_mut();
     let s = e.active_screen(e.default_display().unwrap()).unwrap();
     let btnm = e.create(s, Box::new(FakeBtnm)).unwrap();
     let ta = e.create(s, Box::new(FakeTa)).unwrap();
     let kb = e.create(s, Box::new(FakeKb)).unwrap();
     let sb = e.create(s, Box::new(FakeSpinbox)).unwrap();
-    let ta_label = e.create(ta, Box::new(FakeLabel)).unwrap();
+    let ta_label = e.create(ta, Box::new(FakeTaLabel)).unwrap();
     let sb_label = e.create(sb, Box::new(FakeLabel)).unwrap();
     (h, [btnm, ta, kb, sb, ta_label, sb_label])
 }
 
 #[test]
 fn default_theme_text_input_branches() {
-    let (mut h, [btnm, ta, kb, sb, ta_label, sb_label]) = scene(Rc::new(DefaultTheme::light()));
+    let (mut h, [btnm, ta, kb, sb, ta_label, sb_label]) = scene(&lvgl::THEME, ThemeMode::Light);
     let e = h.engine();
     let dpi = 130;
     // Button matrix: a card with `btn` items, primary when checked.
@@ -109,7 +114,8 @@ fn default_theme_text_input_branches() {
         Palette::Blue.main()
     );
     assert_eq!(e.style_opa(sb, Part::Cursor, PropId::BgOpacity), Opa::COVER);
-    // Only a textarea's label gets the primary selection (LVGL's exact type check).
+    // Only a textarea's label (`TEXTAREA_LABEL_CLASS`) gets the primary selection (LVGL's
+    // exact type check), not a spinbox's (a plain label).
     assert_eq!(
         e.style_color(ta_label, Part::Selected, PropId::BgColor),
         Palette::Blue.main()
@@ -122,7 +128,7 @@ fn default_theme_text_input_branches() {
 
 #[test]
 fn simple_and_mono_text_input_branches() {
-    let (h, [btnm, ta, kb, sb, ..]) = scene(Rc::new(SimpleTheme::new()));
+    let (h, [btnm, ta, kb, sb, ..]) = scene(&simple::THEME, ThemeMode::Light);
     let e = h.engine();
     assert_eq!(e.style_color(btnm, Part::Main, PropId::BgColor), Color::WHITE);
     assert_eq!(
@@ -136,12 +142,7 @@ fn simple_and_mono_text_input_branches() {
     assert_eq!(e.style_color(kb, Part::Items, PropId::BgColor), Color::WHITE);
     assert_eq!(e.style_i32(ta, Part::Cursor, PropId::BorderWidth), 0);
 
-    let (mut h, [btnm, ta, _kb, sb, ..]) = scene(Rc::new(
-        MonoTheme::builder()
-            .mode(ThemeMode::Light)
-            .font(&twine_assets::fonts::MONTSERRAT_14)
-            .build(),
-    ));
+    let (mut h, [btnm, ta, _kb, sb, ..]) = scene(&mono::THEME, ThemeMode::Light);
     let e = h.engine();
     assert_eq!(e.style_i32(btnm, Part::Items, PropId::BorderWidth), 1);
     assert_eq!(

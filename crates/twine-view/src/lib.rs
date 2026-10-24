@@ -29,12 +29,12 @@
 //! | [`View`], [`ViewSeq`], [`AnyView`] | descriptions consumed once by [`View::build`] |
 //! | [`BuildCx`], [`WidgetView`], [`widget_view`] | building nodes; the generic widget builder every widget view wraps |
 //! | [`WidgetView::bind_after_children`], [`bind_model`], [`on_value_changed`], [`event_value`] | the pieces of a value widget's view: a value applied after its other settings, two-way binding, `.on_change` (the built-in views use them; so can custom widget views outside this crate) |
-//! | [`IntoProp`], [`Prop`], [`Icon`], [`IntoText`], [`text!`], [`IntoModel`] | constant, signal, memo or closure property values (any type, converted with `From`); zero-allocation text; two-way bindings |
+//! | [`IntoProp`], [`Prop`], [`Icon`], [`IntoText`], [`text!`], [`IntoModel`], [`IntoVariant`] | constant, signal, memo or closure property values (any type, converted with `From`); zero-allocation text; two-way bindings; a widget's variants |
 //! | [`#[component]`](macro@component), [`component::Modifiers`] | components: a function becomes a view with a props builder, used like a built-in widget (`meter(rpm).range(0..=8000).padding(4)`) |
-//! | [`ViewExt`] | flag, per-part / per-state style ([`ViewExt::part`], [`ViewExt::on_state`]), style, event and identity modifiers |
+//! | [`ViewExt`] | flag, per-part / per-state style ([`ViewExt::part`], [`ViewExt::on_state`]), style, theme class ([`ViewExt::variant`], [`ViewExt::role`]), event and identity modifiers |
 //! | [`StyleExt`], [`StyleScope`] | one modifier per style property and shorthand (generated from the property table), on every view and in part/state scopes; colors, lengths, radii, opacities and fonts also take [design elements](twine_style::design) (`design::SURFACE`) |
 //! | [`Scope::provide`](twine_reactive::Scope::provide), [`Scope::expect_context`](twine_reactive::Scope::expect_context) / [`Scope::use_context`](twine_reactive::Scope::use_context), [`MissingContext`](twine_reactive::MissingContext) | context values: application stores (a `Copy` struct of signals and memos) provided by a scope and read by any component below it; allocation-free lookup, panicking or `Result` form (facade guide `twine::guide::app_state`) |
-//! | [`use_theme`], [`ThemeHandle`], [`IntoTheme`](twine_engine::IntoTheme) | switch the theme (a value or a shared `Rc`, the same parameter everywhere) or its mode (`set_mode`: light ↔ dark without rebuilding), read the mode and design element values (tracked) |
+//! | [`use_theme`], [`ThemeHandle`], [`AppConfig::theme`] / [`DisplayBuilder::theme`] + `.mode(..)` | the display's `static` theme (fixed when the display is created); switch its mode (`set_mode`: light ↔ dark without rebuilding), read the mode and design element values (tracked) |
 //! | [`use_motion`], [`MotionHandle`], [`UiBuilder::motion`] | the global motion preference ([`Motion`](twine_anim::Motion): full, reduced, none), honoured by tweens, animations, style transitions, screen loads and scroll animations |
 //! | [`column()`], [`row`], [`grid`], [`container`], [`card`], [`stack`], [`spacer`], [`scroll_view`], [`Layout`] | layout containers |
 //! | [`label`], [`button`], [`image`], [`image_button`], [`animimg`] | core widget views |
@@ -76,7 +76,6 @@
 //! modals) and navigation defer their engine work to the next update. Engine side effects —
 //! the cleanups of a scope disposed outside an update (stopping its animations, removing its
 //! timers, closing its modals, deleting its navigator's pages), the [`AnimController`] methods,
-//! [`ThemeHandle::set`],
 //! [`ThemeHandle::set_mode`] and [`MotionHandle::set`] — are
 //! queued on the `Ui` that owns the scope and applied at the start of its next update (a
 //! bounded, allocation-free queue: see [`UiCore`] § Engine commands). The queue is bounded:
@@ -213,7 +212,7 @@ pub use nav::ModalHandle;
 pub use navigator::expect_navigator;
 pub use navigator::{Leave, NavOutcome, Navigator, NavigatorView, navigator, use_navigator};
 pub use node_ref::NodeRef;
-pub use prop::{Icon, IntoProp, Prop, marker};
+pub use prop::{Icon, IntoProp, IntoVariant, Prop, marker};
 pub use style_ext::{StyleExt, StyleScope};
 #[cfg(feature = "display-integrity")]
 pub use text::INVALID_TEXT;

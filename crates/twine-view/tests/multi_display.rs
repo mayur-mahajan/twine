@@ -254,12 +254,12 @@ fn dashboard() -> Dashboard {
         .limits(twine_testing::HARNESS_LIMITS)
         .clock(clock.clone())
         .buffers(bufs())
-        .theme(DefaultTheme::light())
+        .theme(&lvgl::THEME)
         .input(main_touch.clone())
         .display(
             DisplayBuilder::new(panel(96, 112))
                 .buffers(bufs())
-                .theme(DefaultTheme::light())
+                .theme(&lvgl::THEME)
                 .input(aux_touch.clone()),
             move |_| {
                 column((
@@ -403,11 +403,11 @@ fn per_display_theme_mode_and_commands() {
         .runtime(Runtime::current_thread())
         .clock(clock.clone())
         .buffers(bufs())
-        .theme(DefaultTheme::light())
+        .theme(&lvgl::THEME)
         .display(
             DisplayBuilder::new(panel(64, 32).with_power_control())
                 .buffers(bufs())
-                .theme(DefaultTheme::light())
+                .theme(&lvgl::THEME)
                 .display_commands(&AUX_CMDS),
             |_| label("aux"),
         )
@@ -486,7 +486,7 @@ fn one_waker_for_every_display_of_a_ui() {
 #[test]
 fn ui_core_mount_on_refuses_unknown_and_taken_displays() {
     let mut engine = Engine::new(EngineConfig::default()).unwrap();
-    let main = engine.add_display(panel(64, 32), bufs()).unwrap();
+    let main = engine.add_display(panel(64, 32), bufs(), None).unwrap();
     let mut core = UiCore::mount(Runtime::current_thread(), &mut engine, main, |_| label("main")).unwrap();
     let taken = core.mount_on(&mut engine, main, |_| label("again"));
     assert!(matches!(
@@ -495,13 +495,13 @@ fn ui_core_mount_on_refuses_unknown_and_taken_displays() {
     ));
     // A display id this engine does not have (the second display of another engine).
     let mut other = Engine::new(EngineConfig::default()).unwrap();
-    other.add_display(panel(8, 8), bufs()).unwrap();
-    let unknown = other.add_display(panel(8, 8), bufs()).unwrap();
+    other.add_display(panel(8, 8), bufs(), None).unwrap();
+    let unknown = other.add_display(panel(8, 8), bufs(), None).unwrap();
     assert!(matches!(
         core.mount_on(&mut engine, unknown, |_| label("x")),
         Err(UiError::Engine(EngineError::DisplayNotFound(_)))
     ));
-    let aux = engine.add_display(panel(32, 16), bufs()).unwrap();
+    let aux = engine.add_display(panel(32, 16), bufs(), None).unwrap();
     let scope = core.mount_on(&mut engine, aux, |_| label("aux")).unwrap();
     assert_eq!(core.display_scope(aux), Some(scope));
     assert_eq!(core.display_scope(main), Some(core.root_scope()));

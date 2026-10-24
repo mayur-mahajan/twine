@@ -100,13 +100,22 @@ fn style_box(e: &mut Engine, b: NodeId, checkable: bool) {
             main.with_state(State::CHECKED),
             StyleProp::BgColor(Color::hex(0x43_A0_47).into()),
         ),
-        (main.with_state(State::FOCUSED), StyleProp::OutlineWidth(2)),
+        (
+            main.with_state(State::FOCUSED),
+            StyleProp::OutlineWidth(Length::Px(2).into()),
+        ),
         (
             main.with_state(State::FOCUSED),
             StyleProp::OutlineColor(Color::hex(0x21_21_21).into()),
         ),
-        (main.with_state(State::FOCUSED), StyleProp::OutlineOffset(2)),
-        (main.with_state(State::FOCUS_KEY), StyleProp::OutlineWidth(4)),
+        (
+            main.with_state(State::FOCUSED),
+            StyleProp::OutlineOffset(Length::Px(2).into()),
+        ),
+        (
+            main.with_state(State::FOCUS_KEY),
+            StyleProp::OutlineWidth(Length::Px(4).into()),
+        ),
         (
             main.with_state(State::FOCUS_KEY),
             StyleProp::OutlineColor(Color::hex(0x29_79_FF).into()),
@@ -184,7 +193,7 @@ fn scene(e: &mut Engine) {
     e.set_local_prop(
         grid,
         Selector::state(State::FOCUS_KEY),
-        StyleProp::OutlineWidth(2),
+        StyleProp::OutlineWidth(Length::Px(2).into()),
     );
     e.set_local_prop(
         grid,

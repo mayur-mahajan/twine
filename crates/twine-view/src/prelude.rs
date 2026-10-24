@@ -4,9 +4,9 @@
 pub use crate::{
     AnimController, AnyView, AppConfig, BuildCx, BuildError, Container, DisplayBuilder, DisplayMut, Dynamic,
     Flex, ForEach, Grid, Icon, IntoAnyView, IntoItems, IntoModel, IntoOptions, IntoProp, IntoText,
-    LayerBuffer, Layout, Leave, MemoryReport, ModalHandle, Model, MotionHandle, NavOutcome, Navigator,
-    NavigatorView, NodeRef, Prop, ScopeExt, ScreenAnim, ScreenLoad, StyleExt, StyleScope, TextFn, TextProp,
-    ThemeHandle, Ui, UiBuilder, UiError, View, ViewExt, ViewSeq, VirtualList, Wake, When, WhenElse,
+    IntoVariant, LayerBuffer, Layout, Leave, MemoryReport, ModalHandle, Model, MotionHandle, NavOutcome,
+    Navigator, NavigatorView, NodeRef, Prop, ScopeExt, ScreenAnim, ScreenLoad, StyleExt, StyleScope, TextFn,
+    TextProp, ThemeHandle, Ui, UiBuilder, UiError, View, ViewExt, ViewSeq, VirtualList, Wake, When, WhenElse,
     WidgetView, button, card, column, component, container, dynamic, flex, for_each, grid, image, label,
     navigator, row, scroll_view, spacer, stack, use_motion, use_navigator, use_theme, virtual_list, when,
     widget_view,
@@ -35,9 +35,12 @@ pub use twine_core::{
 pub use twine_engine::{
     BufferMode, BufferSpec, DEAD_NODE, DisplayCmd, DisplayControlFault, DisplayHealth, DisplayState, DrawCx,
     Engine, EngineConfig, Event, EventCode, EventCx, EventResult, FaultHook, FaultRecord, FlushPolicy,
-    GroupId, IntoTheme, MeasureCx, NodeId, Obj, ObjFlags, StepBudget, TimingReport, Widget, WidgetClass,
+    GroupId, MeasureCx, NodeId, Obj, ObjFlags, StepBudget, ThemeHook, TimingReport, Widget, WidgetClass,
     WidgetCx,
 };
+// NOTE(R7.S07): `twine_engine::Theme` (the zero-sized theme of a `DesignSystem`) joins these
+// when the `Theme` trait of `twine-theme` is removed.
+pub use twine_engine::{ComputedRecipe, DesignSystem, Recipe, RecipeRef, Variant, recipe};
 #[cfg(feature = "display-integrity")]
 pub use twine_engine::{FrameChunk, FrameObserver, FrameReport};
 pub use twine_hal::Key;
@@ -51,16 +54,23 @@ pub use twine_style::design;
 pub use twine_style::{
     Align, Anchor, Axis, BaseDir, CrossAlign, FlexDirection, FlexFlow, GridAlign, GridSpan, GridTrack,
     GridTracks, LayoutKind, Length, MainAlign, Part, PropId, Props, Radius, ScrollSnap, ScrollbarMode,
-    Selector, Side, Sides, State, Style, StyleBuf, StyleProp, StyleRef, Transition, grid_tracks, style,
+    Selector, Side, Sides, State, Style, StyleBuf, StyleProp, StyleRef, Transition, elements, grid_tracks,
+    style,
 };
 pub use twine_text::{Font, LongMode, Symbol, TextAlign, TextDecor};
-pub use twine_theme::{DefaultTheme, FontScale, MonoTheme, Palette, SimpleTheme, Theme, ThemeMode, Tone};
+pub use twine_theme::{FontScale, Palette, Theme, ThemeMode, Tone};
+#[cfg(feature = "theme-lvgl")]
+pub use twine_theme::{Lvgl, LvglSet, lvgl};
+#[cfg(feature = "theme-mono")]
+pub use twine_theme::{Mono, MonoSet, mono};
+#[cfg(feature = "theme-simple")]
+pub use twine_theme::{Simple, SimpleSet, simple};
 #[cfg(feature = "vector")]
 pub use twine_vector::{FxPoint, Path, VectorDsc, VectorScene};
 pub use twine_widgets::Orientation;
 pub use twine_widgets::arc::ArcMode;
 pub use twine_widgets::bar::BarMode;
-pub use twine_widgets::button::Button;
+pub use twine_widgets::button::{Button, ButtonVariant};
 pub use twine_widgets::buttonmatrix::{BtnCtrl, MapBtn};
 pub use twine_widgets::container::Card;
 pub use twine_widgets::image::ImageAlign;

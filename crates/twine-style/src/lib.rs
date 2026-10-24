@@ -132,7 +132,7 @@
 //! | [`Style`], [`StyleBuf`], [`StyleRef`], [`style!`], [`StyleContainer`] | containers and their composition (`..BASE` spread, [`Style::merge`], [`StyleBuf::extend_from`]) | `lv_style_t`, `LV_STYLE_CONST_INIT` |
 //! | [`Part`], [`State`] ([`State::custom`], [`State::PRECEDENCE`]), [`Selector`] | selectors, application states, state precedence | `lv_part_t`, `lv_state_t`, `lv_style_selector_t` |
 //! | [`resolve`], [`StyleSource`] | resolution | `lv_obj_get_style_prop` |
-//! | [`design`] ([`ThemeMode`], [`design::ElementTable`], [`design::ContrastPair`], `design::SURFACE`, …) | design elements: named values the theme supplies per mode, and each mode's contrast requirements | — |
+//! | [`design`] ([`ThemeMode`], [`design::ElementTable`], [`design::DesignSet`] and the typed sets, [`design::ContrastPair`], `design::SURFACE`, …), [`elements!`] | design elements: named values the theme supplies per mode (const tables in flash), application element sets, and each mode's contrast requirements | — |
 //! | [`GridTracks`], [`SharedTracks`], [`TracksRef`], [`resolve_grid_tracks`] | grid templates in styles (`'static`, or run-time ones owned by their container) | `lv_style_set_grid_*_dsc_array` |
 //! | [`Transition`], [`Props`], [`TransitionRef`], [`interpolate`] | transitions: what animates (a property set or the properties a state change alters) and how ([`AnimSpec`]) | `lv_style_transition_dsc_t`, `trans_anim_cb` |
 //!
@@ -226,7 +226,9 @@ pub mod __private {
     pub use twine_render::ShadowDsc;
     pub use twine_text::Font;
 
-    pub use crate::design::{ColorValue, FontValue, LengthValue, OpacityValue, RadiusValue};
+    pub use crate::design::{
+        ColorValue, FontValue, IconValue, LengthValue, MotionValue, OpacityValue, RadiusValue, ScaleValue,
+    };
     pub use crate::style::{merge_props, merged_len};
     pub use crate::tracks::TracksRef;
     pub use crate::transition::TransitionRef;

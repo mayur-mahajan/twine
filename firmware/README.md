@@ -164,12 +164,18 @@ their type, zeroed `.bss` (no flash), taken once with `BUFS.take()` and passed w
 `BufferMode::partial_double_from`. Change the rows there to trade RAM for fewer, larger
 transfers.
 
-Every main gives the builder `twine_demos::config()` — the demos' `AppConfig` (theme, engine
-configuration, motion, budgets), the same value their simulator examples
-(`SimConfig::app_config`) and tests (`TestUi::app_config`) run — and adds only its board hooks
+Every main gives the builder `twine_demos::config_with_theme(&demo::THEME)` — the demos'
+`AppConfig` (engine configuration, motion, budgets; the same value their simulator examples
+(`SimConfig::app_config`) and tests (`TestUi::app_config`) run) with the selected demo's theme:
+the LVGL theme trimmed to the recipes of the widget classes that demo creates
+(`twine_demos::counter::THEME`, …, `Lvgl::new().recipes(&[..])`), so the looks of widgets the
+image never shows are not linked; the demo's tests check the list
+(`twine_testing::assert_theme_covers`) — and adds only its board hooks
 (`config.engine.mem_info` — the allocator's `used()`/`free()` through `twine::engine::HeapPeak` —
-and `config.engine.hires_timer`). OLED builds take the same configuration with a monochrome
-theme, `twine_demos::config_with_theme(MonoTheme::..)`, so the default theme is not linked. The
+and `config.engine.hires_timer`). OLED builds take the same configuration with the monochrome
+theme in its dark mode only, `twine_demos::config_with_theme(&OLED_THEME)` (`static OLED_THEME:
+Mono = Mono::new().modes(..)`, feature `twine/theme-mono`), so neither the LVGL theme nor the
+other mono tables are linked. The
 runtime, the clock/platform and the draw buffers are compile-time requirements of the builder:
 a main that forgets one does not compile.
 

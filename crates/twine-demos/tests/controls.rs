@@ -8,8 +8,8 @@ use twine::prelude::*;
 use twine::widgets::arc::Arc;
 use twine::widgets::bar::Bar;
 use twine::widgets::slider::Slider;
-use twine_demos::controls::{app, app_static};
-use twine_testing::{TestUi, by_id};
+use twine_demos::controls::{self, app, app_static};
+use twine_testing::{TestUi, assert_theme_covers, by_id};
 
 fn id(t: &TestUi, s: &'static str) -> NodeId {
     t.find(by_id(s)).id()
@@ -27,7 +27,7 @@ fn checked(t: &TestUi, s: &'static str) -> bool {
 #[test]
 fn slider_drives_bar_arc_and_label() {
     let mut t = TestUi::new(320, 240)
-        .app_config(twine_demos::config())
+        .app_config(twine_demos::config_with_theme(&controls::THEME))
         .mount(app_static);
     t.run_until_idle();
     let c = t.find(by_id("slider")).coords();
@@ -49,7 +49,7 @@ fn slider_drives_bar_arc_and_label() {
 #[test]
 fn switch_checkbox_and_power_button_stay_in_sync() {
     let mut t = TestUi::new(320, 240)
-        .app_config(twine_demos::config())
+        .app_config(twine_demos::config_with_theme(&controls::THEME))
         .mount(app_static);
     t.run_until_idle();
     t.find(by_id("switch")).click();
@@ -65,7 +65,7 @@ fn switch_checkbox_and_power_button_stay_in_sync() {
 #[test]
 fn keypad_reaches_every_control() {
     let mut t = TestUi::new(320, 240)
-        .app_config(twine_demos::config())
+        .app_config(twine_demos::config_with_theme(&controls::THEME))
         .mount(app_static);
     t.run_until_idle();
     let g = t.engine().default_group().unwrap();
@@ -96,11 +96,13 @@ fn keypad_reaches_every_control() {
 
 #[test]
 fn animated_variant_runs_and_idle_variant_is_idle() {
-    let mut t = TestUi::new(320, 240).app_config(twine_demos::config()).mount(app);
+    let mut t = TestUi::new(320, 240)
+        .app_config(twine_demos::config_with_theme(&controls::THEME))
+        .mount(app);
     t.advance(Duration::ms(500));
     assert!(t.engine().anim_count() > 0, "spinner and animation run");
     let mut s = TestUi::new(240, 320)
-        .app_config(twine_demos::config())
+        .app_config(twine_demos::config_with_theme(&controls::THEME))
         .mount(app_static);
     s.run_until_idle();
     s.assert_idle();
@@ -109,12 +111,15 @@ fn animated_variant_runs_and_idle_variant_is_idle() {
 #[test]
 fn snapshots_initial() {
     let mut t = TestUi::new(320, 240)
-        .app_config(twine_demos::config())
+        .app_config(twine_demos::config_with_theme(&controls::THEME))
         .mount(app_static);
     t.run_until_idle();
     t.assert_snapshot("controls_initial_light");
+    // Every class the demo shows has a recipe in its (trimmed) theme.
+    assert_theme_covers(&t.engine());
     let mut t = TestUi::new(320, 240)
-        .theme(DefaultTheme::dark())
+        .theme(&controls::THEME)
+        .mode(ThemeMode::Dark)
         .mount(app_static);
     t.run_until_idle();
     t.assert_snapshot("controls_initial_dark");
@@ -125,7 +130,7 @@ fn snapshots_initial() {
 #[test]
 fn snapshots_theme_modes() {
     let mut t = TestUi::new(320, 240)
-        .app_config(twine_demos::config())
+        .app_config(twine_demos::config_with_theme(&controls::THEME))
         .mount(app_static);
     t.run_until_idle();
     let slider = id(&t, "slider");
@@ -153,14 +158,15 @@ fn snapshots_theme_modes() {
 #[test]
 fn mode_switch_draws_like_the_dark_theme() {
     let mut switched = TestUi::new(320, 240)
-        .app_config(twine_demos::config())
+        .app_config(twine_demos::config_with_theme(&controls::THEME))
         .mount(app_static);
     switched.run_until_idle();
     use_theme(switched.root_scope()).set_mode(ThemeMode::Dark);
     switched.run_until_idle();
     switched.harness_mut().render_full();
     let mut dark = TestUi::new(320, 240)
-        .theme(DefaultTheme::dark())
+        .theme(&controls::THEME)
+        .mode(ThemeMode::Dark)
         .mount(app_static);
     dark.run_until_idle();
     dark.harness_mut().render_full();

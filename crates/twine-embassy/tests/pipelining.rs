@@ -141,7 +141,7 @@ fn async_ui(double: bool, fb: &Fb) -> AsyncUi<MockAsync> {
     let mut ui = Ui::builder_async(MockAsync { fb: fb.clone() })
         .runtime(Runtime::current_thread())
         .buffers(bufs)
-        .theme(DefaultTheme::light())
+        .theme(&lvgl::THEME)
         .with_embassy_platform()
         .build(app);
     ui.engine_mut().set_render_hook(Some(|_| log(Ev::Rendered)));
@@ -234,7 +234,7 @@ fn blocking_and_async_render_identical_pixels() {
     })
     .runtime(Runtime::current_thread())
     .buffers(BufferMode::partial_double(leak(len), leak(len)))
-    .theme(DefaultTheme::light())
+    .theme(&lvgl::THEME)
     .clock(EmbassyPlatform)
     .build(app);
     let _ = blocking.update();
@@ -266,7 +266,7 @@ fn async_ui_accepts_static_and_heap_buffers() {
         let mut ui = Ui::builder_async(MockAsync { fb: got.clone() })
             .runtime(Runtime::current_thread())
             .buffers(mode)
-            .theme(DefaultTheme::light())
+            .theme(&lvgl::THEME)
             .with_embassy_platform()
             .build(app);
         let _ = block_on(ui.update_async());

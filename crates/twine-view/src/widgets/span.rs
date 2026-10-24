@@ -146,7 +146,7 @@ impl SpanView {
 
     /// Extra space between the span's letters.
     #[must_use]
-    pub fn letter_spacing<M>(self, px: impl IntoProp<i32, M>) -> Self {
+    pub fn letter_spacing<M>(self, px: impl IntoProp<twine_style::design::LengthValue, M>) -> Self {
         self.style_prop(px, StyleProp::LetterSpacing)
     }
 }

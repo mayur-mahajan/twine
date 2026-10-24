@@ -8,11 +8,16 @@
 //! | Macro | Role |
 //! |-------|------|
 //! | [`#[component]`](macro@component) | a component function becomes a view with a props builder: `gauge(rpm).max(8000).redline(6500).padding(4)` |
+//! | `include_font!` (feature `assets`) | a bitmap font generated from a TrueType/OpenType file while the crate compiles: `include_font!(pub static BODY = "assets/Inter.ttf", size = 16, bpp = 4, chars = '\u{20}'..='\u{7E}')` |
+//! | `include_image!` (feature `assets`) | an image converted from a PNG/JPEG/BMP/GIF/QOI file while the crate compiles: `include_image!(pub static LOGO = "assets/logo.png", format = Rgb565)` |
 //!
 //! Projects that avoid procedural macros write the same component as a plain function (see
 //! [`component`] § Without the macro); nothing in Twine requires this crate.
 
 #![forbid(unsafe_code)]
+
+#[cfg(feature = "assets")]
+mod assets;
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -24,6 +29,127 @@ use syn::{
     AngleBracketedGenericArguments, Attribute, Expr, FnArg, GenericArgument, GenericParam, Generics, Ident,
     ItemFn, Pat, PathArguments, ReturnType, Token, Type, TypeImplTrait, TypeParamBound, TypePath,
 };
+
+/// Generates a bitmap font from a TrueType or OpenType file **while the crate compiles** and
+/// expands to the `static` [`twine::text::Font`] (feature `assets`; through the facade,
+/// `twine::include_font!` with its feature `include-assets`).
+///
+/// The same generator as `twine_build::font::Font` in a build script, without one: handy for a
+/// few fonts; a build script is better for many (it runs once, not on every compilation of
+/// the crate) and for subsetting from translation catalogs.
+///
+/// ```
+/// twine_macros::include_font!(
+///     /// Digits and a degree sign for the temperature readout.
+///     pub static READOUT = "../../assets/fonts/Montserrat-Medium.ttf",
+///     size = 20,
+///     bpp = 4,
+///     chars = ['0'..='9', "°C-."],
+/// );
+///
+/// assert_eq!(READOUT.line_height, 26);
+/// assert!(READOUT.glyph('7', None).is_some());
+/// assert!(READOUT.glyph('A', None).is_none(), "only the characters asked for");
+///
+/// // Vertical-only hinting (unhinted advances) and stronger text gamma.
+/// twine_macros::include_font!(
+///     static SMALL = "../../assets/fonts/Montserrat-Medium.ttf",
+///     size = 12,
+///     chars = 'a'..='z',
+///     hinting = Light,
+///     gamma = [1.3, 2.0],
+/// );
+/// assert!(SMALL.glyph('q', None).is_some());
+/// ```
+///
+/// # Syntax
+///
+/// `[attributes] [visibility] static NAME = "path/to/font.ttf", option = value, …` — the path
+/// is relative to the package's directory (`CARGO_MANIFEST_DIR`); attributes (doc comments)
+/// go on the font static. Options (each at most once, except `chars`):
+///
+/// | Option | Value | Default |
+/// |--------|-------|---------|
+/// | `size` | pixel size, 1 to 255 | 14 |
+/// | `bpp` | 1, 2, 4 or 8 bits per pixel (checked at compile time) | 4 |
+/// | `chars` | `'a'..='z'`, `'°'`, `"äöü"` or an array of those (repeatable) | — (required unless `chars_file` / `chars_from_rust` / `symbol_fonts`) |
+/// | `chars_file` | a UTF-8 file of characters | — |
+/// | `chars_from_rust` | a `.rs` file or directory whose string and character literals are added | — |
+/// | `symbol_fonts` | `["fa-solid-900.ttf", …]`: merge the Font Awesome symbols | none |
+/// | `format` | `Plain`, `Compressed`, `CompressedNoPrefilter` | `Plain` |
+/// | `kerning` | `true` / `false` | `true` |
+/// | `subpx` | `None`, `Hor`, `Ver` | `None` |
+/// | `hinting` | `None`, `Light`, `Full` (grid-fitting, see `twine_build::font::Hinting`) | `Full` |
+/// | `gamma` | `Default`, `Linear` or `[dark_on_light, light_on_dark]` strengths such as `[1.3, 2.0]` (text gamma, see `twine_build::font::Gamma`) | `Default` (1.2 / 1.8) |
+///
+/// The generated code names the text crate through the `twine` facade when the crate depends
+/// on it (`twine::text`), else through `twine-text`. Every input file is tracked: changing it
+/// recompiles the crate.
+///
+/// # Errors
+/// A compile error for an unknown option or value, an unreadable font file, a character
+/// set with no glyph, or anything else `twine_build::font::Font::build` refuses.
+///
+/// [`twine::text::Font`]: https://docs.rs/twine-text/latest/twine_text/struct.Font.html
+#[cfg(feature = "assets")]
+#[proc_macro]
+pub fn include_font(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as assets::AssetInput);
+    assets::include_font(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Converts an image file (PNG, JPEG, BMP, GIF, QOI) **while the crate compiles** and expands
+/// to the `static` [`twine::image::Image`], pixel data included (feature `assets`; through the
+/// facade, `twine::include_image!` with its feature `include-assets`).
+///
+/// The same converter as `twine_build::image::Image` in a build script, without one.
+///
+/// ```
+/// twine_macros::include_image!(
+///     /// The logo for the splash screen.
+///     pub static LOGO = "../../assets/images/twine_logo.png",
+///     format = Rgb565,
+///     background = 0xFFFFFF,
+///     compress = Rle,
+/// );
+///
+/// assert_eq!((LOGO.header.w, LOGO.header.h), (64, 64));
+/// assert_eq!(LOGO.header.format, twine_core::ColorFormat::Rgb565);
+/// ```
+///
+/// # Syntax
+///
+/// `[attributes] [visibility] static NAME = "path/to/image.png", option = value, …` — the path
+/// is relative to the package's directory (`CARGO_MANIFEST_DIR`); attributes (doc comments)
+/// go on the image static. Options:
+///
+/// | Option | Value | Default |
+/// |--------|-------|---------|
+/// | `format` | a `ColorFormat` variant: `Rgb565`, `Argb8888`, `A4`, `I8`, … | `Argb8888` |
+/// | `compress` | `None`, `Rle`, `Lz4` (needs `img-lz4` at run time) | `None` |
+/// | `dither` | `true` / `false` | `false` |
+/// | `premultiply` | `true` / `false` (`Argb8888`, `Rgb565A8`) | `false` |
+/// | `background` | `0xRRGGBB`: composite over this color first | alpha kept |
+///
+/// The generated code names the image crate through the `twine` facade when the crate
+/// depends on it (`twine::image`), else through `twine-image`. The input file is tracked:
+/// changing it recompiles the crate.
+///
+/// # Errors
+/// A compile error for an unknown option or value, an unreadable or undecodable file, or
+/// anything else `twine_build::image::Image::build` refuses.
+///
+/// [`twine::image::Image`]: https://docs.rs/twine-image/latest/twine_image/struct.Image.html
+#[cfg(feature = "assets")]
+#[proc_macro]
+pub fn include_image(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as assets::AssetInput);
+    assets::include_image(&input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
 
 /// Turns a function describing a piece of UI into a **component**: a view with a props
 /// builder, used exactly like the built-in widgets.

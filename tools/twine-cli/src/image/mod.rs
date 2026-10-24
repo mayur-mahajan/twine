@@ -1,29 +1,21 @@
 //! `twine image`: converts PNG, JPEG, BMP, GIF, QOI (anything the `image` crate reads) into a
 //! `pub static <NAME>: Image` Rust file plus a `.bin` sidecar holding the pixel data, in any
-//! `ColorFormat`, optionally RLE- or LZ4-compressed.
+//! `ColorFormat`, optionally RLE- or LZ4-compressed — the command-line form of
+//! `twine_build::image::Image` (which build scripts use directly). `--bin` writes a raw
+//! `.tbin` file instead (loaded at run time as `ImageSource::File`), `--info` prints the
+//! summary of a converted image.
 //!
-//! The output only depends on the inputs (deterministic median cut, no timestamps), so
-//! regenerated files diff cleanly. The first lines of the `.rs` file record the command, the
-//! input's SHA-256 and a machine-readable summary (`twine image --info` prints it).
+//! The module also draws the repository's sample images ([`assets`], `cargo xtask
+//! gen-assets`).
 
 pub mod assets;
-mod convert;
-mod emit;
-mod quantize;
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use twine_core::{Color, ColorFormat};
-use twine_image::{ImageFlags, ImageHeader, rle_block_size, rle_compress};
+use twine_build::image::{Color, ColorFormat, Compression, FORMAT_NAMES, Image};
 
-pub use convert::{Converted, convert, flatten, luminance};
-pub use emit::{Emit, render, summary, variant};
-pub use quantize::{Rgba, map_to_palette, median_cut};
-
-use crate::font::sha256_hex;
-
-/// Result type of the converter (errors are human-readable messages).
+/// Result type of the command (errors are human-readable messages).
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// `--compress`.
@@ -38,39 +30,25 @@ pub enum CompressArg {
     Lz4,
 }
 
-impl CompressArg {
-    /// Command-line spelling.
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            CompressArg::None => "none",
-            CompressArg::Rle => "rle",
-            CompressArg::Lz4 => "lz4",
+impl From<CompressArg> for Compression {
+    fn from(c: CompressArg) -> Compression {
+        match c {
+            CompressArg::None => Compression::None,
+            CompressArg::Rle => Compression::Rle,
+            CompressArg::Lz4 => Compression::Lz4,
         }
     }
 }
 
-/// Command-line names of the formats, in `ColorFormat::ALL` order.
-pub const FORMAT_NAMES: [(&str, ColorFormat); 16] = [
-    ("l8", ColorFormat::L8),
-    ("a1", ColorFormat::A1),
-    ("a2", ColorFormat::A2),
-    ("a4", ColorFormat::A4),
-    ("a8", ColorFormat::A8),
-    ("i1", ColorFormat::I1),
-    ("i2", ColorFormat::I2),
-    ("i4", ColorFormat::I4),
-    ("i8", ColorFormat::I8),
-    ("rgb565", ColorFormat::Rgb565),
-    ("rgb565-swapped", ColorFormat::Rgb565Swapped),
-    ("rgb565a8", ColorFormat::Rgb565A8),
-    ("rgb888", ColorFormat::Rgb888),
-    ("argb8888", ColorFormat::Argb8888),
-    ("xrgb8888", ColorFormat::Xrgb8888),
-    ("argb8888-premultiplied", ColorFormat::Argb8888Premultiplied),
-];
-
-/// Parses a `--format` value.
+/// Parses a `--format` value (the names of `twine_build::image::FORMAT_NAMES`, any case).
+///
+/// ```
+/// use twine_cli::image::parse_format;
+/// use twine_core::ColorFormat;
+///
+/// assert_eq!(parse_format("RGB565"), Ok(ColorFormat::Rgb565));
+/// assert!(parse_format("rgb999").is_err());
+/// ```
 ///
 /// # Errors
 /// A message listing the valid names when `s` is not one.
@@ -83,12 +61,6 @@ pub fn parse_format(s: &str) -> std::result::Result<ColorFormat, String> {
             let all: Vec<_> = FORMAT_NAMES.iter().map(|(n, _)| *n).collect();
             format!("unknown format {s:?} (expected one of {})", all.join(", "))
         })
-}
-
-/// The command-line name of `f`.
-#[must_use]
-pub fn format_name(f: ColorFormat) -> &'static str {
-    FORMAT_NAMES.iter().find(|(_, g)| *g == f).map_or("?", |(n, _)| n)
 }
 
 /// Parses a `--background` value: `#RRGGBB` (hex digits in either case).
@@ -111,12 +83,6 @@ pub fn parse_background(s: &str) -> std::result::Result<Color, String> {
         .and_then(|h| u32::from_str_radix(h, 16).ok())
         .map(Color::hex)
         .ok_or_else(|| format!("invalid background {s:?} (expected #RRGGBB, e.g. #FFFFFF)"))
-}
-
-/// The `--background` spelling of `c` (`#RRGGBB`, upper case).
-#[must_use]
-pub fn background_name(c: Color) -> String {
-    format!("#{:02X}{:02X}{:02X}", c.r, c.g, c.b)
 }
 
 /// Arguments of `twine image`.
@@ -163,235 +129,30 @@ pub struct ImageArgs {
     pub info: Option<PathBuf>,
 }
 
-/// Converter options.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ImageOptions {
-    /// Input image.
-    pub input: PathBuf,
-    /// Output format.
-    pub format: ColorFormat,
-    /// Compression.
-    pub compress: CompressArg,
-    /// Dithering.
-    pub dither: bool,
-    /// Premultiplied alpha.
-    pub premultiply: bool,
-    /// Composite over this color first (`--background`): every pixel becomes opaque. `None`
-    /// keeps the source's alpha.
-    pub background: Option<Color>,
-    /// Static name.
-    pub name: String,
-    /// Output `.rs` path.
-    pub out: PathBuf,
-    /// Crate path used in the generated code.
-    pub crate_path: String,
-    /// Write a `.tbin` file instead of Rust source.
-    pub bin: bool,
-}
-
-impl ImageOptions {
-    /// Options from command-line arguments.
-    ///
-    /// # Errors
-    /// A message naming the missing required option (`--name` or `--out` to derive it from, `--in`,
-    /// `--format`).
-    pub fn from_args(a: &ImageArgs) -> Result<Self> {
-        fn need<T>(v: Option<T>, what: &str) -> std::result::Result<T, String> {
-            v.ok_or_else(|| format!("missing --{what}"))
-        }
-        let name = match (&a.name, a.bin) {
-            (Some(n), _) => n.clone(),
-            (None, true) => "IMAGE".to_string(),
-            (None, false) => need(None, "name")?,
-        };
-        Ok(Self {
-            input: need(a.input.clone(), "in")?,
-            format: need(a.format, "format")?,
-            compress: a.compress,
-            dither: a.dither,
-            premultiply: a.premultiply,
-            background: a.background,
-            name,
-            out: need(a.out.clone(), "out")?,
-            crate_path: a.crate_path.clone(),
-            bin: a.bin,
-        })
-    }
-
-    /// The equivalent command line (recorded in the output).
-    #[must_use]
-    pub fn command(&self) -> String {
-        let mut s = format!(
-            "twine image --in {} --format {}",
-            self.input.display(),
-            format_name(self.format)
-        );
-        if self.compress != CompressArg::None {
-            let _ = write!(s, " --compress {}", self.compress.name());
-        }
-        if self.dither {
-            s += " --dither";
-        }
-        if self.premultiply {
-            s += " --premultiply";
-        }
-        if let Some(bg) = self.background {
-            let _ = write!(s, " --background {}", background_name(bg));
-        }
-        if self.bin {
-            let _ = write!(s, " --bin --out {}", self.out.display());
-            return s;
-        }
-        let _ = write!(s, " --name {} --out {}", self.name, self.out.display());
-        if self.crate_path != "twine_image" {
-            let _ = write!(s, " --crate-path {}", self.crate_path);
-        }
-        s
-    }
-
-    /// File name of the sidecar (`<out stem>.bin`).
-    #[must_use]
-    pub fn bin_name(&self) -> String {
-        let stem = self
-            .out
-            .file_stem()
-            .map_or_else(|| "image".into(), |s| s.to_string_lossy().into_owned());
-        format!("{stem}.bin")
-    }
-}
-
-/// A conversion result.
-#[derive(Debug, Clone)]
-pub struct Generated {
-    /// Header of the pixel data (`COMPRESSED` set when compressed).
-    pub header: ImageHeader,
-    /// Uncompressed pixel data.
-    pub data: Vec<u8>,
-    /// Bytes of the `.bin` sidecar (compressed or not).
-    pub bin: Vec<u8>,
-    /// File name of the sidecar.
-    pub bin_name: String,
-    /// The `.rs` source.
-    pub source: String,
-}
-
-/// Compresses `data` of `format`.
-#[must_use]
-pub fn compress(data: &[u8], format: ColorFormat, method: CompressArg) -> Vec<u8> {
-    match method {
-        CompressArg::None => data.to_vec(),
-        CompressArg::Rle => rle_compress(data, rle_block_size(format)),
-        CompressArg::Lz4 => lz4_flex::block::compress(data),
-    }
-}
-
-/// Converts in-memory RGBA pixels (the part of [`generate`] after decoding the input).
-///
-/// With [`ImageOptions::background`], the pixels are first composited over that color
-/// ([`flatten`]).
+/// The image builder of parsed arguments (not for `--info`); a relative input path is read
+/// from the working directory.
 ///
 /// # Errors
-/// A message when the image is wider or taller than 65 535 pixels, when a background is given
-/// for an alpha-only format (A1…A8: flattening would leave a fully opaque mask), or when it
-/// cannot be converted to the requested format.
-pub fn generate_rgba(
-    rgba: &[u8],
-    w: u32,
-    h: u32,
-    input_sha256: &str,
-    opts: &ImageOptions,
-) -> Result<Generated> {
-    let (w16, h16) = (
-        u16::try_from(w).map_err(|_| "image too wide (max 65535)")?,
-        u16::try_from(h).map_err(|_| "image too tall (max 65535)")?,
-    );
-    let flat;
-    let rgba = match opts.background {
-        None => rgba,
-        Some(_)
-            if matches!(
-                opts.format,
-                ColorFormat::A1 | ColorFormat::A2 | ColorFormat::A4 | ColorFormat::A8
-            ) =>
-        {
-            return Err(format!(
-                "--background needs a format with color (not {})",
-                format_name(opts.format)
-            )
-            .into());
-        }
-        Some(bg) => {
-            flat = flatten(rgba, bg);
-            &flat[..]
-        }
+/// A message naming the missing required option (`--in`, `--format`, `--name` without
+/// `--bin`).
+pub fn image_from_args(a: &ImageArgs) -> Result<Image> {
+    let input = a.input.clone().ok_or("missing --in")?;
+    let name = match (&a.name, a.bin) {
+        (Some(n), _) => n.clone(),
+        (None, true) => "IMAGE".to_string(),
+        (None, false) => return Err("missing --name".into()),
     };
-    let Converted { mut header, data } = convert(rgba, w16, h16, opts.format, opts.dither, opts.premultiply)?;
-    let bin = compress(&data, opts.format, opts.compress);
-    if opts.compress != CompressArg::None {
-        header.flags |= ImageFlags::COMPRESSED;
+    let mut img = Image::from_file(input)
+        .format(a.format.ok_or("missing --format")?)
+        .compress(a.compress.into())
+        .dither(a.dither)
+        .premultiply(a.premultiply)
+        .name(&name)
+        .crate_path(&a.crate_path);
+    if let Some(bg) = a.background {
+        img = img.background(bg);
     }
-    let bin_name = opts.bin_name();
-    let command = opts.command();
-    let source = render(&Emit {
-        name: &opts.name,
-        crate_path: &opts.crate_path,
-        command: &command,
-        input_sha256,
-        header,
-        compress: opts.compress,
-        bin_name: &bin_name,
-        stored_len: bin.len(),
-        data_len: data.len(),
-    });
-    Ok(Generated {
-        header,
-        data,
-        bin,
-        bin_name,
-        source,
-    })
-}
-
-/// Reads and converts `opts.input` (relative paths are resolved against `root`).
-///
-/// # Errors
-/// A message when the input cannot be read or decoded, and the errors of [`generate_rgba`].
-pub fn generate(opts: &ImageOptions, root: &Path) -> Result<Generated> {
-    let path = root.join(&opts.input);
-    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let img = image::load_from_memory(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-    let rgba = img.to_rgba8();
-    generate_rgba(
-        rgba.as_raw(),
-        rgba.width(),
-        rgba.height(),
-        &sha256_hex(&bytes),
-        opts,
-    )
-}
-
-/// Writes the `.rs` file and its sidecar.
-///
-/// # Errors
-/// An I/O error creating the output directory or writing either file.
-pub fn write(g: &Generated, out: &Path) -> Result<()> {
-    if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(out, &g.source)?;
-    std::fs::write(out.with_file_name(&g.bin_name), &g.bin)?;
-    Ok(())
-}
-
-/// The `.tbin` file of a conversion (`twine image --bin`).
-#[must_use]
-pub fn tbin(g: &Generated, method: CompressArg) -> Vec<u8> {
-    let compression = match method {
-        CompressArg::None => None,
-        CompressArg::Rle => Some(twine_image::Compression::Rle),
-        CompressArg::Lz4 => Some(twine_image::Compression::Lz4),
-    };
-    twine_image::decoders::tbin::encode_tbin(g.header, compression, &g.bin)
+    Ok(img)
 }
 
 /// `twine image --info`: the summary line of a converted image and its file sizes.
@@ -425,23 +186,24 @@ pub fn info(path: &Path) -> Result<String> {
 /// Runs `twine image`.
 ///
 /// # Errors
-/// The errors of [`ImageOptions::from_args`], [`generate`], [`write`](fn@write) and [`info`].
+/// The errors of [`image_from_args`], `Image::build` and [`info`], or an I/O error writing
+/// the output.
 pub fn run(args: &ImageArgs) -> Result<()> {
     if let Some(p) = &args.info {
         print!("{}", info(p)?);
         return Ok(());
     }
-    let opts = ImageOptions::from_args(args)?;
-    let g = generate(&opts, Path::new("."))?;
-    if opts.bin {
-        let file = tbin(&g, opts.compress);
-        if let Some(dir) = opts.out.parent().filter(|d| !d.as_os_str().is_empty()) {
+    let out = args.out.clone().ok_or("missing --out")?;
+    let g = image_from_args(args)?.build()?;
+    if args.bin {
+        let file = g.to_tbin();
+        if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(&opts.out, &file)?;
+        std::fs::write(&out, &file)?;
         println!(
             "image: wrote {} ({}×{} {}, {} bytes)",
-            opts.out.display(),
+            out.display(),
             g.header.w,
             g.header.h,
             g.header.format.name(),
@@ -449,15 +211,15 @@ pub fn run(args: &ImageArgs) -> Result<()> {
         );
         return Ok(());
     }
-    write(&g, &opts.out)?;
+    g.write(&out)?;
     println!(
         "image: wrote {} and {} ({}×{} {}, {} bytes)",
-        opts.out.display(),
-        g.bin_name,
+        out.display(),
+        twine_build::image::GeneratedImage::sidecar_name(&out),
         g.header.w,
         g.header.h,
         g.header.format.name(),
-        g.bin.len()
+        g.stored.len()
     );
     Ok(())
 }

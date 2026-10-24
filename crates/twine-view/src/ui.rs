@@ -8,8 +8,8 @@ use twine_anim::Motion;
 use twine_core::fault::{FaultCounts, FaultKind, Faults};
 use twine_core::{Duration, Fraction, Instant, Rotation};
 use twine_engine::{
-    BufferMode, DisplayCmd, DisplayId, Engine, EngineConfig, EngineError, FaultHook, FaultRecord, InputId,
-    IntoTheme, StepBudget, TimingReport, Wake,
+    BufferMode, DisplayCmd, DisplayId, DisplayTheme, Engine, EngineConfig, EngineError, FaultHook,
+    FaultRecord, InputId, StepBudget, ThemeHook, ThemeMode, TimingReport, Wake,
 };
 use twine_hal::{Clock, DisplayDriver, FramebufferDisplay, InputDevice, Platform};
 use twine_reactive::{Channel, Runtime, Scope, Signal, UiWaker, WakerLease};
@@ -44,7 +44,7 @@ use twine_core::fault::CapacityFault;
 /// #     fn poll_flush(&mut self) -> Option<twine_hal::DrawBufferMem> { self.0.take() }
 /// # }
 /// let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
-/// let d = engine.add_display(Nop(None), BufferMode::partial_single(buf)).unwrap();
+/// let d = engine.add_display(Nop(None), BufferMode::partial_single(buf), None).unwrap();
 /// let rt = Runtime::take().unwrap();
 /// let mut core = UiCore::mount(rt, &mut engine, d, |_cx| label("hi")).unwrap();
 /// let _wake = core.update(&mut engine, twine_core::Instant::from_millis(0));
@@ -67,7 +67,7 @@ use twine_core::fault::CapacityFault;
 /// **Engine commands.** Engine side effects issued while the engine is not lent — the
 /// cleanups of a scope disposed outside [`update`](Self::update) (animations stopped, timers
 /// removed, modals closed), [`AnimController`](crate::AnimController) methods,
-/// [`ThemeHandle::set`](crate::ThemeHandle::set), [`ThemeHandle::set_mode`](crate::ThemeHandle::set_mode)
+/// [`ThemeHandle::set_mode`](crate::ThemeHandle::set_mode)
 /// and [`MotionHandle::set`](crate::MotionHandle::set) called between updates — are queued on the
 /// `UiCore` that owns the scope and applied at the start of the next `update`. The queue is a
 /// fixed ring of [`Limits::engine_queue`] commands allocated at mount
@@ -306,7 +306,7 @@ impl UiCore {
     /// static WAKER: UiWaker = UiWaker::new(); // an input interrupt may call `WAKER.wake()`
     /// # let mut engine = Engine::new(EngineConfig::default()).unwrap();
     /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
-    /// # let d = engine.add_display(Nop(None), BufferMode::partial_single(buf)).unwrap();
+    /// # let d = engine.add_display(Nop(None), BufferMode::partial_single(buf), None).unwrap();
     /// let rt = Runtime::take().unwrap();
     /// let core = UiCore::mount_with_waker(rt, &mut engine, d, &WAKER, |_cx| label("hi")).unwrap();
     /// assert!(core::ptr::eq(core.waker(), &WAKER));
@@ -335,8 +335,8 @@ impl UiCore {
     /// [`mount`](Self::mount) with the application's [`AppConfig`], for hosts that create the
     /// engine themselves (the simulator, test harnesses, custom loops) and want exactly what
     /// [`UiBuilder::app_config`] gives a [`Ui`]: [`AppConfig::apply_limits`] (engine, runtime,
-    /// waker pool), [`AppConfig::configure_engine`] on `display` (fault hook, motion, theme,
-    /// rotation), then the mount with the limits' engine-queue capacity and messages per
+    /// waker pool), [`AppConfig::configure_engine`] on `display` (fault hook, motion,
+    /// rotation; the display was created with [`AppConfig::display_theme`]), then the mount with the limits' engine-queue capacity and messages per
     /// channel. [`AppConfig::engine`] is what the host creates the engine with.
     ///
     /// ```
@@ -345,10 +345,10 @@ impl UiCore {
     /// use twine_testing::MemoryDisplay;
     /// use twine_view::{UiCore, prelude::*};
     ///
-    /// let cfg = AppConfig::new().theme(DefaultTheme::light()).limits(Limits::DEFAULT.messages_per_channel(2));
+    /// let cfg = AppConfig::new().theme(&lvgl::THEME).limits(Limits::DEFAULT.messages_per_channel(2));
     /// let mut engine = Engine::new(cfg.engine).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::default()), cfg.display_theme()).unwrap();
     /// let core = UiCore::mount_configured(Runtime::take().unwrap(), &mut engine, d, &cfg, |_| label("hi")).unwrap();
     /// assert_eq!(core.messages_per_channel(), 2);
     /// assert!(engine.theme(d).is_some());
@@ -387,7 +387,7 @@ impl UiCore {
     /// let cfg = AppConfig::new().limits(Limits::DEFAULT.messages_per_channel(2));
     /// let mut engine = Engine::new(cfg.engine).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::default()), None).unwrap();
     /// let rt = Runtime::take().unwrap();
     /// let core =
     ///     UiCore::mount_configured_with_waker(rt, &mut engine, d, &cfg, &WAKER, |_| label("hi")).unwrap();
@@ -504,8 +504,8 @@ impl UiCore {
     ///
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = |w, h| MemoryDisplay::new(DisplayInfo::new(w, h, ColorFormat::Rgb565));
-    /// let main = engine.add_display(panel(64, 32), BufferMode::alloc(BufferSpec::default())).unwrap();
-    /// let aux = engine.add_display(panel(32, 16), BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let main = engine.add_display(panel(64, 32), BufferMode::alloc(BufferSpec::default()), None).unwrap();
+    /// let aux = engine.add_display(panel(32, 16), BufferMode::alloc(BufferSpec::default()), None).unwrap();
     /// let mut core = UiCore::mount(Runtime::take().unwrap(), &mut engine, main, |_| label("main")).unwrap();
     /// let scope = core.mount_on(&mut engine, aux, |_| label("aux")).unwrap();
     /// assert_eq!(core.displays().collect::<Vec<_>>(), [main, aux]);
@@ -565,7 +565,7 @@ impl UiCore {
     ///
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// let main = engine.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let main = engine.add_display(panel, BufferMode::alloc(BufferSpec::default()), None).unwrap();
     /// let core = UiCore::mount(Runtime::take().unwrap(), &mut engine, main, |_| label("main")).unwrap();
     /// assert_eq!(core.displays().collect::<Vec<_>>(), [main]);
     /// # core.dispose(&mut engine);
@@ -588,7 +588,7 @@ impl UiCore {
     ///
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// let main = engine.add_display(panel, BufferMode::alloc(BufferSpec::default())).unwrap();
+    /// let main = engine.add_display(panel, BufferMode::alloc(BufferSpec::default()), None).unwrap();
     /// let core = UiCore::mount(Runtime::take().unwrap(), &mut engine, main, |_| label("main")).unwrap();
     /// assert_eq!(core.display_scope(main), Some(core.root_scope()));
     /// # core.dispose(&mut engine);
@@ -678,7 +678,7 @@ impl UiCore {
     /// # use twine_view::{UiCore, prelude::*};
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
     /// # let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 })).unwrap();
+    /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }), None).unwrap();
     /// let mut core = UiCore::mount(Runtime::take().unwrap(), &mut engine, d, |_cx| label("hi")).unwrap();
     /// let now = Instant::from_millis(0);
     /// assert_eq!(core.update_budgeted(&mut engine, now, StepBudget::chunks(1)), Wake::Now);
@@ -755,7 +755,7 @@ impl UiCore {
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
     /// # let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
     /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
-    /// let d = engine.add_display(panel, BufferMode::partial_single(buf)).unwrap();
+    /// let d = engine.add_display(panel, BufferMode::partial_single(buf), None).unwrap();
     /// let mut core = UiCore::mount(Runtime::take().unwrap(), &mut engine, d, |_cx| label("hi")).unwrap();
     /// core.set_motion(&mut engine, Motion::Reduced);
     /// assert_eq!(engine.motion(), Motion::Reduced);
@@ -798,7 +798,7 @@ impl UiCore {
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
     /// # let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
     /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
-    /// let d = engine.add_display(panel, BufferMode::partial_single(buf)).unwrap();
+    /// let d = engine.add_display(panel, BufferMode::partial_single(buf), None).unwrap();
     /// let mut core = UiCore::mount(Runtime::take().unwrap(), &mut engine, d, |_cx| label("hi")).unwrap();
     /// core.set_engine_queue_capacity(64);
     /// # core.dispose(&mut engine);
@@ -823,7 +823,7 @@ impl UiCore {
     /// # use twine_view::{UiCore, prelude::*};
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
     /// # let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 })).unwrap();
+    /// let d = engine.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }), None).unwrap();
     /// let mut core = UiCore::mount(Runtime::take().unwrap(), &mut engine, d, |_cx| label("hi")).unwrap();
     /// core.set_messages_per_channel(4);
     /// assert_eq!(core.messages_per_channel(), 4);
@@ -865,7 +865,7 @@ impl UiCore {
     /// use twine_view::{UiCore, prelude::*};
     ///
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
-    /// let display = engine.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::Rgb565), 32 * 2 * 4).unwrap();
+    /// let display = engine.add_chunked_display(DisplayInfo::new(32, 16, ColorFormat::Rgb565), 32 * 2 * 4, None).unwrap();
     /// let core = UiCore::mount(Runtime::take().unwrap(), &mut engine, display, |_| label("hi")).unwrap();
     /// assert_eq!(core.partition(), Partition::MAIN);
     /// assert_eq!(engine.partition(), core.partition());
@@ -913,7 +913,7 @@ impl UiCore {
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
     /// # let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
     /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
-    /// let d = engine.add_display(panel, BufferMode::partial_single(buf)).unwrap();
+    /// let d = engine.add_display(panel, BufferMode::partial_single(buf), None).unwrap();
     /// let core = UiCore::mount(Runtime::take().unwrap(), &mut engine, d, |_cx| label("hi")).unwrap();
     /// engine.raise_fault(FaultRecord::new(FaultKind::Capacity));
     /// assert!(core.take_faults(&mut engine).contains(FaultKind::Capacity));
@@ -938,7 +938,7 @@ impl UiCore {
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
     /// # let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
     /// # let buf: &'static mut [u8] = Box::leak(vec![0u8; 64 * 2 * 8].into_boxed_slice());
-    /// let d = engine.add_display(panel, BufferMode::partial_single(buf)).unwrap();
+    /// let d = engine.add_display(panel, BufferMode::partial_single(buf), None).unwrap();
     /// let core = UiCore::mount(Runtime::take().unwrap(), &mut engine, d, |_cx| label("hi")).unwrap();
     /// let root = core.root_scope();
     /// core.dispose(&mut engine);
@@ -989,11 +989,17 @@ impl Drop for UiCore {
 /// ([`Ui::builder`], [`DisplayBuilder::new`]) and [`Framebuffer`] ([`Ui::builder_fb`],
 /// [`DisplayBuilder::framebuffer`]); sealed.
 pub trait DisplaySetup: setup_seal::Sealed + 'static {
-    /// Adds the display with `buffers` and returns its id.
+    /// Adds the display with `buffers` and `theme` (attached when it is created) and returns
+    /// its id.
     ///
     /// # Errors
     /// The engine's errors for the display and buffers (see [`Engine::add_display`]).
-    fn add(self, engine: &mut Engine, buffers: BufferMode) -> Result<DisplayId, EngineError>;
+    fn add(
+        self,
+        engine: &mut Engine,
+        buffers: BufferMode,
+        theme: Option<DisplayTheme>,
+    ) -> Result<DisplayId, EngineError>;
 }
 
 /// A [`DisplayDriver`] flushed from partial draw buffers ([`Ui::builder`]).
@@ -1016,16 +1022,26 @@ impl<D> setup_seal::Sealed for Framebuffer<D> {}
 impl<D: DisplayDriver + 'static> DisplaySetup for Partial<D> {
     /// Partial displays bring their buffers explicitly (the builder's typestate requires
     /// them): no heap memory is allocated implicitly.
-    fn add(self, engine: &mut Engine, buffers: BufferMode) -> Result<DisplayId, EngineError> {
-        engine.add_display(self.0, buffers)
+    fn add(
+        self,
+        engine: &mut Engine,
+        buffers: BufferMode,
+        theme: Option<DisplayTheme>,
+    ) -> Result<DisplayId, EngineError> {
+        engine.add_display(self.0, buffers, theme)
     }
 }
 
 impl<D: FramebufferDisplay + 'static> DisplaySetup for Framebuffer<D> {
     /// [`BufferMode::Full`] unless the builder set another mode: the framebuffers belong to
     /// the driver, nothing is allocated.
-    fn add(self, engine: &mut Engine, buffers: BufferMode) -> Result<DisplayId, EngineError> {
-        engine.add_framebuffer_display(self.0, buffers)
+    fn add(
+        self,
+        engine: &mut Engine,
+        buffers: BufferMode,
+        theme: Option<DisplayTheme>,
+    ) -> Result<DisplayId, EngineError> {
+        engine.add_framebuffer_display(self.0, buffers, theme)
     }
 }
 
@@ -1079,11 +1095,11 @@ impl Settings {
     pub(crate) fn build<V: View>(
         mut self,
         rt: Runtime,
-        add_display: impl FnOnce(&mut Engine) -> Result<AddedDisplay, UiError>,
+        add_display: impl FnOnce(&mut Engine, Option<DisplayTheme>) -> Result<AddedDisplay, UiError>,
         app: impl FnOnce(Scope) -> V,
     ) -> Result<(Engine, UiCore), UiError> {
         let mut engine = self.new_engine(rt)?;
-        let (display, commands) = add_display(&mut engine)?;
+        let (display, commands) = add_display(&mut engine, self.app.display_theme())?;
         self.app.configure_display(&mut engine, display)?;
         if let Some(set_accel) = self.accel {
             set_accel(&mut engine);
@@ -1154,7 +1170,7 @@ impl Settings {
 ///     .runtime(Runtime::take().unwrap()) // required
 ///     .clock(MockClock::new()) // required (or `.platform(&p)`)
 ///     .buffers(BufferMode::alloc(BufferSpec::default())) // required for a partial display
-///     .app_config(AppConfig::new().theme(DefaultTheme::light()))
+///     .app_config(AppConfig::new().theme(&lvgl::THEME))
 ///     .build(|_| label("hi"));
 /// # let _ = ui;
 /// ```
@@ -1205,7 +1221,7 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
     /// use twine_view::prelude::*;
     ///
     /// fn config() -> AppConfig {
-    ///     AppConfig::new().theme(DefaultTheme::light()).limits(Limits::DEFAULT.messages_per_channel(4))
+    ///     AppConfig::new().theme(&lvgl::THEME).limits(Limits::DEFAULT.messages_per_channel(4))
     /// }
     ///
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
@@ -1578,8 +1594,8 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
         b
     }
 
-    /// The theme of the display: a theme value or a shared one ([`IntoTheme`]); sets
-    /// [`AppConfig::theme`]. A later call replaces it.
+    /// The theme of the display: a `static` theme, attached when the display is created;
+    /// sets [`AppConfig::theme`]. A later call replaces it.
     ///
     /// ```
     /// use twine_core::ColorFormat;
@@ -1587,17 +1603,27 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
     /// use twine_testing::{MemoryDisplay, MockClock};
     /// use twine_view::prelude::*;
     ///
+    /// static THEME: Lvgl = Lvgl::new();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
     /// let ui = Ui::builder(panel)
     ///     .runtime(Runtime::take().unwrap())
     ///     .clock(MockClock::new())
     ///     .buffers(BufferMode::alloc(BufferSpec::default()))
-    ///     .theme(DefaultTheme::dark())
+    ///     .theme(&THEME)
+    ///     .mode(ThemeMode::Dark)
     ///     .build(|_| label("hi"));
     /// assert!(ui.engine().theme(ui.display()).is_some());
+    /// assert_eq!(ui.engine().theme_mode(ui.display()), ThemeMode::Dark);
     /// ```
-    pub fn theme(mut self, t: impl IntoTheme) -> Self {
-        self.settings.app.theme = Some(t.into_theme());
+    pub fn theme(mut self, theme: &'static dyn ThemeHook) -> Self {
+        self.settings.app.theme = Some(theme);
+        self
+    }
+
+    /// The mode the display starts in; sets [`AppConfig::theme_mode`]. (Example: see
+    /// [`theme`](Self::theme).)
+    pub fn mode(mut self, mode: ThemeMode) -> Self {
+        self.settings.app.theme_mode = Some(mode);
         self
     }
 
@@ -1702,7 +1728,7 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
     ///
     /// - [`engine_queue`](Limits::engine_queue): engine commands the `Ui` can queue while the
     ///   engine is not lent — the cleanups of scopes disposed and the
-    ///   [`AnimController`](crate::AnimController) methods, [`ThemeHandle::set`](crate::ThemeHandle::set),
+    ///   [`AnimController`](crate::AnimController) methods,
     ///   [`ThemeHandle::set_mode`](crate::ThemeHandle::set_mode) and
     ///   [`MotionHandle::set`](crate::MotionHandle::set) calls made outside [`Ui::update`],
     ///   applied at the start of the next update. The ring is allocated once when the `Ui` is
@@ -1832,7 +1858,7 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
         let display = self.display;
         let (engine, core) = self
             .settings
-            .build(self.runtime.into_part(), |e| display.add(e), app)?;
+            .build(self.runtime.into_part(), |e, t| display.add(e, t), app)?;
         Ok(Ui { engine, core, clock })
     }
 
@@ -1887,7 +1913,7 @@ impl<S, R, C, B> UiBuilder<S, R, C, B> {
 /// # use twine_view::prelude::*;
 /// # fn app(_cx: Scope) -> impl View { label("hi") }
 /// fn run(display: impl twine_hal::DisplayDriver + 'static, clock: impl twine_hal::Clock + 'static) -> ! {
-///     let mut ui = Ui::builder(display).runtime(Runtime::take().unwrap()).buffers(BufferMode::alloc(BufferSpec::default())).clock(clock).theme(DefaultTheme::light()).build(app);
+///     let mut ui = Ui::builder(display).runtime(Runtime::take().unwrap()).buffers(BufferMode::alloc(BufferSpec::default())).clock(clock).theme(&lvgl::THEME).build(app);
 ///     loop {
 ///         match ui.update() {
 ///             Wake::Idle | Wake::IdleFor(_) => { /* sleep until an interrupt */ }
@@ -2352,24 +2378,6 @@ impl Ui {
         self.core.set_motion(&mut self.engine, motion);
     }
 
-    /// Switches the theme of the first display (every node is re-styled; the display is
-    /// redrawn once): a theme value or a shared one ([`IntoTheme`]). Another display:
-    /// [`display_mut`](Self::display_mut). Never panics.
-    ///
-    /// ```
-    /// # use twine_core::ColorFormat;
-    /// # use twine_hal::DisplayInfo;
-    /// # use twine_testing::{MemoryDisplay, MockClock};
-    /// # use twine_view::prelude::*;
-    /// # let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// let mut ui = Ui::builder(panel).runtime(Runtime::take().unwrap()).clock(MockClock::new()).buffers(BufferMode::alloc(BufferSpec::default())).build(|_| label("hi"));
-    /// ui.set_theme(DefaultTheme::dark()); // e.g. from a settings screen
-    /// ui.update();
-    /// ```
-    pub fn set_theme(&mut self, t: impl IntoTheme) {
-        self.primary().set_theme(t);
-    }
-
     /// Adds a further display to the `Ui` and builds `app` on it (the run-time counterpart of
     /// [`UiBuilder::display`]); returns its id. `display` brings its own draw buffers, inputs,
     /// theme, rotation reserve and command channel. The application runs in a child scope of
@@ -2446,7 +2454,7 @@ impl Ui {
     /// # use twine_testing::{MemoryDisplay, MockClock};
     /// # use twine_view::prelude::*;
     /// # let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// let mut ui = Ui::builder(panel).runtime(Runtime::take().unwrap()).clock(MockClock::new()).buffers(BufferMode::alloc(BufferSpec::default())).theme(DefaultTheme::light()).build(|_| label("hi"));
+    /// let mut ui = Ui::builder(panel).runtime(Runtime::take().unwrap()).clock(MockClock::new()).buffers(BufferMode::alloc(BufferSpec::default())).theme(&lvgl::THEME).build(|_| label("hi"));
     /// let d = ui.display();
     /// ui.display_mut(d).unwrap().set_theme_mode(ThemeMode::Dark);
     /// assert_eq!(ui.display_mut(d).unwrap().theme_mode(), ThemeMode::Dark);

@@ -400,7 +400,7 @@ impl Engine {
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
     /// // 8-row buffers: the first frame (the whole 32-row screen) is 4 chunks.
-    /// engine.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 })).unwrap();
+    /// engine.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }), None).unwrap();
     /// let now = Instant::from_millis(0);
     /// let mut steps = 1;
     /// while engine.step_budgeted(now, StepBudget::chunks(1)) == Wake::Now {
@@ -449,7 +449,7 @@ impl Engine {
     ///
     /// let mut engine = Engine::new(EngineConfig::default()).unwrap();
     /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// engine.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 })).unwrap();
+    /// engine.add_display(panel, BufferMode::alloc(BufferSpec::PartialSingle { rows: 8 }), None).unwrap();
     /// let now = Instant::from_millis(0);
     /// // The parts of a step, run one by one (as the view layer does between them).
     /// engine.begin_step(now);
@@ -713,7 +713,10 @@ impl Engine {
         twine_core::warn!(target: "twine::refresh", "display {}: frame abandoned ({})", d, why);
     }
 
-    /// Takes back finished buffers without blocking.
+    /// Takes back finished buffers without blocking: flushed partial buffers, and the old front
+    /// framebuffer once a swap has taken effect. Called before the flush timeout is checked, so
+    /// the timeout only measures what is still pending: a swap that completed while the engine
+    /// slept is not reported hung.
     pub(crate) fn reclaim_buffers(&mut self, d: usize) {
         let Some(disp) = self.displays.get_mut(d) else {
             return;
@@ -726,6 +729,7 @@ impl Engine {
                 }
             }
         }
+        self.present_done(d);
     }
 
     /// Whether a framebuffer swap requested by the previous frame has happened (always true for

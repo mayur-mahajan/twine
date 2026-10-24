@@ -60,7 +60,11 @@ fn leak(len: usize) -> &'static mut [u8] {
 fn flush_engine() -> (Engine, twine_engine::DisplayId) {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     let d = e
-        .add_display(FailingPanel(None), BufferMode::partial_single(leak(64 * 2 * 32)))
+        .add_display(
+            FailingPanel(None),
+            BufferMode::partial_single(leak(64 * 2 * 32)),
+            None,
+        )
         .unwrap();
     let s = e.active_screen(d).unwrap();
     e.set_local_prop(s, Selector::MAIN, StyleProp::BgColor(Color::RED.into()));
@@ -86,7 +90,7 @@ fn flush_error_is_raised_with_its_display() {
 fn present_error_is_raised() {
     let mut e = Engine::new(EngineConfig::default()).unwrap();
     let fb = FailingFb(Some((DrawBufferMem::new(leak(64 * 2 * 32)), None)));
-    let d = e.add_framebuffer_display(fb, BufferMode::direct()).unwrap();
+    let d = e.add_framebuffer_display(fb, BufferMode::direct(), None).unwrap();
     let s = e.active_screen(d).unwrap();
     e.set_local_prop(s, Selector::MAIN, StyleProp::BgColor(Color::BLUE.into()));
     let _ = e.step(Instant::from_millis(1));

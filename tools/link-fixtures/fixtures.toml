@@ -1,0 +1,231 @@
+# Linking fixtures (R7.S01; design `docs/plan/r7-theming-design.md` §2.9.7): what each image of
+# `src/bin/` must NOT link because its source does not reference it. `cargo xtask nostd` links
+# every fixture (release, `thumbv7em-none-eabihf`) and checks its symbol table against these
+# rules (`tools/xtask/src/cmd/link_check.rs`).
+#
+# A rule names an item and the symbols it lives in: `forbid` patterns are substrings of the
+# demangled symbol names (no hashes, e.g.
+# `<twine_theme::lvgl::Lvgl as twine_engine::theme_hook::ThemeHook>::apply`);
+# a symbol matching an `allow` pattern is exempt. The patterns name where the item lives in the
+# code of today: a step that moves an item (code to static data, a renamed theme) updates them.
+#
+# `until = "R7.Sxx"` marks a known failure: the item IS linked today although the source does
+# not reference it — the R7 baseline — and the step named is expected to remove it. The check
+# fails on a violation without `until` (a regression) and on an `until` rule that passes (the
+# step that fixed it removes the mark, so the baseline only shrinks).
+
+[[fixture]]
+bin = "no_theme"
+
+[[fixture.rule]]
+item = "a theme"
+forbid = ["twine_theme::"]
+
+[[fixture.rule]]
+item = "a font (the source names none)"
+forbid = ["twine_assets::fonts::"]
+
+[[fixture.rule]]
+item = "run-time theme switching (design §2.0a, §2.9.8)"
+forbid = ["<twine_engine::engine::Engine>::replace_theme", "<twine_engine::engine::Engine>::set_theme"]
+
+[[fixture.rule]]
+item = "theme classes (variants, roles: `Engine::set_theme_class`; R7.S03), which the source sets none of"
+forbid = ["<twine_engine::engine::Engine>::set_theme_class", "<twine_engine::engine::Engine>::reapply_theme"]
+
+[[fixture.rule]]
+item = "a design-system theme (`Theme<D>`, recipes; R7.S03), which the source does not install"
+forbid = ["twine_engine::design_system::", "twine_engine::recipe::"]
+
+[[fixture]]
+bin = "lvgl_light"
+
+[[fixture.rule]]
+item = "another theme (Mono, Simple)"
+forbid = ["twine_theme::mono::", "twine_theme::simple::"]
+
+[[fixture.rule]]
+item = "a font other than the theme's (Montserrat 14)"
+forbid = ["twine_assets::fonts::"]
+allow = ["twine_assets::fonts::montserrat_14::"]
+
+[[fixture.rule]]
+item = "run-time theme switching (design §2.0a, §2.9.8)"
+forbid = ["<twine_engine::engine::Engine>::replace_theme", "<twine_engine::engine::Engine>::set_theme"]
+
+[[fixture.rule]]
+item = "the tables of the modes it does not list (Dark, Night, HighContrast: `static`s since R7.S04)"
+forbid = ["twine_theme::lvgl::DARK", "twine_theme::lvgl::NIGHT", "twine_theme::lvgl::HIGH_CONTRAST"]
+
+[[fixture.rule]]
+item = "style builder code (every widget's styles built at run time instead of static data, design §2.9.2)"
+forbid = ["<twine_style::style::StyleBuf>::"]
+# The engine's local styles (`Engine::set_local_prop`): a node's own properties, not the theme's.
+allow = ["<twine_style::style::StyleBuf>::set", "<twine_style::style::StyleBuf>::remove"]
+
+[[fixture.rule]]
+item = "theme classes (variants, roles: `Engine::set_theme_class`; R7.S03), which the source sets none of"
+forbid = ["<twine_engine::engine::Engine>::set_theme_class", "<twine_engine::engine::Engine>::reapply_theme"]
+
+[[fixture.rule]]
+item = "a design-system theme (`Theme<D>`, recipes; R7.S03), which the source does not install"
+forbid = ["twine_engine::design_system::", "twine_engine::recipe::"]
+
+[[fixture.rule]]
+item = "the code and class of every widget the source never creates (it creates screens and a column — objects —, labels and buttons; R7.S04b)"
+forbid = ["twine_widgets::", "twine_widgets_ext::"]
+allow = ["twine_widgets::button::", "twine_widgets::label::"]
+
+[[fixture.rule]]
+item = "the recipes of the widget classes the source never creates (its theme lists OBJ, LABEL and BUTTON: `.recipes(&[..])`, R7.S04b)"
+forbid = ["twine_theme::lvgl::CARD", "twine_theme::lvgl::TEXTAREA", "twine_theme::lvgl::TABVIEW", "twine_theme::lvgl::MENU", "twine_theme::lvgl::IMAGE", "twine_theme::lvgl::SPANGROUP", "twine_theme::lvgl::POPOVER", "twine_theme::lvgl::LIST", "twine_theme::lvgl::MSGBOX", "twine_theme::lvgl::TILEVIEW", "twine_theme::lvgl::WIN", "twine_theme::lvgl::LINE", "twine_theme::lvgl::BAR", "twine_theme::lvgl::SLIDER", "twine_theme::lvgl::CHECKBOX", "twine_theme::lvgl::SWITCH", "twine_theme::lvgl::ARC", "twine_theme::lvgl::SPIN", "twine_theme::lvgl::LED", "twine_theme::lvgl::BUTTONMATRIX", "twine_theme::lvgl::KEYBOARD", "twine_theme::lvgl::ROLLER", "twine_theme::lvgl::DROPDOWN", "twine_theme::lvgl::card", "twine_theme::lvgl::textarea", "twine_theme::lvgl::tabview", "twine_theme::lvgl::menu", "twine_theme::lvgl::list", "twine_theme::lvgl::msgbox", "twine_theme::lvgl::tileview", "twine_theme::lvgl::win", "twine_theme::lvgl::line", "twine_theme::lvgl::bar", "twine_theme::lvgl::slider", "twine_theme::lvgl::checkbox", "twine_theme::lvgl::switch", "twine_theme::lvgl::arc", "twine_theme::lvgl::spin", "twine_theme::lvgl::led", "twine_theme::lvgl::buttonmatrix", "twine_theme::lvgl::keyboard", "twine_theme::lvgl::roller", "twine_theme::lvgl::dropdown"]
+
+[[fixture.rule]]
+item = "the styles only those recipes use"
+forbid = ["twine_theme::lvgl::styles::ANIM", "twine_theme::lvgl::styles::ANIM_FAST", "twine_theme::lvgl::styles::ARC_INDIC", "twine_theme::lvgl::styles::ARC_INDIC_PRIMARY", "twine_theme::lvgl::styles::BG_COLOR_GREY", "twine_theme::lvgl::styles::BG_COLOR_PRIMARY_MUTED", "twine_theme::lvgl::styles::BG_COLOR_SECONDARY_MUTED", "twine_theme::lvgl::styles::BG_COLOR_WHITE", "twine_theme::lvgl::styles::CB_MARKER", "twine_theme::lvgl::styles::CB_MARKER_CHECKED", "twine_theme::lvgl::styles::CIRCLE", "twine_theme::lvgl::styles::CLIP_CORNER", "twine_theme::lvgl::styles::DROPDOWN_LIST", "twine_theme::lvgl::styles::KEYBOARD_BUTTON_BG", "twine_theme::lvgl::styles::KEYBOARD_PAD_STYLE", "twine_theme::lvgl::styles::KNOB", "twine_theme::lvgl::styles::LED", "twine_theme::lvgl::styles::LINE", "twine_theme::lvgl::styles::LINE_SPACE_LARGE", "twine_theme::lvgl::styles::LIST_BG", "twine_theme::lvgl::styles::LIST_BTN", "twine_theme::lvgl::styles::LIST_ITEM_GROW", "twine_theme::lvgl::styles::MENU_BG", "twine_theme::lvgl::styles::MENU_CONT", "twine_theme::lvgl::styles::MENU_HEADER_BTN", "twine_theme::lvgl::styles::MENU_HEADER_CONT", "twine_theme::lvgl::styles::MENU_MAIN_CONT", "twine_theme::lvgl::styles::MENU_PAGE", "twine_theme::lvgl::styles::MENU_PRESSED", "twine_theme::lvgl::styles::MENU_SECTION", "twine_theme::lvgl::styles::MENU_SEPARATOR", "twine_theme::lvgl::styles::MENU_SIDEBAR_CONT", "twine_theme::lvgl::styles::MSGBOX_BACKDROP_BG", "twine_theme::lvgl::styles::NO_RADIUS", "twine_theme::lvgl::styles::OUTLINE_SECONDARY", "twine_theme::lvgl::styles::PAD_GAP", "twine_theme::lvgl::styles::PAD_NORMAL", "twine_theme::lvgl::styles::PAD_SMALL", "twine_theme::lvgl::styles::PAD_TINY", "twine_theme::lvgl::styles::PAD_ZERO", "twine_theme::lvgl::styles::ROTARY_SCROLL", "twine_theme::lvgl::styles::SWITCH_KNOB", "twine_theme::lvgl::styles::TAB_BG_FOCUS", "twine_theme::lvgl::styles::TAB_BTN", "twine_theme::lvgl::styles::TA_CURSOR", "twine_theme::lvgl::styles::TA_PLACEHOLDER", "twine_theme::lvgl::styles::TEXT_ALIGN_CENTER"]
+
+[[fixture]]
+bin = "lvgl_app_font"
+
+[[fixture.rule]]
+item = "the theme's default font (Montserrat 14), which the source replaces"
+forbid = ["twine_assets::fonts::montserrat_14::"]
+
+[[fixture.rule]]
+item = "another theme (Mono, Simple)"
+forbid = ["twine_theme::mono::", "twine_theme::simple::"]
+
+[[fixture.rule]]
+item = "theme classes (variants, roles: `Engine::set_theme_class`; R7.S03), which the source sets none of"
+forbid = ["<twine_engine::engine::Engine>::set_theme_class", "<twine_engine::engine::Engine>::reapply_theme"]
+
+[[fixture.rule]]
+item = "a design-system theme (`Theme<D>`, recipes; R7.S03), which the source does not install"
+forbid = ["twine_engine::design_system::", "twine_engine::recipe::"]
+
+[[fixture.rule]]
+item = "the code and class of every widget the source never creates (it creates screens and a column — objects —, labels and buttons; R7.S04b)"
+forbid = ["twine_widgets::", "twine_widgets_ext::"]
+allow = ["twine_widgets::button::", "twine_widgets::label::"]
+
+[[fixture.rule]]
+item = "the recipes of the widget classes the source never creates (its theme lists OBJ, LABEL and BUTTON: `.recipes(&[..])`, R7.S04b)"
+forbid = ["twine_theme::lvgl::CARD", "twine_theme::lvgl::TEXTAREA", "twine_theme::lvgl::TABVIEW", "twine_theme::lvgl::MENU", "twine_theme::lvgl::IMAGE", "twine_theme::lvgl::SPANGROUP", "twine_theme::lvgl::POPOVER", "twine_theme::lvgl::LIST", "twine_theme::lvgl::MSGBOX", "twine_theme::lvgl::TILEVIEW", "twine_theme::lvgl::WIN", "twine_theme::lvgl::LINE", "twine_theme::lvgl::BAR", "twine_theme::lvgl::SLIDER", "twine_theme::lvgl::CHECKBOX", "twine_theme::lvgl::SWITCH", "twine_theme::lvgl::ARC", "twine_theme::lvgl::SPIN", "twine_theme::lvgl::LED", "twine_theme::lvgl::BUTTONMATRIX", "twine_theme::lvgl::KEYBOARD", "twine_theme::lvgl::ROLLER", "twine_theme::lvgl::DROPDOWN", "twine_theme::lvgl::card", "twine_theme::lvgl::textarea", "twine_theme::lvgl::tabview", "twine_theme::lvgl::menu", "twine_theme::lvgl::list", "twine_theme::lvgl::msgbox", "twine_theme::lvgl::tileview", "twine_theme::lvgl::win", "twine_theme::lvgl::line", "twine_theme::lvgl::bar", "twine_theme::lvgl::slider", "twine_theme::lvgl::checkbox", "twine_theme::lvgl::switch", "twine_theme::lvgl::arc", "twine_theme::lvgl::spin", "twine_theme::lvgl::led", "twine_theme::lvgl::buttonmatrix", "twine_theme::lvgl::keyboard", "twine_theme::lvgl::roller", "twine_theme::lvgl::dropdown"]
+
+[[fixture.rule]]
+item = "the styles only those recipes use"
+forbid = ["twine_theme::lvgl::styles::ANIM", "twine_theme::lvgl::styles::ANIM_FAST", "twine_theme::lvgl::styles::ARC_INDIC", "twine_theme::lvgl::styles::ARC_INDIC_PRIMARY", "twine_theme::lvgl::styles::BG_COLOR_GREY", "twine_theme::lvgl::styles::BG_COLOR_PRIMARY_MUTED", "twine_theme::lvgl::styles::BG_COLOR_SECONDARY_MUTED", "twine_theme::lvgl::styles::BG_COLOR_WHITE", "twine_theme::lvgl::styles::CB_MARKER", "twine_theme::lvgl::styles::CB_MARKER_CHECKED", "twine_theme::lvgl::styles::CIRCLE", "twine_theme::lvgl::styles::CLIP_CORNER", "twine_theme::lvgl::styles::DROPDOWN_LIST", "twine_theme::lvgl::styles::KEYBOARD_BUTTON_BG", "twine_theme::lvgl::styles::KEYBOARD_PAD_STYLE", "twine_theme::lvgl::styles::KNOB", "twine_theme::lvgl::styles::LED", "twine_theme::lvgl::styles::LINE", "twine_theme::lvgl::styles::LINE_SPACE_LARGE", "twine_theme::lvgl::styles::LIST_BG", "twine_theme::lvgl::styles::LIST_BTN", "twine_theme::lvgl::styles::LIST_ITEM_GROW", "twine_theme::lvgl::styles::MENU_BG", "twine_theme::lvgl::styles::MENU_CONT", "twine_theme::lvgl::styles::MENU_HEADER_BTN", "twine_theme::lvgl::styles::MENU_HEADER_CONT", "twine_theme::lvgl::styles::MENU_MAIN_CONT", "twine_theme::lvgl::styles::MENU_PAGE", "twine_theme::lvgl::styles::MENU_PRESSED", "twine_theme::lvgl::styles::MENU_SECTION", "twine_theme::lvgl::styles::MENU_SEPARATOR", "twine_theme::lvgl::styles::MENU_SIDEBAR_CONT", "twine_theme::lvgl::styles::MSGBOX_BACKDROP_BG", "twine_theme::lvgl::styles::NO_RADIUS", "twine_theme::lvgl::styles::OUTLINE_SECONDARY", "twine_theme::lvgl::styles::PAD_GAP", "twine_theme::lvgl::styles::PAD_NORMAL", "twine_theme::lvgl::styles::PAD_SMALL", "twine_theme::lvgl::styles::PAD_TINY", "twine_theme::lvgl::styles::PAD_ZERO", "twine_theme::lvgl::styles::ROTARY_SCROLL", "twine_theme::lvgl::styles::SWITCH_KNOB", "twine_theme::lvgl::styles::TAB_BG_FOCUS", "twine_theme::lvgl::styles::TAB_BTN", "twine_theme::lvgl::styles::TA_CURSOR", "twine_theme::lvgl::styles::TA_PLACEHOLDER", "twine_theme::lvgl::styles::TEXT_ALIGN_CENTER"]
+
+[[fixture]]
+bin = "mono_dark"
+
+[[fixture.rule]]
+item = "another theme (LVGL, Simple)"
+forbid = ["twine_theme::lvgl::", "twine_theme::simple::"]
+
+[[fixture.rule]]
+item = "a font other than the theme's (Montserrat 14)"
+forbid = ["twine_assets::fonts::"]
+allow = ["twine_assets::fonts::montserrat_14::"]
+
+[[fixture.rule]]
+item = "run-time theme switching (design §2.0a, §2.9.8)"
+forbid = ["<twine_engine::engine::Engine>::replace_theme", "<twine_engine::engine::Engine>::set_theme"]
+
+[[fixture.rule]]
+item = "the tables of the modes it does not list (Light, Night, HighContrast: `static`s since R7.S04)"
+forbid = ["twine_theme::mono::LIGHT", "twine_theme::mono::NIGHT", "twine_theme::mono::HIGH_CONTRAST"]
+
+[[fixture.rule]]
+item = "theme classes (variants, roles: `Engine::set_theme_class`; R7.S03), which the source sets none of"
+forbid = ["<twine_engine::engine::Engine>::set_theme_class", "<twine_engine::engine::Engine>::reapply_theme"]
+
+[[fixture.rule]]
+item = "a design-system theme (`Theme<D>`, recipes; R7.S03), which the source does not install"
+forbid = ["twine_engine::design_system::", "twine_engine::recipe::"]
+
+[[fixture.rule]]
+item = "the code and class of every widget the source never creates (it creates screens and a column — objects —, labels and buttons; R7.S04b)"
+forbid = ["twine_widgets::", "twine_widgets_ext::"]
+allow = ["twine_widgets::button::", "twine_widgets::label::"]
+
+[[fixture.rule]]
+item = "the recipes of the widget classes the source never creates (its theme lists OBJ, LABEL and BUTTON: `.recipes(&[..])`, R7.S04b)"
+forbid = ["twine_theme::mono::TABVIEW", "twine_theme::mono::WIN", "twine_theme::mono::CARD", "twine_theme::mono::LIST", "twine_theme::mono::BAR", "twine_theme::mono::SLIDER", "twine_theme::mono::CHECKBOX", "twine_theme::mono::SWITCH", "twine_theme::mono::ARC", "twine_theme::mono::SPIN", "twine_theme::mono::BUTTONMATRIX", "twine_theme::mono::TEXTAREA", "twine_theme::mono::KEYBOARD", "twine_theme::mono::ROLLER", "twine_theme::mono::DROPDOWN", "twine_theme::mono::TILEVIEW", "twine_theme::mono::MSGBOX", "twine_theme::mono::LED", "twine_theme::mono::tab_page", "twine_theme::mono::bar", "twine_theme::mono::slider", "twine_theme::mono::checkbox", "twine_theme::mono::switch", "twine_theme::mono::arc", "twine_theme::mono::spin", "twine_theme::mono::buttonmatrix", "twine_theme::mono::textarea", "twine_theme::mono::keyboard", "twine_theme::mono::roller", "twine_theme::mono::dropdown", "twine_theme::mono::list_button", "twine_theme::mono::tile", "twine_theme::mono::plain_card"]
+
+[[fixture.rule]]
+item = "the styles only those recipes use"
+forbid = ["twine_theme::mono::styles::CB_MARKER_CHECKED", "twine_theme::mono::styles::LARGE_BORDER", "twine_theme::mono::styles::LARGE_LINE_SPACE", "twine_theme::mono::styles::NO_RADIUS", "twine_theme::mono::styles::PAD_GAP", "twine_theme::mono::styles::PAD_ZERO", "twine_theme::mono::styles::RADIUS_CIRCLE", "twine_theme::mono::styles::SPINNER_INDIC", "twine_theme::mono::styles::TA_CURSOR", "twine_theme::mono::styles::UNDERLINE"]
+
+[[fixture]]
+bin = "design_system"
+
+[[fixture.rule]]
+item = "a built-in theme (LVGL, Mono, Simple): the source installs only its design system"
+forbid = ["twine_theme::"]
+
+[[fixture.rule]]
+item = "the design language's mode table the source does not list (Dark)"
+forbid = ["twine_link_fixtures::design::DARK"]
+
+[[fixture.rule]]
+item = "the design language's recipe the source does not list (slider)"
+forbid = ["twine_link_fixtures::design::SLIDER"]
+
+[[fixture.rule]]
+item = "a font (the source names none; its table has no font)"
+forbid = ["twine_assets::fonts::"]
+
+[[fixture.rule]]
+item = "run-time theme switching (design §2.0a, §2.9.8)"
+forbid = ["<twine_engine::engine::Engine>::replace_theme", "<twine_engine::engine::Engine>::set_theme"]
+# The variant's theme class (`set_theme_class` and its binding) is not theme switching.
+allow = ["<twine_engine::engine::Engine>::set_theme_class"]
+
+[[fixture]]
+bin = "plain_font"
+
+[[fixture.rule]]
+item = "the default text-gamma tables (R6.S03), which a font generated with `gamma = Linear` does not reference"
+forbid = ["twine_text::gamma::DEFAULT"]
+
+[[fixture.rule]]
+item = "a built-in font (the source names none)"
+forbid = ["twine_assets::fonts::"]
+
+[[fixture]]
+bin = "simple_light"
+
+[[fixture.rule]]
+item = "another theme (LVGL, Mono)"
+forbid = ["twine_theme::lvgl::", "twine_theme::mono::"]
+
+[[fixture.rule]]
+item = "the code and class of every widget the source never creates (it creates screens and a column — objects —, labels and buttons; R7.S04b)"
+forbid = ["twine_widgets::", "twine_widgets_ext::"]
+allow = ["twine_widgets::button::", "twine_widgets::label::"]
+
+[[fixture.rule]]
+item = "the recipes of the widget classes the source never creates (its theme lists OBJ, LABEL and BUTTON: `.recipes(&[..])`, R7.S04b)"
+forbid = ["twine_theme::simple::TABVIEW", "twine_theme::simple::CARD", "twine_theme::simple::LIST", "twine_theme::simple::BAR", "twine_theme::simple::SLIDER", "twine_theme::simple::CHECKBOX", "twine_theme::simple::SWITCH", "twine_theme::simple::ARC", "twine_theme::simple::SPIN", "twine_theme::simple::BUTTONMATRIX", "twine_theme::simple::TEXTAREA", "twine_theme::simple::KEYBOARD", "twine_theme::simple::ROLLER", "twine_theme::simple::DROPDOWN", "twine_theme::simple::WIN", "twine_theme::simple::MSGBOX", "twine_theme::simple::LED", "twine_theme::simple::TILEVIEW", "twine_theme::simple::tabview_page", "twine_theme::simple::tab_part", "twine_theme::simple::bar", "twine_theme::simple::slider", "twine_theme::simple::checkbox", "twine_theme::simple::switch", "twine_theme::simple::arc", "twine_theme::simple::spin", "twine_theme::simple::buttonmatrix", "twine_theme::simple::textarea", "twine_theme::simple::keyboard", "twine_theme::simple::roller", "twine_theme::simple::plain_white", "twine_theme::simple::dropdown_list", "twine_theme::simple::light", "twine_theme::simple::tile"]
+
+[[fixture.rule]]
+item = "the styles only those recipes use"
+forbid = ["twine_theme::simple::styles::ARC_KNOB", "twine_theme::simple::styles::ARC_LINE", "twine_theme::simple::styles::DIM", "twine_theme::simple::styles::LIGHT", "twine_theme::simple::styles::TA_CURSOR", "twine_theme::simple::styles::TRANSP"]
+
+[[fixture.rule]]
+item = "a font other than the theme's (Montserrat 14)"
+forbid = ["twine_assets::fonts::"]
+allow = ["twine_assets::fonts::montserrat_14::"]
+
+[[fixture.rule]]
+item = "the tables of the modes it does not list (Dark, Night, HighContrast)"
+forbid = ["twine_theme::simple::DARK", "twine_theme::simple::NIGHT", "twine_theme::simple::HIGH_CONTRAST"]
+
+[[fixture.rule]]
+item = "theme classes (variants, roles: `Engine::set_theme_class`; R7.S03), which the source sets none of"
+forbid = ["<twine_engine::engine::Engine>::set_theme_class", "<twine_engine::engine::Engine>::reapply_theme"]
+
+[[fixture.rule]]
+item = "a design-system theme (`Theme<D>`, recipes; R7.S03), which the source does not install"
+forbid = ["twine_engine::design_system::", "twine_engine::recipe::"]

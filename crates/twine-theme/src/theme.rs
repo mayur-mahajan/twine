@@ -7,9 +7,9 @@ use twine_text::Font;
 /// plus the other fonts applications take from it (LVGL `lv_theme_get_font_*`).
 ///
 /// ```
-/// use twine_theme::{DefaultTheme, Theme};
-/// let t = DefaultTheme::light();
-/// assert!(core::ptr::eq(t.font_small(), t.font_large()));
+/// use twine_theme::{Lvgl, Theme};
+/// static THEME: Lvgl = Lvgl::new();
+/// assert!(core::ptr::eq(THEME.font_small(), THEME.font_large()));
 /// ```
 pub trait Theme: ThemeHook {
     /// The small font (LVGL `font_small`).
@@ -19,14 +19,19 @@ pub trait Theme: ThemeHook {
 }
 
 /// The small, normal (body) and large font of a theme (LVGL's `font_small`, `font_normal`,
-/// `font_large`), also its `design::FONT_SMALL` / `FONT_BODY` / `FONT_LARGE` elements.
+/// `font_large`): its `design::FONT_SMALL` / `FONT_BODY` / `FONT_LARGE` elements, given to a
+/// theme's element set ([`LvglSet::fonts`](crate::LvglSet::fonts)).
 ///
 /// ```
-/// use twine_theme::{DefaultTheme, FontScale};
+/// use twine_style::ThemeMode;
+/// use twine_style::design::{self, ElementTable};
+/// use twine_theme::{FontScale, Lvgl};
+///
 /// let f = &twine_assets::fonts::MONTSERRAT_14;
-/// let _t = DefaultTheme::builder()
-///     .fonts(FontScale { small: f, normal: f, large: f })
-///     .build();
+/// static LIGHT: ElementTable = Lvgl::SET
+///     .fonts(FontScale::uniform(&twine_assets::fonts::MONTSERRAT_14))
+///     .table(ThemeMode::Light);
+/// assert!(core::ptr::eq(LIGHT.get(design::FONT_LARGE).unwrap(), f));
 /// assert!(core::ptr::eq(FontScale::uniform(f).large, f));
 /// ```
 #[derive(Clone, Copy)]
@@ -57,9 +62,10 @@ impl core::fmt::Debug for FontScale {
     }
 }
 
-/// The font a theme builder starts with: Montserrat 14 with the `assets` feature, else the
-/// empty font (draws no text: set the theme's fonts).
-pub(crate) fn default_font() -> &'static Font {
+/// The font the built-in themes' default element sets start with: Montserrat 14 with the
+/// `assets` feature, else the empty font (draws no text: give the set a font).
+#[cfg(any(feature = "lvgl", feature = "mono", feature = "simple"))]
+pub(crate) const DEFAULT_FONT: &Font = {
     #[cfg(feature = "assets")]
     {
         &twine_assets::fonts::MONTSERRAT_14
@@ -68,11 +74,17 @@ pub(crate) fn default_font() -> &'static Font {
     {
         &twine_text::EMPTY_FONT
     }
-}
+};
 
-/// Warns when a theme is built with the empty default font (no `assets` feature, no font set).
-pub(crate) fn check_font(theme: &str, font: &'static Font) {
-    if cfg!(not(feature = "assets")) && core::ptr::eq(font, &raw const twine_text::EMPTY_FONT) {
-        twine_core::warn!(target: "twine::style", "{} theme built without a font: text is not drawn", theme);
-    }
+/// The font of `design::FONT_<which>` in the first of `modes`' tables (the empty font if it
+/// has none): what the built-in themes report as their fonts.
+#[cfg(any(feature = "lvgl", feature = "mono", feature = "simple"))]
+pub(crate) fn first_font(
+    modes: &[(twine_style::ThemeMode, &'static twine_style::design::ElementTable)],
+    which: twine_style::design::FontElement,
+) -> &'static Font {
+    modes
+        .first()
+        .and_then(|(_, t)| t.get(which))
+        .unwrap_or(&twine_text::EMPTY_FONT)
 }

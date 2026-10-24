@@ -244,7 +244,10 @@ fn macro_new_shorthands_are_const() {
     assert_eq!(STATIC.get(P::OutlineOpacity), Some(StyleValue::Opa(Opa::COVER)));
     assert_eq!(STATIC.get(P::ShadowOpacity), Some(StyleValue::Opa(Opa::P30)));
     // `shadow_offset` comes after `shadow`.
-    assert_eq!(STATIC.get(P::ShadowOffsetY), Some(StyleValue::Int(8)));
+    assert_eq!(
+        STATIC.get(P::ShadowOffsetY),
+        Some(StyleValue::Length(Length::Px(8)))
+    );
     assert_eq!(
         STATIC.get(P::TransformPivotY),
         Some(StyleValue::Length(Length::Px(10)))

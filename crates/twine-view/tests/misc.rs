@@ -1,4 +1,4 @@
-//! Theme switching from a view, screen replacement and label text selection.
+//! Theme mode switching from a view, screen replacement and label text selection.
 
 use twine_core::Point;
 use twine_engine::EventCode;
@@ -8,9 +8,9 @@ use twine_view::prelude::*;
 use twine_widgets::label::Label;
 
 #[test]
-fn use_theme_switches_the_display_theme() {
+fn use_theme_switches_the_display_theme_mode() {
     let mut t = TestUi::new(200, 100)
-        .mount(|cx| button(label("dark")).on_click(move || use_theme(cx).set(DefaultTheme::dark())));
+        .mount(|cx| button(label("dark")).on_click(move || use_theme(cx).set_mode(ThemeMode::Dark)));
     t.run_until_idle();
     let screen = t
         .engine()

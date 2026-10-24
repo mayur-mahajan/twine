@@ -206,7 +206,8 @@ pub fn run(action: Action) -> R {
     let dir = workspace_root().join("target/twine-snapshots");
     let _ = std::fs::remove_dir_all(&dir);
     let mut cmd = cargo();
-    cmd.args(["test", "--workspace"])
+    // Every crate's tests run even when an earlier one has a mismatch: the report lists all.
+    cmd.args(["test", "--workspace", "--no-fail-fast"])
         .env("TWINE_SNAPSHOTS", mode.as_str());
     let result = run_cmd(&mut cmd);
     let records = read_records(&dir, &[SELFTEST_PREFIX]);

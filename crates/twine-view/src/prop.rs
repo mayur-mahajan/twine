@@ -2,6 +2,7 @@
 
 use alloc::boxed::Box;
 
+use twine_engine::{Variant, WidgetClass};
 use twine_image::{Image, ImageSource, Symbol};
 use twine_reactive::{Memo, ReadSignal, Signal};
 
@@ -246,6 +247,67 @@ macro_rules! reactive_props {
     )+};
 }
 reactive_props!(Signal, ReadSignal, Memo);
+
+// ---- Variants ---------------------------------------------------------------------------------
+
+/// A variant of the widget type `W` for the views' [`variant`](crate::ViewExt::variant): a
+/// [`Variant`] whose `Widget` is `W` (e.g. a `ButtonVariant` for a button), or a closure,
+/// [`Signal`], [`ReadSignal`] or [`Memo`] of one. Like [`IntoProp`] (whose markers it shares),
+/// but the widget type picks the variant type, so `.variant(ButtonVariant::Plain)` needs no
+/// annotation and a variant of another widget does not compile.
+///
+/// ```
+/// use twine_view::prelude::*;
+///
+/// fn class<M>(v: impl IntoVariant<Button, M>) -> Prop<&'static WidgetClass> {
+///     v.into_variant()
+/// }
+/// let cx = twine_reactive::Runtime::take().unwrap().create_root();
+/// let danger = cx.signal(false);
+/// assert!(class(ButtonVariant::Filled).get().is(&twine_widgets::button::BUTTON_CLASS));
+/// let p = class(move || if danger.get() { ButtonVariant::Destructive } else { ButtonVariant::Gray });
+/// assert_eq!(p.get().name, "button.gray");
+/// cx.dispose();
+/// ```
+///
+/// Constants are [`Prop::Static`] (no binding); closures and reactive handles one boxed
+/// closure.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a variant of `{W}`",
+    label = "not a `Variant` with `Widget = {W}`, nor a closure, signal or memo of one",
+    note = "a widget's variants are its theme classes: e.g. `ButtonVariant` for a button"
+)]
+pub trait IntoVariant<W, M> {
+    /// The variant's theme class, as a property.
+    fn into_variant(self) -> Prop<&'static WidgetClass>;
+}
+
+impl<V: Variant> IntoVariant<V::Widget, marker::Value<V>> for V {
+    #[inline]
+    fn into_variant(self) -> Prop<&'static WidgetClass> {
+        Prop::Static(self.class())
+    }
+}
+
+impl<V: Variant, F: Fn() -> V + 'static> IntoVariant<V::Widget, marker::Closure<V>> for F {
+    #[inline]
+    fn into_variant(self) -> Prop<&'static WidgetClass> {
+        Prop::Dynamic(Box::new(move || self().class()))
+    }
+}
+
+/// The `IntoVariant` impls of the reactive handles.
+macro_rules! reactive_variants {
+    ($($s:ident),+) => {$(
+        impl<V: Variant> IntoVariant<V::Widget, marker::Reactive<V>> for $s<V> {
+            #[inline]
+            fn into_variant(self) -> Prop<&'static WidgetClass> {
+                Prop::Dynamic(Box::new(move || self.get().class()))
+            }
+        }
+    )+};
+}
+reactive_variants!(Signal, ReadSignal, Memo);
 
 /// A `'static` array is a slice property (e.g. `animimg(&FRAMES, ..)`).
 impl<T: 'static, const N: usize> IntoProp<&'static [T], marker::Slice> for &'static [T; N] {

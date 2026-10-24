@@ -10,12 +10,11 @@
 //! ([`run::blocking`](crate::run::blocking), `twine_embassy::run`) drives them all.
 
 use alloc::boxed::Box;
-use alloc::rc::Rc;
 use alloc::vec::Vec;
 
 use twine_core::{Fraction, Rotation};
 use twine_engine::{
-    BufferMode, DisplayCmd, DisplayHealth, DisplayId, Engine, EngineError, InputId, InputKind, IntoTheme,
+    BufferMode, DisplayCmd, DisplayHealth, DisplayId, DisplayTheme, Engine, EngineError, InputId, InputKind,
     ThemeHook, ThemeMode,
 };
 use twine_hal::{DisplayDriver, DisplayInfo, FramebufferDisplay, InputDevice};
@@ -39,7 +38,8 @@ pub(crate) type CommandsSetter = Box<dyn FnOnce(Scope, DisplayId)>;
 #[derive(Default)]
 pub(crate) struct DisplayParts {
     inputs: Vec<InputAdder>,
-    pub(crate) theme: Option<Rc<dyn ThemeHook>>,
+    theme: Option<&'static dyn ThemeHook>,
+    theme_mode: Option<ThemeMode>,
     commands: Option<CommandsSetter>,
     reserve_rotation: bool,
 }
@@ -64,8 +64,16 @@ impl DisplayParts {
         self.reserve_rotation = true;
     }
 
-    /// Installs the parts on `display` (just added to `engine`): rotation reserve, theme,
-    /// inputs (keypads and encoders join the default focus group). Returns the command-channel
+    /// The theme the display is created with (`None`: the caller's default).
+    pub(crate) fn display_theme(&self) -> Option<DisplayTheme> {
+        self.theme.map(|theme| DisplayTheme {
+            theme,
+            mode: self.theme_mode,
+        })
+    }
+
+    /// Installs the parts on `display` (just added to `engine`, with its theme): rotation
+    /// reserve, inputs (keypads and encoders join the default focus group). Returns the command-channel
     /// registration, to run on the application's scope once it is mounted.
     pub(crate) fn install(
         self,
@@ -74,9 +82,6 @@ impl DisplayParts {
     ) -> Result<Option<CommandsSetter>, UiError> {
         if self.reserve_rotation {
             engine.reserve_rotation(display)?;
-        }
-        if let Some(t) = self.theme {
-            engine.set_theme(display, t);
         }
         let mut focus_inputs = Vec::new();
         for add in self.inputs {
@@ -126,11 +131,11 @@ impl DisplayParts {
 ///     .runtime(Runtime::take().unwrap())
 ///     .clock(MockClock::new())
 ///     .buffers(BufferMode::alloc(BufferSpec::default()))
-///     .theme(DefaultTheme::light())
+///     .theme(&lvgl::THEME)
 ///     .display(
 ///         DisplayBuilder::new(panel(64, 32))
 ///             .buffers(BufferMode::alloc(BufferSpec::default()))
-///             .theme(DefaultTheme::dark()),
+///             .theme(&lvgl::THEME).mode(ThemeMode::Dark),
 ///         |_| label("status"),
 ///     )
 ///     .build(|_| label("main"));
@@ -249,26 +254,34 @@ impl<S, B> DisplayBuilder<S, B> {
         self
     }
 
-    /// The theme of this display (each display has its own theme and theme mode): a theme
-    /// value or a shared one ([`IntoTheme`], e.g. one `Rc` for several displays). A later call
-    /// replaces it.
+    /// The theme of this display (each display has its own theme and theme mode): a
+    /// `static` theme, attached when the display is created and kept for its lifetime (one
+    /// `static` can serve several displays). A later call replaces it. Without one, the
+    /// first display of a [`UiBuilder`](crate::UiBuilder) takes [`AppConfig::theme`](crate::AppConfig::theme);
+    /// further displays get none.
     ///
     /// ```
-    /// use std::rc::Rc;
     /// use twine_core::ColorFormat;
     /// use twine_hal::DisplayInfo;
     /// use twine_testing::MemoryDisplay;
     /// use twine_view::prelude::*;
     ///
+    /// static THEME: Lvgl = Lvgl::new();
     /// let panel = || MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565));
-    /// let aux = DisplayBuilder::new(panel()).theme(DefaultTheme::dark());
-    /// let shared = Rc::new(DefaultTheme::light()); // one theme, two displays
-    /// let left = DisplayBuilder::new(panel()).theme(shared.clone());
-    /// let right = DisplayBuilder::new(panel()).theme(shared);
-    /// # let _ = (aux, left, right);
+    /// let aux = DisplayBuilder::new(panel()).theme(&THEME).mode(ThemeMode::Dark);
+    /// let left = DisplayBuilder::new(panel()).theme(&THEME); // one theme, two displays
+    /// # let _ = (aux, left);
     /// ```
-    pub fn theme(mut self, t: impl IntoTheme) -> Self {
-        self.parts.theme = Some(t.into_theme());
+    pub fn theme(mut self, theme: &'static dyn ThemeHook) -> Self {
+        self.parts.theme = Some(theme);
+        self
+    }
+
+    /// The mode this display starts in (default: its theme's first listed mode; a mode the
+    /// theme does not list starts in that one instead, with a warning). Switch it at run time
+    /// with [`DisplayMut::set_theme_mode`]. (Example: see [`theme`](Self::theme).)
+    pub fn mode(mut self, mode: ThemeMode) -> Self {
+        self.parts.theme_mode = Some(mode);
         self
     }
 
@@ -312,11 +325,16 @@ impl<S, B> DisplayBuilder<S, B> {
 }
 
 impl<S: DisplaySetup, B: HasBuffers> DisplayBuilder<S, B> {
-    /// Adds the display to `engine` with its buffers, rotation reserve, theme and inputs.
-    /// Returns its id and the command-channel registration, to run on the application's
-    /// scope once it is mounted.
-    pub(crate) fn add(self, engine: &mut Engine) -> Result<(DisplayId, Option<CommandsSetter>), UiError> {
-        let display = self.setup.add(engine, self.buffers.into_part())?;
+    /// Adds the display to `engine` with its buffers, theme (its own, else `default_theme`),
+    /// rotation reserve and inputs. Returns its id and the command-channel registration, to
+    /// run on the application's scope once it is mounted.
+    pub(crate) fn add(
+        self,
+        engine: &mut Engine,
+        default_theme: Option<DisplayTheme>,
+    ) -> Result<(DisplayId, Option<CommandsSetter>), UiError> {
+        let theme = self.parts.display_theme().or(default_theme);
+        let display = self.setup.add(engine, self.buffers.into_part(), theme)?;
         let commands = self.parts.install(engine, display)?;
         Ok((display, commands))
     }
@@ -329,7 +347,7 @@ pub(crate) fn mount_display<S: DisplaySetup, B: HasBuffers, V: View>(
     display: DisplayBuilder<S, B>,
     app: impl FnOnce(Scope) -> V,
 ) -> Result<DisplayId, UiError> {
-    let (id, commands) = display.add(engine)?;
+    let (id, commands) = display.add(engine, None)?;
     let scope = core.mount_on(engine, id, app)?;
     if let Some(register) = commands {
         register(scope, id);
@@ -338,10 +356,9 @@ pub(crate) fn mount_display<S: DisplaySetup, B: HasBuffers, V: View>(
 }
 
 /// Run-time control of one display of a [`Ui`](crate::Ui) ([`Ui::display_mut`](crate::Ui::display_mut)):
-/// rotation, brightness, sleep, theme and theme mode, health — independently of the `Ui`'s
-/// other displays. The setters record a request the engine applies at the next update between
-/// two frames, and wake the `Ui`. Never panics; allocates nothing (but
-/// [`set_theme`](Self::set_theme)'s `Rc`).
+/// rotation, brightness, sleep, theme mode, health — independently of the `Ui`'s other
+/// displays. The setters record a request the engine applies at the next update between two
+/// frames, and wake the `Ui`. Never panics; allocates nothing.
 ///
 /// ```
 /// use twine_core::ColorFormat;
@@ -514,27 +531,6 @@ impl DisplayMut<'_> {
     #[must_use]
     pub fn asleep(&self) -> bool {
         self.engine.display_asleep(self.display)
-    }
-
-    /// Switches the display's theme (every node of the display is re-styled and the display
-    /// redrawn once; the other displays keep theirs): a theme value or a shared one
-    /// ([`IntoTheme`]). Never panics.
-    ///
-    /// ```
-    /// # use twine_core::ColorFormat;
-    /// # use twine_hal::DisplayInfo;
-    /// # use twine_testing::{MemoryDisplay, MockClock};
-    /// # use twine_view::prelude::*;
-    /// # let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)).with_power_control().with_rotation_control();
-    /// # let mut ui = Ui::builder(panel).runtime(Runtime::take().unwrap()).clock(MockClock::new()).buffers(BufferMode::alloc(BufferSpec::default())).build(|_| label("hi"));
-    /// let d = ui.display();
-    /// ui.display_mut(d).unwrap().set_theme(DefaultTheme::dark());
-    /// ui.update();
-    /// assert_eq!(ui.display_mut(d).unwrap().theme_mode(), ThemeMode::Dark);
-    /// ```
-    pub fn set_theme(&mut self, theme: impl IntoTheme) {
-        self.engine.set_theme(self.display, theme);
-        self.core.waker().wake();
     }
 
     /// Switches the display's theme mode ([`Engine::set_theme_mode`]; e.g. dark on one

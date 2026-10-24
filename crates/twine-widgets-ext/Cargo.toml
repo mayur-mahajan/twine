@@ -85,7 +85,7 @@ defmt = { version = "1", optional = true }
 twine-widgets-ext = { path = ".", features = ["std", "log", "arabic-shaping", "bidi", "vector"] }
 twine-engine = { path = "../twine-engine", features = ["std", "debug-checks", "color-rgb565"] }
 twine-testing = { path = "../twine-testing", default-features = false, features = ["engine", "debug-checks"] }
-twine-theme = { path = "../twine-theme" }
+twine-theme = { path = "../twine-theme", features = ["mono", "simple"] }
 twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-20"] }
 twine-hal = { path = "../twine-hal" }
 log = "0.4"

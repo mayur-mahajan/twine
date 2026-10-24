@@ -3,7 +3,7 @@
 use std::fmt;
 use std::path::PathBuf;
 use twine_core::{Color, ColorFormat, Rotation};
-use twine_engine::{BufferMode, BufferSpec, IntoTheme};
+use twine_engine::{BufferMode, BufferSpec, ThemeHook, ThemeMode};
 use twine_view::AppConfig;
 
 use crate::paths;
@@ -104,11 +104,11 @@ pub struct SimConfig {
     /// The application's configuration ([`AppConfig`]: engine configuration, theme, motion,
     /// channel and queue budgets, fault hook) — the same value the firmware gives
     /// `Ui::builder(..).app_config(..)`; set it with [`app_config`](Self::app_config). The
-    /// simulator adds its high-resolution timer to the engine configuration. The theme (any:
-    /// `twine_theme::DefaultTheme`, `SimpleTheme`, `MonoTheme` or a custom
-    /// [`ThemeHook`](twine_engine::ThemeHook); default none) is installed before engine apps'
-    /// `setup` runs and declarative apps are built; `F12` cycles through its modes
-    /// ([`ThemeHook::modes`](twine_engine::ThemeHook::modes)).
+    /// simulator adds its high-resolution timer to the engine configuration. The theme (a
+    /// `static`: `twine_theme::Lvgl`, `Simple`, `Mono` or a custom
+    /// [`ThemeHook`]; default none) is attached when the display is created, before engine
+    /// apps' `setup` runs and declarative apps are built; `F12` cycles through its modes
+    /// ([`ThemeHook::modes`]).
     pub app: AppConfig,
     /// Registered input devices.
     pub input: SimInputs,
@@ -233,20 +233,30 @@ impl SimConfig {
         self
     }
 
-    /// Installs `theme` on the display (sets [`AppConfig::theme`] of [`app`](Self::app)): a
-    /// theme value or a shared one ([`IntoTheme`]). `F12` switches it to its next mode
-    /// (light → dark → night → high contrast, as far as the theme supports them).
+    /// The display's theme, a `static` (sets [`AppConfig::theme`] of [`app`](Self::app)).
+    /// `F12` switches it to its next mode (light → dark → night → high contrast, as far as
+    /// the theme lists them).
     ///
     /// ```
     /// use twine_sim::SimConfig;
-    /// use twine_theme::DefaultTheme;
+    /// use twine_style::ThemeMode;
+    /// use twine_theme::lvgl;
     ///
-    /// let cfg = SimConfig::new(320, 240).theme(DefaultTheme::dark());
+    /// let cfg = SimConfig::new(320, 240).theme(&lvgl::THEME).mode(ThemeMode::Dark);
     /// assert!(cfg.app.theme.is_some());
+    /// assert_eq!(cfg.app.theme_mode, Some(ThemeMode::Dark));
     /// ```
     #[must_use]
-    pub fn theme(mut self, theme: impl IntoTheme) -> Self {
-        self.app.theme = Some(theme.into_theme());
+    pub fn theme(mut self, theme: &'static dyn ThemeHook) -> Self {
+        self.app.theme = Some(theme);
+        self
+    }
+
+    /// The mode the display starts in (sets [`AppConfig::theme_mode`] of [`app`](Self::app);
+    /// example: see [`theme`](Self::theme)).
+    #[must_use]
+    pub fn mode(mut self, mode: ThemeMode) -> Self {
+        self.app.theme_mode = Some(mode);
         self
     }
 
@@ -264,7 +274,7 @@ impl SimConfig {
     /// use twine_view::prelude::*;
     ///
     /// fn config() -> AppConfig {
-    ///     AppConfig::new().theme(DefaultTheme::light()).motion(Motion::Reduced).rotation(Rotation::Deg90)
+    ///     AppConfig::new().theme(&lvgl::THEME).motion(Motion::Reduced).rotation(Rotation::Deg90)
     /// }
     ///
     /// let cfg = SimConfig::new(320, 240).app_config(config());

@@ -19,16 +19,16 @@ defmt = ["dep:defmt", "twine/defmt", "twine-extra?/defmt", "twine-lottie?/defmt"
 ## The `multilang` demo: translations, right-to-left and Arabic text, a file image, emoji.
 multilang = [
     "dep:twine-extra",
+    "twine-build/font",
     "twine-extra/i18n",
     "twine/fs",
     "twine/bidi",
     "twine/arabic-shaping",
     "twine/img-qoi",
-    "twine/montserrat-16-latin-ext",
-    "twine/dejavu-16-persian-hebrew",
 ]
-## Chinese and Japanese in the `multilang` demo (Source Han Sans 16, ~165 KB of flash).
-multilang-cjk = ["multilang", "twine/source-han-sans-sc-16-cjk"]
+## Chinese and Japanese in the `multilang` demo (Source Han Sans 16 subset to the demo's
+## characters in `build.rs`).
+multilang-cjk = ["multilang"]
 ## The `vector` demo: shapes, gradients, strokes, SVG icons and an animated path.
 vector = ["twine/vector", "twine/svg"]
 ## The `lottie` demo: three Lottie animations with play/pause, loop and a frame scrubber.
@@ -38,9 +38,14 @@ ttf = ["twine/ttf"]
 
 [dependencies]
 defmt = { version = "1", optional = true }
-twine = { path = "../twine", default-features = false, features = ["montserrat-16", "montserrat-20"] }
+twine = { path = "../twine", default-features = false, features = ["montserrat-16", "montserrat-20", "theme-lvgl"] }
 twine-extra = { path = "../twine-extra", optional = true }
 twine-lottie = { path = "../twine-lottie", optional = true }
+
+[build-dependencies]
+# The demos' images, and the `multilang` demo's translation catalog and subset fonts
+# (generated in `build.rs`; host-only, nothing of it is linked).
+twine-build = { path = "../twine-build", default-features = false, features = ["image"] }
 
 [dev-dependencies]
 twine = { path = "../twine", features = ["std"] }

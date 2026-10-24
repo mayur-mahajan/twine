@@ -5,7 +5,7 @@ use alloc::boxed::Box;
 use twine_core::Point;
 use twine_engine::{
     Engine, EventCode, EventCx, EventFilter, EventResult, GroupId, NodeId, ObjFlags, State, Widget,
-    fmt_node_id,
+    WidgetClass, fmt_node_id,
 };
 use twine_style::{Anchor, Axis, Part, ScrollSnap, ScrollbarMode, Selector, Side};
 
@@ -15,7 +15,7 @@ use crate::access::EngineAccess;
 use crate::bind::{bind_effect, bind_node};
 use crate::build::{BuildCx, BuildOp};
 use crate::node_ref::NodeRef;
-use crate::prop::{IntoProp, Prop};
+use crate::prop::{IntoProp, IntoVariant, Prop};
 use crate::style_ext::{StyleScope, scoped};
 use crate::view::View;
 
@@ -26,6 +26,12 @@ use crate::view::View;
 /// The build step of [`ViewExt::flag`].
 fn flag_op(flag: ObjFlags, p: Prop<bool>) -> impl FnOnce(&mut BuildCx<'_>, NodeId) + 'static {
     move |cx, node| bind_node(cx, node, p, move |e, n, on| e.set_flag(n, flag, on))
+}
+
+/// The build step of [`ViewExt::variant`] and [`ViewExt::role`]: the node's theme class
+/// follows `p` (the engine's setter is idempotent, so an unchanged class re-themes nothing).
+fn theme_class_op(p: Prop<&'static WidgetClass>) -> impl FnOnce(&mut BuildCx<'_>, NodeId) + 'static {
+    move |cx, node| bind_node(cx, node, p, Engine::set_theme_class)
 }
 
 /// The build step of [`ViewExt::state`].
@@ -556,6 +562,71 @@ pub trait ViewExt: View + Sized {
                     EventResult::Continue
                 });
         })
+    }
+
+    // ---- Theme classes --------------------------------------------------------------------
+
+    /// Themes the widget as `variant` (design `docs/plan/r7-theming-design.md` §2.4): a typed
+    /// choice among the theme classes of the widget type ([`Variant`](twine_engine::Variant), e.g.
+    /// `ButtonVariant::Tinted` on a button; a variant of another widget type does not
+    /// compile). A theme that does not know the variant styles the widget like its own class.
+    /// A constant is set once; a signal, memo or closure re-themes the node whenever the
+    /// variant changes (an unchanged variant does nothing).
+    ///
+    /// Sets the node's theme class
+    /// ([`Engine::set_theme_class`](twine_engine::Engine::set_theme_class)): one re-theming
+    /// of the node when it is built and on every change; bounded by
+    /// [`Limits::max_theme_classes`](twine_core::Limits::max_theme_classes). Never panics.
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    ///
+    /// fn app(cx: Scope) -> impl View {
+    ///     let armed = cx.signal(false);
+    ///     row((
+    ///         button(label("Save")),
+    ///         button(label("Cancel")).variant(ButtonVariant::Plain),
+    ///         button(label("Erase"))
+    ///             .variant(move || if armed.get() { ButtonVariant::Destructive } else { ButtonVariant::Gray }),
+    ///     ))
+    /// }
+    /// # let _ = app;
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use twine_view::prelude::*;
+    /// let _v = slider(30).variant(ButtonVariant::Tinted); // not a slider variant
+    /// ```
+    #[must_use]
+    fn variant<M>(self, variant: impl IntoVariant<Self::Widget, M>) -> Self {
+        self.op(theme_class_op(variant.into_variant()))
+    }
+
+    /// Themes the node as `role`: a [`WidgetClass`] derived from the widget's class (its
+    /// [`base`](WidgetClass::base) chain reaches it), so a component or container gets a look
+    /// of its own in every theme that knows the role, and its base's look in the others
+    /// (design `docs/plan/r7-theming-design.md` §2.4). A role that does not derive from the
+    /// widget's class is refused (warning; the node keeps its look).
+    ///
+    /// Sets the node's theme class
+    /// ([`Engine::set_theme_class`](twine_engine::Engine::set_theme_class)) once, when the
+    /// node is built (one re-theming); bounded by
+    /// [`Limits::max_theme_classes`](twine_core::Limits::max_theme_classes). Never panics.
+    ///
+    /// ```
+    /// use twine_view::prelude::*;
+    ///
+    /// /// A tile showing one vital sign: a container in themes that do not know it.
+    /// static METRIC_TILE: WidgetClass = WidgetClass::new("metric_tile").base(&twine_engine::OBJ_CLASS);
+    ///
+    /// fn tile(name: &'static str) -> impl View {
+    ///     column((label(name), label("--"))).role(&METRIC_TILE)
+    /// }
+    /// # let _ = tile;
+    /// ```
+    #[must_use]
+    fn role(self, role: &'static WidgetClass) -> Self {
+        self.op(theme_class_op(Prop::Static(role)))
     }
 
     // ---- Identity -----------------------------------------------------------------------

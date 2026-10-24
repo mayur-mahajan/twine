@@ -54,3 +54,7 @@ harness = false
 [[bench]]
 name = "widgets"
 harness = false
+
+[[bench]]
+name = "theme"
+harness = false

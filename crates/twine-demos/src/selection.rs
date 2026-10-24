@@ -45,6 +45,52 @@ pub struct Selection {
 /// The height of the window header and of the tab bar.
 const BAR_H: i32 = 40;
 
+/// The LVGL theme (every mode) with only the per-class recipes of the widget classes this demo
+/// creates: what the firmware links (pay for what you use — the other recipes and their
+/// styles are not in the image). The list is what `cargo xtask theme-recipes -- -p
+/// twine-demos --test selection` prints; the demo's tests run with this theme and check it with
+/// `twine_testing::assert_theme_covers` (and their snapshots, that it draws like the full
+/// theme).
+pub static THEME: Lvgl = Lvgl::new().recipes(&[
+    &lvgl::WIN,
+    &lvgl::WIN_HEADER,
+    &lvgl::LABEL,
+    &lvgl::BUTTON,
+    &lvgl::IMAGE,
+    &lvgl::WIN_CONTENT,
+    &lvgl::TABVIEW,
+    &lvgl::TABVIEW_TAB_BAR,
+    &lvgl::TABVIEW_TAB_BUTTON,
+    &lvgl::TABVIEW_CONTENT,
+    &lvgl::TABVIEW_PAGE,
+    &lvgl::DROPDOWN,
+    &lvgl::ROLLER,
+    &lvgl::MSGBOX,
+    &lvgl::MSGBOX_HEADER,
+    &lvgl::MSGBOX_HEADER_BUTTON,
+    &lvgl::MSGBOX_CONTENT,
+    &lvgl::MSGBOX_FOOTER,
+    &lvgl::MSGBOX_FOOTER_BUTTON,
+    &lvgl::DROPDOWN_LIST,
+    &lvgl::LIST,
+    &lvgl::LIST_TEXT,
+    &lvgl::LIST_BUTTON,
+    &lvgl::MENU,
+    &lvgl::MENU_PAGE,
+    &lvgl::MENU_SECTION,
+    &lvgl::MENU_CONT,
+    &lvgl::SWITCH,
+    &lvgl::SLIDER,
+    &lvgl::MENU_SIDEBAR_CONTAINER,
+    &lvgl::MENU_SIDEBAR_HEADER_CONTAINER,
+    &lvgl::MENU_BACK_BUTTON,
+    &lvgl::MENU_MAIN_CONTAINER,
+    &lvgl::MENU_MAIN_HEADER_CONTAINER,
+    &lvgl::OBJ,
+    &lvgl::TILEVIEW,
+    &lvgl::TILEVIEW_TILE,
+]);
+
 /// The selection demo.
 ///
 /// ```

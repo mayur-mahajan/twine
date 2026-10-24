@@ -97,6 +97,9 @@ samples! {
     DesignValue<Opa> = DesignValue::Fixed(<Opa as Sample>::S);
     DesignValue<Radius> = DesignValue::Fixed(<Radius as Sample>::S);
     DesignValue<&'static Font> = DesignValue::Fixed(<&'static Font as Sample>::S);
+    DesignValue<&'static AnimSpec> = DesignValue::Fixed(<&'static AnimSpec as Sample>::S);
+    DesignValue<&'static ImageSource> = DesignValue::Fixed(<&'static ImageSource as Sample>::S);
+    DesignValue<Scale> = DesignValue::Fixed(<Scale as Sample>::S);
 }
 
 /// The sample value of a property, as the style value it should resolve to.

@@ -155,6 +155,141 @@ pub fn elf_sizes(elf: &[u8]) -> Result<ElfSizes, String> {
     Ok(s)
 }
 
+/// One sized symbol of an ELF file's symbol table that lies in an allocated section (code or
+/// data of the image).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElfSymbol {
+    /// The demangled name without hashes (`rustc-demangle`'s alternate form, e.g.
+    /// `<twine_theme::lvgl::Lvgl as twine_engine::theme_hook::ThemeHook>::apply`);
+    /// the raw name when it is not a Rust symbol. A compiler-generated local symbol around a
+    /// Rust one (`.Lswitch.table._R….1597`) is demangled from its Rust part.
+    pub name: String,
+    /// The raw (mangled) name.
+    pub raw: String,
+    /// Size in bytes.
+    pub size: u64,
+    /// `true` when the symbol's section is stored in flash (has contents: not `.bss`).
+    pub flash: bool,
+}
+
+/// `SHT_SYMTAB`: the section type of the full symbol table.
+const SHT_SYMTAB: u32 = 2;
+
+/// The demangled form of `raw` (see [`ElfSymbol::name`]).
+#[must_use]
+pub fn demangle(raw: &str) -> String {
+    let Some(start) = raw.find("_R").or_else(|| raw.find("_ZN")) else {
+        return raw.to_string();
+    };
+    let rust = &raw[start..];
+    // A `.Lswitch.table._R….1597`-style name: drop LLVM's numeric suffix.
+    let rust = match rust.rsplit_once('.') {
+        Some((head, tail)) if start > 0 && tail.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => rust,
+    };
+    match rustc_demangle::try_demangle(rust) {
+        Ok(d) => format!("{d:#}"),
+        Err(_) => raw.to_string(),
+    }
+}
+
+/// The sized symbols of a 32- or 64-bit little-endian ELF file that lie in allocated sections,
+/// demangled ([`ElfSymbol`]). Undefined, absolute and zero-sized symbols are skipped.
+///
+/// # Errors
+/// Not an ELF file, big-endian, or truncated.
+pub fn elf_symbols(elf: &[u8]) -> Result<Vec<ElfSymbol>, String> {
+    let get = |o: usize, n: usize| elf.get(o..o + n).ok_or_else(|| "truncated ELF".to_string());
+    let u16_at = |o: usize| get(o, 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    let u32_at = |o: usize| get(o, 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    let u64_at = |o: usize| get(o, 8).map(|b| u64::from_le_bytes(b.try_into().unwrap_or([0; 8])));
+    if elf.get(..4) != Some(b"\x7fELF".as_slice()) {
+        return Err("not an ELF file".into());
+    }
+    if elf.get(5) != Some(&1) {
+        return Err("big-endian ELF is not supported".into());
+    }
+    let is64 = match elf.get(4) {
+        Some(1) => false,
+        Some(2) => true,
+        _ => return Err("unknown ELF class".into()),
+    };
+    let (shoff, shentsize, shnum) = if is64 {
+        (
+            u64_at(0x28)? as usize,
+            usize::from(u16_at(0x3A)?),
+            usize::from(u16_at(0x3C)?),
+        )
+    } else {
+        (
+            u32_at(0x20)? as usize,
+            usize::from(u16_at(0x2E)?),
+            usize::from(u16_at(0x30)?),
+        )
+    };
+    // A section header: (type, flags, offset, size, link, entsize).
+    let section = |i: usize| -> Result<(u32, u64, usize, usize, usize, usize), String> {
+        let h = shoff + i * shentsize;
+        Ok(if is64 {
+            (
+                u32_at(h + 4)?,
+                u64_at(h + 8)?,
+                u64_at(h + 0x18)? as usize,
+                u64_at(h + 0x20)? as usize,
+                u32_at(h + 0x28)? as usize,
+                u64_at(h + 0x38)? as usize,
+            )
+        } else {
+            (
+                u32_at(h + 4)?,
+                u64::from(u32_at(h + 8)?),
+                u32_at(h + 0x10)? as usize,
+                u32_at(h + 0x14)? as usize,
+                u32_at(h + 0x18)? as usize,
+                u32_at(h + 0x24)? as usize,
+            )
+        })
+    };
+    let mut out = Vec::new();
+    for i in 0..shnum {
+        let (ty, _, off, size, link, entsize) = section(i)?;
+        if ty != SHT_SYMTAB || entsize == 0 {
+            continue;
+        }
+        let strtab = section(link)?.2;
+        for k in 0..size / entsize {
+            let e = off + k * entsize;
+            let (name_off, shndx, sym_size) = if is64 {
+                (u32_at(e)?, u16_at(e + 6)?, u64_at(e + 0x10)?)
+            } else {
+                (u32_at(e)?, u16_at(e + 0xE)?, u64::from(u32_at(e + 8)?))
+            };
+            // Undefined (0) and reserved section indices (absolute, common: 0xFF00 and above).
+            if sym_size == 0 || shndx == 0 || shndx >= 0xFF00 {
+                continue;
+            }
+            let (sec_ty, sec_flags, ..) = section(usize::from(shndx))?;
+            if sec_flags & SHF_ALLOC == 0 {
+                continue;
+            }
+            let raw = elf
+                .get(strtab + name_off as usize..)
+                .map(|b| {
+                    String::from_utf8_lossy(&b[..b.iter().position(|c| *c == 0).unwrap_or(b.len())])
+                        .into_owned()
+                })
+                .unwrap_or_default();
+            out.push(ElfSymbol {
+                name: demangle(&raw),
+                raw,
+                size: sym_size,
+                flash: sec_ty != SHT_NOBITS,
+            });
+        }
+    }
+    Ok(out)
+}
+
 /// What an example needs to build.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Example {
@@ -277,7 +412,7 @@ pub fn examples() -> Result<Vec<Example>, String> {
 }
 
 /// Why an example cannot be built here (`None`: it can).
-fn missing_prerequisite(ex: &Example, env: &[(String, String)]) -> Option<String> {
+pub fn missing_prerequisite(ex: &Example, env: &[(String, String)]) -> Option<String> {
     let toolchain = ex.toolchain.as_deref();
     let mut list = Command::new("rustup");
     list.args(["toolchain", "list"]);
@@ -369,8 +504,18 @@ fn example_cargo(dir: &Path, env: &[(String, String)]) -> Command {
     cmd
 }
 
+/// The release ELF file of `ex` (written by [`build_example`]; each feature set overwrites it).
+#[must_use]
+pub fn elf_path(ex: &Example) -> PathBuf {
+    ex.dir
+        .join("target")
+        .join(&ex.target)
+        .join("release")
+        .join(&ex.package)
+}
+
 /// Builds `ex` for each feature set; returns the size rows.
-fn build_example(ex: &Example, env: &[(String, String)]) -> Result<Vec<SizeRow>, String> {
+pub fn build_example(ex: &Example, env: &[(String, String)]) -> Result<Vec<SizeRow>, String> {
     let mut rows = Vec::new();
     for set in &ex.feature_sets {
         let mut cmd = example_cargo(&ex.dir, env);
@@ -386,12 +531,7 @@ fn build_example(ex: &Example, env: &[(String, String)]) -> Result<Vec<SizeRow>,
         if !status.success() {
             return Err(format!("firmware/{}: `{line}` failed with {status}", ex.name));
         }
-        let elf = ex
-            .dir
-            .join("target")
-            .join(&ex.target)
-            .join("release")
-            .join(&ex.package);
+        let elf = elf_path(ex);
         let bytes = std::fs::read(&elf).map_err(|e| format!("{}: {e}", elf.display()))?;
         rows.push(SizeRow {
             example: ex.name.clone(),
@@ -563,6 +703,90 @@ mod tests {
         );
         assert_eq!((s.flash(), s.ram()), (1230, 4030));
         assert!(elf_sizes(b"nope").is_err());
+    }
+
+    /// An ELF32 with `.text` (AX), `.bss` (WA, NOBITS), `.symtab` and `.strtab`; `syms` are
+    /// `(name, section index, size)`.
+    fn elf32_with_symbols(syms: &[(&str, u16, u32)]) -> Vec<u8> {
+        let mut strtab = vec![0u8];
+        let mut symtab = vec![0u8; 16]; // the null symbol
+        for (name, shndx, size) in syms {
+            let off = strtab.len() as u32;
+            strtab.extend_from_slice(name.as_bytes());
+            strtab.push(0);
+            let mut e = [0u8; 16];
+            e[0..4].copy_from_slice(&off.to_le_bytes());
+            e[8..12].copy_from_slice(&size.to_le_bytes());
+            e[14..16].copy_from_slice(&shndx.to_le_bytes());
+            symtab.extend_from_slice(&e);
+        }
+        let mut v = vec![0u8; 0x34];
+        v[..4].copy_from_slice(b"\x7fELF");
+        v[4] = 1;
+        v[5] = 1;
+        let symtab_off = v.len() as u32;
+        v.extend_from_slice(&symtab);
+        let strtab_off = v.len() as u32;
+        v.extend_from_slice(&strtab);
+        let shoff = v.len() as u32;
+        v[0x20..0x24].copy_from_slice(&shoff.to_le_bytes());
+        v[0x2E..0x30].copy_from_slice(&40u16.to_le_bytes());
+        v[0x30..0x32].copy_from_slice(&5u16.to_le_bytes());
+        // (type, flags, offset, size, link, entsize)
+        let headers: [(u32, u32, u32, u32, u32, u32); 5] = [
+            (0, 0, 0, 0, 0, 0),
+            (1, 0x6, 0, 100, 0, 0),
+            (8, 0x3, 0, 100, 0, 0),
+            (2, 0, symtab_off, symtab.len() as u32, 4, 16),
+            (3, 0, strtab_off, strtab.len() as u32, 0, 0),
+        ];
+        for (ty, flags, off, size, link, entsize) in headers {
+            let mut h = [0u8; 40];
+            h[4..8].copy_from_slice(&ty.to_le_bytes());
+            h[8..12].copy_from_slice(&flags.to_le_bytes());
+            h[0x10..0x14].copy_from_slice(&off.to_le_bytes());
+            h[0x14..0x18].copy_from_slice(&size.to_le_bytes());
+            h[0x18..0x1C].copy_from_slice(&link.to_le_bytes());
+            h[0x24..0x28].copy_from_slice(&entsize.to_le_bytes());
+            v.extend_from_slice(&h);
+        }
+        v
+    }
+
+    #[test]
+    fn elf_symbols_reads_sized_allocated_symbols_and_demangles() {
+        let design = "_RNvXs3_NtCsiLCkRq3apFI_11twine_theme7defaultNtB5_12DefaultThemeNtNtCs5RVGM0BCmv4_12twine_engine10theme_hook9ThemeHook6design";
+        let elf = elf32_with_symbols(&[
+            (design, 1, 2070),
+            ("HEAP", 2, 4096),
+            ("zero_sized", 1, 0),
+            ("undefined", 0, 8),
+            ("absolute", 0xFFF1, 8),
+        ]);
+        let syms = elf_symbols(&elf).unwrap();
+        assert_eq!(syms.len(), 2, "{syms:?}");
+        assert_eq!(
+            syms[0].name,
+            "<twine_theme::default::DefaultTheme as twine_engine::theme_hook::ThemeHook>::design"
+        );
+        assert_eq!((syms[0].size, syms[0].flash), (2070, true));
+        assert_eq!((syms[1].name.as_str(), syms[1].flash), ("HEAP", false));
+        assert!(elf_symbols(b"nope").is_err());
+    }
+
+    #[test]
+    fn demangle_handles_v0_legacy_and_local_wrappers() {
+        let v0 = "_RNvNtNtCsiLCkRq3apFI_11twine_theme7default6styles10CHECK_MARK";
+        assert_eq!(demangle(v0), "twine_theme::default::styles::CHECK_MARK");
+        assert_eq!(
+            demangle(&format!(".Lswitch.table.{v0}.1597")),
+            "twine_theme::default::styles::CHECK_MARK"
+        );
+        assert_eq!(
+            demangle("_ZN4core3fmt5write17h0123456789abcdefE"),
+            "core::fmt::write"
+        );
+        assert_eq!(demangle("memcpy"), "memcpy");
     }
 
     #[test]

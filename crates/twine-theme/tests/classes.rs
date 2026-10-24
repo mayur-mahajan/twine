@@ -1,15 +1,18 @@
 //! Typed widget classes in themes (R2.S04): identity matching along `WidgetClass::base`,
-//! application class registrations, public theme styles, the card class, builders, and colors
-//! that follow every theme mode.
+//! design systems extending a built-in theme (R7.S04), public theme styles, the card class,
+//! tuned element sets, and colors that follow every theme mode.
 
-use std::cell::Cell;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-use twine_core::{Color, Opa, Size};
-use twine_engine::{Engine, NodeId, OBJ_CLASS, ObjFlags, ThemeHook, Widget, WidgetClass};
-use twine_style::{Part, PropId, Selector, State, StyleBuf, ThemeMode, design};
+use twine_core::{Color, Opa};
+use twine_engine::{
+    ComputedRecipe, DesignSystem, Engine, NodeId, OBJ_CLASS, ObjFlags, Recipe, RecipeRef, Theme, ThemeCx,
+    ThemeHook, Widget, WidgetClass, recipe,
+};
+use twine_style::design::ElementTable;
+use twine_style::{Part, PropId, Selector, State, Style, ThemeMode, design, style};
 use twine_testing::EngineHarness;
-use twine_theme::{DefaultTheme, FontScale, MonoTheme, Palette, SimpleTheme};
+use twine_theme::{FontScale, Lvgl, Mono, Palette, lvgl, mono, simple};
 use twine_widgets::button::BUTTON_CLASS;
 use twine_widgets::container::{CARD_CLASS, Card};
 
@@ -23,7 +26,7 @@ static BIG_KEY_CLASS: WidgetClass = WidgetClass::new("big_key")
     .base(&KEY_CLASS);
 /// A class named like the button but not derived from it.
 static NAMESAKE_CLASS: WidgetClass = WidgetClass::new("button").default_flags(ObjFlags::CLICKABLE);
-/// A gauge styled only by an application registration.
+/// A gauge styled only by an application recipe.
 static GAUGE_CLASS: WidgetClass = WidgetClass::new("gauge").parts(&[Part::Main, Part::Indicator]);
 
 struct Of(&'static WidgetClass);
@@ -42,14 +45,15 @@ fn bg(e: &Engine, n: NodeId) -> Color {
     e.style_color(n, Part::Main, PropId::BgColor)
 }
 
+/// The built-in themes.
+fn themes() -> [&'static dyn ThemeHook; 3] {
+    [&lvgl::THEME, &mono::THEME, &simple::THEME]
+}
+
 #[test]
 fn custom_class_with_button_base_gets_button_styling() {
-    for theme in [
-        Rc::new(DefaultTheme::light()) as Rc<dyn ThemeHook>,
-        Rc::new(MonoTheme::builder().build()),
-        Rc::new(SimpleTheme::new()),
-    ] {
-        let mut h = EngineHarness::new(240, 160).theme(theme.clone());
+    for theme in themes() {
+        let mut h = EngineHarness::new(240, 160).theme(theme);
         let real = create(&mut h, &BUTTON_CLASS);
         let key = create(&mut h, &KEY_CLASS);
         let big = create(&mut h, &BIG_KEY_CLASS);
@@ -85,7 +89,7 @@ fn custom_class_with_button_base_gets_button_styling() {
         );
     }
     // State styles come along: the default theme's pressed recolor.
-    let mut h = EngineHarness::new(240, 160).theme(DefaultTheme::light());
+    let mut h = EngineHarness::new(240, 160).theme(&lvgl::THEME);
     let key = create(&mut h, &KEY_CLASS);
     h.engine_mut().add_state(key, State::PRESSED);
     h.run_until_idle();
@@ -95,26 +99,47 @@ fn custom_class_with_button_base_gets_button_styling() {
     );
 }
 
+static RED: Style = style! { bg_color: Color::RED };
+static GREEN: Style = style! { bg_color: Color::GREEN };
+static KEY_CALLS: AtomicU32 = AtomicU32::new(0);
+
+/// The key: the LVGL button, red.
+fn key(cx: &mut ThemeCx<'_>) {
+    KEY_CALLS.fetch_add(1, Ordering::Relaxed);
+    if let Some(r) = lvgl::THEME.recipe(&BUTTON_CLASS) {
+        cx.add_recipe(r);
+    }
+    cx.add_style(Selector::MAIN, &RED);
+}
+/// The big key: the key, green.
+fn big_key(cx: &mut ThemeCx<'_>) {
+    key(cx);
+    cx.add_style(Selector::MAIN, &GREEN);
+}
+static KEY: ComputedRecipe = ComputedRecipe::new("KEY", &KEY_CLASS, key);
+static BIG_KEY: ComputedRecipe = ComputedRecipe::new("BIG_KEY", &BIG_KEY_CLASS, big_key);
+
+/// Keys on the LVGL theme.
+struct Keys;
+impl DesignSystem for Keys {
+    type Base = Lvgl;
+    const NAME: &'static str = "keys";
+    const MODES: &'static [(ThemeMode, &'static ElementTable)] = lvgl::MODES;
+    fn recipe(class: &'static WidgetClass) -> Option<RecipeRef> {
+        KEY.for_class(class).or_else(|| BIG_KEY.for_class(class))
+    }
+}
+static KEYS: Theme<Keys> = Theme::new();
+
 #[test]
-fn app_registered_class_style_is_applied_and_overrides_the_base() {
-    let calls = Rc::new(Cell::new(0));
-    let c = calls.clone();
-    let theme = DefaultTheme::builder()
-        .class(&KEY_CLASS, move |cx| {
-            c.set(c.get() + 1);
-            assert!(cx.class().is_a(&KEY_CLASS));
-            cx.add_style(Selector::MAIN, Rc::new(StyleBuf::new().bg_color(Color::RED)));
-        })
-        .class(&BIG_KEY_CLASS, |cx| {
-            cx.add_style(Selector::MAIN, Rc::new(StyleBuf::new().bg_color(Color::GREEN)));
-        })
-        .build();
-    let mut h = EngineHarness::new(240, 160).theme(theme);
+fn design_system_recipes_style_custom_classes_over_the_base() {
+    let mut h = EngineHarness::new(240, 160).theme(&KEYS);
+    let before = KEY_CALLS.load(Ordering::Relaxed);
     let button = create(&mut h, &BUTTON_CLASS);
     let key = create(&mut h, &KEY_CLASS);
     let big = create(&mut h, &BIG_KEY_CLASS);
     let e = h.engine();
-    // The base's styles stay (radius, shadow), the registration wins where both set a value.
+    // The base's styles stay (radius, shadow), the recipe wins where both set a value.
     assert_eq!(bg(e, key), Color::RED);
     assert_eq!(
         e.style_i32(key, Part::Main, PropId::ShadowWidth),
@@ -125,20 +150,34 @@ fn app_registered_class_style_is_applied_and_overrides_the_base() {
         Palette::Blue.main(),
         "the button itself is untouched"
     );
-    // The most derived registration runs last and wins; the key's runs for the big key too.
+    // The most derived recipe is chosen; it builds on the key's.
     assert_eq!(bg(e, big), Color::GREEN);
-    assert_eq!(calls.get(), 2);
+    assert_eq!(KEY_CALLS.load(Ordering::Relaxed) - before, 2);
 }
 
+/// Mono buttons inverted, through a design system on the mono theme.
+fn inverted_button(cx: &mut ThemeCx<'_>) {
+    if let Some(r) = mono::THEME.recipe(&BUTTON_CLASS) {
+        cx.add_recipe(r);
+    }
+    cx.add_style(Selector::MAIN, &mono::styles::INV);
+}
+static INVERTED_BUTTON: ComputedRecipe =
+    ComputedRecipe::new("INVERTED_BUTTON", &BUTTON_CLASS, inverted_button);
+struct InvertedMono;
+impl DesignSystem for InvertedMono {
+    type Base = Mono;
+    const NAME: &'static str = "inverted_mono";
+    const MODES: &'static [(ThemeMode, &'static ElementTable)] = mono::MODES;
+    fn recipe(class: &'static WidgetClass) -> Option<RecipeRef> {
+        INVERTED_BUTTON.for_class(class)
+    }
+}
+static INVERTED: Theme<InvertedMono> = Theme::new();
+
 #[test]
-fn registrations_style_built_in_classes_and_screens_too() {
-    let theme = MonoTheme::builder()
-        .class(&BUTTON_CLASS, |cx| {
-            let inv = cx.styles().inv.clone();
-            cx.add_style(Selector::MAIN, inv);
-        })
-        .build();
-    let mut h = EngineHarness::new(128, 64).theme(theme);
+fn design_systems_restyle_built_in_classes_too() {
+    let mut h = EngineHarness::new(128, 64).theme(&INVERTED);
     let b = create(&mut h, &BUTTON_CLASS);
     let key = create(&mut h, &KEY_CLASS);
     let e = h.engine();
@@ -146,17 +185,25 @@ fn registrations_style_built_in_classes_and_screens_too() {
     assert_eq!(bg(e, key), Color::BLACK, "derived classes too");
 }
 
+recipe! {
+    /// The gauge: the LVGL card with a primary indicator, from the theme's public styles.
+    static GAUGE for GAUGE_CLASS {
+        Selector::MAIN => { ..lvgl::styles::CARD },
+        Part::Indicator => { ..lvgl::styles::BG_COLOR_PRIMARY },
+    }
+}
+struct Gauges;
+impl DesignSystem for Gauges {
+    type Base = Lvgl;
+    const NAME: &'static str = "gauges";
+    const MODES: &'static [(ThemeMode, &'static ElementTable)] = lvgl::MODES;
+    const RECIPES: &'static [&'static Recipe] = &[&GAUGE];
+}
+static GAUGES: Theme<Gauges> = Theme::new();
+
 #[test]
 fn theme_styles_make_a_custom_widget_look_native() {
-    let theme = DefaultTheme::builder()
-        .class(&GAUGE_CLASS, |cx| {
-            let s = cx.styles();
-            let (card, primary) = (s.card.clone(), s.bg_color_primary.clone());
-            cx.add_style(Selector::MAIN, card);
-            cx.add_style(Selector::part(Part::Indicator), primary);
-        })
-        .build();
-    let mut h = EngineHarness::new(240, 160).theme(theme);
+    let mut h = EngineHarness::new(240, 160).theme(&GAUGES);
     let gauge = create(&mut h, &GAUGE_CLASS);
     let card = create(&mut h, &OBJ_CLASS);
     let e = h.engine();
@@ -177,22 +224,42 @@ fn theme_styles_make_a_custom_widget_look_native() {
         e.style_color(gauge, Part::Indicator, PropId::BgColor),
         Palette::Blue.main()
     );
-    // The same style set is public on the theme itself.
-    let t = DefaultTheme::light();
-    let s = t.styles(130, Size::new(240, 160));
-    assert!(Rc::ptr_eq(&s, &t.styles(130, Size::new(240, 160))));
-    assert!(s.card.get(PropId::BgColor).is_some());
+    // The styles are `static` data with design elements.
+    assert!(matches!(
+        lvgl::styles::CARD.get(PropId::BgColor),
+        Some(twine_style::StyleValue::Element(_))
+    ));
 }
+
+static SQUARE_STYLE: Style = style! { radius: 0 };
+/// Cards: the LVGL card, square.
+fn square_card(cx: &mut ThemeCx<'_>) {
+    if let Some(r) = lvgl::THEME.recipe(&CARD_CLASS) {
+        cx.add_recipe(r);
+    }
+    cx.add_style(Selector::MAIN, &SQUARE_STYLE);
+}
+static SQUARE_CARD: ComputedRecipe = ComputedRecipe::new("SQUARE_CARD", &CARD_CLASS, square_card);
+struct SquareCards;
+impl DesignSystem for SquareCards {
+    type Base = Lvgl;
+    const NAME: &'static str = "square_cards";
+    const MODES: &'static [(ThemeMode, &'static ElementTable)] = lvgl::MODES;
+    fn recipe(class: &'static WidgetClass) -> Option<RecipeRef> {
+        SQUARE_CARD.for_class(class)
+    }
+}
+static SQUARE: Theme<SquareCards> = Theme::new();
 
 #[test]
 fn card_matches_the_themes_card() {
-    for theme in [
-        Rc::new(DefaultTheme::light()) as Rc<dyn ThemeHook>,
-        Rc::new(DefaultTheme::dark()),
-        Rc::new(MonoTheme::builder().build()),
-        Rc::new(SimpleTheme::new()),
+    for (theme, mode) in [
+        (&lvgl::THEME as &'static dyn ThemeHook, ThemeMode::Light),
+        (&lvgl::THEME, ThemeMode::Dark),
+        (&mono::THEME, ThemeMode::Light),
+        (&simple::THEME, ThemeMode::Light),
     ] {
-        let mut h = EngineHarness::new(240, 160).theme(theme.clone());
+        let mut h = EngineHarness::new(240, 160).theme(theme).mode(mode);
         let s = h.screen();
         let card = h.engine_mut().create(s, Box::new(Card)).unwrap();
         let obj = create(&mut h, &OBJ_CLASS);
@@ -216,12 +283,7 @@ fn card_matches_the_themes_card() {
         }
     }
     // An application restyles cards only, not plain containers.
-    let theme = DefaultTheme::builder()
-        .class(&CARD_CLASS, |cx| {
-            cx.add_style(Selector::MAIN, Rc::new(StyleBuf::new().radius(0)));
-        })
-        .build();
-    let mut h = EngineHarness::new(240, 160).theme(theme);
+    let mut h = EngineHarness::new(240, 160).theme(&SQUARE);
     let s = h.screen();
     let card = h.engine_mut().create(s, Box::new(Card)).unwrap();
     let obj = create(&mut h, &OBJ_CLASS);
@@ -232,18 +294,19 @@ fn card_matches_the_themes_card() {
 #[test]
 fn a_theme_without_a_card_look_styles_cards_like_containers() {
     /// Knows only plain objects.
-    struct ObjOnly(Rc<StyleBuf>);
+    struct ObjOnly(&'static Style);
     impl ThemeHook for ObjOnly {
-        fn apply(&self, cx: &mut twine_engine::ThemeCx<'_>, class: &'static WidgetClass) {
+        fn apply(&self, cx: &mut ThemeCx<'_>, class: &'static WidgetClass) {
             if class.lineage().any(|c| c.is(&OBJ_CLASS)) && cx.parent().is_some() {
-                cx.add_style(Selector::MAIN, self.0.clone());
+                cx.add_style(Selector::MAIN, self.0);
             }
         }
         fn font_normal(&self) -> &'static twine_text::Font {
             &twine_assets::fonts::MONTSERRAT_14
         }
     }
-    let mut h = EngineHarness::new(64, 48).theme(ObjOnly(Rc::new(StyleBuf::new().bg_color(Color::RED))));
+    static OBJ_ONLY: ObjOnly = ObjOnly(&RED);
+    let mut h = EngineHarness::new(64, 48).theme(&OBJ_ONLY);
     let s = h.screen();
     let card = h.engine_mut().create(s, Box::new(Card)).unwrap();
     assert_eq!(bg(h.engine(), card), Color::RED);
@@ -251,42 +314,52 @@ fn a_theme_without_a_card_look_styles_cards_like_containers() {
 
 #[test]
 fn mono_starts_in_each_mode() {
-    let size = Size::new(128, 64);
     for mode in ThemeMode::ALL {
-        let t = MonoTheme::builder().mode(mode).build();
-        assert_eq!(ThemeHook::mode(&t), mode);
-        let mut h = EngineHarness::new(128, 64).theme(t);
+        let mut h = EngineHarness::new(128, 64).theme(&mono::THEME).mode(mode);
         let d = h.engine().default_display().unwrap();
         assert_eq!(h.engine().theme_mode(d), mode);
         let b = create(&mut h, &BUTTON_CLASS);
-        let want = MonoTheme::builder()
-            .build()
-            .design(mode, 130, size)
-            .unwrap()
-            .get(design::SURFACE)
-            .unwrap();
+        let want = mono::THEME.design(mode).unwrap().get(design::SURFACE).unwrap();
         assert_eq!(bg(h.engine(), b), want, "{mode:?}");
     }
 }
 
 #[test]
 fn simple_starts_in_its_modes_only() {
+    /// The simple theme listing light and high contrast only.
+    static TWO: twine_theme::Simple = twine_theme::Simple::new().modes(&[
+        (ThemeMode::Light, &simple::LIGHT),
+        (ThemeMode::HighContrast, &simple::HIGH_CONTRAST),
+    ]);
+    let h = EngineHarness::new(64, 48)
+        .theme(&simple::THEME)
+        .mode(ThemeMode::HighContrast);
+    assert_eq!(h.engine().theme_mode(h.display()), ThemeMode::HighContrast);
+    let h = EngineHarness::new(64, 48).theme(&TWO).mode(ThemeMode::Night);
     assert_eq!(
-        ThemeHook::mode(&SimpleTheme::builder().mode(ThemeMode::HighContrast).build()),
-        ThemeMode::HighContrast
-    );
-    assert_eq!(
-        ThemeHook::mode(&SimpleTheme::builder().mode(ThemeMode::Night).build()),
-        ThemeMode::Light
+        h.engine().theme_mode(h.display()),
+        ThemeMode::Light,
+        "the first listed mode"
     );
 }
 
-/// The builders produce exactly the themes of the old positional constructors (same pixels).
+/// A tuned element set with LVGL's own values is LVGL's table (same pixels); another primary
+/// color changes them.
 #[test]
-fn builder_equivalence_same_pixels() {
-    let f = &twine_assets::fonts::MONTSERRAT_14;
-    let scene = |theme: Rc<dyn ThemeHook>| {
-        let mut h = EngineHarness::new(160, 100).theme(theme);
+fn tuned_sets_same_pixels() {
+    static EXPLICIT_LIGHT: ElementTable = Lvgl::SET
+        .primary(Palette::Blue.main())
+        .secondary(Palette::Red.main())
+        .fonts(FontScale::uniform(&twine_assets::fonts::MONTSERRAT_14))
+        .table(ThemeMode::Light);
+    static EXPLICIT: Lvgl = Lvgl::new().modes(&[(ThemeMode::Light, &EXPLICIT_LIGHT)]);
+    static TEAL_LIGHT: ElementTable = Lvgl::SET
+        .primary(Palette::Teal.main())
+        .secondary(Palette::Amber.main())
+        .table(ThemeMode::Light);
+    static TEAL: Lvgl = Lvgl::new().modes(&[(ThemeMode::Light, &TEAL_LIGHT)]);
+    let scene = |theme: &'static dyn ThemeHook, mode| {
+        let mut h = EngineHarness::new(160, 100).theme(theme).mode(mode);
         let s = h.screen();
         let e = h.engine_mut();
         let c = e.create(s, Box::new(Card)).unwrap();
@@ -297,57 +370,32 @@ fn builder_equivalence_same_pixels() {
         h.run_until_idle();
         h.panel_rgb888()
     };
-    let explicit = scene(Rc::new(
-        DefaultTheme::builder()
-            .primary(Palette::Blue)
-            .secondary(Palette::Red)
-            .mode(ThemeMode::Light)
-            .fonts(FontScale::uniform(f))
-            .build(),
-    ));
-    assert_eq!(explicit, scene(Rc::new(DefaultTheme::light())));
-    assert_eq!(
-        scene(Rc::new(DefaultTheme::builder().mode(ThemeMode::Dark).build())),
-        scene(Rc::new(DefaultTheme::dark()))
-    );
-    let teal = scene(Rc::new(
-        DefaultTheme::builder()
-            .primary(Palette::Teal)
-            .secondary(Palette::Amber)
-            .build(),
-    ));
-    let teal_colors = scene(Rc::new(
-        DefaultTheme::builder()
-            .primary(Palette::Teal.main())
-            .secondary(Color::from(Palette::Amber))
-            .build(),
-    ));
-    assert_eq!(teal, teal_colors);
-    assert_ne!(teal, explicit);
+    let explicit = scene(&EXPLICIT, ThemeMode::Light);
+    assert_eq!(explicit, scene(&lvgl::THEME, ThemeMode::Light));
+    assert_ne!(scene(&TEAL, ThemeMode::Light), explicit);
+    assert_ne!(scene(&lvgl::THEME, ThemeMode::Dark), explicit);
 }
 
 #[test]
 fn line_and_menu_greys_follow_every_mode() {
-    let t = DefaultTheme::light();
-    let size = Size::new(240, 160);
-    let s = t.styles(130, size);
+    let t = &lvgl::THEME;
     // The card's line color and the pressed menu row are the NEUTRAL element...
     assert_eq!(
-        s.card.get(PropId::LineColor),
+        lvgl::styles::CARD.get(PropId::LineColor),
         Some(twine_style::StyleValue::Element(design::NEUTRAL.erase()))
     );
     assert_eq!(
-        s.menu_pressed.get(PropId::BgColor),
+        lvgl::styles::MENU_PRESSED.get(PropId::BgColor),
         Some(twine_style::StyleValue::Element(design::NEUTRAL.erase()))
     );
     // ...LVGL's grey in light and dark mode, the mode's own neutral otherwise.
-    let neutral = |m| t.design(m, 130, size).unwrap().get(design::NEUTRAL).unwrap();
+    let neutral = |m| t.design(m).unwrap().get(design::NEUTRAL).unwrap();
     assert_eq!(neutral(ThemeMode::Light), Palette::Grey.main());
     assert_eq!(neutral(ThemeMode::Dark), Palette::Grey.main());
     assert_ne!(neutral(ThemeMode::Night), Palette::Grey.main());
     assert_ne!(neutral(ThemeMode::HighContrast), Palette::Grey.main());
     // Resolved on a node, it switches with the mode.
-    let mut h = EngineHarness::new(240, 160).theme(DefaultTheme::light());
+    let mut h = EngineHarness::new(240, 160).theme(&lvgl::THEME);
     let card = create(&mut h, &OBJ_CLASS);
     let d = h.engine().default_display().unwrap();
     for mode in ThemeMode::ALL {

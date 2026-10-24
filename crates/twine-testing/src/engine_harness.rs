@@ -1,15 +1,13 @@
 //! [`EngineHarness`]: a bare [`Engine`] on an in-memory display with a mock clock, for engine
 //! tests (feature `engine`).
 
-use std::rc::Rc;
 use twine_core::{ColorFormat, Duration, Instant, Limits, Point, Rect, Rotation};
 
 use twine_engine::{
-    BufferMode, BufferSpec, DisplayId, Engine, EngineConfig, InputId, IntoTheme, InvalidateReason, NodeId,
-    RefreshStats, ThemeHook, Wake,
+    BufferMode, BufferSpec, DisplayId, DisplayTheme, Engine, EngineConfig, InputId, InvalidateReason, NodeId,
+    RefreshStats, ThemeHook, ThemeMode, Wake,
 };
 use twine_hal::{Clock, DisplayInfo, Key, PollHint};
-use twine_theme::DefaultTheme;
 
 use crate::mock_display::MockFramebufferDisplay;
 use crate::snapshot::{SnapshotConfig, Tolerance, assert_rgb_snapshot};
@@ -177,8 +175,8 @@ struct Settings {
     align: u8,
     /// `DisplayInfo::dpi` of the panel.
     dpi: u16,
-    /// Installed on the display after it is added.
-    theme: Option<Rc<dyn ThemeHook>>,
+    /// The display's theme (attached when it is added).
+    theme: Option<DisplayTheme>,
 }
 
 /// The harness's limits unless a test sets its own: [`Limits::DEFAULT`], except in the safety
@@ -252,6 +250,7 @@ impl Settings {
                     } else {
                         BufferMode::direct()
                     },
+                    self.theme,
                 )
             }
             kind => {
@@ -260,9 +259,9 @@ impl Settings {
                 if let Kind::Dma(polls) = kind {
                     #[cfg(feature = "debug-checks")]
                     engine.set_render_hook(Some(crate::mock_display::record_render_start));
-                    engine.add_display(MockDmaDisplay::new(info, polls), mode)
+                    engine.add_display(MockDmaDisplay::new(info, polls), mode, self.theme)
                 } else {
-                    engine.add_display(MemoryDisplay::new(info), mode)
+                    engine.add_display(MemoryDisplay::new(info), mode, self.theme)
                 }
             }
         };
@@ -274,9 +273,6 @@ impl Settings {
                 info.width, info.height, info.format
             )
         });
-        if let Some(t) = &self.theme {
-            engine.set_theme(display, t.clone());
-        }
         (engine, display)
     }
 }
@@ -290,8 +286,8 @@ impl std::fmt::Debug for EngineHarness {
 }
 
 impl EngineHarness {
-    /// A `w × h` RGB565 display with two 40-row buffers and LVGL's default light theme
-    /// ([`DefaultTheme::light`]).
+    /// A `w × h` RGB565 display with two 40-row buffers and the LVGL theme in its light mode
+    /// ([`twine_theme::lvgl::THEME`]).
     #[must_use]
     pub fn new(w: u16, h: u16) -> Self {
         let s = Settings {
@@ -305,7 +301,7 @@ impl EngineHarness {
             rotation: Rotation::Deg0,
             align: 1,
             dpi: twine_style::DEFAULT_DPI,
-            theme: Some(DefaultTheme::light().into_theme()),
+            theme: Some(DisplayTheme::new(&twine_theme::lvgl::THEME)),
         };
         let (engine, display) = s.build();
         Self {
@@ -362,19 +358,37 @@ impl EngineHarness {
         self.teardown = Some(f);
     }
 
-    /// Installs `theme` on the display instead of the default light theme (rebuilds the
-    /// engine): a theme value or a shared one ([`IntoTheme`]).
+    /// Creates the display with `theme` (a `static`) instead of the LVGL theme, starting in
+    /// its first listed mode (rebuilds the engine).
     ///
     /// ```
+    /// use twine_engine::NoBase;
     /// use twine_testing::EngineHarness;
-    /// use twine_theme::DefaultTheme;
     ///
-    /// let h = EngineHarness::new(64, 32).theme(DefaultTheme::dark());
-    /// assert!(h.engine().theme(h.display()).is_some());
+    /// static PLAIN: NoBase = NoBase; // a theme that styles nothing
+    /// let h = EngineHarness::new(64, 32).theme(&PLAIN);
+    /// assert_eq!(h.engine().theme(h.display()).map(|t| t.name()), Some("none"));
     /// ```
     #[must_use]
-    pub fn theme(mut self, theme: impl IntoTheme) -> Self {
-        self.s.theme = Some(theme.into_theme());
+    pub fn theme(mut self, theme: &'static dyn ThemeHook) -> Self {
+        self.s.theme = Some(DisplayTheme::new(theme));
+        self.rebuild();
+        self
+    }
+
+    /// Starts the display's theme in `mode` (rebuilds the engine; with
+    /// [`no_theme`](Self::no_theme) it does nothing).
+    ///
+    /// ```
+    /// use twine_style::ThemeMode;
+    /// use twine_testing::EngineHarness;
+    ///
+    /// let h = EngineHarness::new(64, 32).mode(ThemeMode::Dark);
+    /// assert_eq!(h.engine().theme_mode(h.display()), ThemeMode::Dark);
+    /// ```
+    #[must_use]
+    pub fn mode(mut self, mode: ThemeMode) -> Self {
+        self.s.theme = self.s.theme.map(|t| t.mode(mode));
         self.rebuild();
         self
     }
@@ -386,7 +400,7 @@ impl EngineHarness {
         mut self,
         config: EngineConfig,
         limits: Limits,
-        theme: Option<Rc<dyn ThemeHook>>,
+        theme: Option<DisplayTheme>,
         rotation: Option<Rotation>,
     ) -> Self {
         self.s.config = config;

@@ -45,7 +45,8 @@
 //! `kind` is how `style!` converts values: `len` (integers become `Length::Px`, any `Length`
 //! such as `Length::dp(8)`, a `LengthElement` or a `LengthValue` stays), `radius` (integers
 //! become `Radius::Px`; a `Radius`, a `RadiusElement` or a `RadiusValue` stays), `elem` (a
-//! color, opacity or font property: the fixed value, its design element or its design value),
+//! color, opacity, font, `anim` or `bg_image` property: the fixed value, its design element or
+//! its design value),
 //! `dur` (a `Duration` becomes `DurationMs`), `tracks` (a grid template: `style!` takes a
 //! `'static` slice or array; the `StyleBuf` builder and the view modifier take a `GridTracks`,
 //! so also a `Vec`, which the container holds, see `TracksRef`), `trans` (a transition:
@@ -55,8 +56,9 @@
 //! `layout` kind also makes the `twine-view` modifier take a whole `Layout` (the kind with its
 //! flow or tracks).
 //!
-//! Every color, length, radius, opacity and font property has a design-value payload
-//! (`ColorValue`, `LengthValue`, `RadiusValue`, `OpacityValue`, `FontValue`, see
+//! Every color, length, radius, opacity and font property, `anim`, `bg_image` and
+//! `rotary_sensitivity` have a design-value payload (`ColorValue`, `LengthValue`,
+//! `RadiusValue`, `OpacityValue`, `FontValue`, `MotionValue`, `IconValue`, `ScaleValue`, see
 //! [`design`](crate::design)): a fixed value or a design element the theme supplies, so all
 //! three APIs take either.
 //! The payload type is written with the names of `twine_style::__private` and resolved by
@@ -188,7 +190,7 @@ macro_rules! __prop_table {
                 /// Full gradient descriptor; overrides the simple gradient (`LV_STYLE_BG_GRAD`).
                 BgGradient(bg_gradient): val [&'static Gradient] [] NONE ["bg_grad" "LV_STYLE_BG_GRAD"];
                 /// Background image or symbol (`LV_STYLE_BG_IMAGE_SRC`).
-                BgImage(bg_image): val [&'static ImageSource] [EXT_DRAW] NONE ["bg_image_src" "LV_STYLE_BG_IMAGE_SRC"];
+                BgImage(bg_image): elem [IconValue] [EXT_DRAW] NONE ["bg_image_src" "LV_STYLE_BG_IMAGE_SRC"];
                 /// Background image opacity (`LV_STYLE_BG_IMAGE_OPA`).
                 BgImageOpacity(bg_image_opacity): elem [OpacityValue] [] COVER ["bg_image_opa" "LV_STYLE_BG_IMAGE_OPA"];
                 /// Background image recolor (`LV_STYLE_BG_IMAGE_RECOLOR`).
@@ -214,24 +216,24 @@ macro_rules! __prop_table {
             /// Outline.
             OUTLINE {
                 /// Outline width (`LV_STYLE_OUTLINE_WIDTH`).
-                OutlineWidth(outline_width): val [i32] [EXT_DRAW] INT0 ["LV_STYLE_OUTLINE_WIDTH"];
+                OutlineWidth(outline_width): len [LengthValue] [EXT_DRAW] PX0 ["LV_STYLE_OUTLINE_WIDTH"];
                 /// Outline color (`LV_STYLE_OUTLINE_COLOR`).
                 OutlineColor(outline_color): elem [ColorValue] [] BLACK ["LV_STYLE_OUTLINE_COLOR"];
                 /// Outline opacity (`LV_STYLE_OUTLINE_OPA`).
                 OutlineOpacity(outline_opacity): elem [OpacityValue] [EXT_DRAW] COVER ["outline_opa" "LV_STYLE_OUTLINE_OPA"];
                 /// Gap between the object and the outline (`LV_STYLE_OUTLINE_PAD`).
-                OutlineOffset(outline_offset): val [i32] [EXT_DRAW] INT0 ["outline_pad" "LV_STYLE_OUTLINE_PAD"];
+                OutlineOffset(outline_offset): len [LengthValue] [EXT_DRAW] PX0 ["outline_pad" "LV_STYLE_OUTLINE_PAD"];
             }
             /// Box shadow.
             SHADOW {
                 /// Shadow blur width (`LV_STYLE_SHADOW_WIDTH`).
-                ShadowWidth(shadow_width): val [i32] [EXT_DRAW] INT0 ["LV_STYLE_SHADOW_WIDTH"];
+                ShadowWidth(shadow_width): len [LengthValue] [EXT_DRAW] PX0 ["LV_STYLE_SHADOW_WIDTH"];
                 /// Shadow horizontal offset (`LV_STYLE_SHADOW_OFFSET_X`).
-                ShadowOffsetX(shadow_offset_x): val [i32] [EXT_DRAW] INT0 ["LV_STYLE_SHADOW_OFFSET_X"];
+                ShadowOffsetX(shadow_offset_x): len [LengthValue] [EXT_DRAW] PX0 ["LV_STYLE_SHADOW_OFFSET_X"];
                 /// Shadow vertical offset (`LV_STYLE_SHADOW_OFFSET_Y`).
-                ShadowOffsetY(shadow_offset_y): val [i32] [EXT_DRAW] INT0 ["LV_STYLE_SHADOW_OFFSET_Y"];
+                ShadowOffsetY(shadow_offset_y): len [LengthValue] [EXT_DRAW] PX0 ["LV_STYLE_SHADOW_OFFSET_Y"];
                 /// Shadow spread (`LV_STYLE_SHADOW_SPREAD`).
-                ShadowSpread(shadow_spread): val [i32] [EXT_DRAW] INT0 ["LV_STYLE_SHADOW_SPREAD"];
+                ShadowSpread(shadow_spread): len [LengthValue] [EXT_DRAW] PX0 ["LV_STYLE_SHADOW_SPREAD"];
                 /// Shadow color (`LV_STYLE_SHADOW_COLOR`).
                 ShadowColor(shadow_color): elem [ColorValue] [] BLACK ["LV_STYLE_SHADOW_COLOR"];
                 /// Shadow opacity (`LV_STYLE_SHADOW_OPA`).
@@ -275,7 +277,7 @@ macro_rules! __prop_table {
             /// Line drawing.
             LINE {
                 /// Line width (`LV_STYLE_LINE_WIDTH`).
-                LineWidth(line_width): val [i32] [EXT_DRAW] INT0 ["LV_STYLE_LINE_WIDTH"];
+                LineWidth(line_width): len [LengthValue] [EXT_DRAW] PX0 ["LV_STYLE_LINE_WIDTH"];
                 /// Dash length (`LV_STYLE_LINE_DASH_WIDTH`).
                 LineDashWidth(line_dash_width): val [i32] [] INT0 ["LV_STYLE_LINE_DASH_WIDTH"];
                 /// Gap between dashes (`LV_STYLE_LINE_DASH_GAP`).
@@ -290,7 +292,7 @@ macro_rules! __prop_table {
             /// Arc drawing.
             ARC {
                 /// Arc width (`LV_STYLE_ARC_WIDTH`).
-                ArcWidth(arc_width): val [i32] [EXT_DRAW] INT0 ["LV_STYLE_ARC_WIDTH"];
+                ArcWidth(arc_width): len [LengthValue] [EXT_DRAW] PX0 ["LV_STYLE_ARC_WIDTH"];
                 /// Rounded arc ends (`LV_STYLE_ARC_ROUNDED`).
                 ArcRounded(arc_rounded): val [bool] [] FALSE ["LV_STYLE_ARC_ROUNDED"];
                 /// Arc color (`LV_STYLE_ARC_COLOR`).
@@ -309,9 +311,9 @@ macro_rules! __prop_table {
                 /// Font, inherited (`LV_STYLE_TEXT_FONT`); the default comes from `StyleDefaults::font`.
                 Font(font): elem [FontValue] [INHERITABLE LAYOUT] FONT_EMPTY ["text_font" "LV_STYLE_TEXT_FONT"];
                 /// Extra space between letters, inherited (`LV_STYLE_TEXT_LETTER_SPACE`).
-                LetterSpacing(letter_spacing): val [i32] [INHERITABLE LAYOUT] INT0 ["text_letter_space" "letter_space" "LV_STYLE_TEXT_LETTER_SPACE"];
+                LetterSpacing(letter_spacing): len [LengthValue] [INHERITABLE LAYOUT] PX0 ["text_letter_space" "letter_space" "LV_STYLE_TEXT_LETTER_SPACE"];
                 /// Extra space between lines, inherited (`LV_STYLE_TEXT_LINE_SPACE`).
-                LineSpacing(line_spacing): val [i32] [INHERITABLE LAYOUT] INT0 ["text_line_space" "line_space" "LV_STYLE_TEXT_LINE_SPACE"];
+                LineSpacing(line_spacing): len [LengthValue] [INHERITABLE LAYOUT] PX0 ["text_line_space" "line_space" "LV_STYLE_TEXT_LINE_SPACE"];
                 /// Underline/strikethrough, inherited (`LV_STYLE_TEXT_DECOR`).
                 TextDecoration(text_decoration): val [TextDecor] [INHERITABLE] TEXT_DECOR_NONE ["text_decor" "LV_STYLE_TEXT_DECOR"];
                 /// Horizontal text alignment, inherited (`LV_STYLE_TEXT_ALIGN`).
@@ -360,7 +362,7 @@ macro_rules! __prop_table {
                 /// Offset of radial items (`LV_STYLE_RADIAL_OFFSET`).
                 RadialOffset(radial_offset): val [i32] [] INT0 ["LV_STYLE_RADIAL_OFFSET"];
                 /// Animation timing used by some widgets (`LV_STYLE_ANIM`).
-                Anim(anim): val [&'static AnimSpec] [] NONE ["LV_STYLE_ANIM"];
+                Anim(anim): elem [MotionValue] [] NONE ["LV_STYLE_ANIM"];
                 /// Animation duration used by some widgets (`LV_STYLE_ANIM_DURATION`).
                 AnimDuration(anim_duration): dur [DurationMs] [] INT0 ["LV_STYLE_ANIM_DURATION"];
                 /// Transition to run when entering the state: which properties animate and how
@@ -375,7 +377,7 @@ macro_rules! __prop_table {
                 /// A8/L8 image masking the object (`LV_STYLE_BITMAP_MASK_SRC`).
                 BitmapMask(bitmap_mask): val [&'static ImageSource] [LAYER] NONE ["bitmap_mask_src" "LV_STYLE_BITMAP_MASK_SRC"];
                 /// Encoder rotation multiplier (`LV_STYLE_ROTARY_SENSITIVITY`).
-                RotarySensitivity(rotary_sensitivity): val [Scale] [] SCALE_ONE ["LV_STYLE_ROTARY_SENSITIVITY"];
+                RotarySensitivity(rotary_sensitivity): elem [ScaleValue] [] SCALE_ONE ["LV_STYLE_ROTARY_SENSITIVITY"];
             }
             /// Flex layout.
             FLEX {
@@ -580,33 +582,33 @@ macro_rules! __shorthand_table {
                 /// ```
             };
             /// Outline width, color (fully opaque) and offset from the node.
-            outline(width: val<W> [i32] => OutlineWidth; color: elem<C> [ColorValue] => OutlineColor, OutlineOpacity = OPA_COVER; offset: val<O> [i32] => OutlineOffset) [] {
+            outline(width: len<W> [LengthValue] => OutlineWidth; color: elem<C> [ColorValue] => OutlineColor, OutlineOpacity = OPA_COVER; offset: len<O> [LengthValue] => OutlineOffset) [] {
                 /// ```
                 /// # use twine_core::Color;
-                /// # use twine_style::{PropId, StyleBuf, StyleValue};
+                /// # use twine_style::{Length, PropId, StyleBuf, StyleValue};
                 /// let s = StyleBuf::new().outline(2, Color::GREEN, 3);
                 /// assert_eq!(s.len(), 4);
-                /// assert_eq!(s.get(PropId::OutlineOffset), Some(StyleValue::Int(3)));
+                /// assert_eq!(s.get(PropId::OutlineOffset), Some(StyleValue::Length(Length::Px(3))));
                 /// ```
             };
             /// Every shadow property from one `ShadowDsc`.
-            shadow(shadow: val<S> [ShadowDsc] => ShadowWidth(.width), ShadowOffsetX(.ofs_x), ShadowOffsetY(.ofs_y), ShadowSpread(.spread), ShadowColor(.color), ShadowOpacity(.opa)) [] {
+            shadow(shadow: val<S> [ShadowDsc] => ShadowWidth(px .width), ShadowOffsetX(px .ofs_x), ShadowOffsetY(px .ofs_y), ShadowSpread(px .spread), ShadowColor(.color), ShadowOpacity(.opa)) [] {
                 /// ```
                 /// # use twine_core::{Color, Opa};
                 /// # use twine_render::ShadowDsc;
-                /// # use twine_style::{PropId, StyleBuf, StyleValue};
+                /// # use twine_style::{Length, PropId, StyleBuf, StyleValue};
                 /// let d = ShadowDsc { width: 8, ofs_x: 0, ofs_y: 2, spread: 0, color: Color::BLACK, opa: Opa::P30 };
                 /// let s = StyleBuf::new().shadow(d);
                 /// assert_eq!(s.len(), 6);
-                /// assert_eq!(s.get(PropId::ShadowOffsetY), Some(StyleValue::Int(2)));
+                /// assert_eq!(s.get(PropId::ShadowOffsetY), Some(StyleValue::Length(Length::Px(2))));
                 /// ```
             };
             /// Shadow offset.
-            shadow_offset(x: val<X> [i32] => ShadowOffsetX; y: val<Y> [i32] => ShadowOffsetY) [] {
+            shadow_offset(x: len<X> [LengthValue] => ShadowOffsetX; y: len<Y> [LengthValue] => ShadowOffsetY) [] {
                 /// ```
-                /// # use twine_style::{PropId, StyleBuf, StyleValue};
+                /// # use twine_style::{Length, PropId, StyleBuf, StyleValue};
                 /// let s = StyleBuf::new().shadow_offset(1, 3);
-                /// assert_eq!(s.get(PropId::ShadowOffsetY), Some(StyleValue::Int(3)));
+                /// assert_eq!(s.get(PropId::ShadowOffsetY), Some(StyleValue::Length(Length::Px(3))));
                 /// ```
             };
             /// Scale of the rendered node on both axes.

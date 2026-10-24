@@ -6,7 +6,7 @@ mod common;
 
 use common::{Mode, get, harness, with};
 use twine_assets::fonts::DEJAVU_16_PERSIAN_HEBREW;
-use twine_engine::{MeasureCx, NodeId};
+use twine_engine::{MeasureCx, NodeId, Widget};
 use twine_style::{Align, BaseDir, FlexFlow, LayoutKind, Length, Part, Selector, StyleProp};
 use twine_testing::EngineHarness;
 use twine_text::TextDir;
@@ -130,6 +130,19 @@ fn arabic_label_is_shaped_textarea_is_not() {
     );
     with(&mut h, l, |w: &mut Label, cx| w.set_text(cx, "abc"));
     assert_eq!(get::<Label>(&h, l).shown_text(), "abc");
+}
+
+#[test]
+fn regression_queries_see_the_logical_text_of_a_shaped_label() {
+    // A shaped label answered queries with its presentation forms, so `by_text` and
+    // `.text()` assertions changed when another crate enabled `arabic-shaping` (cargo
+    // feature unification in `cargo test --workspace`).
+    let mut h = harness(200, 100, Mode::Light);
+    let screen = h.screen();
+    let l = label::create_with(h.engine_mut(), screen, "سلام ۱۲").unwrap();
+    assert_ne!(get::<Label>(&h, l).shown_text(), "سلام ۱۲", "drawn shaped");
+    assert_eq!(Widget::text(get::<Label>(&h, l)), Some("سلام ۱۲"));
+    assert_eq!(h.find(twine_testing::by_text("سلام ۱۲")), l);
     let ta = textarea::create(h.engine_mut(), screen).unwrap();
     with(&mut h, ta, |w: &mut Textarea, cx| w.set_text(cx, "سلام"));
     let inner = h.engine().tree().child(ta, 0).unwrap();

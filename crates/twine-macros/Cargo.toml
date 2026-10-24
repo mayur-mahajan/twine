@@ -13,6 +13,12 @@ workspace = true
 [lib]
 proc-macro = true
 
+[features]
+default = []
+## `include_font!` and `include_image!`: bitmap fonts and images generated while the crate
+## compiles (runs the generators of `twine-build`; host-only, like every proc macro).
+assets = ["dep:twine-build"]
+
 # Host-only (a proc macro never reaches firmware): the generated code is what firmware links.
 [dependencies]
 proc-macro2 = "1"
@@ -21,6 +27,8 @@ syn = { version = "2", features = ["full", "visit"] }
 # Finds how the crate using the macro names `twine-view` (directly, or through the `twine`
 # facade, renamed or not), so generated paths resolve without a `crate = ..` argument.
 proc-macro-crate = "3"
+# `include_font!` / `include_image!` (feature `assets`).
+twine-build = { path = "../twine-build", optional = true }
 
 # The doctests use the macro as applications do (a dev-dependency cycle Cargo allows).
 [dev-dependencies]
@@ -28,3 +36,7 @@ twine-view = { path = "../twine-view", features = ["std"] }
 twine-reactive = { path = "../twine-reactive", features = ["std"] }
 # Host implementation for `critical-section` (used by the reactive runtime).
 critical-section = { version = "1", features = ["std"] }
+# The `include_font!` / `include_image!` doctests use the generated statics.
+twine-text = { path = "../twine-text", features = ["std"] }
+twine-image = { path = "../twine-image", features = ["std"] }
+twine-core = { path = "../twine-core", features = ["std"] }

@@ -240,7 +240,7 @@ fn frame_observer_registered_at_build_and_critical_label_cross_check() {
         .buffers(BufferMode::alloc(BufferSpec::PartialDouble { rows: 20 }))
         .limits(limits())
         .frame_observer(obs.clone())
-        .theme(DefaultTheme::light())
+        .theme(&lvgl::THEME)
         .try_build(move |cx| {
             let r = cx.node_ref();
             *c2.borrow_mut() = Some(r);

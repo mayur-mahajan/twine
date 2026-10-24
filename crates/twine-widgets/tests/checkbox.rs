@@ -13,7 +13,7 @@ use twine_engine::{EventCode, EventFilter, EventResult, GroupDef, Key, MeasureCx
 use twine_style::{Align, Part, PropId, State};
 use twine_testing::EngineHarness;
 use twine_text::TextLayout;
-use twine_theme::MonoTheme;
+use twine_theme::mono;
 use twine_widgets::checkbox::{self, CHECKBOX_CLASS, Checkbox};
 
 fn scene(mode: Mode) -> (EngineHarness, NodeId) {
@@ -194,12 +194,10 @@ fn snapshot_checkbox_states() {
 
 #[test]
 fn snapshot_checkbox_mono_i1() {
-    let mut h = EngineHarness::new(128, 32).format(ColorFormat::I1).theme(
-        MonoTheme::builder()
-            .mode(ThemeMode::Light)
-            .font(&twine_assets::fonts::MONTSERRAT_14)
-            .build(),
-    );
+    let mut h = EngineHarness::new(128, 32)
+        .format(ColorFormat::I1)
+        .theme(&mono::THEME)
+        .mode(ThemeMode::Light);
     let screen = h.screen();
     let e = h.engine_mut();
     let a = checkbox::create_with(e, screen, "Off").unwrap();

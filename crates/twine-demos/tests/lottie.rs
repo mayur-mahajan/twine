@@ -14,7 +14,7 @@ fn frame(t: &TestUi, id: &'static str) -> u32 {
 fn lottie_demo_smoke() {
     let ((), logs) = capture_logs(|| {
         let mut t = TestUi::new(480, 320)
-            .app_config(twine_demos::config())
+            .app_config(twine_demos::config_with_theme(&twine_demos::lottie::THEME))
             .mount(twine_demos::lottie::app);
         t.advance(Duration::ms(500));
         for name in ["Loader", "Check", "Heart"] {

@@ -29,8 +29,23 @@ enum Cmd {
         #[arg(long)]
         only: Vec<String>,
     },
-    /// Build every `no_std` crate for every embedded target.
+    /// Build every `no_std` crate for every embedded target, then run `link-check`.
     Nostd,
+    /// Link the linking fixtures (`tools/link-fixtures`) and check that no image links a theme,
+    /// mode table, recipe, font or icon its source does not reference (`fixtures.toml`).
+    LinkCheck,
+    /// Build the example firmware images of the theme baseline (rp2040 and STM32F411 with the
+    /// counter, controls and selection demos) and print the flash of each theme part, attributed
+    /// by symbol.
+    ThemeSize,
+    /// Run tests that call `twine_testing::assert_theme_covers` (the arguments after `--` go
+    /// to `cargo test`, e.g. `-- -p my-app --test screens`) and print the minimal recipe list
+    /// of their UIs and the widget classes without a recipe.
+    ThemeRecipes {
+        /// Arguments for `cargo test` (after `--`).
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
     /// Fail on untracked work markers; only step-tagged NOTE markers are allowed.
     TodoCheck,
     /// Verify crate layering (the layer table lives in `tools/xtask/src/cmd/layers.rs`).
@@ -122,12 +137,6 @@ enum Cmd {
         #[arg(long)]
         check: bool,
     },
-    /// Convert the images of `assets/images/images.toml` into `crates/twine/examples/assets/`.
-    Images {
-        /// Only verify that the generated files are up to date.
-        #[arg(long)]
-        check: bool,
-    },
     /// Write the style property table (`crates/twine-style/PROPERTIES.md`) from the property
     /// metadata.
     StyleProps {
@@ -205,6 +214,9 @@ fn main() {
     let result = match cli.cmd {
         Cmd::Ci { quick, only } => cmd::ci::run(quick, &only),
         Cmd::Nostd => cmd::nostd::run(),
+        Cmd::LinkCheck => cmd::link_check::run(),
+        Cmd::ThemeSize => cmd::theme_size::run(),
+        Cmd::ThemeRecipes { args } => cmd::theme_recipes::run(&args),
         Cmd::TodoCheck => cmd::todo::run(),
         Cmd::Layers => cmd::layers::run(),
         Cmd::Snapshots {
@@ -250,7 +262,6 @@ fn main() {
         Cmd::Bench { iai, save_baseline } => cmd::bench::run(iai, save_baseline),
         Cmd::Fonts { check } => cmd::fonts::run(check),
         Cmd::GenAssets { check } => cmd::images::gen_assets(check),
-        Cmd::Images { check } => cmd::images::run(check),
         Cmd::StyleProps { check } => cmd::style_props::run(check),
         Cmd::Fuzz { target, time } => cmd::fuzz::run(&target, time),
         Cmd::Progress => cmd::progress::run(),

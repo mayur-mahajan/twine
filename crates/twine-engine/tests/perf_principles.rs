@@ -4,6 +4,7 @@
 mod common;
 
 use std::sync::OnceLock;
+use twine_style::Length;
 
 use common::{boxed, white_screen};
 use twine_core::{Color, Duration, Instant, Opa, Rect};
@@ -55,7 +56,7 @@ fn p2_moving_box_invalidates_old_and_new_only() {
     // With a shadow the extra draw size is added on both sides, and nothing else.
     let n = b.unwrap();
     h.engine_mut()
-        .set_local_prop(n, Selector::MAIN, StyleProp::ShadowWidth(8));
+        .set_local_prop(n, Selector::MAIN, StyleProp::ShadowWidth(Length::Px(8).into()));
     h.run_until_idle();
     h.engine_mut().place(n, Rect::from_xywh(48, 40, 20, 20));
     h.clock().advance(Duration::ms(16));
@@ -103,7 +104,7 @@ fn p4_zero_alloc_steady_state() {
             ];
             if i % 7 == 0 {
                 props.extend([
-                    StyleProp::ShadowWidth(6),
+                    StyleProp::ShadowWidth(Length::Px(6).into()),
                     StyleProp::ShadowOpacity(Opa::P40.into()),
                 ]);
             }

@@ -5,10 +5,10 @@
 # Reference PNGs are not committed: `tests/snapshots/*.png` is a local cache used for diffs.
 
 [approved]
-modal_open_light = "240x160 xxh64:0e080ff75513b389"
-nav_mid_anim_move_left = "240x160 xxh64:da1848cadc4512e3"
+modal_open_light = "240x160 xxh64:ea899055154c1495"
+nav_mid_anim_move_left = "240x160 xxh64:00447b6d28ca9927"
 vector_canvas_star_0 = "120x120 xxh64:8fad447df128a4ea"
 vector_canvas_star_1 = "120x120 xxh64:0f79ee0b193110c0"
 vector_canvas_star_2 = "120x120 xxh64:2f7e7149df1c674e"
-view_column_row_light = "240x160 xxh64:c715f6538958ebce"
-view_grid_dark = "240x160 xxh64:e27d50081e9033d8"
+view_column_row_light = "240x160 xxh64:b863f6ee153e067c"
+view_grid_dark = "240x160 xxh64:45d912df171b39fc"

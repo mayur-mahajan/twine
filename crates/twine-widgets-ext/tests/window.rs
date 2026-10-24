@@ -57,13 +57,13 @@ fn window_structure_header_content() {
 #[test]
 fn window_header_height_follows_dpi() {
     // LVGL `lv_win_constructor`: the header is `lv_display_get_dpi / 2` high.
-    let mut h = EngineHarness::new(320, 240).theme(twine_theme::DefaultTheme::light());
+    let mut h = EngineHarness::new(320, 240).theme(&twine_theme::lvgl::THEME);
     let mut info = DisplayInfo::new(320, 240, ColorFormat::Rgb565);
     info.dpi = 260;
     let buf: &'static mut [u8] = Box::leak(vec![0u8; 320 * 2 * 20].into_boxed_slice());
     let e = h.engine_mut();
     let d260 = e
-        .add_display(MemoryDisplay::new(info), BufferMode::partial_single(buf))
+        .add_display(MemoryDisplay::new(info), BufferMode::partial_single(buf), None)
         .unwrap();
     let s130 = h.screen();
     let e = h.engine_mut();
@@ -127,7 +127,7 @@ fn window_theme_styles() {
     // Header: grey with `pad_tiny`; content: the screen look with `pad_normal`.
     assert_eq!(
         e.style_color(win.header(), Part::Main, PropId::BgColor),
-        twine_theme::default::colors::LIGHT_GREY
+        twine_theme::lvgl::colors::LIGHT_GREY
     );
     assert_eq!(
         e.style_i32(win.header(), Part::Main, PropId::PaddingLeft),
@@ -135,7 +135,7 @@ fn window_theme_styles() {
     );
     assert_eq!(
         e.style_color(win.content(), Part::Main, PropId::BgColor),
-        twine_theme::default::colors::LIGHT_SCR
+        twine_theme::lvgl::colors::LIGHT_SCR
     );
     assert_eq!(
         e.style_i32(win.content(), Part::Main, PropId::PaddingLeft),

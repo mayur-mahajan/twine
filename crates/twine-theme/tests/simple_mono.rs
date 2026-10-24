@@ -1,14 +1,13 @@
-//! `SimpleTheme`, `MonoTheme` and the harness's default theme.
+//! `Simple`, `Mono` and the harness's default theme.
 #![allow(clippy::unreadable_literal)] // colors as LVGL writes them (0xRRGGBB)
 
-use std::rc::Rc;
 use twine_theme::{ThemeMode, Tone};
 
 use twine_core::{Color, ColorFormat};
 use twine_engine::{Engine, NodeId, Obj, ObjFlags, Widget, WidgetClass};
 use twine_style::{Part, PropId, State, StyleValue};
 use twine_testing::EngineHarness;
-use twine_theme::{MonoTheme, Palette, SimpleTheme};
+use twine_theme::{Palette, mono, simple};
 
 struct FakeButton;
 static FAKE_BUTTON_CLASS: WidgetClass = WidgetClass::new("fake_button")
@@ -40,7 +39,7 @@ fn scene(h: EngineHarness) -> (EngineHarness, NodeId, NodeId) {
 
 #[test]
 fn simple_theme_screen_matches_lvgl() {
-    let (h, card, b) = scene(EngineHarness::new(240, 160).theme(SimpleTheme::new()));
+    let (h, card, b) = scene(EngineHarness::new(240, 160).theme(&simple::THEME));
     let e = h.engine();
     let s = screen(e);
     // COLOR_SCR = lv_palette_lighten(GREY, 4), text COLOR_DIM = lv_palette_darken(GREY, 2)
@@ -64,13 +63,8 @@ fn simple_theme_screen_matches_lvgl() {
 #[test]
 fn mono_theme_only_uses_pure_colors() {
     for dark in [false, true] {
-        let t = Rc::new(
-            MonoTheme::builder()
-                .mode(if dark { ThemeMode::Dark } else { ThemeMode::Light })
-                .font(&twine_assets::fonts::MONTSERRAT_14)
-                .build(),
-        );
-        let (mut h, card, b) = scene(EngineHarness::new(240, 160).theme(t));
+        let mode = if dark { ThemeMode::Dark } else { ThemeMode::Light };
+        let (mut h, card, b) = scene(EngineHarness::new(240, 160).theme(&mono::THEME).mode(mode));
         let s = screen(h.engine());
         let states = [
             State::DEFAULT,
@@ -101,11 +95,11 @@ fn mono_theme_only_uses_pure_colors() {
 }
 
 #[test]
-fn harness_defaults_to_default_light() {
+fn harness_defaults_to_lvgl_light() {
     let h = EngineHarness::new(64, 48);
     let d = h.display();
     let t = h.engine().theme(d).expect("a theme");
-    assert_eq!(t.name(), "default");
+    assert_eq!(t.name(), "lvgl");
     assert_eq!(h.engine().theme_mode(d), twine_style::ThemeMode::Light);
     let s = screen(h.engine());
     assert_eq!(
@@ -114,21 +108,32 @@ fn harness_defaults_to_default_light() {
     );
 }
 
+/// R7.S04: the simple theme's dark and night variants.
+#[test]
+fn snapshot_theme_simple_container_dark_night() {
+    for (mode, name) in [
+        (ThemeMode::Dark, "theme_simple_container_dark"),
+        (ThemeMode::Night, "theme_simple_container_night"),
+    ] {
+        let (mut h, _, _) = scene(EngineHarness::new(240, 160).theme(&simple::THEME).mode(mode));
+        h.assert_snapshot(name);
+    }
+}
+
 #[test]
 fn snapshot_theme_simple_container() {
-    let (mut h, _, _) = scene(EngineHarness::new(240, 160).theme(SimpleTheme::new()));
+    let (mut h, _, _) = scene(EngineHarness::new(240, 160).theme(&simple::THEME));
     h.assert_snapshot("theme_simple_container");
 }
 
 #[test]
 fn snapshot_theme_mono_container() {
-    let t = Rc::new(
-        MonoTheme::builder()
-            .mode(ThemeMode::Light)
-            .font(&twine_assets::fonts::MONTSERRAT_14)
-            .build(),
+    let (mut h, _, b) = scene(
+        EngineHarness::new(240, 160)
+            .format(ColorFormat::I1)
+            .theme(&mono::THEME)
+            .mode(ThemeMode::Light),
     );
-    let (mut h, _, b) = scene(EngineHarness::new(240, 160).format(ColorFormat::I1).theme(t));
     h.engine_mut().add_state(b, State::CHECKED);
     h.assert_snapshot("theme_mono_container");
 }

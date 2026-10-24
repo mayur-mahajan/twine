@@ -166,7 +166,9 @@ impl<'a, 'p> DrawCx<'a, 'p> {
         self.engine.arc_dsc(self.node, part, self.opa)
     }
 
-    /// The text style of `part` (`Text*` properties, inherited ones included).
+    /// The text style of `part` (`Text*` properties, inherited ones included), with the
+    /// surface behind the text as its [`background`](TextDsc::background)
+    /// ([`Engine::text_background`]), which picks the run's text gamma.
     #[must_use]
     pub fn text_dsc(&self, part: Part) -> TextDsc {
         self.engine.text_dsc(self.node, part, self.opa)

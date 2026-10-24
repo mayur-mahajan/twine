@@ -35,7 +35,6 @@ use twine_image::ImageSource;
 use twine_render::Gradient;
 use twine_style::StyleValue;
 use twine_testing::{TestUi, by_id, by_text};
-use twine_theme::DefaultTheme;
 use twine_view::prelude::*;
 use twine_widgets::label::Label;
 
@@ -276,8 +275,8 @@ fn style_modifiers_resolve() {
             "outline",
             |v| v.outline(2, Color::BLUE, 3),
             &[
-                (PropId::OutlineWidth, StyleValue::Int(2)),
-                (PropId::OutlineOffset, StyleValue::Int(3)),
+                (PropId::OutlineWidth, StyleValue::Length(Length::Px(2))),
+                (PropId::OutlineOffset, StyleValue::Length(Length::Px(3))),
             ],
         ),
         (
@@ -298,30 +297,30 @@ fn style_modifiers_resolve() {
                 })
             },
             &[
-                (PropId::ShadowWidth, StyleValue::Int(5)),
-                (PropId::ShadowOffsetX, StyleValue::Int(1)),
-                (PropId::ShadowOffsetY, StyleValue::Int(2)),
-                (PropId::ShadowSpread, StyleValue::Int(3)),
+                (PropId::ShadowWidth, StyleValue::Length(Length::Px(5))),
+                (PropId::ShadowOffsetX, StyleValue::Length(Length::Px(1))),
+                (PropId::ShadowOffsetY, StyleValue::Length(Length::Px(2))),
+                (PropId::ShadowSpread, StyleValue::Length(Length::Px(3))),
                 (PropId::ShadowOpacity, StyleValue::Opa(Opa::P50)),
             ],
         ),
         (
             "shadow_width",
             |v| v.shadow_width(7),
-            &[(PropId::ShadowWidth, StyleValue::Int(7))],
+            &[(PropId::ShadowWidth, StyleValue::Length(Length::Px(7)))],
         ),
         (
             "shadow_offset",
             |v| v.shadow_offset(1, 2),
             &[
-                (PropId::ShadowOffsetX, StyleValue::Int(1)),
-                (PropId::ShadowOffsetY, StyleValue::Int(2)),
+                (PropId::ShadowOffsetX, StyleValue::Length(Length::Px(1))),
+                (PropId::ShadowOffsetY, StyleValue::Length(Length::Px(2))),
             ],
         ),
         (
             "shadow_spread",
             |v| v.shadow_spread(2),
-            &[(PropId::ShadowSpread, StyleValue::Int(2))],
+            &[(PropId::ShadowSpread, StyleValue::Length(Length::Px(2)))],
         ),
         (
             "shadow_color",
@@ -356,12 +355,12 @@ fn style_modifiers_resolve() {
         (
             "letter_spacing",
             |v| v.letter_spacing(2),
-            &[(PropId::LetterSpacing, StyleValue::Int(2))],
+            &[(PropId::LetterSpacing, StyleValue::Length(Length::Px(2)))],
         ),
         (
             "line_spacing",
             |v| v.line_spacing(3),
-            &[(PropId::LineSpacing, StyleValue::Int(3))],
+            &[(PropId::LineSpacing, StyleValue::Length(Length::Px(3)))],
         ),
         (
             "text_decoration",
@@ -1126,24 +1125,27 @@ fn view_column_row_light() {
 
 #[test]
 fn view_grid_dark() {
-    let mut t = TestUi::new(240, 160).theme(DefaultTheme::dark()).mount(|_| {
-        let cells: Vec<_> = (0..6)
-            .map(|i| {
-                button(label(["A", "B", "C", "D", "E", "F"][i]))
-                    .grid_col(i % 3)
-                    .grid_row(i / 3)
-                    .grid_align(GridAlign::Stretch, GridAlign::Stretch)
-            })
-            .collect();
-        grid(
-            grid_tracks![fr(1), fr(1), fr(1)],
-            grid_tracks![fr(1), fr(1)],
-            cells,
-        )
-        .gap(6)
-        .padding(6)
-        .size(Length::pct(100), Length::pct(100))
-    });
+    let mut t = TestUi::new(240, 160)
+        .theme(&lvgl::THEME)
+        .mode(ThemeMode::Dark)
+        .mount(|_| {
+            let cells: Vec<_> = (0..6)
+                .map(|i| {
+                    button(label(["A", "B", "C", "D", "E", "F"][i]))
+                        .grid_col(i % 3)
+                        .grid_row(i / 3)
+                        .grid_align(GridAlign::Stretch, GridAlign::Stretch)
+                })
+                .collect();
+            grid(
+                grid_tracks![fr(1), fr(1), fr(1)],
+                grid_tracks![fr(1), fr(1)],
+                cells,
+            )
+            .gap(6)
+            .padding(6)
+            .size(Length::pct(100), Length::pct(100))
+        });
     t.run_until_idle();
     t.assert_snapshot("view_grid_dark");
     let _ = (by_text("A"), Rect::ZERO);

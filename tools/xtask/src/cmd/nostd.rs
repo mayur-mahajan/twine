@@ -1,12 +1,14 @@
-//! `cargo xtask nostd`: builds every `no_std` crate for every embedded target (P4, P11), and
-//! the facade in the safety profile for every target ([`NOSTD_SAFETY_SETS`]).
+//! `cargo xtask nostd`: builds every `no_std` crate for every embedded target (P4, P11), the
+//! facade in the safety profile for every target ([`NOSTD_SAFETY_SETS`]), and links the
+//! linking fixtures and checks their symbols ([`link_check`](crate::cmd::link_check)).
 
 use crate::cmd::layers::LAYERS;
 use crate::util::{R, cargo_ci, has_target, run as run_cmd};
 
-/// Layered crates that only ever build for the host: the std-only simulator and test kit, and
-/// the proc-macro crate (proc macros run inside the compiler, never on a target).
-pub const HOST_CRATES: &[&str] = &["twine-sim", "twine-testing", "twine-macros"];
+/// Layered crates that only ever build for the host: the std-only simulator and test kit, the
+/// proc-macro crate (proc macros run inside the compiler, never on a target) and the
+/// build-script helpers (they run in `build.rs`).
+pub const HOST_CRATES: &[&str] = &["twine-sim", "twine-testing", "twine-macros", "twine-build"];
 
 /// The crates `nostd` builds: every crate of the layer table ([`LAYERS`]) except the
 /// [`HOST_CRATES`], so a new layered crate is built for the embedded targets by default.
@@ -196,6 +198,7 @@ pub fn run() -> R {
     for (krate, features, t) in NOSTD_TARGET_FEATURE_SETS {
         run_cmd(target_cargo(t).args(["build", "--target", t, "-p", krate, "--features", features]))?;
     }
+    crate::cmd::link_check::run()?;
     println!(
         "nostd: {} crates built for {} targets (and the safety profile: {} feature sets)",
         nostd_crates().count(),

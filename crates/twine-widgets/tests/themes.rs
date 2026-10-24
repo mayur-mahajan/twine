@@ -8,7 +8,7 @@ use twine_core::{ColorFormat, Point};
 use twine_engine::{Engine, NodeId, State};
 use twine_style::{FlexFlow, LayoutKind, Length};
 use twine_testing::EngineHarness;
-use twine_theme::{MonoTheme, SimpleTheme};
+use twine_theme::{mono, simple};
 use twine_widgets::prelude::*;
 
 static WAVE: [Point; 4] = [
@@ -50,25 +50,40 @@ fn controls(h: &mut EngineHarness) {
 
 #[test]
 fn snapshot_simple_theme() {
-    let mut h = EngineHarness::new(240, 200).theme(SimpleTheme::new());
+    let mut h = EngineHarness::new(240, 200).theme(&simple::THEME);
     controls(&mut h);
     h.run_until_idle();
     h.assert_snapshot("controls_simple");
 }
 
+/// R7.S04: the simple theme's dark variant.
+#[test]
+fn snapshot_simple_theme_dark() {
+    let mut h = EngineHarness::new(240, 200)
+        .theme(&simple::THEME)
+        .mode(twine_theme::ThemeMode::Dark);
+    controls(&mut h);
+    h.run_until_idle();
+    h.assert_snapshot("controls_simple_dark");
+    let mut h = EngineHarness::new(240, 240)
+        .theme(&simple::THEME)
+        .mode(twine_theme::ThemeMode::Dark);
+    text_inputs(&mut h);
+    h.run_until_idle();
+    h.assert_snapshot("text_inputs_simple_dark");
+}
+
 #[test]
 fn snapshot_mono_theme() {
     for dark in [false, true] {
-        let mut h = EngineHarness::new(240, 200).format(ColorFormat::I1).theme(
-            MonoTheme::builder()
-                .mode(if dark {
-                    twine_theme::ThemeMode::Dark
-                } else {
-                    twine_theme::ThemeMode::Light
-                })
-                .font(&twine_assets::fonts::MONTSERRAT_14)
-                .build(),
-        );
+        let mut h = EngineHarness::new(240, 200)
+            .format(ColorFormat::I1)
+            .theme(&mono::THEME)
+            .mode(if dark {
+                twine_theme::ThemeMode::Dark
+            } else {
+                twine_theme::ThemeMode::Light
+            });
         controls(&mut h);
         h.run_until_idle();
         assert!(h.panel_rgb888().iter().all(|&v| v == 0 || v == 255));
@@ -129,7 +144,7 @@ fn text_inputs(h: &mut EngineHarness) {
 
 #[test]
 fn snapshot_text_inputs_simple_theme() {
-    let mut h = EngineHarness::new(240, 240).theme(SimpleTheme::new());
+    let mut h = EngineHarness::new(240, 240).theme(&simple::THEME);
     text_inputs(&mut h);
     h.run_until_idle();
     h.assert_snapshot("text_inputs_simple");
@@ -138,16 +153,14 @@ fn snapshot_text_inputs_simple_theme() {
 #[test]
 fn snapshot_text_inputs_mono_theme() {
     for dark in [false, true] {
-        let mut h = EngineHarness::new(240, 240).format(ColorFormat::I1).theme(
-            MonoTheme::builder()
-                .mode(if dark {
-                    twine_theme::ThemeMode::Dark
-                } else {
-                    twine_theme::ThemeMode::Light
-                })
-                .font(&twine_assets::fonts::MONTSERRAT_14)
-                .build(),
-        );
+        let mut h = EngineHarness::new(240, 240)
+            .format(ColorFormat::I1)
+            .theme(&mono::THEME)
+            .mode(if dark {
+                twine_theme::ThemeMode::Dark
+            } else {
+                twine_theme::ThemeMode::Light
+            });
         text_inputs(&mut h);
         h.run_until_idle();
         assert!(h.panel_rgb888().iter().all(|&v| v == 0 || v == 255));

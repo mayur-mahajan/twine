@@ -140,7 +140,7 @@ pub(crate) fn show_modal<V: View>(
                     StyleProp::PaddingBottom(Length::Px(0).into()),
                     StyleProp::PaddingLeft(Length::Px(0).into()),
                     StyleProp::PaddingRight(Length::Px(0).into()),
-                    StyleProp::ShadowWidth(0),
+                    StyleProp::ShadowWidth(twine_style::Length::Px(0).into()),
                 ] {
                     e.set_local_prop(backdrop, Selector::MAIN, p);
                 }

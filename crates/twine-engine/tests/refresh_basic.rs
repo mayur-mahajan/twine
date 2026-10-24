@@ -108,6 +108,7 @@ fn buffer_too_small_is_rejected() {
             a: leak_buffer(199),
             b: None,
         },
+        None,
     );
     assert_eq!(
         r,
@@ -123,6 +124,7 @@ fn buffer_too_small_is_rejected() {
             a: leak_buffer(200 * 4),
             b: None,
         },
+        None,
     );
     assert!(matches!(r, Err(EngineError::BufferTooSmall { .. })));
 }
@@ -138,6 +140,7 @@ fn misaligned_buffer_is_rejected() {
             a: DrawBufferMem::new(&mut mem[off..off + 200]),
             b: None,
         },
+        None,
     );
     assert_eq!(r, Err(EngineError::BufferMisaligned));
 }

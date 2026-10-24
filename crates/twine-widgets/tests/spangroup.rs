@@ -8,6 +8,7 @@ use common::{Mode, get, harness, with};
 use twine_assets::fonts::{MONTSERRAT_14, MONTSERRAT_20};
 use twine_core::{Color, Point, Rect};
 use twine_engine::{MeasureCx, NodeId};
+use twine_style::Length;
 use twine_style::{Align, PropId, StyleProp, TextDecor};
 use twine_testing::EngineHarness;
 use twine_text::TextLayout;
@@ -150,11 +151,11 @@ fn mixed_fonts_baseline_aligned() {
 #[test]
 fn three_span_two_font_paragraph_layout_table() {
     // Hand-computed, 150 px wide: "The quick " (Montserrat 14, 76 px) + "BROWN fox "
-    // (Montserrat 20, 124 px) + "jumps over the lazy dog" (14). LVGL's filling never
-    // breaks a word that does not start the line:
-    // - line 0: "The quick " (76); "BROWN" (89) does not fit in the remaining 74 px;
-    // - line 1: "BROWN fox " (124) fits; "jumps" does not fit in the remaining 26 px;
-    // - line 2: "jumps over the lazy " (146, the trailing space may overhang);
+    // (Montserrat 20, 127 px) + "jumps over the lazy dog" (14). LVGL's filling never
+    // breaks a word that does not start the line (widths of the hinted built-in fonts, R6.S03):
+    // - line 0: "The quick " (76); "BROWN" (90) does not fit in the remaining 74 px;
+    // - line 1: "BROWN fox " (127) fits; "jumps" does not fit in the remaining 23 px;
+    // - line 2: "jumps over the lazy " (147, the trailing space may overhang);
     // - line 3: "dog".
     type Row = (i32, i32, Vec<(SpanId, std::ops::Range<usize>, i32, i32)>);
     let (mut h, g) = scene(Mode::Light);
@@ -169,14 +170,14 @@ fn three_span_two_font_paragraph_layout_table() {
     break_group(&mut h, g, 150);
     assert_eq!(
         (w14("The quick "), w20("BROWN "), w20("BROWN fox ")),
-        (76, 89, 124)
+        (76, 90, 127)
     );
-    assert_eq!((w14("jumps over the lazy "), w14("dog")), (146, 29));
+    assert_eq!((w14("jumps over the lazy "), w14("dog")), (147, 27));
     let expected: Vec<Row> = vec![
         (0, 18, vec![(a, 0..10, 0, 76)]),
-        (18, 26, vec![(b, 0..10, 0, 124)]),
-        (44, 18, vec![(c, 0..20, 0, 146)]),
-        (62, 18, vec![(c, 20..23, 0, 29)]),
+        (18, 26, vec![(b, 0..10, 0, 127)]),
+        (44, 18, vec![(c, 0..20, 0, 147)]),
+        (62, 18, vec![(c, 20..23, 0, 27)]),
     ];
     // Line heights: Montserrat 14 is 18 px, 20 is 26 px.
     assert_eq!((MONTSERRAT_14.line_height, MONTSERRAT_20.line_height), (18, 26));
@@ -186,11 +187,11 @@ fn three_span_two_font_paragraph_layout_table() {
         .collect();
     assert_eq!(got, expected);
     assert_eq!(h.engine().content_area(g).height(), 80);
-    // Wider: "BROWN " joins line 0 (76 + 89 = 165 ≤ 170), "fox " and "jumps " share line 1.
+    // Wider: "BROWN " joins line 0 (76 + 90 = 166 ≤ 170), "fox " and "jumps " share line 1.
     h.engine_mut().set_width(g, 170);
     h.run_until_idle();
     let l = lines(&h, g);
-    assert_eq!(l[0].pieces, vec![(a, 0..10, 0, 76), (b, 0..6, 76, 89)]);
+    assert_eq!(l[0].pieces, vec![(a, 0..10, 0, 76), (b, 0..6, 76, 90)]);
     assert_eq!((l[1].pieces[0].0, l[1].pieces[0].1.clone()), (b, 6..10));
     assert_eq!(l[1].pieces[1].0, c);
 }
@@ -239,7 +240,12 @@ fn ellipsis_on_overflow() {
 fn expand_mode_size() {
     let (mut h, g) = scene(Mode::Light);
     add(&mut h, g, "Hello, ", &[]);
-    add(&mut h, g, "world", &[StyleProp::LetterSpacing(2)]);
+    add(
+        &mut h,
+        g,
+        "world",
+        &[StyleProp::LetterSpacing(Length::Px(2).into())],
+    );
     h.run_until_idle();
     let w = get::<SpanGroup>(&h, g);
     let m = MeasureCx::new(h.engine(), g);

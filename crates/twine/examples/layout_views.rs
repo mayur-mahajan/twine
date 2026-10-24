@@ -57,7 +57,7 @@ fn main() {
         SimConfig::new(320, 240)
             .title("layout views")
             .scale(2)
-            .theme(DefaultTheme::light()),
+            .theme(&lvgl::THEME),
         app,
     );
 }

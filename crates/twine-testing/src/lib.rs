@@ -24,7 +24,7 @@
 //! | Feature | Items |
 //! |---------|-------|
 //! | `render` | [`RenderHarness`] over the renderer; [`gallery`]: the renderer's reference drawings (pages of the `render_gallery` example and the renderer snapshot tests) |
-//! | `engine` | [`EngineHarness`] over a bare engine, [`MockDmaDisplay`], [`MockFramebufferDisplay`]; [`scenes`]: reference engine scenes (`engine_boxes`, `scroll_list`, …) shared by tests, benchmarks and examples |
+//! | `engine` | [`EngineHarness`] over a bare engine, [`MockDmaDisplay`], [`MockFramebufferDisplay`]; [`scenes`]: reference engine scenes (`engine_boxes`, `scroll_list`, …) shared by tests, benchmarks and examples; [`theme_coverage`](mod@theme_coverage): [`assert_theme_covers`] (every widget class a UI shows has a recipe in its theme) and the input of `cargo xtask theme-recipes` |
 //! | `ui` (default) | [`TestUi`] over the declarative UI; per-test ports ([`TestUi::channel`], [`TestUi::latest`], [`TestUi::outbox`]: fresh `'static` queues handed to the application instead of global `static`s shared by parallel tests), the shipped configuration ([`TestUi::app_config`], [`TestUi::limits`]), [`TestUi::memory_report`] and [`TestUi::seal`] |
 //!
 //! ```
@@ -62,6 +62,8 @@ pub mod render_harness;
 #[cfg(feature = "engine")]
 pub mod scenes;
 pub mod snapshot;
+#[cfg(feature = "engine")]
+pub mod theme_coverage;
 #[cfg(feature = "ui")]
 pub mod ui;
 
@@ -94,5 +96,7 @@ pub use platform::MockPlatform;
 #[cfg(feature = "render")]
 pub use render_harness::RenderHarness;
 pub use snapshot::{SnapshotConfig, Tolerance, assert_rgb_snapshot};
+#[cfg(feature = "engine")]
+pub use theme_coverage::{ThemeCoverage, assert_theme_covers, theme_coverage};
 #[cfg(feature = "ui")]
 pub use ui::{NodeHandle, TestUi};

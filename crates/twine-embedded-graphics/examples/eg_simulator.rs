@@ -117,7 +117,7 @@ fn main() {
         .buffers(BufferMode::alloc(BufferSpec::PartialSingle { rows: 40 }))
         .input(pointer.clone())
         .clock(clock.clone())
-        .theme(DefaultTheme::light())
+        .theme(&lvgl::THEME)
         .build(twine_demos::counter::app);
 
     let settings = OutputSettingsBuilder::new().scale(2).build();

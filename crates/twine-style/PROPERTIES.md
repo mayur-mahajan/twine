@@ -47,7 +47,7 @@ All 129 properties of `twine-style` (LVGL v9.6 `lv_style_prop_t`), in id order. 
 | 39 | `BgGradientStartOpacity` | `bg_gradient_start_opacity` | `OpacityValue` | `Opa::COVER` | — | `BG` | 2 | `bg_main_opa`, `LV_STYLE_BG_MAIN_OPA` |
 | 40 | `BgGradientEndOpacity` | `bg_gradient_end_opacity` | `OpacityValue` | `Opa::COVER` | — | `BG` | 2 | `bg_grad_opa`, `LV_STYLE_BG_GRAD_OPA` |
 | 41 | `BgGradient` | `bg_gradient` | `&'static Gradient` | none | — | `BG` | 2 | `bg_grad`, `LV_STYLE_BG_GRAD` |
-| 42 | `BgImage` | `bg_image` | `&'static ImageSource` | none | EXT_DRAW | `BG` | 2 | `bg_image_src`, `LV_STYLE_BG_IMAGE_SRC` |
+| 42 | `BgImage` | `bg_image` | `IconValue` | none | EXT_DRAW | `BG` | 2 | `bg_image_src`, `LV_STYLE_BG_IMAGE_SRC` |
 | 43 | `BgImageOpacity` | `bg_image_opacity` | `OpacityValue` | `Opa::COVER` | — | `BG` | 2 | `bg_image_opa`, `LV_STYLE_BG_IMAGE_OPA` |
 | 44 | `BgImageRecolor` | `bg_image_recolor` | `ColorValue` | `#000000` | — | `BG` | 2 | `LV_STYLE_BG_IMAGE_RECOLOR` |
 | 45 | `BgImageRecolorOpacity` | `bg_image_recolor_opacity` | `OpacityValue` | `Opa::TRANSP` | — | `BG` | 2 | `bg_image_recolor_opa`, `LV_STYLE_BG_IMAGE_RECOLOR_OPA` |
@@ -57,14 +57,14 @@ All 129 properties of `twine-style` (LVGL v9.6 `lv_style_prop_t`), in id order. 
 | 49 | `BorderWidth` | `border_width` | `LengthValue` | `0px` | LAYOUT | `BORDER` | 3 | `LV_STYLE_BORDER_WIDTH` |
 | 50 | `BorderSide` | `border_side` | `BorderSide` | `BorderSide::FULL` | — | `BORDER` | 3 | `LV_STYLE_BORDER_SIDE` |
 | 51 | `BorderAboveChildren` | `border_above_children` | `bool` | `false` | — | `BORDER` | 3 | `border_post`, `LV_STYLE_BORDER_POST` |
-| 52 | `OutlineWidth` | `outline_width` | `i32` | `0` | EXT_DRAW | `OUTLINE` | 3 | `LV_STYLE_OUTLINE_WIDTH` |
+| 52 | `OutlineWidth` | `outline_width` | `LengthValue` | `0px` | EXT_DRAW | `OUTLINE` | 3 | `LV_STYLE_OUTLINE_WIDTH` |
 | 53 | `OutlineColor` | `outline_color` | `ColorValue` | `#000000` | — | `OUTLINE` | 3 | `LV_STYLE_OUTLINE_COLOR` |
 | 54 | `OutlineOpacity` | `outline_opacity` | `OpacityValue` | `Opa::COVER` | EXT_DRAW | `OUTLINE` | 3 | `outline_opa`, `LV_STYLE_OUTLINE_OPA` |
-| 55 | `OutlineOffset` | `outline_offset` | `i32` | `0` | EXT_DRAW | `OUTLINE` | 3 | `outline_pad`, `LV_STYLE_OUTLINE_PAD` |
-| 56 | `ShadowWidth` | `shadow_width` | `i32` | `0` | EXT_DRAW | `SHADOW` | 3 | `LV_STYLE_SHADOW_WIDTH` |
-| 57 | `ShadowOffsetX` | `shadow_offset_x` | `i32` | `0` | EXT_DRAW | `SHADOW` | 3 | `LV_STYLE_SHADOW_OFFSET_X` |
-| 58 | `ShadowOffsetY` | `shadow_offset_y` | `i32` | `0` | EXT_DRAW | `SHADOW` | 3 | `LV_STYLE_SHADOW_OFFSET_Y` |
-| 59 | `ShadowSpread` | `shadow_spread` | `i32` | `0` | EXT_DRAW | `SHADOW` | 3 | `LV_STYLE_SHADOW_SPREAD` |
+| 55 | `OutlineOffset` | `outline_offset` | `LengthValue` | `0px` | EXT_DRAW | `OUTLINE` | 3 | `outline_pad`, `LV_STYLE_OUTLINE_PAD` |
+| 56 | `ShadowWidth` | `shadow_width` | `LengthValue` | `0px` | EXT_DRAW | `SHADOW` | 3 | `LV_STYLE_SHADOW_WIDTH` |
+| 57 | `ShadowOffsetX` | `shadow_offset_x` | `LengthValue` | `0px` | EXT_DRAW | `SHADOW` | 3 | `LV_STYLE_SHADOW_OFFSET_X` |
+| 58 | `ShadowOffsetY` | `shadow_offset_y` | `LengthValue` | `0px` | EXT_DRAW | `SHADOW` | 3 | `LV_STYLE_SHADOW_OFFSET_Y` |
+| 59 | `ShadowSpread` | `shadow_spread` | `LengthValue` | `0px` | EXT_DRAW | `SHADOW` | 3 | `LV_STYLE_SHADOW_SPREAD` |
 | 60 | `ShadowColor` | `shadow_color` | `ColorValue` | `#000000` | — | `SHADOW` | 3 | `LV_STYLE_SHADOW_COLOR` |
 | 61 | `ShadowOpacity` | `shadow_opacity` | `OpacityValue` | `Opa::COVER` | EXT_DRAW | `SHADOW` | 3 | `shadow_opa`, `LV_STYLE_SHADOW_OPA` |
 | 62 | `DropShadowRadius` | `drop_shadow_radius` | `i32` | `0` | EXT_DRAW | `DROP_SHADOW` | 3 | `LV_STYLE_DROP_SHADOW_RADIUS` |
@@ -80,13 +80,13 @@ All 129 properties of `twine-style` (LVGL v9.6 `lv_style_prop_t`), in id order. 
 | 72 | `ImageRecolor` | `image_recolor` | `ColorValue` | `#000000` | — | `IMAGE` | 4 | `LV_STYLE_IMAGE_RECOLOR` |
 | 73 | `ImageRecolorOpacity` | `image_recolor_opacity` | `OpacityValue` | `Opa::TRANSP` | — | `IMAGE` | 4 | `image_recolor_opa`, `LV_STYLE_IMAGE_RECOLOR_OPA` |
 | 74 | `ImageColorKey` | `image_color_key` | `&'static ImageColorkey` | none | — | `IMAGE` | 4 | `image_colorkey`, `LV_STYLE_IMAGE_COLORKEY` |
-| 75 | `LineWidth` | `line_width` | `i32` | `0` | EXT_DRAW | `LINE` | 4 | `LV_STYLE_LINE_WIDTH` |
+| 75 | `LineWidth` | `line_width` | `LengthValue` | `0px` | EXT_DRAW | `LINE` | 4 | `LV_STYLE_LINE_WIDTH` |
 | 76 | `LineDashWidth` | `line_dash_width` | `i32` | `0` | — | `LINE` | 4 | `LV_STYLE_LINE_DASH_WIDTH` |
 | 77 | `LineDashGap` | `line_dash_gap` | `i32` | `0` | — | `LINE` | 4 | `LV_STYLE_LINE_DASH_GAP` |
 | 78 | `LineRounded` | `line_rounded` | `bool` | `false` | — | `LINE` | 4 | `LV_STYLE_LINE_ROUNDED` |
 | 79 | `LineColor` | `line_color` | `ColorValue` | `#000000` | — | `LINE` | 4 | `LV_STYLE_LINE_COLOR` |
 | 80 | `LineOpacity` | `line_opacity` | `OpacityValue` | `Opa::COVER` | — | `LINE` | 5 | `line_opa`, `LV_STYLE_LINE_OPA` |
-| 81 | `ArcWidth` | `arc_width` | `i32` | `0` | EXT_DRAW | `ARC` | 5 | `LV_STYLE_ARC_WIDTH` |
+| 81 | `ArcWidth` | `arc_width` | `LengthValue` | `0px` | EXT_DRAW | `ARC` | 5 | `LV_STYLE_ARC_WIDTH` |
 | 82 | `ArcRounded` | `arc_rounded` | `bool` | `false` | — | `ARC` | 5 | `LV_STYLE_ARC_ROUNDED` |
 | 83 | `ArcColor` | `arc_color` | `ColorValue` | `#000000` | — | `ARC` | 5 | `LV_STYLE_ARC_COLOR` |
 | 84 | `ArcOpacity` | `arc_opacity` | `OpacityValue` | `Opa::COVER` | — | `ARC` | 5 | `arc_opa`, `LV_STYLE_ARC_OPA` |
@@ -94,8 +94,8 @@ All 129 properties of `twine-style` (LVGL v9.6 `lv_style_prop_t`), in id order. 
 | 86 | `TextColor` | `text_color` | `ColorValue` | `#000000` | INHERITABLE | `TEXT` | 5 | `LV_STYLE_TEXT_COLOR` |
 | 87 | `TextOpacity` | `text_opacity` | `OpacityValue` | `Opa::COVER` | INHERITABLE | `TEXT` | 5 | `text_opa`, `LV_STYLE_TEXT_OPA` |
 | 88 | `Font` | `font` | `FontValue` | theme font (`StyleDefaults::font`) | INHERITABLE, LAYOUT | `TEXT` | 5 | `text_font`, `LV_STYLE_TEXT_FONT` |
-| 89 | `LetterSpacing` | `letter_spacing` | `i32` | `0` | INHERITABLE, LAYOUT | `TEXT` | 5 | `text_letter_space`, `letter_space`, `LV_STYLE_TEXT_LETTER_SPACE` |
-| 90 | `LineSpacing` | `line_spacing` | `i32` | `0` | INHERITABLE, LAYOUT | `TEXT` | 5 | `text_line_space`, `line_space`, `LV_STYLE_TEXT_LINE_SPACE` |
+| 89 | `LetterSpacing` | `letter_spacing` | `LengthValue` | `0px` | INHERITABLE, LAYOUT | `TEXT` | 5 | `text_letter_space`, `letter_space`, `LV_STYLE_TEXT_LETTER_SPACE` |
+| 90 | `LineSpacing` | `line_spacing` | `LengthValue` | `0px` | INHERITABLE, LAYOUT | `TEXT` | 5 | `text_line_space`, `line_space`, `LV_STYLE_TEXT_LINE_SPACE` |
 | 91 | `TextDecoration` | `text_decoration` | `TextDecor` | none (`TextDecor::empty()`) | INHERITABLE | `TEXT` | 5 | `text_decor`, `LV_STYLE_TEXT_DECOR` |
 | 92 | `TextAlign` | `text_align` | `TextAlign` | `Auto` | INHERITABLE, LAYOUT | `TEXT` | 5 | `LV_STYLE_TEXT_ALIGN` |
 | 93 | `TextOutlineColor` | `text_outline_color` | `ColorValue` | `#000000` | — | `TEXT` | 5 | `text_outline_stroke_color`, `LV_STYLE_TEXT_OUTLINE_STROKE_COLOR` |
@@ -112,14 +112,14 @@ All 129 properties of `twine-style` (LVGL v9.6 `lv_style_prop_t`), in id order. 
 | 104 | `ColorFilterOpacity` | `color_filter_opacity` | `OpacityValue` | `Opa::TRANSP` | INHERITABLE | `RECOLOR` | 6 | `color_filter_opa`, `LV_STYLE_COLOR_FILTER_OPA` |
 | 105 | `Length` | `length` | `i32` | `0` | EXT_DRAW | `MISC` | 6 | `LV_STYLE_LENGTH` |
 | 106 | `RadialOffset` | `radial_offset` | `i32` | `0` | — | `MISC` | 6 | `LV_STYLE_RADIAL_OFFSET` |
-| 107 | `Anim` | `anim` | `&'static AnimSpec` | none | — | `MISC` | 6 | `LV_STYLE_ANIM` |
+| 107 | `Anim` | `anim` | `MotionValue` | none | — | `MISC` | 6 | `LV_STYLE_ANIM` |
 | 108 | `AnimDuration` | `anim_duration` | `DurationMs` | `Duration::ms(0)` | — | `MISC` | 6 | `LV_STYLE_ANIM_DURATION` |
 | 109 | `Transition` | `transition` | `TransitionRef` | none | — | `MISC` | 6 | `LV_STYLE_TRANSITION` |
 | 110 | `BlendMode` | `blend_mode` | `BlendMode` | `Normal` | LAYER | `MISC` | 6 | `LV_STYLE_BLEND_MODE` |
 | 111 | `Layout` | `layout` | `LayoutKind` | `None` | LAYOUT | `MISC` | 6 | `LV_STYLE_LAYOUT` |
 | 112 | `BaseDir` | `base_dir` | `BaseDir` | `Ltr` | INHERITABLE, LAYOUT | `MISC` | 7 | `LV_STYLE_BASE_DIR` |
 | 113 | `BitmapMask` | `bitmap_mask` | `&'static ImageSource` | none | LAYER | `MISC` | 7 | `bitmap_mask_src`, `LV_STYLE_BITMAP_MASK_SRC` |
-| 114 | `RotarySensitivity` | `rotary_sensitivity` | `Scale` | `Scale::ONE` | — | `MISC` | 7 | `LV_STYLE_ROTARY_SENSITIVITY` |
+| 114 | `RotarySensitivity` | `rotary_sensitivity` | `ScaleValue` | `Scale::ONE` | — | `MISC` | 7 | `LV_STYLE_ROTARY_SENSITIVITY` |
 | 115 | `FlexFlow` | `flex_flow` | `FlexFlow` | `ROW` | LAYOUT | `FLEX` | 7 | `LV_STYLE_FLEX_FLOW` |
 | 116 | `FlexMainAlign` | `flex_main_align` | `MainAlign` | `Start` | LAYOUT | `FLEX` | 7 | `flex_main_place`, `LV_STYLE_FLEX_MAIN_PLACE` |
 | 117 | `FlexCrossAlign` | `flex_cross_align` | `CrossAlign` | `Start` | LAYOUT | `FLEX` | 7 | `flex_cross_place`, `LV_STYLE_FLEX_CROSS_PLACE` |
@@ -185,9 +185,9 @@ Shorthands set several properties at once and have the same name in `style!` (se
 | `gap` | `v: LengthValue` | `row_gap`, `column_gap` | `pad_gap` |
 | `bg` | `color: ColorValue` | `bg_color`, `bg_opacity` | — |
 | `border` | `width: LengthValue, color: ColorValue` | `border_width`, `border_color`, `border_opacity` | — |
-| `outline` | `width: i32, color: ColorValue, offset: i32` | `outline_width`, `outline_color`, `outline_opacity`, `outline_offset` | — |
+| `outline` | `width: LengthValue, color: ColorValue, offset: LengthValue` | `outline_width`, `outline_color`, `outline_opacity`, `outline_offset` | — |
 | `shadow` | `shadow: ShadowDsc` | `shadow_width`, `shadow_offset_x`, `shadow_offset_y`, `shadow_spread`, `shadow_color`, `shadow_opacity` | — |
-| `shadow_offset` | `x: i32, y: i32` | `shadow_offset_x`, `shadow_offset_y` | — |
+| `shadow_offset` | `x: LengthValue, y: LengthValue` | `shadow_offset_x`, `shadow_offset_y` | — |
 | `transform_scale` | `scale: Scale` | `transform_scale_x`, `transform_scale_y` | — |
 | `transform_pivot` | `point: Point` | `transform_pivot_x`, `transform_pivot_y` | — |
 | `grid_col` | `columns: GridSpan` | `grid_cell_column`, `grid_cell_column_span` | `grid_cell` |

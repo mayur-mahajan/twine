@@ -13,10 +13,8 @@ use twine::text::LongMode;
 use twine::theme::Palette;
 use twine::widgets::prelude::*;
 
-#[path = "../assets/logo_rgb565a8.rs"]
-mod logo_rgb565a8;
-
-use logo_rgb565a8::LOGO_RGB565A8;
+// The logo converted to RGB565 + 8-bit alpha while the example compiles.
+twine::include_image!(static LOGO_RGB565A8 = "../../assets/images/twine_logo.png", format = Rgb565A8);
 
 /// The logo encoded as QOI (decoded by the engine's decoder registry into its image cache).
 pub static LOGO_QOI: &[u8] = include_bytes!("../../../../assets/images/twine_logo.qoi");

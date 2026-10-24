@@ -1,6 +1,6 @@
 // The gauge of the custom widget guide (`twine::guide::custom_widgets`): a widget with its
-// own class and parts, drawn with the renderer, themed through a theme builder registration
-// with design elements, and wrapped in a typed view. Shared by the `gauge` example
+// own class and parts, drawn with the renderer, themed through a design system extending the
+// LVGL theme with design elements, and wrapped in a typed view. Shared by the `gauge` example
 // (`main.rs`), its tests (`tests/gauge.rs`) and the guide's doctests, which `include!` this
 // file (so it has no inner `//!` docs).
 
@@ -8,8 +8,9 @@ use core::ops::RangeInclusive;
 
 use twine::core::math::{TRIG_SHIFT, cos, sin};
 use twine::engine::{AnimId, AnimProp, Editable, EventParam, GroupDef, OBJ_FLAGS};
+use twine::engine::{ComputedRecipe, DesignSystem, RecipeRef, Theme, ThemeCx};
 use twine::prelude::*;
-use twine::theme::ClassCx;
+use twine::style::design::ElementTable;
 use twine::view::{BuildOp, event_value, on_value_changed};
 use twine::widgets::container::CARD_CLASS;
 
@@ -348,12 +349,10 @@ static LABEL_STYLE: Style = style! {
     text_align: TextAlign::Center,
 };
 
-/// Styles a gauge node in any theme: register it with the theme builder,
-/// `DefaultTheme::builder().class(&GAUGE_CLASS, style_gauge)` (also `MonoTheme` and
-/// `SimpleTheme`). Every colour and the font are design elements, so the gauge follows the
-/// theme's modes (light, dark, night, high contrast) without being rebuilt. `Main` keeps the
-/// card look the theme gives the base class.
-pub fn style_gauge<S>(cx: &mut ClassCx<'_, '_, S>) {
+/// Adds the gauge's styles to a node, on top of the card look a theme gives the base class
+/// (see [`lvgl_gauge`]). Every colour and the font are design elements, so the gauge follows
+/// the theme's modes (light, dark, night, high contrast) without being rebuilt.
+pub fn style_gauge(cx: &mut ThemeCx<'_>) {
     cx.add_style(Selector::MAIN, &MAIN_STYLE);
     cx.add_style(Selector::state(State::FOCUS_KEY), &FOCUS_STYLE);
     cx.add_style(Selector::part(TRACK), &TRACK_STYLE);
@@ -365,6 +364,31 @@ pub fn style_gauge<S>(cx: &mut ClassCx<'_, '_, S>) {
     cx.add_style(Selector::part(NEEDLE), &NEEDLE_STYLE);
     cx.add_style(Selector::part(LABEL), &LABEL_STYLE);
 }
+
+/// The gauge's recipe on the LVGL theme: the theme's card look (the base class), then
+/// [`style_gauge`].
+fn lvgl_gauge(cx: &mut ThemeCx<'_>) {
+    lvgl::THEME.apply(cx, &CARD_CLASS);
+    style_gauge(cx);
+}
+static LVGL_GAUGE: ComputedRecipe = ComputedRecipe::new("GAUGE", &GAUGE_CLASS, lvgl_gauge);
+
+/// The LVGL theme with the gauge: a design system extending it (`type Base = Lvgl`) with a
+/// recipe for [`GAUGE_CLASS`]; every other class keeps the LVGL look. Installed as
+/// [`GAUGE_THEME`].
+pub struct GaugeTheme;
+
+impl DesignSystem for GaugeTheme {
+    type Base = Lvgl;
+    const NAME: &'static str = "lvgl+gauge";
+    const MODES: &'static [(ThemeMode, &'static ElementTable)] = lvgl::MODES;
+    fn recipe(class: &'static WidgetClass) -> Option<RecipeRef> {
+        LVGL_GAUGE.for_class(class)
+    }
+}
+
+/// The theme to give a display that shows gauges (`AppConfig::new().theme(&GAUGE_THEME)`).
+pub static GAUGE_THEME: Theme<GaugeTheme> = Theme::new();
 
 // ---- View ---------------------------------------------------------------------------------
 

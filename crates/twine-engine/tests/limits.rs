@@ -73,6 +73,7 @@ fn screens_count_against_the_node_limit() {
         .add_chunked_display(
             twine_hal::DisplayInfo::new(16, 8, twine_core::ColorFormat::Rgb565),
             16 * 2 * 8,
+            None,
         )
         .unwrap();
     // 4 layer and screen nodes: one more screen fits, a second does not.

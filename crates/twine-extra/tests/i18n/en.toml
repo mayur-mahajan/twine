@@ -1,0 +1,20 @@
+# The default language of the test catalog (`catalog.rs` is generated from this directory:
+# `cargo run -p twine-cli -- i18n crates/twine-extra/tests/i18n --default en
+#  --languages en,de,ru,ar,zh,fr,hi,fa,ja --font ar=::twine_text::EMPTY_FONT
+#  -o crates/twine-extra/tests/i18n/catalog.rs`, or `TWINE_I18N_BLESS=1 cargo test -p
+# twine-extra --test i18n generated_catalog`).
+hello = "Hello"
+greeting = "Hello, {name}!"
+moved = "{0} moved to {1}"
+copied = "{file} copied to {dir}"
+only-en = "Only English"
+ok = "OK"
+total = "Total: {amount}"
+
+[items]
+"0" = "No items"
+one = "{count} item"
+other = "{count} items"
+
+[settings]
+title = "Settings"

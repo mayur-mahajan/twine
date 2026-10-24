@@ -54,10 +54,10 @@
 //! assert!(oled.poll_flush().is_some());
 //! ```
 //!
-//! Pair it with the monochrome theme (`MonoTheme`) of the `twine` crate and draw buffers that
+//! Pair it with the monochrome theme (`twine::theme::mono::THEME`, feature `theme-mono`) of the `twine` crate and draw buffers that
 //! hold the whole 1 KiB frame (`twine::draw_buffers!(static BUFS: 2 x 64 rows x 128 px @ I1)`),
 //! e.g. `Ui::builder(oled).runtime(rt).buffers(BufferMode::partial_double_from(BUFS.take().unwrap()))
-//! .theme(MonoTheme::builder().mode(ThemeMode::Dark).build())`, and enable `I1` rendering
+//! .theme(&mono::THEME).mode(ThemeMode::Dark)`, and enable `I1` rendering
 //! (feature `color-i1`).
 
 use heapless::{Deque, Vec};

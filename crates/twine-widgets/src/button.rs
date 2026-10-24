@@ -3,7 +3,8 @@
 use alloc::boxed::Box;
 
 use twine_engine::{
-    Engine, EngineError, GroupDef, MeasureCx, NodeId, OBJ_FLAGS, ObjFlags, Widget, WidgetClass, WidgetCx,
+    Engine, EngineError, GroupDef, MeasureCx, NodeId, OBJ_FLAGS, ObjFlags, Variant, Widget, WidgetClass,
+    WidgetCx,
 };
 use twine_style::Part;
 
@@ -22,6 +23,96 @@ pub static BUTTON_CLASS: WidgetClass = WidgetClass::new("button")
     .parts(&[Part::Main, Part::Scrollbar])
     .default_flags(BUTTON_FLAGS)
     .group_def(GroupDef::True);
+
+/// A theme class derived from [`BUTTON_CLASS`] (only themes read it: parts, flags and
+/// behaviour stay the button's).
+macro_rules! variant_class {
+    ($name:literal) => {
+        WidgetClass::new($name)
+            .parts(BUTTON_CLASS.parts)
+            .default_flags(BUTTON_FLAGS)
+            .group_def(GroupDef::True)
+            .base(&BUTTON_CLASS)
+    };
+}
+
+/// The theme class of [`ButtonVariant::Tinted`]: `"button.tinted"`, derived from
+/// [`BUTTON_CLASS`].
+pub static BUTTON_TINTED_CLASS: WidgetClass = variant_class!("button.tinted");
+/// The theme class of [`ButtonVariant::Gray`]: `"button.gray"`, derived from [`BUTTON_CLASS`].
+pub static BUTTON_GRAY_CLASS: WidgetClass = variant_class!("button.gray");
+/// The theme class of [`ButtonVariant::Plain`]: `"button.plain"`, derived from
+/// [`BUTTON_CLASS`].
+pub static BUTTON_PLAIN_CLASS: WidgetClass = variant_class!("button.plain");
+/// The theme class of [`ButtonVariant::Destructive`]: `"button.destructive"`, derived from
+/// [`BUTTON_CLASS`].
+pub static BUTTON_DESTRUCTIVE_CLASS: WidgetClass = variant_class!("button.destructive");
+
+/// The look of a button, as a theme class (design `docs/plan/r7-theming-design.md` §2.4):
+/// the value of the view's `.variant(..)` (a constant or a signal), which calls
+/// [`Engine::set_theme_class`](twine_engine::Engine::set_theme_class). A theme that does not
+/// know a variant styles it like a plain button (lineage fallback): the built-in LVGL, Mono
+/// and Simple themes show every variant as their button.
+///
+/// | Variant | Class | Intent |
+/// |---------|-------|--------|
+/// | `Filled` (default) | [`BUTTON_CLASS`] | the primary action |
+/// | `Tinted` | [`BUTTON_TINTED_CLASS`] | a secondary action: accent text on a light accent tint |
+/// | `Gray` | [`BUTTON_GRAY_CLASS`] | a neutral action on a gray fill |
+/// | `Plain` | [`BUTTON_PLAIN_CLASS`] | text only, no fill |
+/// | `Destructive` | [`BUTTON_DESTRUCTIVE_CLASS`] | an action that deletes or cancels something |
+/// | `Custom(class)` | `class` | an application variant (a class whose base chain reaches [`BUTTON_CLASS`]) |
+///
+/// ```
+/// use twine_engine::{Variant, WidgetClass};
+/// use twine_widgets::button::{BUTTON_CLASS, BUTTON_TINTED_CLASS, ButtonVariant};
+///
+/// static PILL: WidgetClass = WidgetClass::new("button.pill").base(&BUTTON_CLASS);
+/// assert!(ButtonVariant::Filled.class().is(&BUTTON_CLASS));
+/// assert!(ButtonVariant::Tinted.class().is(&BUTTON_TINTED_CLASS));
+/// assert!(ButtonVariant::Custom(&PILL).class().is_a(&BUTTON_CLASS));
+/// assert_eq!(ButtonVariant::default(), ButtonVariant::Filled);
+/// ```
+#[derive(Clone, Copy, Debug, Default)]
+pub enum ButtonVariant {
+    /// The theme's button (the primary action).
+    #[default]
+    Filled,
+    /// Accent text on a light accent tint.
+    Tinted,
+    /// A neutral gray fill.
+    Gray,
+    /// Text only, no fill.
+    Plain,
+    /// A destructive action (the theme's danger color).
+    Destructive,
+    /// An application variant: a class derived from [`BUTTON_CLASS`].
+    Custom(&'static WidgetClass),
+}
+
+impl PartialEq for ButtonVariant {
+    /// Variants are equal when they name the same class (`Custom(&BUTTON_CLASS) == Filled`).
+    fn eq(&self, other: &Self) -> bool {
+        self.class().is(other.class())
+    }
+}
+
+impl Eq for ButtonVariant {}
+
+impl Variant for ButtonVariant {
+    type Widget = Button;
+
+    fn class(self) -> &'static WidgetClass {
+        match self {
+            ButtonVariant::Filled => &BUTTON_CLASS,
+            ButtonVariant::Tinted => &BUTTON_TINTED_CLASS,
+            ButtonVariant::Gray => &BUTTON_GRAY_CLASS,
+            ButtonVariant::Plain => &BUTTON_PLAIN_CLASS,
+            ButtonVariant::Destructive => &BUTTON_DESTRUCTIVE_CLASS,
+            ButtonVariant::Custom(c) => c,
+        }
+    }
+}
 
 /// A button: a container that is clickable, focusable and not scrollable. With the default
 /// theme it is a primary-colored rounded rectangle with a shadow (light mode) that darkens

@@ -9,5 +9,5 @@ license (MIT OR Apache-2.0).
 | `frame0.png` … `frame3.png` | 32 × 32 grey ring with a blue quarter sector, rotated 90° per frame (the `controls` animimg) |
 | `power_off.png`, `power_on.png` | 36 × 36 grey / blue disc with a white power sign (the `controls` image button) |
 
-The converted images (`src/assets/*.rs` + `.bin`, ARGB8888) are generated with the commands in
-the header of `gen_frames.py`.
+`build.rs` converts them to ARGB8888 with `twine-build` while the crate builds (nothing
+converted is committed); `gen_frames.py` redraws the PNGs.

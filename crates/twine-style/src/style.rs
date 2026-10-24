@@ -29,22 +29,28 @@ fn count_lookup() {
     LOOKUPS.with(|c| c.set(c.get() + 1));
 }
 
-/// Scans `props` from the end (the last duplicate wins).
+/// The value of `id` in `props` ([`find_prop`], converted to a [`StyleValue`]).
 #[inline]
 fn find(props: &[StyleProp], has_group: u16, id: PropId) -> Option<StyleValue> {
+    find_prop(props, has_group, id).map(StyleProp::value)
+}
+
+/// The property `id` in `props` (scanned from the end: the last duplicate wins), `None` when
+/// the group mask rules it out. Returns the property itself, not its [`StyleValue`]: the
+/// resolver converts only the winning one (see `resolve::own_value`), and the scan stays small
+/// enough to inline.
+#[inline]
+fn find_prop(props: &[StyleProp], has_group: u16, id: PropId) -> Option<&StyleProp> {
     if has_group & id.group_bit() == 0 {
         return None;
     }
     count_lookup();
-    props.iter().rev().find(|p| p.id() == id).map(StyleProp::value)
+    props.iter().rev().find(|p| p.id() == id)
 }
 
 /// The template of grid template property `id` in `props` (the last occurrence wins).
 fn find_ref(props: &[StyleProp], has_group: u16, id: PropId) -> Option<TracksRef> {
-    if has_group & id.group_bit() == 0 {
-        return None;
-    }
-    props.iter().rev().find(|p| p.id() == id)?.tracks_ref()
+    find_prop(props, has_group, id)?.tracks_ref()
 }
 
 /// The `transition` property in `props` (the last occurrence wins).
@@ -755,6 +761,18 @@ impl StyleRef {
             StyleRef::Static(s) => s.get(id),
             StyleRef::Shared(s) => s.get(id),
         }
+    }
+
+    /// The property `id` of this style, if set (the last duplicate wins): the
+    /// [`get`](Self::get) of the resolver, which converts only the winning property to a
+    /// [`StyleValue`]. One group-mask test, then a scan of the style's properties.
+    #[inline]
+    pub(crate) fn get_prop(&self, id: PropId) -> Option<&StyleProp> {
+        let (props, g) = match self {
+            StyleRef::Static(s) => (s.props, s.has_group),
+            StyleRef::Shared(b) => (&b.props[..], b.has_group),
+        };
+        find_prop(props, g, id)
     }
 
     /// The group mask (see [`Style::has_group`]).

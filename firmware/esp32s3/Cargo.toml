@@ -42,7 +42,7 @@ panel-sh8601 = ["qspi-panel", "twine/drivers-sh8601", "dep:twine-esp"]
 ## RM67162 AMOLED on quad SPI (240 × 536).
 panel-rm67162 = ["qspi-panel", "twine/drivers-rm67162", "dep:twine-esp"]
 ## SSD1306 128 × 64 mono OLED on the I2C pins of the capacitive touch (no touch; mono theme).
-oled-ssd1306 = ["twine/drivers-ssd1306", "twine/drivers-i2c"]
+oled-ssd1306 = ["twine/drivers-ssd1306", "twine/drivers-i2c", "twine/theme-mono"]
 ## XPT2046 resistive touch on its own SPI bus.
 touch-xpt2046 = ["touch", "twine/drivers-xpt2046"]
 ## FT6x36 / FT3168 capacitive touch on I2C.

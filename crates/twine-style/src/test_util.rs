@@ -9,7 +9,13 @@ impl GlyphProvider for NoGlyphs {
         None
     }
 
-    fn render_a8(&self, _info: &GlyphInfo, _out: &mut [u8], _cache: &mut GlyphCache) -> bool {
+    fn render_a8(
+        &self,
+        _info: &GlyphInfo,
+        _polarity: twine_text::Polarity,
+        _out: &mut [u8],
+        _cache: &mut GlyphCache,
+    ) -> bool {
         false
     }
 }

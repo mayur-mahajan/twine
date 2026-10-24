@@ -4,7 +4,7 @@ use twine_assets::fonts::{MONTSERRAT_14, MONTSERRAT_14_SUBPX, MONTSERRAT_28};
 use twine_core::{ColorFormat, Rect};
 use twine_testing::RenderHarness;
 use twine_testing::alloc::{CountingAllocator, count_allocs};
-use twine_text::{Font, GlyphCache, TextDecor, TextDsc, draw_text};
+use twine_text::{Font, GlyphCache, Polarity, TextDecor, TextDsc, draw_text};
 
 #[global_allocator]
 static A: CountingAllocator = CountingAllocator;
@@ -12,7 +12,9 @@ static A: CountingAllocator = CountingAllocator;
 fn render_100(font: &'static Font, cache: &mut GlyphCache, out: &mut [u8]) {
     for c in (0x21u8..0x7E).map(char::from).cycle().take(100) {
         let (f, info) = font.glyph(c, None).unwrap();
-        assert!(f.provider.render_a8(&info, out, cache));
+        for polarity in [Polarity::DarkOnLight, Polarity::LightOnDark] {
+            assert!(f.provider.render_a8(&info, polarity, out, cache));
+        }
     }
 }
 
