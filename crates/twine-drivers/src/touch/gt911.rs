@@ -6,15 +6,21 @@
 //! | Address | `0x5D` or `0x14` (selected by the `INT` level during reset) |
 //! | Bus speed | I2C up to 400 kHz |
 //! | IRQ | `INT`; the default configuration triggers on the falling edge → active low |
-//! | Rotation | reports panel coordinates (resolution from its config), mapped to the display by [`TouchTransform`](super::TouchTransform) (fitted automatically, see [module docs](super#coordinates)) |
+//! | Coordinates | reported in the resolution of its configuration (`0x8048`), scaled to the display's native size and mapped by [`TouchTransform`](super::TouchTransform) (fitted automatically, see [module docs](super#coordinates)) |
 //!
 //! A reading reads the status register `0x814E` (bit 7: buffer ready, bits 3:0: number of
 //! points). When ready and touched, the first point is read at `0x8150` (X low, X high, Y low,
 //! Y high); the status is then cleared by writing `0` — without that the controller stops
 //! reporting. When the buffer is not ready the previous state is kept.
 //!
-//! [`probe`](Gt911::probe) reads the product ID (`0x8140`, `"911"`) and the configuration
-//! version (`0x8047`) and logs them.
+//! The controller reports points in the X/Y resolution of its configuration (`0x8048`), which
+//! module makers do not always set to the panel's: the CYD 8048S043 ships configured for
+//! 480 × 272 on an 800 × 480 display. The driver reads it once (in [`probe`](Gt911::probe), or
+//! before the first sample) and scales points from it to the display's native size; a zero
+//! resolution is taken as native pixels.
+//!
+//! [`probe`](Gt911::probe) reads the product ID (`0x8140`, `"911"`), the configuration
+//! version (`0x8047`) and the resolution, and logs them.
 //!
 //! # Wiring
 //!
@@ -54,6 +60,8 @@ pub const REG_POINT1: u16 = 0x8150;
 pub const REG_PRODUCT_ID: u16 = 0x8140;
 /// Configuration version.
 pub const REG_CONFIG_VERSION: u16 = 0x8047;
+/// Configured resolution: X max low, X max high, Y max low, Y max high.
+pub const REG_RESOLUTION: u16 = 0x8048;
 
 /// GT911 driver implementing [`InputDevice`] (`Pointer`).
 #[derive(Debug)]
@@ -62,6 +70,8 @@ pub struct Gt911<I2C, IRQ> {
     addr: u8,
     pub(super) irq: IrqState<IRQ>,
     map: PanelMap,
+    /// The configured resolution has been read (it is in `map`).
+    resolution_read: bool,
 }
 
 impl<I2C, IRQ> Gt911<I2C, IRQ> {
@@ -86,6 +96,7 @@ impl<I2C, IRQ> Gt911<I2C, IRQ> {
             addr: ADDR,
             irq: IrqState::new(irq),
             map: PanelMap::new(),
+            resolution_read: false,
         }
     }
 
@@ -130,7 +141,8 @@ impl<I2C: I2c, IRQ> Gt911<I2C, IRQ> {
         self.i2c.write(self.addr, &[h, l, val])
     }
 
-    /// Reads and logs the product ID and configuration version; returns `(id, version)`.
+    /// Reads and logs the product ID and configuration version, and reads the configured
+    /// resolution (see [`read_resolution`](Self::read_resolution)); returns `(id, version)`.
     ///
     /// # Errors
     /// The I²C bus error.
@@ -140,7 +152,38 @@ impl<I2C: I2c, IRQ> Gt911<I2C, IRQ> {
         let mut ver = [0u8; 1];
         self.read_reg(REG_CONFIG_VERSION, &mut ver)?;
         info!(target: "twine::driver", "gt911: product id {:?}, config version {}", id, ver[0]);
+        self.read_resolution()?;
         Ok((id, ver[0]))
+    }
+
+    /// Reads and logs the resolution of the configuration (`(0, 0)` if not set) and scales
+    /// points from it to the display from now on. The driver calls it before its first sample
+    /// unless [`probe`](Self::probe) did.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Point};
+    /// use twine_drivers::NoPin;
+    /// use twine_drivers::testkit::Recorder;
+    /// use twine_drivers::touch::Gt911;
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let rec = Recorder::new();
+    /// rec.set_i2c_responder(|_, _, rx| rx.copy_from_slice(&[0xE0, 0x01, 0x10, 0x01])); // 480 × 272
+    /// let mut touch = Gt911::new(rec.i2c(), None::<NoPin>)
+    ///     .for_display(&DisplayInfo::new(800, 480, ColorFormat::Rgb565));
+    /// assert_eq!(touch.read_resolution(), Ok((480, 272)));
+    /// ```
+    ///
+    /// # Errors
+    /// The I²C bus error (the resolution is read again before the next sample).
+    pub fn read_resolution(&mut self) -> Result<(u16, u16), I2C::Error> {
+        let mut r = [0u8; 4];
+        self.read_reg(REG_RESOLUTION, &mut r)?;
+        let size = (u16::from_le_bytes([r[0], r[1]]), u16::from_le_bytes([r[2], r[3]]));
+        info!(target: "twine::driver", "gt911: configured for {}x{}", size.0, size.1);
+        self.map.set_panel_size(Some(size));
+        self.resolution_read = true;
+        Ok(size)
     }
 
     /// Reads one report: `Ok(None)` if the buffer is not ready, `Ok(Some(None))` if ready and
@@ -176,7 +219,12 @@ impl<I2C: I2c, IRQ: InputPin> InputDevice for Gt911<I2C, IRQ> {
         if !self.irq.should_read() {
             return InputData::Pointer(self.irq.last);
         }
-        let data = match self.read_raw() {
+        let raw = if self.resolution_read {
+            self.read_raw()
+        } else {
+            self.read_resolution().and_then(|_| self.read_raw())
+        };
+        let data = match raw {
             Ok(Some(Some((x, y)))) => PointerData {
                 point: self.map.apply(x, y),
                 pressed: true,
@@ -232,6 +280,12 @@ mod tests {
         assert_eq!(
             rec.ops(),
             [
+                // The configured resolution, once (unset here: native pixels).
+                BusOp::I2cWrite {
+                    addr: 0x5D,
+                    data: vec![0x80, 0x48]
+                },
+                BusOp::I2cRead { addr: 0x5D, len: 4 },
                 BusOp::I2cWrite {
                     addr: 0x5D,
                     data: vec![0x81, 0x4E]
@@ -256,6 +310,53 @@ mod tests {
         // Ready with 0 points: released.
         regs.set(0x814E, &[0x80]);
         assert!(matches!(t.read(), InputData::Pointer(p) if !p.pressed && p.point == Point::new(300, 200)));
+    }
+
+    /// A GT911 configured for 480 × 272 on an 800 × 480 panel (the CYD 8048S043) reported
+    /// its raw coordinates as pixels: touches landed in the top-left 60 % of the screen.
+    #[test]
+    fn regression_gt911_scales_configured_resolution_to_display() {
+        let rec = Recorder::new();
+        let regs = Regs::install(&rec);
+        regs.set(REG_RESOLUTION, &[0xE0, 0x01, 0x10, 0x01]); // 480 × 272
+        regs.set(0x814E, &[0x81]);
+        regs.set(0x8150, &[0xF0, 0x00, 0x88, 0x00]); // x 240, y 136: the centre
+        let mut t: Gt911<_, crate::NoPin> =
+            Gt911::new(rec.i2c(), None).for_display(&crate::touch::test_util::display(800, 480));
+        assert!(matches!(t.read(), InputData::Pointer(p) if p.point == Point::new(400, 240)));
+        regs.set(0x814E, &[0x81]);
+        regs.set(0x8150, &[0xDF, 0x01, 0x0F, 0x01]); // x 479, y 271: the last raw point
+        assert!(matches!(t.read(), InputData::Pointer(p) if p.point == Point::new(798, 478)));
+        // Read once: the next sample reads only the status and the point.
+        let _ = rec.take_ops();
+        regs.set(0x814E, &[0x81]);
+        let _ = t.read();
+        assert_eq!(rec.ops().len(), 5);
+    }
+
+    #[test]
+    fn gt911_scales_along_swapped_mount_axes() {
+        let rec = Recorder::new();
+        let regs = Regs::install(&rec);
+        regs.set(0x8140, b"911\0");
+        regs.set(REG_RESOLUTION, &[0x10, 0x01, 0xE0, 0x01]); // 272 × 480: X along the rows
+        let mut t: Gt911<_, crate::NoPin> = Gt911::new(rec.i2c(), None)
+            .with_mount(twine_hal::TouchMount {
+                swap_xy: true,
+                ..twine_hal::TouchMount::ALIGNED
+            })
+            .for_display(&crate::touch::test_util::display(800, 480));
+        t.probe().unwrap();
+        regs.set(0x814E, &[0x81]);
+        regs.set(0x8150, &[0x44, 0x00, 0x78, 0x00]); // x 68 of 272, y 120 of 480
+        // Scaled to 120 of 480 rows and 200 of 800 columns, then swapped.
+        assert!(matches!(t.read(), InputData::Pointer(p) if p.point == Point::new(200, 120)));
+        // `probe` read the resolution: no second read before the sample.
+        let resolution_reads = BusOp::I2cWrite {
+            addr: 0x5D,
+            data: vec![0x80, 0x48],
+        };
+        assert_eq!(rec.ops().iter().filter(|op| **op == resolution_reads).count(), 1);
     }
 
     #[test]

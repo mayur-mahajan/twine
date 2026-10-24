@@ -21,8 +21,8 @@ enum Cmd {
     /// Run everything CI runs (fmt, clippy, the safety profile, tests, todo-check, layers, fonts,
     /// images, style-props, nostd, docs, bench build, miri, snapshots, firmware).
     Ci {
-        /// Skip the slow stages (nostd, safety-exclusions, stack-budget, doc, bench-build, miri,
-        /// firmware).
+        /// Skip the slow stages (nostd, safety-exclusions, stack-budget, doc, llms-txt,
+        /// bench-build, miri, firmware).
         #[arg(long)]
         quick: bool,
         /// Run only the named stage(s) (repeatable), e.g. `--only clippy --only clippy-all-features`.
@@ -140,6 +140,13 @@ enum Cmd {
     /// Write the style property table (`crates/twine-style/PROPERTIES.md`) from the property
     /// metadata.
     StyleProps {
+        /// Only verify that the file is up to date.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Write `llms.txt` (the public API for AI coding agents) from the rustdoc comments of the
+    /// library crates (needs nightly: rustdoc JSON).
+    LlmsTxt {
         /// Only verify that the file is up to date.
         #[arg(long)]
         check: bool,
@@ -263,6 +270,7 @@ fn main() {
         Cmd::Fonts { check } => cmd::fonts::run(check),
         Cmd::GenAssets { check } => cmd::images::gen_assets(check),
         Cmd::StyleProps { check } => cmd::style_props::run(check),
+        Cmd::LlmsTxt { check } => cmd::llms_txt::run(check),
         Cmd::Fuzz { target, time } => cmd::fuzz::run(&target, time),
         Cmd::Progress => cmd::progress::run(),
         Cmd::Traceability { check } => cmd::traceability::run(check),

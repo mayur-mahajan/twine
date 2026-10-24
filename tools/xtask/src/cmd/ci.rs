@@ -1,7 +1,7 @@
 //! `cargo xtask ci [--quick]`: every check CI runs, in order, stopping at the first failure.
 //!
 //! A summary table is printed at the end. `--quick` skips `nostd`, `safety-exclusions`,
-//! `stack-budget`, `doc`, `bench-build`, `miri` and `firmware`.
+//! `stack-budget`, `doc`, `llms-txt`, `bench-build`, `miri` and `firmware`.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,8 +10,8 @@ use std::time::Instant;
 use serde_json::Value;
 
 use crate::cmd::{
-    divisions, firmware, fonts, guidelines, images, layers, miri, nostd, progress, safety, shifts, sim,
-    snapshots, stack, style_props, todo, traceability,
+    divisions, firmware, fonts, guidelines, images, layers, llms_txt, miri, nostd, progress, safety, shifts,
+    sim, snapshots, stack, style_props, todo, traceability,
 };
 use crate::util::{R, cargo, cargo_ci, output, run as run_cmd, warn};
 
@@ -508,6 +508,17 @@ fn nostd_build() -> Result<Outcome, Box<dyn std::error::Error>> {
     ok(nostd::run())
 }
 
+/// `llms.txt` matches the rustdoc comments (`cargo xtask llms-txt --check`); skipped (with a
+/// warning) without a nightly toolchain, which rustdoc's JSON output needs.
+fn llms_txt_check() -> Result<Outcome, Box<dyn std::error::Error>> {
+    if !llms_txt::nightly_available() {
+        return Ok(Outcome::Skipped(
+            "nightly toolchain not installed (`rustup toolchain install nightly`)".into(),
+        ));
+    }
+    ok(llms_txt::run(true))
+}
+
 /// Miri over the default crates; skipped (with a warning) when nightly Miri is not installed.
 fn miri_check() -> Result<Outcome, Box<dyn std::error::Error>> {
     if !miri::miri_available() {
@@ -639,6 +650,7 @@ const STAGES: &[(&str, bool, StageFn)] = &[
     ("safety-exclusions", false, safety_exclusions),
     ("stack-budget", false, stack_budget),
     ("doc", false, doc),
+    ("llms-txt", false, llms_txt_check),
     ("bench-build", false, bench_build),
     ("miri", false, miri_check),
     ("eg-sim", true, eg_sim),

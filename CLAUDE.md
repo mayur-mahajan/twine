@@ -22,6 +22,9 @@ API, `no_std` + `alloc`). Low compute/power is the top priority.
 - `README.md`, `CONTRIBUTING.md` — overview, Definition of Done, hard rules, code guidelines.
 - `twine::guide::custom_widgets` (rustdoc) — the custom-widget guide; `twine::guide::app_state` —
   the store pattern (application state as context).
+- `llms.txt` — the public API of every library crate for AI coding agents (generated from the
+  rustdoc comments; its preamble explains how to find a section without reading it whole). Use
+  it to look up an API instead of reading crate sources.
 
 ## Workflow for every step
 1. Read the step in `docs/plan/api-evolution.md`, the §6 deviations of earlier steps, and the code
@@ -35,7 +38,12 @@ API, `no_std` + `alloc`). Low compute/power is the top priority.
    `-D warnings`) for the crates touched, `cargo xtask ci --only todo-check --only layers`. The full
    `cargo xtask ci` (no_std, firmware, sim-smoke, Miri), benchmarks and firmware-size comparisons
    run once at the end of each phase.
-5. Tick the step in §5 and record deviations in §6 of `docs/plan/api-evolution.md`, then report.
+5. **Keep `llms.txt` current:** whenever the public API of a library crate or its rustdoc
+   changes (items added, removed, renamed or re-exported, signatures, doc comments), run
+   `cargo xtask llms-txt` and include the regenerated `llms.txt` with the change; never edit it
+   by hand. A new library crate is added to `CRATES` in `tools/xtask/src/cmd/llms_txt.rs`.
+   `cargo xtask llms-txt --check` (CI stage `llms-txt`) fails when it is stale.
+6. Tick the step in §5 and record deviations in §6 of `docs/plan/api-evolution.md`, then report.
    **Never run `git commit`, `git push`, tag or publish; the user handles all git operations.**
 
 ## Commands
@@ -94,6 +102,9 @@ API, `no_std` + `alloc`). Low compute/power is the top priority.
   `twine_testing::assert_theme_covers` and print the minimal recipe list of their UIs (for a
   `DesignSystem`'s `RECIPES` or a built-in theme's `.recipes(&[..])`) and the widget classes
   without a recipe.
+- `cargo xtask llms-txt [--check]` — write (or verify) `llms.txt` from the rustdoc comments of
+  the library crates (nightly: rustdoc JSON into `target/llms/`; each crate documented with the
+  user-facing features listed in `CRATES`). Also a slow CI stage, skipped without nightly.
 - `RUST_LOG=twine=debug` — enable logs in simulator/tests (`twine::refresh=trace` for invalidations).
 
 ## Hard rules

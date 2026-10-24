@@ -13,6 +13,7 @@ pub mod guidelines;
 pub mod images;
 pub mod layers;
 pub mod link_check;
+pub mod llms_txt;
 pub mod miri;
 pub mod nostd;
 pub mod panel_colors;

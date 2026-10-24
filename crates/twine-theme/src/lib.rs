@@ -11,8 +11,8 @@
 //! | Theme | Cargo feature | LVGL | Look |
 //! |-------|---------------|------|------|
 //! | [`Lvgl`] | `lvgl` (default) | `lv_theme_default` | material-like, light, dark, night or high contrast, primary/secondary colors, rounded cards and buttons with shadows, focus outlines, transitions, DPI-scaled |
-//! | [`Simple`] | `simple` | `lv_theme_simple` | flat grey tones, minimal styling |
-//! | [`Mono`] | `mono` | `lv_theme_mono` | pure black and white for 1-bit displays |
+//! | `Simple` | `simple` | `lv_theme_simple` | flat grey tones, minimal styling |
+//! | `Mono` | `mono` | `lv_theme_mono` | pure black and white for 1-bit displays |
 //!
 //! A theme is **data**: its styles are `static`s (`lvgl::styles`, `mono::styles`,
 //! `simple::styles`), its colors, fonts and motion one `'static` [design
@@ -100,8 +100,8 @@
 //! | Theme | `Light` | `Dark` | `Night` | `HighContrast` |
 //! |-------|---------|--------|---------|----------------|
 //! | [`Lvgl`] | LVGL | LVGL | warm amber on near-black, ≤ 30 % luminance, blue ≤ red / 2 | white on black, yellow accent, opaque cyan focus ring |
-//! | [`Mono`] | black on white | white on black | white on black | black on white |
-//! | [`Simple`] | LVGL | flat greys inverted | dim warm amber, ≤ 30 % luminance, blue ≤ red / 2 | black on white, grey buttons with black text |
+//! | `Mono` | black on white | white on black | white on black | black on white |
+//! | `Simple` | LVGL | flat greys inverted | dim warm amber, ≤ 30 % luminance, blue ≤ red / 2 | black on white, grey buttons with black text |
 //!
 //! A mode a theme does not list is refused: the display keeps its mode (with a warning).
 //! Each mode specifies minimum WCAG contrast ratios ([`ThemeMode::min_contrast`]:

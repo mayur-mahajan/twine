@@ -72,7 +72,7 @@
 //!   `fonts-latin-medium` (12–24 px), `fonts-latin-all`, `fonts-mono` (unscii), `fonts-rtl`
 //!   (Hebrew, Arabic, Persian), `fonts-cjk`, `fonts-all`; and one feature per font
 //!   (`montserrat-20`, `unscii-8`, …) for precise flash budgets.
-//! - `include-assets`: [`include_font!`] and [`include_image!`], bitmap fonts and images
+//! - `include-assets`: `include_font!` and `include_image!`, bitmap fonts and images
 //!   generated from TrueType/OpenType and PNG/JPEG/… files while the application compiles
 //!   (host-only proc macros; a build script with the `twine-build` crate does the same for
 //!   many assets, and subsets fonts to the characters of the translations).

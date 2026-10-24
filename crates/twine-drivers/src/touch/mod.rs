@@ -142,8 +142,15 @@ pub(crate) struct PanelMap {
     /// The aligned panel's transform of the display last fitted to (`None`: not fitted yet).
     display: Option<TouchTransform>,
     mount: TouchMount,
-    /// `display` composed with `mount`; the only field read per sample.
+    /// `display` composed with `mount`; read per sample.
     transform: TouchTransform,
+    /// The range of the raw axes when the controller reports in its own resolution instead of
+    /// native pixels (a GT911 configured for 480 × 272 on an 800 × 480 panel); `None`: raw
+    /// coordinates are native pixels.
+    panel_size: Option<(u16, u16)>,
+    /// The display's native size along the raw axes (swapped by the mount); `(0, 0)` until
+    /// fitted.
+    native: (u16, u16),
 }
 
 #[cfg(any(
@@ -158,13 +165,22 @@ impl PanelMap {
             display: None,
             mount: TouchMount::ALIGNED,
             transform: TouchTransform::PASS_THROUGH,
+            panel_size: None,
+            native: (0, 0),
         }
     }
 
-    /// Fits the mapping to `info` (keeps the mount).
+    /// Fits the mapping to `info` (keeps the mount and the panel size).
     pub fn fit(&mut self, info: &DisplayInfo) {
         self.display = Some(TouchTransform::for_display(info));
+        self.native = info.native_size();
         self.update();
+    }
+
+    /// Sets the range of the raw axes (`None`: native pixels); raw points are scaled from it to
+    /// the native size before the transform. A zero dimension counts as unknown.
+    pub fn set_panel_size(&mut self, size: Option<(u16, u16)>) {
+        self.panel_size = size.filter(|&(w, h)| w > 0 && h > 0);
     }
 
     /// Sets the mount (applied now if already fitted, else at the fit).
@@ -186,8 +202,36 @@ impl PanelMap {
 
     #[inline]
     pub fn apply(&self, x: u16, y: u16) -> Point {
-        self.transform.apply(i32::from(x), i32::from(y))
+        let (x, y) = match (self.panel_size, self.display) {
+            (Some((pw, ph)), Some(_)) => {
+                // The raw X axis runs along the native rows when the mount swaps the axes.
+                let (nw, nh) = if self.mount.swap_xy {
+                    (self.native.1, self.native.0)
+                } else {
+                    self.native
+                };
+                (scale(x, pw, nw), scale(y, ph, nh))
+            }
+            _ => (i32::from(x), i32::from(y)),
+        };
+        self.transform.apply(x, y)
     }
+}
+
+/// `v` of the range `0..from` mapped to `0..to` (`from` > 0); out-of-range values scale past
+/// `to` and are clamped by the transform.
+#[cfg(any(
+    feature = "ft6x36",
+    feature = "gt911",
+    feature = "cst816s",
+    feature = "axs5106l"
+))]
+fn scale(v: u16, from: u16, to: u16) -> i32 {
+    let scaled = u32::from(v)
+        .saturating_mul(u32::from(to))
+        .checked_div(u32::from(from))
+        .unwrap_or(u32::from(v));
+    i32::try_from(scaled).unwrap_or(i32::MAX)
 }
 
 /// The builder methods of the coordinate mapping, for a capacitive driver with a
