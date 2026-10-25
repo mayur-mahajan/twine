@@ -6,7 +6,7 @@ use twine_render::ImagePixels;
 
 use crate::cache::GlyphCache;
 use crate::decode::Bpp;
-use crate::gamma::Polarity;
+use crate::gamma::CoverageMap;
 
 /// Subpixel rendering of a font's glyphs (LVGL `lv_font_subpx_t`).
 ///
@@ -76,17 +76,17 @@ pub trait GlyphProvider: Sync {
     fn glyph_info(&self, cp: char, next: Option<char>) -> Option<GlyphInfo>;
 
     /// Writes the glyph's A8 opacity (`box_w × box_h`, stride `box_w`) into `out`: its
-    /// coverage mapped through the provider's text gamma for `polarity` (see
-    /// [`gamma`](crate::gamma); providers without gamma tables, such as 8-bit run-time
-    /// TrueType glyphs, ignore it).
+    /// coverage mapped through the provider's text gamma for the run's polarity, or through the
+    /// table replacing it (`map`, see [`CoverageMap`] and [`gamma`](crate::gamma); providers
+    /// without gamma tables, such as 8-bit run-time TrueType glyphs, ignore it).
     ///
     /// Returns `false` (and leaves `out` unspecified) when `out` is too small or the glyph data
-    /// is corrupt. May use `cache` to keep decoded bitmaps (per polarity).
-    fn render_a8(&self, info: &GlyphInfo, polarity: Polarity, out: &mut [u8], cache: &mut GlyphCache)
-    -> bool;
+    /// is corrupt. May use `cache` to keep decoded bitmaps (keyed by polarity and replacing
+    /// table, see [`GlyphKey`](crate::GlyphKey)).
+    fn render_a8(&self, info: &GlyphInfo, map: CoverageMap, out: &mut [u8], cache: &mut GlyphCache) -> bool;
 
     /// Streams the glyph's A8 opacity row by row to `sink(row_index, row)` (each row
-    /// `box_w` bytes; `polarity` as for [`render_a8`](Self::render_a8)). Returns `false` if the
+    /// `box_w` bytes; `map` as for [`render_a8`](Self::render_a8)). Returns `false` if the
     /// glyph could not be decoded.
     ///
     /// The default implementation renders the whole glyph with
@@ -95,7 +95,7 @@ pub trait GlyphProvider: Sync {
     fn render_rows(
         &self,
         info: &GlyphInfo,
-        polarity: Polarity,
+        map: CoverageMap,
         cache: &mut GlyphCache,
         sink: &mut dyn FnMut(usize, &[u8]),
     ) -> bool {
@@ -105,7 +105,7 @@ pub trait GlyphProvider: Sync {
         let Some(mut buf) = cache.take_glyph_scratch(w.wrapping_mul(h)) else {
             return false;
         };
-        let ok = self.render_a8(info, polarity, &mut buf, cache);
+        let ok = self.render_a8(info, map, &mut buf, cache);
         if ok && w > 0 {
             for (y, row) in buf.chunks_exact(w).take(h).enumerate() {
                 sink(y, row);
@@ -178,7 +178,7 @@ impl GlyphProvider for EmptyProvider {
     fn render_a8(
         &self,
         _info: &GlyphInfo,
-        _polarity: Polarity,
+        _map: CoverageMap,
         _out: &mut [u8],
         _cache: &mut GlyphCache,
     ) -> bool {

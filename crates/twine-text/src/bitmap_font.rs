@@ -4,7 +4,7 @@
 use crate::cache::GlyphCache;
 use crate::decode::{Bpp, decode_compressed, expand_row};
 use crate::font::{GlyphInfo, GlyphProvider, provider_key};
-use crate::gamma::{Polarity, TextGamma};
+use crate::gamma::{CoverageMap, Polarity, TextGamma};
 
 /// Metrics and bitmap location of one glyph (LVGL `lv_font_fmt_txt_glyph_dsc_t`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -141,7 +141,8 @@ pub struct BitmapFont {
     pub format: BitmapFormat,
     /// Coverage → opacity curves, one per [`Polarity`] (see [`gamma`](crate::gamma)):
     /// [`gamma::DEFAULT`](crate::gamma::DEFAULT) for generated fonts,
-    /// [`gamma::LINEAR`](crate::gamma::LINEAR) for LVGL's mapping.
+    /// [`gamma::LINEAR`](crate::gamma::LINEAR) for LVGL's mapping. A run can replace them
+    /// ([`CoverageMap::gamma`]: the display's text gamma).
     pub gamma: &'static TextGamma,
 }
 
@@ -273,22 +274,22 @@ impl BitmapFont {
 
     fn warn_corrupt(&self, cache: &mut GlyphCache) {
         let key = provider_key(self);
-        if cache.first_warning((key, u32::MAX)) {
+        if cache.first_warning((key, 0, u32::MAX)) {
             twine_core::warn!(target: "twine::text", "corrupt glyph data in bitmap font at {:#x}", key);
         }
     }
 
-    /// Streams rows of the glyph (`sink(y, a8_row)`, coverage mapped through the gamma ramp of
-    /// `polarity`); the shared core of both render paths.
+    /// Streams rows of the glyph (`sink(y, a8_row)`, coverage mapped through the gamma ramp
+    /// `map` selects); the shared core of both render paths.
     fn rows(
         &self,
         info: &GlyphInfo,
-        polarity: Polarity,
+        map: CoverageMap,
         cache: &mut GlyphCache,
         sink: &mut dyn FnMut(usize, &[u8]),
     ) -> bool {
         let depth = self.bpp;
-        let ramp = self.gamma.ramp(polarity);
+        let ramp = map.ramp(self.gamma);
         let Some(d) = self.dsc(info) else {
             return false;
         };
@@ -333,8 +334,12 @@ impl BitmapFont {
             BitmapFormat::Compressed | BitmapFormat::CompressedNoPrefilter => {
                 let prefilter = self.format == BitmapFormat::Compressed;
                 // Decoded glyphs are cached per polarity (bit 31 of the id: glyph ids are
-                // `u16`s), since the gamma ramp is applied while decoding.
-                let key = (provider_key(self), glyph_key_id(info.id, polarity));
+                // `u16`s) and per replacing table (its address), since the gamma ramp is
+                // applied while decoding.
+                let table = map
+                    .override_of(self.gamma)
+                    .map_or(0, |g| core::ptr::from_ref(g) as usize);
+                let key = (provider_key(self), table, glyph_key_id(info.id, map.polarity));
                 if let Some(bmp) = cache.get(key) {
                     for (y, row) in bmp.chunks_exact(w).take(h).enumerate() {
                         sink(y, row);
@@ -393,13 +398,7 @@ impl GlyphProvider for BitmapFont {
         })
     }
 
-    fn render_a8(
-        &self,
-        info: &GlyphInfo,
-        polarity: Polarity,
-        out: &mut [u8],
-        cache: &mut GlyphCache,
-    ) -> bool {
+    fn render_a8(&self, info: &GlyphInfo, map: CoverageMap, out: &mut [u8], cache: &mut GlyphCache) -> bool {
         let w = usize::from(info.box_w);
         // SAFE-ARITH: two `u16`s: the product is below 2^32.
         let n = w.wrapping_mul(usize::from(info.box_h));
@@ -412,17 +411,17 @@ impl GlyphProvider for BitmapFont {
             );
             return false;
         }
-        self.rows(info, polarity, cache, &mut |y, row| copy_row(out, y, w, row))
+        self.rows(info, map, cache, &mut |y, row| copy_row(out, y, w, row))
     }
 
     fn render_rows(
         &self,
         info: &GlyphInfo,
-        polarity: Polarity,
+        map: CoverageMap,
         cache: &mut GlyphCache,
         sink: &mut dyn FnMut(usize, &[u8]),
     ) -> bool {
-        self.rows(info, polarity, cache, sink)
+        self.rows(info, map, cache, sink)
     }
 }
 
@@ -645,7 +644,7 @@ mod tests {
         let mut cache = GlyphCache::new(0);
         let info = TEST_BITMAP.glyph_info('A', None).unwrap();
         let mut out = [0u8; 6];
-        assert!(TEST_BITMAP.render_a8(&info, Polarity::DarkOnLight, &mut out, &mut cache));
+        assert!(TEST_BITMAP.render_a8(&info, Polarity::DarkOnLight.into(), &mut out, &mut cache));
         assert_eq!(out, [0, 255, 0, 17 * 8, 255, 17]);
     }
 
@@ -661,7 +660,7 @@ mod tests {
         for polarity in [Polarity::DarkOnLight, Polarity::LightOnDark] {
             let t = crate::gamma::DEFAULT.ramp(polarity).table4();
             let mut out = [0u8; 6];
-            assert!(f.render_a8(&info, polarity, &mut out, &mut cache));
+            assert!(f.render_a8(&info, polarity.into(), &mut out, &mut cache));
             assert_eq!(out, [0, 255, 0, t[8], 255, t[1]], "{polarity:?}");
         }
     }
@@ -709,11 +708,43 @@ mod tests {
             for polarity in [Polarity::DarkOnLight, Polarity::LightOnDark] {
                 let t = crate::gamma::DEFAULT.ramp(polarity).table4();
                 let mut out = [0u8; 6];
-                assert!(f.render_a8(&info, polarity, &mut out, &mut cache));
+                assert!(f.render_a8(&info, polarity.into(), &mut out, &mut cache));
                 assert_eq!(out, [0, 255, 0, t[8], 255, t[1]], "{polarity:?}");
             }
         }
         assert_eq!(cache.stats().misses, 2, "one decode per polarity");
         assert_eq!(cache.stats().hits, 2);
+        // A replacing table (a display's text gamma) is a separate cache entry: never the
+        // font's own opacities, and the font's own entries stay valid.
+        for _pass in 0..2 {
+            for polarity in [Polarity::DarkOnLight, Polarity::LightOnDark] {
+                let map = CoverageMap::new(polarity).with_gamma(Some(&crate::gamma::LINEAR));
+                let mut out = [0u8; 6];
+                assert!(f.render_a8(&info, map, &mut out, &mut cache));
+                assert_eq!(out, [0, 255, 0, 8 * 17, 255, 17], "{polarity:?}");
+            }
+        }
+        assert_eq!(cache.stats().misses, 4, "one more decode per polarity");
+        assert_eq!(cache.stats().hits, 4);
+        // The font's own table given as the replacement is no replacement: the same entries.
+        let map = CoverageMap::new(Polarity::LightOnDark).with_gamma(Some(&crate::gamma::DEFAULT));
+        let mut out = [0u8; 6];
+        assert!(f.render_a8(&info, map, &mut out, &mut cache));
+        assert_eq!(cache.stats().misses, 4);
+    }
+
+    /// A replacing table (`CoverageMap::gamma`) maps the coverage instead of the font's own.
+    #[test]
+    fn render_maps_coverage_through_the_replacing_table() {
+        let f = BitmapFont {
+            gamma: &crate::gamma::DEFAULT,
+            ..TEST_BITMAP
+        };
+        let info = f.glyph_info('A', None).unwrap();
+        let mut cache = GlyphCache::new(0);
+        let map = CoverageMap::new(Polarity::LightOnDark).with_gamma(Some(&crate::gamma::LINEAR));
+        let mut out = [0u8; 6];
+        assert!(f.render_a8(&info, map, &mut out, &mut cache));
+        assert_eq!(out, [0, 255, 0, 8 * 17, 255, 17], "LVGL's linear expansion");
     }
 }

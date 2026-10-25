@@ -15,7 +15,7 @@ use alloc::vec::Vec;
 
 use crate::cache::GlyphCache;
 use crate::font::{Font, GlyphInfo, GlyphProvider, Subpx, provider_key};
-use crate::gamma::Polarity;
+use crate::gamma::CoverageMap;
 
 /// Errors of [`TtfFont`] / [`TtfProvider`] creation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -215,11 +215,11 @@ impl GlyphProvider for TtfProvider {
         })
     }
 
-    /// 8-bit coverage as rasterized: no gamma table applies (`polarity` is ignored).
+    /// 8-bit coverage as rasterized: no gamma table applies (`map` is ignored).
     fn render_a8(
         &self,
         info: &GlyphInfo,
-        _polarity: Polarity,
+        _map: CoverageMap,
         out: &mut [u8],
         _cache: &mut GlyphCache,
     ) -> bool {
@@ -229,7 +229,7 @@ impl GlyphProvider for TtfProvider {
     fn render_rows(
         &self,
         info: &GlyphInfo,
-        _polarity: Polarity,
+        _map: CoverageMap,
         cache: &mut GlyphCache,
         sink: &mut dyn FnMut(usize, &[u8]),
     ) -> bool {
@@ -237,7 +237,7 @@ impl GlyphProvider for TtfProvider {
         if w == 0 || h == 0 {
             return true;
         }
-        let key = (provider_key(self), info.id);
+        let key = (provider_key(self), 0, info.id);
         if let Some(bmp) = cache.get(key) {
             for (y, row) in bmp.chunks_exact(w).take(h).enumerate() {
                 sink(y, row);

@@ -12,7 +12,7 @@ impl GlyphProvider for NoGlyphs {
     fn render_a8(
         &self,
         _info: &GlyphInfo,
-        _polarity: twine_text::Polarity,
+        _map: twine_text::CoverageMap,
         _out: &mut [u8],
         _cache: &mut GlyphCache,
     ) -> bool {

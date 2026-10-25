@@ -40,6 +40,7 @@ pub(crate) struct DisplayParts {
     inputs: Vec<InputAdder>,
     theme: Option<&'static dyn ThemeHook>,
     theme_mode: Option<ThemeMode>,
+    text_gamma: Option<&'static twine_text::TextGamma>,
     commands: Option<CommandsSetter>,
     reserve_rotation: bool,
 }
@@ -82,6 +83,9 @@ impl DisplayParts {
     ) -> Result<Option<CommandsSetter>, UiError> {
         if self.reserve_rotation {
             engine.reserve_rotation(display)?;
+        }
+        if self.text_gamma.is_some() {
+            engine.set_text_gamma(display, self.text_gamma);
         }
         let mut focus_inputs = Vec::new();
         for add in self.inputs {
@@ -282,6 +286,27 @@ impl<S, B> DisplayBuilder<S, B> {
     /// with [`DisplayMut::set_theme_mode`]. (Example: see [`theme`](Self::theme).)
     pub fn mode(mut self, mode: ThemeMode) -> Self {
         self.parts.theme_mode = Some(mode);
+        self
+    }
+
+    /// The text gamma of this display, replacing the fonts' own ([`Engine::set_text_gamma`]):
+    /// e.g. [`gamma::LINEAR`](twine_text::gamma::LINEAR) on a dense panel next to a small one
+    /// that keeps the fonts' crisp curves. Change it at run time with
+    /// [`DisplayMut::set_text_gamma`].
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::MemoryDisplay;
+    /// use twine_text::gamma;
+    /// use twine_view::prelude::*;
+    ///
+    /// let panel = MemoryDisplay::new(DisplayInfo::new(800, 480, ColorFormat::Rgb565));
+    /// let dense = DisplayBuilder::new(panel).text_gamma(&gamma::LINEAR);
+    /// # let _ = dense;
+    /// ```
+    pub fn text_gamma(mut self, gamma: &'static twine_text::TextGamma) -> Self {
+        self.parts.text_gamma = Some(gamma);
         self
     }
 
@@ -540,6 +565,37 @@ impl DisplayMut<'_> {
     pub fn set_theme_mode(&mut self, mode: ThemeMode) {
         self.engine.set_theme_mode(self.display, mode);
         self.core.waker().wake();
+    }
+
+    /// Replaces the fonts' text gamma on the display ([`Engine::set_text_gamma`]; `None`: the
+    /// fonts' own), e.g. from a settings screen. Redraws the display; idempotent; never
+    /// panics.
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::{MemoryDisplay, MockClock};
+    /// use twine_text::gamma;
+    /// use twine_view::prelude::*;
+    ///
+    /// let mut ui = Ui::builder(MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)))
+    ///     .runtime(Runtime::take().unwrap())
+    ///     .clock(MockClock::new())
+    ///     .buffers(BufferMode::alloc(BufferSpec::default()))
+    ///     .build(|_| label("hi"));
+    /// let d = ui.display();
+    /// ui.display_mut(d).unwrap().set_text_gamma(Some(&gamma::LINEAR));
+    /// assert!(ui.display_mut(d).unwrap().text_gamma().is_some());
+    /// ```
+    pub fn set_text_gamma(&mut self, gamma: Option<&'static twine_text::TextGamma>) {
+        self.engine.set_text_gamma(self.display, gamma);
+        self.core.waker().wake();
+    }
+
+    /// The display's text gamma (`None`: the fonts' own). Never panics.
+    #[must_use]
+    pub fn text_gamma(&self) -> Option<&'static twine_text::TextGamma> {
+        self.engine.text_gamma(self.display)
     }
 
     /// The display's theme mode. Never panics.

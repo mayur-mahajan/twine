@@ -13,7 +13,7 @@ fn render_100(font: &'static Font, cache: &mut GlyphCache, out: &mut [u8]) {
     for c in (0x21u8..0x7E).map(char::from).cycle().take(100) {
         let (f, info) = font.glyph(c, None).unwrap();
         for polarity in [Polarity::DarkOnLight, Polarity::LightOnDark] {
-            assert!(f.provider.render_a8(&info, polarity, out, cache));
+            assert!(f.provider.render_a8(&info, polarity.into(), out, cache));
         }
     }
 }

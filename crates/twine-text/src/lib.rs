@@ -143,7 +143,7 @@ pub use draw::{TextDrawFlags, TextDsc, draw_text};
 pub use font::{
     EMPTY_FONT, Font, GlyphInfo, GlyphProvider, MAX_FALLBACK_DEPTH, Subpx, has_placeholder, provider_key,
 };
-pub use gamma::{GammaRamp, Polarity, TextGamma};
+pub use gamma::{CoverageMap, GammaRamp, Polarity, TextGamma};
 pub use hit::{DOTS, Ellipsis, LongMode, TextAlign, TextDecor};
 pub use imgfont::{ImageFontProvider, ImageGlyphLookup};
 pub use twine_core::Symbol;

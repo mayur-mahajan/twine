@@ -32,6 +32,21 @@ fonts-latin-all = [
     "montserrat-42", "montserrat-44", "montserrat-46", "montserrat-48",
     "montserrat-14-subpx", "montserrat-16-latin-ext",
 ]
+## `fonts-latin-small` unhinted with linear coverage (the `-smooth` sizes; ~58 KB).
+fonts-latin-small-smooth = ["montserrat-12-smooth", "montserrat-14-smooth", "montserrat-16-smooth"]
+## `fonts-latin-medium` unhinted with linear coverage (~147 KB).
+fonts-latin-medium-smooth = [
+    "fonts-latin-small-smooth",
+    "montserrat-18-smooth", "montserrat-20-smooth", "montserrat-22-smooth", "montserrat-24-smooth",
+]
+## Every Montserrat size unhinted with linear coverage (8 to 48 px).
+fonts-latin-all-smooth = [
+    "fonts-latin-medium-smooth",
+    "montserrat-8-smooth", "montserrat-10-smooth", "montserrat-26-smooth", "montserrat-28-smooth",
+    "montserrat-30-smooth", "montserrat-32-smooth", "montserrat-34-smooth", "montserrat-36-smooth",
+    "montserrat-38-smooth", "montserrat-40-smooth", "montserrat-42-smooth", "montserrat-44-smooth",
+    "montserrat-46-smooth", "montserrat-48-smooth",
+]
 ## The unscii bitmap fonts (8 and 16 px, 1 bpp): pixel-exact text for monochrome displays (~4 KB).
 fonts-mono = ["unscii-8", "unscii-16"]
 ## Right-to-left scripts: DejaVu Sans 16 px with Hebrew and Arabic/Persian (~38 KB).
@@ -39,7 +54,7 @@ fonts-rtl = ["dejavu-16-persian-hebrew"]
 ## Simplified Chinese and Japanese kana: Source Han Sans 14 and 16 px (~289 KB together).
 fonts-cjk = ["source-han-sans-sc-14-cjk", "source-han-sans-sc-16-cjk"]
 ## Every built-in font.
-fonts-all = ["fonts-latin-all", "fonts-mono", "fonts-rtl", "fonts-cjk"]
+fonts-all = ["fonts-latin-all", "fonts-latin-all-smooth", "fonts-mono", "fonts-rtl", "fonts-cjk"]
 
 #! ### Individual fonts
 montserrat-8 = []
@@ -63,6 +78,29 @@ montserrat-42 = []
 montserrat-44 = []
 montserrat-46 = []
 montserrat-48 = []
+#! Montserrat unhinted with linear coverage (`MONTSERRAT_<size>_SMOOTH`): LVGL's rendering, for
+#! panels dense enough that the hinted fonts' one-pixel stems read thin.
+montserrat-8-smooth = []
+montserrat-10-smooth = []
+montserrat-12-smooth = []
+montserrat-14-smooth = []
+montserrat-16-smooth = []
+montserrat-18-smooth = []
+montserrat-20-smooth = []
+montserrat-22-smooth = []
+montserrat-24-smooth = []
+montserrat-26-smooth = []
+montserrat-28-smooth = []
+montserrat-30-smooth = []
+montserrat-32-smooth = []
+montserrat-34-smooth = []
+montserrat-36-smooth = []
+montserrat-38-smooth = []
+montserrat-40-smooth = []
+montserrat-42-smooth = []
+montserrat-44-smooth = []
+montserrat-46-smooth = []
+montserrat-48-smooth = []
 ## Montserrat 14 with horizontal subpixel (RGB) glyphs.
 montserrat-14-subpx = []
 unscii-8 = []

@@ -31,8 +31,10 @@ pub const DEFAULT_BUDGET: usize = 8 * 1024;
 /// full, no further such warnings are logged.
 pub const WARN_CAP: usize = 32;
 
-/// Cache key: `(provider address, glyph id)`.
-pub type GlyphKey = (usize, u32);
+/// Cache key: `(provider address, coverage-map key, glyph id)`. The middle field tells apart
+/// glyphs decoded under a replacing text gamma ([`CoverageMap::override_of`](crate::CoverageMap::override_of)):
+/// `0` for the provider's own tables, else the replacing table's address. Warnings use `0`.
+pub type GlyphKey = (usize, usize, u32);
 
 /// Statistics of a [`GlyphCache`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -65,8 +67,8 @@ struct Entry {
 /// use twine_text::GlyphCache;
 ///
 /// let mut c = GlyphCache::new(1024);
-/// c.insert((1, 7), 4, 2).unwrap().copy_from_slice(&[9; 8]);
-/// assert_eq!(c.get((1, 7)), Some(&[9u8; 8][..]));
+/// c.insert((1, 0, 7), 4, 2).unwrap().copy_from_slice(&[9; 8]);
+/// assert_eq!(c.get((1, 0, 7)), Some(&[9u8; 8][..]));
 /// assert_eq!(c.stats().hits, 1);
 /// ```
 pub struct GlyphCache {
@@ -126,7 +128,7 @@ impl GlyphCache {
             row_b: vec![0; MAX_ROW],
             glyph: Vec::new(),
             lcd_row: Vec::new(),
-            warned: [(0, 0); WARN_CAP],
+            warned: [(0, 0, 0); WARN_CAP],
             warned_len: 0,
             warn_suppressed: false,
             #[cfg(feature = "display-integrity")]
@@ -144,11 +146,11 @@ impl GlyphCache {
     /// use twine_text::GlyphCache;
     ///
     /// let mut c = GlyphCache::new(1024);
-    /// c.insert((1, 7), 4, 2).unwrap().copy_from_slice(&[9; 8]);
+    /// c.insert((1, 0, 7), 4, 2).unwrap().copy_from_slice(&[9; 8]);
     /// c.set_fresh(true);
-    /// assert_eq!(c.get((1, 7)), None); // decoded again by the caller
+    /// assert_eq!(c.get((1, 0, 7)), None); // decoded again by the caller
     /// c.set_fresh(false);
-    /// assert!(c.get((1, 7)).is_some());
+    /// assert!(c.get((1, 0, 7)).is_some());
     /// ```
     #[cfg(feature = "display-integrity")]
     pub fn set_fresh(&mut self, on: bool) {
@@ -325,7 +327,7 @@ impl GlyphCache {
         let Some((i, e)) = self.entries.iter().enumerate().min_by_key(|(_, e)| e.stamp) else {
             return false;
         };
-        twine_core::trace!(target: "twine::text", "glyph cache evicts id {}", e.key.1);
+        twine_core::trace!(target: "twine::text", "glyph cache evicts id {}", e.key.2);
         self.release(i);
         self.stats.evictions = self.stats.evictions.saturating_add(1);
         true
@@ -358,7 +360,7 @@ impl GlyphCache {
     /// [`put_glyph_scratch`](Self::put_glyph_scratch).
     pub fn take_glyph_scratch(&mut self, len: usize) -> Option<Vec<u8>> {
         if len > MAX_GLYPH_BYTES {
-            if self.first_warning((0, u32::MAX)) {
+            if self.first_warning((0, 0, u32::MAX)) {
                 twine_core::warn!(
                     target: "twine::text",
                     "glyph of {} bytes exceeds the {} byte glyph scratch; not drawn",
@@ -378,7 +380,7 @@ impl GlyphCache {
         self.glyph = buf;
     }
 
-    /// Records `key` (e.g. `(provider key, code point)`) in the "already warned" set; `true` if
+    /// Records `key` (e.g. `(provider key, 0, code point)`) in the "already warned" set; `true` if
     /// it was not there yet, i.e. the caller should log. Used to warn once per missing glyph
     /// or corrupt font. After [`WARN_CAP`] distinct keys the set is full: one last "further
     /// warnings suppressed" message is logged and every later call returns `false`.
@@ -421,9 +423,9 @@ mod tests {
     #[test]
     fn cache_hit_after_insert() {
         let mut c = GlyphCache::new(512);
-        assert!(c.get((1, 1)).is_none());
-        c.insert((1, 1), 10, 10).unwrap().fill(7);
-        assert_eq!(c.get((1, 1)).unwrap(), &[7u8; 100][..]);
+        assert!(c.get((1, 0, 1)).is_none());
+        c.insert((1, 0, 1), 10, 10).unwrap().fill(7);
+        assert_eq!(c.get((1, 0, 1)).unwrap(), &[7u8; 100][..]);
         let s = c.stats();
         assert_eq!((s.hits, s.misses, s.bytes_used), (1, 1, 128));
     }
@@ -432,13 +434,13 @@ mod tests {
     fn cache_evicts_lru_when_full() {
         // 4 blocks; each glyph takes 2 → two fit.
         let mut c = GlyphCache::new(256);
-        c.insert((1, 1), 100, 1).unwrap().fill(1);
-        c.insert((1, 2), 100, 1).unwrap().fill(2);
-        assert!(c.get((1, 1)).is_some()); // 1 is now the most recent
-        c.insert((1, 3), 100, 1).unwrap().fill(3);
-        assert!(c.get((1, 2)).is_none(), "2 was least recently used");
-        assert_eq!(c.get((1, 1)).unwrap()[0], 1);
-        assert_eq!(c.get((1, 3)).unwrap()[0], 3);
+        c.insert((1, 0, 1), 100, 1).unwrap().fill(1);
+        c.insert((1, 0, 2), 100, 1).unwrap().fill(2);
+        assert!(c.get((1, 0, 1)).is_some()); // 1 is now the most recent
+        c.insert((1, 0, 3), 100, 1).unwrap().fill(3);
+        assert!(c.get((1, 0, 2)).is_none(), "2 was least recently used");
+        assert_eq!(c.get((1, 0, 1)).unwrap()[0], 1);
+        assert_eq!(c.get((1, 0, 3)).unwrap()[0], 3);
         assert_eq!(c.stats().evictions, 1);
     }
 
@@ -447,36 +449,36 @@ mod tests {
         // 2 blocks → at most 2 entries even for tiny glyphs.
         let mut c = GlyphCache::new(128);
         for id in 0..5 {
-            c.insert((9, id), 1, 1).unwrap()[0] = id as u8;
+            c.insert((9, 0, id), 1, 1).unwrap()[0] = id as u8;
         }
         assert_eq!(c.len(), 2);
-        assert_eq!(c.get((9, 4)).unwrap(), &[4]);
-        assert_eq!(c.get((9, 3)).unwrap(), &[3]);
+        assert_eq!(c.get((9, 0, 4)).unwrap(), &[4]);
+        assert_eq!(c.get((9, 0, 3)).unwrap(), &[3]);
     }
 
     #[test]
     fn cache_zero_budget_disabled() {
         let mut c = GlyphCache::new(0);
         assert!(!c.is_enabled());
-        assert!(c.insert((1, 1), 1, 1).is_none());
-        assert!(c.get((1, 1)).is_none());
+        assert!(c.insert((1, 0, 1), 1, 1).is_none());
+        assert!(c.get((1, 0, 1)).is_none());
     }
 
     #[test]
     fn cache_oversize_glyph_not_cached() {
         let mut c = GlyphCache::new(256);
-        c.insert((1, 1), 8, 8).unwrap();
-        assert!(c.insert((1, 2), 20, 20).is_none());
-        assert!(c.get((1, 1)).is_some(), "existing entries survive");
+        c.insert((1, 0, 1), 8, 8).unwrap();
+        assert!(c.insert((1, 0, 2), 20, 20).is_none());
+        assert!(c.get((1, 0, 1)).is_some(), "existing entries survive");
     }
 
     #[test]
     fn reinsert_replaces_and_clear_empties() {
         let mut c = GlyphCache::new(256);
-        c.insert((1, 1), 8, 8).unwrap().fill(1);
-        c.insert((1, 1), 4, 4).unwrap().fill(2);
+        c.insert((1, 0, 1), 8, 8).unwrap().fill(1);
+        c.insert((1, 0, 1), 4, 4).unwrap().fill(2);
         assert_eq!(c.len(), 1);
-        assert_eq!(c.get((1, 1)).unwrap().len(), 16);
+        assert_eq!(c.get((1, 0, 1)).unwrap().len(), 16);
         c.clear();
         assert!(c.is_empty());
         assert_eq!(c.stats().bytes_used, 0);
@@ -485,12 +487,12 @@ mod tests {
     #[test]
     fn warnings_once_per_key_then_capped() {
         let mut c = GlyphCache::new(0);
-        assert!(c.first_warning((1, 65)));
-        assert!(!c.first_warning((1, 65)));
+        assert!(c.first_warning((1, 0, 65)));
+        assert!(!c.first_warning((1, 0, 65)));
         for i in 1..WARN_CAP as u32 {
-            assert!(c.first_warning((2, i)));
+            assert!(c.first_warning((2, 0, i)));
         }
-        assert!(!c.first_warning((1, 65)), "still recorded");
-        assert!(!c.first_warning((3, 3)), "set full: no more warnings");
+        assert!(!c.first_warning((1, 0, 65)), "still recorded");
+        assert!(!c.first_warning((3, 0, 3)), "set full: no more warnings");
     }
 }

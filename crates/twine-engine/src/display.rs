@@ -557,6 +557,8 @@ pub(crate) struct Display {
     /// The fail-safe screen and whether it is active (`Engine::set_fail_safe_screen`).
     #[cfg(feature = "display-integrity")]
     pub(crate) fail_safe: crate::integrity::FailSafe,
+    /// The text gamma replacing the fonts' own on this display (`Engine::set_text_gamma`).
+    pub(crate) text_gamma: Option<&'static twine_text::TextGamma>,
 }
 
 /// Bytes of a display's partial draw buffers by where they live (recorded once, when the
@@ -873,6 +875,7 @@ impl Engine {
             draw_buffers,
             #[cfg(feature = "display-integrity")]
             fail_safe: crate::integrity::FailSafe::default(),
+            text_gamma: None,
         });
         if self.default_display.is_none() {
             self.default_display = Some(id);
@@ -919,6 +922,60 @@ impl Engine {
     #[must_use]
     pub fn display_info(&self, display: DisplayId) -> Option<DisplayInfo> {
         self.display(display).map(|d| d.info)
+    }
+
+    /// Replaces the text gamma of the bitmap fonts drawn on `display` (`None`: each font's own,
+    /// the default): how glyph coverage becomes opacity, see `twine_text::gamma`. A property of
+    /// the panel more than of the font: [`twine_text::gamma::LINEAR`] draws every font as LVGL
+    /// does (no lift of light text on dark), the built-in fonts' own curves
+    /// ([`twine_text::gamma::DEFAULT`]) suit low-density panels. Every widget's text on the
+    /// display uses it ([`text_dsc`](Self::text_dsc) fills in [`TextDsc::gamma`](twine_text::TextDsc::gamma));
+    /// the display is redrawn when it changes. An unknown display is ignored (warned).
+    /// O(1) besides the redraw; never panics.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, Opa};
+    /// use twine_engine::{Engine, EngineConfig, Obj};
+    /// use twine_hal::DisplayInfo;
+    /// use twine_style::Part;
+    /// use twine_text::gamma;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::Rgb565), 64 * 2 * 8, None).unwrap();
+    /// let text = e.create(e.active_screen(d).unwrap(), Box::new(Obj)).unwrap();
+    /// assert_eq!(e.text_gamma(d), None);
+    /// assert!(e.text_dsc(text, Part::Main, Opa::COVER).gamma.is_none()); // the font's own
+    /// e.set_text_gamma(d, Some(&gamma::LINEAR));
+    /// assert!(e.text_dsc(text, Part::Main, Opa::COVER).gamma.is_some_and(|g| core::ptr::eq(g, core::ptr::from_ref(&gamma::LINEAR))));
+    /// ```
+    pub fn set_text_gamma(&mut self, display: DisplayId, gamma: Option<&'static twine_text::TextGamma>) {
+        let Some(d) = self.displays.get_mut(display.index()) else {
+            twine_core::warn!(target: "twine::engine", "set_text_gamma: display {} not found", display);
+            return;
+        };
+        let same = match (d.text_gamma, gamma) {
+            (Some(a), Some(b)) => core::ptr::eq(a, b),
+            (a, b) => a.is_none() && b.is_none(),
+        };
+        if same {
+            return;
+        }
+        d.text_gamma = gamma;
+        let area = d.area();
+        twine_core::info!(
+            target: "twine::engine",
+            "display {}: text gamma {}",
+            display,
+            if gamma.is_some() { "replaced" } else { "of the fonts" }
+        );
+        self.invalidate_area(display, area, crate::InvalidateReason::Explicit);
+    }
+
+    /// The text gamma replacing the fonts' own on `display` (`None`: the fonts' own, or an
+    /// unknown display); see [`set_text_gamma`](Self::set_text_gamma).
+    #[must_use]
+    pub fn text_gamma(&self, display: DisplayId) -> Option<&'static twine_text::TextGamma> {
+        self.display(display)?.text_gamma
     }
 
     /// The driver of `display` as `D` (e.g. to read a test display's pixels).

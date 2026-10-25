@@ -69,7 +69,12 @@ fn every_legal_depth_reads_its_bits() {
             // All-ones data decodes to full coverage in the plain format; the compressed
             // formats read the same bits as literals and repeats, never past the data.
             assert!(
-                f.render_a8(&info, Polarity::DarkOnLight, &mut out, &mut GlyphCache::new(0)),
+                f.render_a8(
+                    &info,
+                    Polarity::DarkOnLight.into(),
+                    &mut out,
+                    &mut GlyphCache::new(0)
+                ),
                 "{bpp:?} {format:?}"
             );
             if format == BitmapFormat::Plain {

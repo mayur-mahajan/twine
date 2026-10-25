@@ -10,6 +10,12 @@
 //!   kept in the glyph cache). Kerning from the font's `GPOS` table is included.
 //! - **Montserrat Medium 14 px subpixel** (`montserrat-14-subpx`): horizontal RGB subpixel
 //!   glyphs for LCD panels with a known subpixel order.
+//! - **Montserrat Medium smooth** 8–48 px (`montserrat-<size>-smooth`, statics
+//!   `MONTSERRAT_<size>_SMOOTH`): the same sizes and characters **unhinted with linear
+//!   coverage** (`twine_text::gamma::LINEAR`), as LVGL's `lv_font_conv` renders them — softer,
+//!   evenly weighted text for denser panels (e.g. 4.3" 800 × 480), where the hinted fonts'
+//!   one-pixel stems and light-on-dark lift read thin. Pick per display; a display's text gamma
+//!   (`twine_engine::Engine::set_text_gamma`) can also make the hinted fonts draw linearly.
 //! - **unscii** 8 and 16 px, 1 bpp, ASCII: pixel-exact bitmap fonts.
 //! - **`DejaVu` Sans 16 px** (`dejavu-16-persian-hebrew`), 4 bpp, compressed: ASCII, Hebrew,
 //!   Arabic and Persian letters plus the Arabic presentation forms that
@@ -23,7 +29,8 @@
 //! `assets/fonts/SOURCES.md`); never edit them by hand. They are grid-fitted with full
 //! hinting (`twine_build::font::Hinting::Full`: one-pixel stems, whole-pixel advances) and
 //! carry the default text gamma (`twine_text::gamma::DEFAULT`: γ 1.2 dark-on-light, 1.8
-//! light-on-dark), so small text stays crisp on low-DPI panels. Applications that need other sizes,
+//! light-on-dark), so small text stays crisp on low-DPI panels; the `-smooth` fonts are
+//! generated unhinted (`Hinting::None`) with `gamma::LINEAR` instead. Applications that need other sizes,
 //! scripts or a subset of characters generate their own fonts with the same generator: the
 //! `twine-build` crate in `build.rs` (`twine_build::font::Font`, e.g. subset to the characters
 //! of the application's translations), `twine::include_font!`, or the `twine font` command.
@@ -41,6 +48,9 @@
 //! | `fonts-latin-small` | Montserrat 12, 14, 16 | ~58 K |
 //! | `fonts-latin-medium` | `fonts-latin-small` + Montserrat 18, 20, 22, 24 | ~147 K |
 //! | `fonts-latin-all` | every Montserrat size, `montserrat-14-subpx`, `montserrat-16-latin-ext` | ~666 K |
+//! | `fonts-latin-small-smooth` | Montserrat 12, 14, 16, unhinted | ~59 K |
+//! | `fonts-latin-medium-smooth` | `fonts-latin-small-smooth` + Montserrat 18, 20, 22, 24, unhinted | ~150 K |
+//! | `fonts-latin-all-smooth` | every Montserrat size, unhinted | ~628 K |
 //! | `fonts-mono` | unscii 8, 16 | ~4 K |
 //! | `fonts-rtl` | `dejavu-16-persian-hebrew` | ~38 K |
 //! | `fonts-cjk` | Source Han Sans SC 14, 16 | ~289 K |
@@ -80,6 +90,27 @@
 //! | `dejavu-16-persian-hebrew` | 625 | 19 | 37983 |
 //! | `source-han-sans-sc-14-cjk` | 1630 | 22 | 139833 |
 //! | `source-han-sans-sc-16-cjk` | 1630 | 24 | 164904 |
+//! | `montserrat-8-smooth` | 157 | 11 | 13793 |
+//! | `montserrat-10-smooth` | 157 | 13 | 15494 |
+//! | `montserrat-12-smooth` | 157 | 16 | 17385 |
+//! | `montserrat-14-smooth` | 157 | 18 | 19589 |
+//! | `montserrat-16-smooth` | 157 | 21 | 21879 |
+//! | `montserrat-18-smooth` | 157 | 23 | 20608 |
+//! | `montserrat-20-smooth` | 157 | 26 | 21973 |
+//! | `montserrat-22-smooth` | 157 | 28 | 23754 |
+//! | `montserrat-24-smooth` | 157 | 31 | 24994 |
+//! | `montserrat-26-smooth` | 157 | 33 | 27208 |
+//! | `montserrat-28-smooth` | 157 | 36 | 28925 |
+//! | `montserrat-30-smooth` | 157 | 38 | 30705 |
+//! | `montserrat-32-smooth` | 157 | 40 | 32123 |
+//! | `montserrat-34-smooth` | 157 | 42 | 34828 |
+//! | `montserrat-36-smooth` | 157 | 45 | 36618 |
+//! | `montserrat-38-smooth` | 157 | 47 | 38479 |
+//! | `montserrat-40-smooth` | 157 | 50 | 39963 |
+//! | `montserrat-42-smooth` | 157 | 52 | 42331 |
+//! | `montserrat-44-smooth` | 157 | 55 | 44058 |
+//! | `montserrat-46-smooth` | 157 | 57 | 46121 |
+//! | `montserrat-48-smooth` | 157 | 60 | 46985 |
 //!
 //! ## Example
 //!
@@ -195,6 +226,90 @@ pub mod fonts {
     mod montserrat_48;
     #[cfg(feature = "montserrat-48")]
     pub use montserrat_48::MONTSERRAT_48;
+    #[cfg(feature = "montserrat-8-smooth")]
+    mod montserrat_8_smooth;
+    #[cfg(feature = "montserrat-8-smooth")]
+    pub use montserrat_8_smooth::MONTSERRAT_8_SMOOTH;
+    #[cfg(feature = "montserrat-10-smooth")]
+    mod montserrat_10_smooth;
+    #[cfg(feature = "montserrat-10-smooth")]
+    pub use montserrat_10_smooth::MONTSERRAT_10_SMOOTH;
+    #[cfg(feature = "montserrat-12-smooth")]
+    mod montserrat_12_smooth;
+    #[cfg(feature = "montserrat-12-smooth")]
+    pub use montserrat_12_smooth::MONTSERRAT_12_SMOOTH;
+    #[cfg(feature = "montserrat-14-smooth")]
+    mod montserrat_14_smooth;
+    #[cfg(feature = "montserrat-14-smooth")]
+    pub use montserrat_14_smooth::MONTSERRAT_14_SMOOTH;
+    #[cfg(feature = "montserrat-16-smooth")]
+    mod montserrat_16_smooth;
+    #[cfg(feature = "montserrat-16-smooth")]
+    pub use montserrat_16_smooth::MONTSERRAT_16_SMOOTH;
+    #[cfg(feature = "montserrat-18-smooth")]
+    mod montserrat_18_smooth;
+    #[cfg(feature = "montserrat-18-smooth")]
+    pub use montserrat_18_smooth::MONTSERRAT_18_SMOOTH;
+    #[cfg(feature = "montserrat-20-smooth")]
+    mod montserrat_20_smooth;
+    #[cfg(feature = "montserrat-20-smooth")]
+    pub use montserrat_20_smooth::MONTSERRAT_20_SMOOTH;
+    #[cfg(feature = "montserrat-22-smooth")]
+    mod montserrat_22_smooth;
+    #[cfg(feature = "montserrat-22-smooth")]
+    pub use montserrat_22_smooth::MONTSERRAT_22_SMOOTH;
+    #[cfg(feature = "montserrat-24-smooth")]
+    mod montserrat_24_smooth;
+    #[cfg(feature = "montserrat-24-smooth")]
+    pub use montserrat_24_smooth::MONTSERRAT_24_SMOOTH;
+    #[cfg(feature = "montserrat-26-smooth")]
+    mod montserrat_26_smooth;
+    #[cfg(feature = "montserrat-26-smooth")]
+    pub use montserrat_26_smooth::MONTSERRAT_26_SMOOTH;
+    #[cfg(feature = "montserrat-28-smooth")]
+    mod montserrat_28_smooth;
+    #[cfg(feature = "montserrat-28-smooth")]
+    pub use montserrat_28_smooth::MONTSERRAT_28_SMOOTH;
+    #[cfg(feature = "montserrat-30-smooth")]
+    mod montserrat_30_smooth;
+    #[cfg(feature = "montserrat-30-smooth")]
+    pub use montserrat_30_smooth::MONTSERRAT_30_SMOOTH;
+    #[cfg(feature = "montserrat-32-smooth")]
+    mod montserrat_32_smooth;
+    #[cfg(feature = "montserrat-32-smooth")]
+    pub use montserrat_32_smooth::MONTSERRAT_32_SMOOTH;
+    #[cfg(feature = "montserrat-34-smooth")]
+    mod montserrat_34_smooth;
+    #[cfg(feature = "montserrat-34-smooth")]
+    pub use montserrat_34_smooth::MONTSERRAT_34_SMOOTH;
+    #[cfg(feature = "montserrat-36-smooth")]
+    mod montserrat_36_smooth;
+    #[cfg(feature = "montserrat-36-smooth")]
+    pub use montserrat_36_smooth::MONTSERRAT_36_SMOOTH;
+    #[cfg(feature = "montserrat-38-smooth")]
+    mod montserrat_38_smooth;
+    #[cfg(feature = "montserrat-38-smooth")]
+    pub use montserrat_38_smooth::MONTSERRAT_38_SMOOTH;
+    #[cfg(feature = "montserrat-40-smooth")]
+    mod montserrat_40_smooth;
+    #[cfg(feature = "montserrat-40-smooth")]
+    pub use montserrat_40_smooth::MONTSERRAT_40_SMOOTH;
+    #[cfg(feature = "montserrat-42-smooth")]
+    mod montserrat_42_smooth;
+    #[cfg(feature = "montserrat-42-smooth")]
+    pub use montserrat_42_smooth::MONTSERRAT_42_SMOOTH;
+    #[cfg(feature = "montserrat-44-smooth")]
+    mod montserrat_44_smooth;
+    #[cfg(feature = "montserrat-44-smooth")]
+    pub use montserrat_44_smooth::MONTSERRAT_44_SMOOTH;
+    #[cfg(feature = "montserrat-46-smooth")]
+    mod montserrat_46_smooth;
+    #[cfg(feature = "montserrat-46-smooth")]
+    pub use montserrat_46_smooth::MONTSERRAT_46_SMOOTH;
+    #[cfg(feature = "montserrat-48-smooth")]
+    mod montserrat_48_smooth;
+    #[cfg(feature = "montserrat-48-smooth")]
+    pub use montserrat_48_smooth::MONTSERRAT_48_SMOOTH;
     #[cfg(feature = "montserrat-14-subpx")]
     mod montserrat_14_subpx;
     #[cfg(feature = "montserrat-14-subpx")]

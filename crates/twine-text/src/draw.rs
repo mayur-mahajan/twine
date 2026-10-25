@@ -7,7 +7,7 @@ use twine_render::{ImageDsc, Painter, SubpxOrder};
 use crate::cache::GlyphCache;
 use crate::dir::TextDir;
 use crate::font::{Font, Subpx};
-use crate::gamma::Polarity;
+use crate::gamma::{CoverageMap, Polarity, TextGamma};
 use crate::hit::{DOTS, TextAlign, TextDecor};
 use crate::layout::{Pen, TextFlags, TextLayout};
 
@@ -44,6 +44,12 @@ pub struct TextDsc {
     /// text. Selected characters use
     /// [`sel_color`](Self::sel_color) over [`sel_bg_color`](Self::sel_bg_color).
     pub background: Option<Color>,
+    /// The text gamma replacing the font's own for this text (default `None`: the font's, see
+    /// [`gamma`](crate::gamma)). Widgets drawing through the engine get the display's
+    /// (`twine_engine::Engine::set_text_gamma`), e.g. [`gamma::LINEAR`](crate::gamma::LINEAR)
+    /// to draw every font as LVGL does. Applies to bitmap fonts; run-time TrueType glyphs have
+    /// no gamma table.
+    pub gamma: Option<&'static TextGamma>,
     /// Opacity of everything drawn.
     pub opa: Opa,
     /// Line alignment inside the area.
@@ -87,6 +93,7 @@ impl TextDsc {
             font,
             color: Color::BLACK,
             background: None,
+            gamma: None,
             opa: Opa::COVER,
             align: TextAlign::Left,
             decor: TextDecor::empty(),
@@ -136,7 +143,7 @@ fn draw_char(
     pen_x: i32,
     line_top: i32,
     color: Color,
-    polarity: Polarity,
+    map: CoverageMap,
     opa: Opa,
     order: SubpxOrder,
     cache: &mut GlyphCache,
@@ -146,7 +153,7 @@ fn draw_char(
         if !crate::font::has_placeholder(c) {
             return;
         }
-        if cache.first_warning((font.provider_key(), u32::from(c))) {
+        if cache.first_warning((font.provider_key(), 0, u32::from(c))) {
             twine_core::warn!(target: "twine::text", "missing glyph U+{:04X}", u32::from(c));
         }
         let b = Rect::from_xywh(pen_x, line_top, font.placeholder_width(), font.ascent());
@@ -207,7 +214,7 @@ fn draw_char(
     let provider = gfont.provider;
     match gfont.subpx {
         Subpx::None => {
-            provider.render_rows(&info, polarity, cache, &mut |y, row| {
+            provider.render_rows(&info, map, cache, &mut |y, row| {
                 let gy = area.y0.saturating_add(y as i32);
                 if gy >= clip.y0 && gy < clip.y1 {
                     p.glyph_a8(Rect::from_xywh(area.x0, gy, w_px, 1), row, row.len(), color, opa);
@@ -218,7 +225,7 @@ fn draw_char(
             let mut lcd = core::mem::take(&mut cache.lcd_row);
             // SAFE-ARITH: `w_px ≤ (2^16 + 1) / 3`.
             lcd.resize((w_px as usize).wrapping_mul(3), 0);
-            provider.render_rows(&info, polarity, cache, &mut |y, row| {
+            provider.render_rows(&info, map, cache, &mut |y, row| {
                 let gy = area.y0.saturating_add(y as i32);
                 if gy >= clip.y0 && gy < clip.y1 {
                     lcd.fill(0);
@@ -243,7 +250,7 @@ fn draw_char(
             lcd.resize((w_px as usize).wrapping_mul(3), 0);
             lcd.fill(0);
             let rows = bh as usize;
-            provider.render_rows(&info, polarity, cache, &mut |y, row| {
+            provider.render_rows(&info, map, cache, &mut |y, row| {
                 let t = y % 3;
                 // Sub-pixel `t` of pixel `x` is byte `3x + t`.
                 for (px, v) in lcd.chunks_exact_mut(3).zip(row) {
@@ -326,8 +333,9 @@ fn draw_clipped(p: &mut Painter<'_>, area: Rect, text: &str, dsc: &TextDsc, cach
     };
     let thick = i32::from(font.underline_thickness).max(1);
     // The text gamma of the run (and of its selection), chosen once.
-    let polarity = Polarity::of(dsc.color, dsc.background);
-    let sel_polarity = Polarity::of(dsc.sel_color, Some(dsc.sel_bg_color));
+    let polarity = CoverageMap::new(Polarity::of(dsc.color, dsc.background)).with_gamma(dsc.gamma);
+    let sel_polarity =
+        CoverageMap::new(Polarity::of(dsc.sel_color, Some(dsc.sel_bg_color))).with_gamma(dsc.gamma);
     #[cfg(feature = "bidi")]
     let base = crate::bidi::resolve_dir(dsc.base_dir, text);
     #[cfg(not(feature = "bidi"))]

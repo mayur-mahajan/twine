@@ -859,6 +859,12 @@ impl Engine {
             .and_then(|d| self.displays.get(d.index()))
     }
 
+    /// The text gamma of the display showing `id` (see [`Engine::set_text_gamma`]).
+    #[inline]
+    pub(crate) fn node_text_gamma(&self, id: NodeId) -> Option<&'static twine_text::TextGamma> {
+        self.node_display(id)?.text_gamma
+    }
+
     /// The value of `element` for `id` (the [`StyleSource::design_value`] of the engine): one
     /// indexed lookup in the node's display's table (the mode's, merged over the metrics).
     ///

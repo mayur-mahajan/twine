@@ -1,4 +1,4 @@
-//! Font bundles (R3.S10): every bundle names existing fonts, `fonts-all` really is every font,
+//! Font bundles (R3.S10, smooth sets R6.S05): every bundle names existing fonts, `fonts-all` really is every font,
 //! and the fonts of each bundle are there when it is enabled (the tests build with
 //! `fonts-all`, so every bundle's `cfg` is on). That each bundle *alone* compiles for the
 //! embedded targets is checked by `cargo xtask nostd` (facade sets with each bundle).
@@ -56,7 +56,7 @@ fn bundles_name_existing_fonts_and_fonts_all_is_complete() {
         .collect();
     assert!(individual.len() >= 28, "{individual:?}");
     let bundles: Vec<&String> = all.keys().filter(|f| f.starts_with("fonts-")).collect();
-    assert_eq!(bundles.len(), 7, "{bundles:?}");
+    assert_eq!(bundles.len(), 10, "{bundles:?}");
     for bundle in &bundles {
         let fonts = fonts_of(&all, bundle);
         assert!(
@@ -80,6 +80,25 @@ fn bundles_name_existing_fonts_and_fonts_all_is_complete() {
     // Bundles nest: small ⊂ medium ⊂ all.
     assert!(fonts_of(&all, "fonts-latin-small").is_subset(&fonts_of(&all, "fonts-latin-medium")));
     assert!(fonts_of(&all, "fonts-latin-medium").is_subset(&fonts_of(&all, "fonts-latin-all")));
+    // The smooth bundles are the same sizes, unhinted: only `-smooth` fonts, nested alike.
+    for (hinted, smooth) in [
+        ("fonts-latin-small", "fonts-latin-small-smooth"),
+        ("fonts-latin-medium", "fonts-latin-medium-smooth"),
+    ] {
+        let want: BTreeSet<String> = fonts_of(&all, hinted)
+            .iter()
+            .map(|f| format!("{f}-smooth"))
+            .collect();
+        assert_eq!(fonts_of(&all, smooth), want, "{smooth}");
+    }
+    let all_smooth = fonts_of(&all, "fonts-latin-all-smooth");
+    assert!(
+        all_smooth
+            .iter()
+            .all(|f| f.starts_with("montserrat-") && f.ends_with("-smooth"))
+    );
+    assert_eq!(all_smooth.len(), 21, "every Montserrat size");
+    assert!(fonts_of(&all, "fonts-latin-medium-smooth").is_subset(&all_smooth));
 }
 
 #[test]
@@ -103,6 +122,18 @@ fn bundle_fonts_are_compiled_in() {
         &fonts::MONTSERRAT_14_SUBPX,
         &fonts::MONTSERRAT_16_LATIN_EXT,
     ] {
+        assert!(f.line_height > 0);
+    }
+    #[cfg(feature = "fonts-latin-small-smooth")]
+    for f in [
+        &fonts::MONTSERRAT_12_SMOOTH,
+        &fonts::MONTSERRAT_14_SMOOTH,
+        &fonts::MONTSERRAT_16_SMOOTH,
+    ] {
+        assert!(f.line_height > 0);
+    }
+    #[cfg(feature = "fonts-latin-all-smooth")]
+    for f in [&fonts::MONTSERRAT_8_SMOOTH, &fonts::MONTSERRAT_48_SMOOTH] {
         assert!(f.line_height > 0);
     }
     #[cfg(feature = "fonts-mono")]

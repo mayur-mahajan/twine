@@ -34,193 +34,193 @@ This file is large: do not read it whole. Find the section you need, then read o
   - mod `twine::guide::app_state` — Application state: the store pattern for large applications. (L476)
   - mod `twine::prelude` — Everything an application needs: `use twine::prelude::*;`. (L504)
 - crate `twine_view` — The declarative layer of the Twine GUI library: an application is a function `fn app(cx: Scope) -> impl View`… (L515)
-  - mod `twine_view::component` — Components: functions describing a piece of UI, used like built-in widgets. (L2017)
-  - mod `twine_view::flow` — Control flow: `when`, `dynamic`, `for_each`, `virtual_list` (the keyed collections take their items as `IntoIt… (L2038)
-  - mod `twine_view::navigator` — Typed screen navigation: `navigator`, `Navigator`, `expect_navigator` / `use_navigator`, leave guards (`Naviga… (L2084)
-  - mod `twine_view::prelude` — Everything an application needs: `use twine_view::prelude::*;` (the `twine` facade's prelude re-exports this o… (L2121)
-  - mod `twine_view::prelude::draw_buffers` — Static draw buffers: `draw_buffers!` and `DrawBuffers`. (L2418)
-  - mod `twine_view::run` — Run loops: thin, optional adapters that step a `Ui` and sleep as it asks. (L2426)
-  - mod `twine_view::text` — Text properties: `IntoText`, `TextProp` and the zero-allocation `text!` macro. (L2471)
-  - mod `twine_view::typestate` — The parts a `UiBuilder` (and `AsyncUiBuilder`) must be given before it can build, checked by the compiler. (L2487)
-  - mod `twine_view::widgets` — Widget views: constructor functions returning `WidgetView`s with the widget-specific builder methods. (L2525)
-  - mod `twine_view::marker` — The markers of the conversion traits' impls, one per form of value: `IntoProp`, `IntoText`, `IntoOptions` and… (L2579)
-- crate `twine_widgets` — The basic widgets of the Twine GUI library, each a port of the LVGL widget of the same name: (L2611)
-  - mod `twine_widgets::animimg` — `AnimImg`: an image that plays a sequence of frames (LVGL `lv_animimg`). (L2720)
-  - mod `twine_widgets::arc` — `Arc`: an arc slider with a knob (LVGL `lv_arc`). (L2761)
-  - mod `twine_widgets::bar` — `Bar`: a progress bar (LVGL `lv_bar`). (L2818)
-  - mod `twine_widgets::button` — `Button`: a clickable container (LVGL `lv_button`). (L2876)
-  - mod `twine_widgets::buttonmatrix` — `ButtonMatrix`: a grid of text buttons drawn by one widget (LVGL `lv_buttonmatrix`). (L2925)
-  - mod `twine_widgets::checkbox` — `Checkbox`: a check box with a text (LVGL `lv_checkbox`). (L3066)
-  - mod `twine_widgets::container` — `Container`: the base object (LVGL `lv_obj`), a styled rectangle holding children. (L3100)
-  - mod `twine_widgets::image` — `Image`: an image source drawn with inner alignment, rotation, scaling and recoloring (LVGL `lv_image`). (L3136)
-  - mod `twine_widgets::image_button` — `ImageButton`: a button drawn from images, one set per state (LVGL `lv_imagebutton`). (L3207)
-  - mod `twine_widgets::keyboard` — `Keyboard`: an on-screen keyboard built on the button matrix (LVGL `lv_keyboard`). (L3245)
-  - mod `twine_widgets::label` — `Label`: text (LVGL `lv_label`) with every long mode, selection and in-place text storage. (L3318)
-  - mod `twine_widgets::led` — `Led`: a light-emitting diode (LVGL `lv_led`). (L3403)
-  - mod `twine_widgets::line` — `Line`: a polyline (LVGL `lv_line`). (L3451)
-  - mod `twine_widgets::prelude` — The widgets and their enums in one import: `use twine_widgets::prelude::*;`. (L3485)
-  - mod `twine_widgets::slider` — `Slider`: a bar with a draggable knob (LVGL `lv_slider`). (L3576)
-  - mod `twine_widgets::spangroup` — `SpanGroup`: rich text made of `Span`s with their own styles (LVGL `lv_spangroup`). (L3613)
-  - mod `twine_widgets::spinbox` — `Spinbox`: a numeric editor with digit-wise stepping (LVGL `lv_spinbox`). (L3693)
-  - mod `twine_widgets::spinner` — `Spinner`: the loading spinner, an endlessly animated arc (LVGL `lv_spinner`). (L3745)
-  - mod `twine_widgets::switch` — `Switch`: an animated on/off switch (LVGL `lv_switch`). (L3783)
-  - mod `twine_widgets::textarea` — `Textarea`: a scrollable text input with a cursor (LVGL `lv_textarea`). (L3821)
-- crate `twine_widgets_ext` — The complex widgets of the Twine GUI library, each a port of the LVGL widget of the same name, built on the ba… (L3948)
-  - mod `twine_widgets_ext::dropdown` — `Dropdown`: a button showing the selected option that opens a list of options (LVGL `lv_dropdown`), and its `D… (L4027)
-  - mod `twine_widgets_ext::list` — `List`: a scrollable column of text headers (`add_text`) and buttons with an icon and a text (`add_button`) (L… (L4094)
-  - mod `twine_widgets_ext::menu` — `Menu`: hierarchical pages with a header, a back button, an optional sidebar and a page history (LVGL `lv_menu… (L4166)
-  - mod `twine_widgets_ext::msgbox` — `Msgbox`: a message box with an optional header (title and buttons), a text content and a footer of buttons, m… (L4310)
-  - mod `twine_widgets_ext::prelude` — The complex widgets and their enums in one import: `use twine_widgets_ext::prelude::*;`. (L4382)
-  - mod `twine_widgets_ext::roller` — `Roller`: a drum-style picker (LVGL `lv_roller`). (L4422)
-  - mod `twine_widgets_ext::tabview` — `Tabview`: tabs with a button bar and swipeable, snap-scrolling content (LVGL `lv_tabview`, 9.x structure). (L4472)
-  - mod `twine_widgets_ext::tileview` — `Tileview`: a 2D grid of full-size tiles navigated by swipes in the allowed directions (LVGL `lv_tileview`). (L4523)
-  - mod `twine_widgets_ext::vector_view` — `VectorView`: a widget drawing a `VectorScene` (paths with fills, strokes and gradients; LVGL `lv_draw_vector`… (L4564)
-  - mod `twine_widgets_ext::window` — `Window`: a header (title and buttons) above a scrollable content area (LVGL `lv_win`). (L4592)
-- crate `twine_theme` — Themes for the Twine GUI library: they give every widget its default look, exactly like LVGL's themes (`src/th… (L4632)
-  - mod `twine_theme::lvgl` — `Lvgl`: a faithful port of LVGL's default theme (`src/themes/default/lv_theme_default.c`), light and dark, plu… (L4913)
-  - mod `twine_theme::lvgl::colors` — The colors of LVGL's default theme (`lv_theme_default.c`, the `LIGHT_COLOR_*` and `DARK_COLOR_*` macros). (L5199)
-  - mod `twine_theme::lvgl::metrics` — The LVGL theme's values that depend on the display: every size LVGL's `style_init()` scales with `LV_DPX_CALC`… (L5236)
-  - mod `twine_theme::lvgl::styles` — The styles of the LVGL theme, LVGL's `style_init()` of `src/themes/default/lv_theme_default.c` as `static` dat… (L5336)
-  - mod `twine_theme::mono` — `Mono`: LVGL's monochrome theme (`src/themes/mono/lv_theme_mono.c`) for 1-bit displays, as `static` data. (L5613)
-  - mod `twine_theme::mono::styles` — The styles of `lv_theme_mono.c` used by the widgets implemented so far, as `static`s (LVGL's names in capitals… (L5771)
-  - mod `twine_theme::simple` — `Simple`: LVGL's simple theme (`src/themes/simple/lv_theme_simple.c`), as `static` data. (L5849)
-  - mod `twine_theme::simple::styles` — The styles of `lv_theme_simple.c` (`my_theme_styles_t`) as `static`s (LVGL's names in capitals). (L6016)
-- crate `twine_style` — The style system of the Twine GUI library, independent of the widget tree: the complete LVGL v9 style property… (L6061)
-  - mod `twine_style::design` — Design elements: named, typed values (colors, spacings, radii, opacities, fonts, motion timings, icons) that a… (L7541)
-- crate `twine_engine` — The core of the Twine GUI library: the retained widget tree, the `Widget` trait, styles attached to nodes, pre… (L8138)
-  - mod `twine_engine::gridnav` — Grid navigation (LVGL `lv_gridnav`): arrow keys move the focus among the children of a container by their posi… (L9779)
-- crate `twine_reactive` — Fine-grained, push-pull, glitch-free reactive signals for a single UI thread The declarative view layer (`twin… (L9808)
-- crate `twine_layout` — Sizing, positioning, flex and grid layout of the Twine GUI library, with the semantics of LVGL 9 (`lv_obj_pos.… (L10351)
-- crate `twine_anim` — Animation building blocks of the Twine GUI library, below the widget engine in the layering (it depends only o… (L10563)
-- crate `twine_render` — The integer software renderer of the Twine GUI library: pixel operations only, no knowledge of widgets. (L10869)
-- crate `twine_text` — Fonts, text layout and text drawing for the Twine GUI library (layer 3, above the renderer). (L11491)
-  - mod `twine_text::encode` — Encoder helpers for font generators (feature `std`): bit packing, the XOR prefilter, the RLE encoder (the exac… (L12158)
-  - mod `twine_text::gamma` — Text gamma: how a glyph's stored coverage becomes opacity, chosen per text run by polarity. (L12239)
-- crate `twine_image` — Images for the Twine GUI library: the `Image` data model (every `ColorFormat` of the renderer, palettes, `Rgb5… (L12280)
-  - mod `twine_image::decoders` — Built-in decoders (each behind its `img-*` feature, except the raw `.tbin` format). (L12557)
-  - mod `twine_image::decoders::bmp` — In-house BMP decoder: 1, 4, 8 bpp paletted (uncompressed, RLE4, RLE8), 16 bpp (RGB555 or bit fields), 24 bpp a… (L12561)
-  - mod `twine_image::decoders::gif` — In-house GIF decoder: `GifDecoder` (first frame, for static use) and `GifPlayer` (animation with frame composi… (L12576)
-  - mod `twine_image::decoders::jpeg` — JPEG decoder over `zune-jpeg` (baseline and progressive, gray / YCbCr / CMYK input, all chroma subsamplings). (L12613)
-  - mod `twine_image::decoders::png` — In-house PNG decoder over `miniz_oxide` (zlib inflate). (L12629)
-  - mod `twine_image::decoders::qoi` — In-house QOI decoder (<https://qoiformat.org/qoi-specification.pdf>), plus an encoder (feature `std`) for tool… (L12645)
-  - mod `twine_image::decoders::tbin` — The raw twine binary image file (`.tbin`, written by `twine image --bin`): pixels in any `ColorFormat`, stored… (L12665)
-- crate `twine_vector` — Vector graphics for the Twine GUI library (the equivalent of LVGL's `lv_vector` API and SVG support): paths, c… (L12703)
-  - mod `twine_vector::svg` — SVG Tiny subset parser (feature `svg`): `parse_svg` turns SVG bytes into an `SvgDocument` holding a `VectorSce… (L13070)
-- crate `twine_fs` — File system abstraction of the Twine GUI library, the equivalent of LVGL's `lv_fs`: images, fonts and other as… (L13129)
-- crate `twine_assets` — Built-in fonts of the Twine GUI library as `static` `Font`s, one cargo feature per font (`default = ["montserr… (L13338)
-  - mod `twine_assets::fonts` — The built-in fonts (each behind its cargo feature). (L13436)
-- crate `twine_extra` — Extras for the Twine GUI library, the equivalent of LVGL's "others" and "libs": QR codes, Code 128 barcodes, a… (L13552)
-  - mod `twine_extra::barcode` — Code 128 barcodes (LVGL `lv_barcode`): an encoder producing the symbol and drawing helpers. (L13595)
-  - mod `twine_extra::i18n` — Compile-time translations (the role of LVGL's `lv_translation`): a catalog generated at build time from transl… (L13650)
-  - mod `twine_extra::i18n::number` — Locale-aware number formatting without floating point or allocation: `Decimal` (an integer or a fixed-point va… (L13850)
-  - mod `twine_extra::i18n::plural` — CLDR plural rules: `PluralCategory`, the operands of a number (`PluralOperands`) and one function per rule (na… (L13874)
-  - mod `twine_extra::qrcode` — QR codes (LVGL `lv_qrcode`): an encoder producing a module matrix and drawing helpers. (L13989)
-- crate `twine_lottie` — Plays Lottie (Bodymovin JSON) animations for the Twine GUI library: `load` parses a file into a typed `Composi… (L14061)
-  - mod `twine_lottie::eval` — Evaluating animated properties at a frame: `Lerp`, keyframe segment lookup (cached for sequential playback), h… (L14188)
-  - mod `twine_lottie::model` — The typed Lottie (Bodymovin JSON) model produced by `load`. (L14219)
-  - mod `twine_lottie::view` — `lottie`: the declarative view of the `Lottie` widget. (L14562)
-  - mod `twine_lottie::widget` — `Lottie`: an engine widget playing a Lottie animation (LVGL `lv_lottie`), redrawing only when the frame change… (L14580)
-- crate `twine_hal` — The hardware abstraction of the Twine GUI library: the traits a display, input device, clock or platform (slee… (L14616)
-  - mod `twine_hal::buffer` — Draw buffer memory: `DrawBufferMem` (an owned `'static` buffer), `DrawBuffer` (the storage of one buffer, 4-by… (L14983)
-  - mod `twine_hal::calibration` — Touch calibration: `Calibration`, a 3-point affine mapping from raw touch-controller coordinates to the displa… (L15016)
-  - mod `twine_hal::clock` — The time source: `Clock`. (L15024)
-  - mod `twine_hal::display` — Display traits and descriptions: `DisplayDriver`, `AsyncDisplayDriver` (feature `async`), `FramebufferDisplay`… (L15031)
-  - mod `twine_hal::input` — Input devices: `InputDevice`, `InputData`, `Key`, `PollHint`, `DeviceHealth` and the per-kind data. (L15067)
-  - mod `twine_hal::platform` — Platform services: `Platform` (wait for a deadline or a wake-up, blocking) and `AsyncPlatform` (the same for a… (L15090)
-  - mod `twine_hal::touch` — Touch coordinates: `TouchTransform` maps raw panel coordinates of a touch controller to the logical (rotated)… (L15124)
-- crate `twine_drivers` — Display, touch and input drivers of the Twine GUI library, implementing the `twine-hal` traits on top of `embe… (L15147)
-  - mod `twine_drivers::co5300` — CO5300 AMOLED controller on quad SPI (Waveshare ESP32-S3-Touch-AMOLED-2.06: 410 × 502). (L15239)
-  - mod `twine_drivers::debounce` — `Debouncer`: time-based debouncing of a digital input. (L15293)
-  - mod `twine_drivers::encoder` — Rotary encoder on two GPIOs (quadrature A/B) plus an optional push button: `QuadratureDecoder` and `GpioQuadra… (L15306)
-  - mod `twine_drivers::gc9a01` — GC9A01 240 × 240 round IPS controller (1.28" round modules). (L15354)
-  - mod `twine_drivers::ili9341` — ILI9341 240 × 320 TFT controller (the common 2.4"/2.8"/3.2" SPI modules). (L15408)
-  - mod `twine_drivers::ili9342` — ILI9342C 320 × 240 TFT controller (landscape-native ILI9341 sibling: `M5Stack` Core, ESP32-S3-BOX-3). (L15462)
-  - mod `twine_drivers::ili9488` — ILI9488 320 × 480 TFT controller over SPI (18-bit colour only). (L15512)
-  - mod `twine_drivers::interface` — Byte-level transports for command/data display controllers: `DcsInterface` (blocking), `AsyncDcsInterface` (fe… (L15562)
-  - mod `twine_drivers::interface::qspi` — `QspiInterface`: quad-SPI transport of AMOLED controllers (CO5300, SH8601, RM67162, …). (L15702)
-  - mod `twine_drivers::interface::qspi::opcode` — QSPI instructions and DCS commands of the panel framing. (L15731)
-  - mod `twine_drivers::jd9853` — JD9853 IPS controller with a 172 × 320 panel (1.47" modules, e.g. (L15751)
-  - mod `twine_drivers::keypad` — Key matrix scanned over GPIOs: `GpioMatrix` (`InputKind::Keypad`). (L15805)
-  - mod `twine_drivers::mipi_dcs` — The generic MIPI DCS panel driver shared by every MIPI panel: `MipiDcs` (blocking, `DisplayDriver`) and `Async… (L15847)
-  - mod `twine_drivers::mipi_dcs::cmd` — MIPI DCS command codes (MIPI DCS 1.03 / ILI9341 datasheet §8.2). (L15980)
-  - mod `twine_drivers::mono` — Page conversion for monochrome OLED controllers (SSD1306, SH1106). (L16056)
-  - mod `twine_drivers::rm67162` — RM67162 AMOLED controller on quad SPI (`LilyGO` T-Display-S3 AMOLED 1.91": 240 × 536). (L16085)
-  - mod `twine_drivers::sh1106` — SH1106 monochrome OLED controller (1.3" 128 × 64 modules) over I2C or SPI. (L16139)
-  - mod `twine_drivers::sh8601` — SH8601 AMOLED controller on quad SPI (Waveshare ESP32-S3-Touch-AMOLED-1.8: 368 × 448). (L16192)
-  - mod `twine_drivers::ssd1306` — SSD1306 monochrome OLED controller (0.49"–1.3" 128 × 64, 128 × 32, 72 × 40 modules) over I2C or SPI. (L16246)
-  - mod `twine_drivers::st7735` — ST7735R / ST7735S 128 × 160 TFT controller ("tab" variants of the common 1.8" and 0.96" modules). (L16316)
-  - mod `twine_drivers::st7789` — ST7789 / ST7789V 240 × 320 IPS controller and its common module variants. (L16378)
-  - mod `twine_drivers::st7796` — ST7796S 320 × 480 TFT controller (3.5"/4.0" SPI modules). (L16436)
-  - mod `twine_drivers::touch` — Touch controllers implementing `InputDevice` (`Pointer`). (L16482)
-  - mod `twine_drivers::touch::axs5106l` — AXS5106L capacitive touch controller (I2C; 1.47" 172 × 320 IPS modules such as the Waveshare ESP32-C6-Touch-LC… (L16641)
-  - mod `twine_drivers::touch::cst816s` — Hynitron CST816S capacitive touch controller (I2C; round 1.28" GC9A01 boards and small watches). (L16684)
-  - mod `twine_drivers::touch::ft5x06` — Focaltech FT5206 / FT5306 / FT5406 capacitive touch controllers (I2C, up to 5 points). (L16723)
-  - mod `twine_drivers::touch::ft6x36` — Focaltech FT6206 / FT6236 / FT6336 (and FT3168) capacitive touch controllers (I2C). (L16745)
-  - mod `twine_drivers::touch::gt911` — Goodix GT911 capacitive touch controller (I2C, 16-bit register addresses). (L16785)
-  - mod `twine_drivers::touch::stmpe811` — ST STMPE811 resistive touch-screen controller with ADC (I2C; STM32F429I-DISC1 and many resistive modules). (L16844)
-  - mod `twine_drivers::touch::stmpe811::reg` — Register addresses. (L16887)
-  - mod `twine_drivers::touch::xpt2046` — XPT2046 (ADS7843-compatible) resistive touch controller on SPI. (L16955)
-  - mod `twine_drivers::testkit` — Recording mock buses for host-side driver tests. (L17010)
-- crate `twine_embassy` — Runs a Twine UI on an embassy executor: `run` updates the UI and then sleeps until the UI's next deadline, a c… (L17113)
-- crate `twine_embedded_graphics` — embedded-graphics adapter for the Twine GUI library, in both directions. (L17219)
-- crate `twine_accel_stm32` — STM32 DMA2D (Chrom-ART) draw acceleration for the Twine renderer. (L17276)
-  - mod `twine_accel_stm32::mock` — `MockRegs`: a recording DMA2D register file for host tests (feature `mock`). (L17391)
-  - mod `twine_accel_stm32::bits` — Register bit fields (RM0090 §9.5; v2 on the STM32H7 only adds bits that are not used here). (L17421)
-- crate `twine_sim` — The desktop simulator of the Twine GUI library: a native window (winit 0.30 + softbuffer 0.4, pure Rust) showi… (L17550)
-  - mod `twine_sim::config` — Simulator configuration: `SimConfig`, `SimInputs`, `Headless`. (L17925)
-  - mod `twine_sim::convert` — Conversion of the emulated panel memory to RGB for the window and PNGs. (L17947)
-  - mod `twine_sim::display` — `SimDisplay`: the simulator's emulated panel, a real `DisplayDriver`. (L17968)
-  - mod `twine_sim::hotkeys` — Simulator hotkeys (F1…F12). (L17977)
-  - mod `twine_sim::input` — Simulated input devices: mouse → `SimPointer`, wheel + middle button → `SimEncoder`, keyboard → `SimKeypad`. (L18012)
-  - mod `twine_sim::panels` — Multi-panel apps: several independent UIs side by side in one window (`SimApp::panels`, `run_panels`). (L18087)
-  - mod `twine_sim::paths` — Output locations of the simulator (`target/twine-sim/…`). (L18129)
-  - mod `twine_sim::script` — `.twinescript`: scripted input for headless runs. (L18145)
-- crate `twine_testing` — Test utilities of the Twine GUI library. (L18222)
-  - mod `twine_testing::alloc` — Allocation counting: `CountingAllocator`, `count_allocs` and `assert_no_alloc_after_seal`. (L18750)
-  - mod `twine_testing::clock` — `MockClock`: a manually advanced `Clock`. (L18794)
-  - mod `twine_testing::convert` — Pixel format conversion for assertions and snapshots: any supported `ColorFormat` buffer → 8-bit RGB. (L18801)
-  - mod `twine_testing::engine_harness` — `EngineHarness`: a bare `Engine` on an in-memory display with a mock clock, for engine tests (feature `engine`… (L18835)
-  - mod `twine_testing::fuzz` — Operation-sequence fuzzing beyond the decoders (R5.S08): interpreters that turn arbitrary bytes into sequences… (L18852)
-  - mod `twine_testing::gallery` — Renderer gallery pages (feature `render`): the reference drawings of the renderer's snapshot tests, also shown… (L18958)
-  - mod `twine_testing::logging` — Test logging: `init_test_logging` and `capture_logs`. (L19041)
-  - mod `twine_testing::memory_display` — `MemoryDisplay`: an in-memory `DisplayDriver` that records every flush, with optional DMA-like latency, plus `… (L19050)
-  - mod `twine_testing::mock_display` — Display mocks for engine tests (feature `engine`): `MockDmaDisplay` (a DMA-like `DisplayDriver` recording an e… (L19061)
-  - mod `twine_testing::mock_input` — Mock input devices: `MockPointer`, `MockKeypad`, `MockEncoder`, `MockButton`. (L19076)
-  - mod `twine_testing::platform` — `MockPlatform`: a `Platform` and `AsyncPlatform` on simulated time. (L19093)
-  - mod `twine_testing::png_io` — Deterministic PNG reading and writing of 8-bit RGB images. (L19100)
-  - mod `twine_testing::render_harness` — `RenderHarness`: an in-memory draw buffer with `RenderCaches` for renderer tests and snapshots (feature `rende… (L19128)
-  - mod `twine_testing::scenes` — Reference scenes for engine tests, benchmarks and examples (feature `engine`), so every buffer mode, rotation… (L19136)
-  - mod `twine_testing::snapshot` — Golden-image snapshots: `assert_rgb_snapshot`, `SnapshotConfig`, `Tolerance`, and the committed hash manifest… (L19180)
-  - mod `twine_testing::theme_coverage` — Theme coverage (design `docs/plan/r7-theming-design.md` §2.9.4): which recipe styles each theme class a UI cre… (L19326)
-  - mod `twine_testing::ui` — `TestUi`: the declarative `Ui` on an in-memory display with a mock clock and mock inputs (feature `ui`). (L19357)
-  - mod `twine_testing::logs` — Log capture for tests: `logs::capture(|| …)` runs a closure and returns the records it logged (on this thread)… (L19366)
-- crate `twine_build` — Build-script helpers for Twine applications: assets are compiled on the host, in `build.rs`, into Rust sources… (L19379)
-  - mod `twine_build::chars` — Character sets for glyph subsetting: which characters a generated font contains. (L19465)
-  - mod `twine_build::font` — Bitmap fonts from TrueType/OpenType files (feature `font`): a deterministic generator that writes a `static` `… (L19498)
-  - mod `twine_build::i18n` — Compile-time translations: read translation files (Fluent `.ftl`, gettext `.po` or TOML), check them, and gene… (L19620)
-  - mod `twine_build::image` — Images from PNG, JPEG, BMP, GIF or QOI files (feature `image`): a deterministic converter that writes a `stati… (L19783)
-- crate `twine_macros` — The procedural macros of Twine. (L19897)
-- crate `twine_core` — Foundations of the Twine GUI library: integer geometry, fixed-point math and trigonometry, transforms, colors… (L19932)
-  - mod `twine_core::alloc_guard` — The allocation guard: detects heap allocation by Twine after start-up ("seal"). (L20722)
-  - mod `twine_core::arena` — Generational arena (`Arena<T>`) with stale-handle detection (`Id<T>`). (L20836)
-  - mod `twine_core::audit` — Configuration evidence: a stable, machine-readable `key=value` dump of everything that bounds or configures Tw… (L20854)
-  - mod `twine_core::color` — Colors: the canonical `Color` (RGB888), opacity (`Opa`), the runtime format tag (`ColorFormat`), typed pixel f… (L20918)
-  - mod `twine_core::crc` — `Crc32`: the CRC-32 checksum (IEEE 802.3) used for display-integrity checks and digests. (L20997)
-  - mod `twine_core::error` — The crate error type. (L21018)
-  - mod `twine_core::fault` — Faults: the vocabulary every Twine crate uses to report a failure that the library recovered from but that may… (L21025)
-  - mod `twine_core::geometry` — Integer geometry: `Point`, `Size`, `Rect` (half-open), `Insets` and `Rotation`. (L21071)
-  - mod `twine_core::limits` — `Limits`: the memory bounds of a Twine application, in one value. (L21086)
-  - mod `twine_core::log` — Logging facade: `trace!`, `debug!`, `info!`, `warn!` and `error!`. (L21113)
-  - mod `twine_core::math` — Deterministic integer math: `Fx` (16.16 fixed point), `Angle` (0.1°), `Scale` (256 = 1.0), `Fraction` (0..=1),… (L21157)
-  - mod `twine_core::partition` — `Partition`: the identity of a partitioned runtime (ADR-001, `docs/design/adr-001-partitioned-runtimes.md`). (L21255)
-  - mod `twine_core::prelude` — The most used `twine-core` types: `use twine_core::prelude::*;`. (L21280)
-  - mod `twine_core::rect_set` — `RectSet`: the fixed-capacity dirty-area set used by the refresh pipeline. (L21304)
-  - mod `twine_core::rng` — Deterministic pseudo-random numbers (`XorShift32`). (L21312)
-  - mod `twine_core::small_vec` — `SmallVec`: an inline-first vector for small `Copy` elements. (L21319)
-  - mod `twine_core::symbol` — `Symbol`: the built-in icon glyphs (LVGL `LV_SYMBOL_*`), with the exact code points of LVGL v9 `src/font/lv_sy… (L21326)
-  - mod `twine_core::time` — Monotonic time in microseconds: `Instant` and `Duration`. (L21343)
-  - mod `twine_core::transform` — 2-D affine transforms in 16.16 fixed point. (L21353)
-  - mod `twine_core::validity` — `Validity`: a value together with how much it can be trusted, and its `ValidityStatus`. (L21360)
+  - mod `twine_view::component` — Components: functions describing a piece of UI, used like built-in widgets. (L2022)
+  - mod `twine_view::flow` — Control flow: `when`, `dynamic`, `for_each`, `virtual_list` (the keyed collections take their items as `IntoIt… (L2043)
+  - mod `twine_view::navigator` — Typed screen navigation: `navigator`, `Navigator`, `expect_navigator` / `use_navigator`, leave guards (`Naviga… (L2089)
+  - mod `twine_view::prelude` — Everything an application needs: `use twine_view::prelude::*;` (the `twine` facade's prelude re-exports this o… (L2126)
+  - mod `twine_view::prelude::draw_buffers` — Static draw buffers: `draw_buffers!` and `DrawBuffers`. (L2423)
+  - mod `twine_view::run` — Run loops: thin, optional adapters that step a `Ui` and sleep as it asks. (L2431)
+  - mod `twine_view::text` — Text properties: `IntoText`, `TextProp` and the zero-allocation `text!` macro. (L2476)
+  - mod `twine_view::typestate` — The parts a `UiBuilder` (and `AsyncUiBuilder`) must be given before it can build, checked by the compiler. (L2492)
+  - mod `twine_view::widgets` — Widget views: constructor functions returning `WidgetView`s with the widget-specific builder methods. (L2530)
+  - mod `twine_view::marker` — The markers of the conversion traits' impls, one per form of value: `IntoProp`, `IntoText`, `IntoOptions` and… (L2584)
+- crate `twine_widgets` — The basic widgets of the Twine GUI library, each a port of the LVGL widget of the same name: (L2616)
+  - mod `twine_widgets::animimg` — `AnimImg`: an image that plays a sequence of frames (LVGL `lv_animimg`). (L2725)
+  - mod `twine_widgets::arc` — `Arc`: an arc slider with a knob (LVGL `lv_arc`). (L2766)
+  - mod `twine_widgets::bar` — `Bar`: a progress bar (LVGL `lv_bar`). (L2823)
+  - mod `twine_widgets::button` — `Button`: a clickable container (LVGL `lv_button`). (L2881)
+  - mod `twine_widgets::buttonmatrix` — `ButtonMatrix`: a grid of text buttons drawn by one widget (LVGL `lv_buttonmatrix`). (L2930)
+  - mod `twine_widgets::checkbox` — `Checkbox`: a check box with a text (LVGL `lv_checkbox`). (L3071)
+  - mod `twine_widgets::container` — `Container`: the base object (LVGL `lv_obj`), a styled rectangle holding children. (L3105)
+  - mod `twine_widgets::image` — `Image`: an image source drawn with inner alignment, rotation, scaling and recoloring (LVGL `lv_image`). (L3141)
+  - mod `twine_widgets::image_button` — `ImageButton`: a button drawn from images, one set per state (LVGL `lv_imagebutton`). (L3212)
+  - mod `twine_widgets::keyboard` — `Keyboard`: an on-screen keyboard built on the button matrix (LVGL `lv_keyboard`). (L3250)
+  - mod `twine_widgets::label` — `Label`: text (LVGL `lv_label`) with every long mode, selection and in-place text storage. (L3323)
+  - mod `twine_widgets::led` — `Led`: a light-emitting diode (LVGL `lv_led`). (L3408)
+  - mod `twine_widgets::line` — `Line`: a polyline (LVGL `lv_line`). (L3456)
+  - mod `twine_widgets::prelude` — The widgets and their enums in one import: `use twine_widgets::prelude::*;`. (L3490)
+  - mod `twine_widgets::slider` — `Slider`: a bar with a draggable knob (LVGL `lv_slider`). (L3581)
+  - mod `twine_widgets::spangroup` — `SpanGroup`: rich text made of `Span`s with their own styles (LVGL `lv_spangroup`). (L3618)
+  - mod `twine_widgets::spinbox` — `Spinbox`: a numeric editor with digit-wise stepping (LVGL `lv_spinbox`). (L3698)
+  - mod `twine_widgets::spinner` — `Spinner`: the loading spinner, an endlessly animated arc (LVGL `lv_spinner`). (L3750)
+  - mod `twine_widgets::switch` — `Switch`: an animated on/off switch (LVGL `lv_switch`). (L3788)
+  - mod `twine_widgets::textarea` — `Textarea`: a scrollable text input with a cursor (LVGL `lv_textarea`). (L3826)
+- crate `twine_widgets_ext` — The complex widgets of the Twine GUI library, each a port of the LVGL widget of the same name, built on the ba… (L3953)
+  - mod `twine_widgets_ext::dropdown` — `Dropdown`: a button showing the selected option that opens a list of options (LVGL `lv_dropdown`), and its `D… (L4032)
+  - mod `twine_widgets_ext::list` — `List`: a scrollable column of text headers (`add_text`) and buttons with an icon and a text (`add_button`) (L… (L4099)
+  - mod `twine_widgets_ext::menu` — `Menu`: hierarchical pages with a header, a back button, an optional sidebar and a page history (LVGL `lv_menu… (L4171)
+  - mod `twine_widgets_ext::msgbox` — `Msgbox`: a message box with an optional header (title and buttons), a text content and a footer of buttons, m… (L4315)
+  - mod `twine_widgets_ext::prelude` — The complex widgets and their enums in one import: `use twine_widgets_ext::prelude::*;`. (L4387)
+  - mod `twine_widgets_ext::roller` — `Roller`: a drum-style picker (LVGL `lv_roller`). (L4427)
+  - mod `twine_widgets_ext::tabview` — `Tabview`: tabs with a button bar and swipeable, snap-scrolling content (LVGL `lv_tabview`, 9.x structure). (L4477)
+  - mod `twine_widgets_ext::tileview` — `Tileview`: a 2D grid of full-size tiles navigated by swipes in the allowed directions (LVGL `lv_tileview`). (L4528)
+  - mod `twine_widgets_ext::vector_view` — `VectorView`: a widget drawing a `VectorScene` (paths with fills, strokes and gradients; LVGL `lv_draw_vector`… (L4569)
+  - mod `twine_widgets_ext::window` — `Window`: a header (title and buttons) above a scrollable content area (LVGL `lv_win`). (L4597)
+- crate `twine_theme` — Themes for the Twine GUI library: they give every widget its default look, exactly like LVGL's themes (`src/th… (L4637)
+  - mod `twine_theme::lvgl` — `Lvgl`: a faithful port of LVGL's default theme (`src/themes/default/lv_theme_default.c`), light and dark, plu… (L4918)
+  - mod `twine_theme::lvgl::colors` — The colors of LVGL's default theme (`lv_theme_default.c`, the `LIGHT_COLOR_*` and `DARK_COLOR_*` macros). (L5204)
+  - mod `twine_theme::lvgl::metrics` — The LVGL theme's values that depend on the display: every size LVGL's `style_init()` scales with `LV_DPX_CALC`… (L5241)
+  - mod `twine_theme::lvgl::styles` — The styles of the LVGL theme, LVGL's `style_init()` of `src/themes/default/lv_theme_default.c` as `static` dat… (L5341)
+  - mod `twine_theme::mono` — `Mono`: LVGL's monochrome theme (`src/themes/mono/lv_theme_mono.c`) for 1-bit displays, as `static` data. (L5618)
+  - mod `twine_theme::mono::styles` — The styles of `lv_theme_mono.c` used by the widgets implemented so far, as `static`s (LVGL's names in capitals… (L5776)
+  - mod `twine_theme::simple` — `Simple`: LVGL's simple theme (`src/themes/simple/lv_theme_simple.c`), as `static` data. (L5854)
+  - mod `twine_theme::simple::styles` — The styles of `lv_theme_simple.c` (`my_theme_styles_t`) as `static`s (LVGL's names in capitals). (L6021)
+- crate `twine_style` — The style system of the Twine GUI library, independent of the widget tree: the complete LVGL v9 style property… (L6066)
+  - mod `twine_style::design` — Design elements: named, typed values (colors, spacings, radii, opacities, fonts, motion timings, icons) that a… (L7546)
+- crate `twine_engine` — The core of the Twine GUI library: the retained widget tree, the `Widget` trait, styles attached to nodes, pre… (L8143)
+  - mod `twine_engine::gridnav` — Grid navigation (LVGL `lv_gridnav`): arrow keys move the focus among the children of a container by their posi… (L9786)
+- crate `twine_reactive` — Fine-grained, push-pull, glitch-free reactive signals for a single UI thread The declarative view layer (`twin… (L9815)
+- crate `twine_layout` — Sizing, positioning, flex and grid layout of the Twine GUI library, with the semantics of LVGL 9 (`lv_obj_pos.… (L10358)
+- crate `twine_anim` — Animation building blocks of the Twine GUI library, below the widget engine in the layering (it depends only o… (L10570)
+- crate `twine_render` — The integer software renderer of the Twine GUI library: pixel operations only, no knowledge of widgets. (L10876)
+- crate `twine_text` — Fonts, text layout and text drawing for the Twine GUI library (layer 3, above the renderer). (L11498)
+  - mod `twine_text::encode` — Encoder helpers for font generators (feature `std`): bit packing, the XOR prefilter, the RLE encoder (the exac… (L12178)
+  - mod `twine_text::gamma` — Text gamma: how a glyph's stored coverage becomes opacity, chosen per text run by polarity. (L12259)
+- crate `twine_image` — Images for the Twine GUI library: the `Image` data model (every `ColorFormat` of the renderer, palettes, `Rgb5… (L12301)
+  - mod `twine_image::decoders` — Built-in decoders (each behind its `img-*` feature, except the raw `.tbin` format). (L12578)
+  - mod `twine_image::decoders::bmp` — In-house BMP decoder: 1, 4, 8 bpp paletted (uncompressed, RLE4, RLE8), 16 bpp (RGB555 or bit fields), 24 bpp a… (L12582)
+  - mod `twine_image::decoders::gif` — In-house GIF decoder: `GifDecoder` (first frame, for static use) and `GifPlayer` (animation with frame composi… (L12597)
+  - mod `twine_image::decoders::jpeg` — JPEG decoder over `zune-jpeg` (baseline and progressive, gray / YCbCr / CMYK input, all chroma subsamplings). (L12634)
+  - mod `twine_image::decoders::png` — In-house PNG decoder over `miniz_oxide` (zlib inflate). (L12650)
+  - mod `twine_image::decoders::qoi` — In-house QOI decoder (<https://qoiformat.org/qoi-specification.pdf>), plus an encoder (feature `std`) for tool… (L12666)
+  - mod `twine_image::decoders::tbin` — The raw twine binary image file (`.tbin`, written by `twine image --bin`): pixels in any `ColorFormat`, stored… (L12686)
+- crate `twine_vector` — Vector graphics for the Twine GUI library (the equivalent of LVGL's `lv_vector` API and SVG support): paths, c… (L12724)
+  - mod `twine_vector::svg` — SVG Tiny subset parser (feature `svg`): `parse_svg` turns SVG bytes into an `SvgDocument` holding a `VectorSce… (L13091)
+- crate `twine_fs` — File system abstraction of the Twine GUI library, the equivalent of LVGL's `lv_fs`: images, fonts and other as… (L13150)
+- crate `twine_assets` — Built-in fonts of the Twine GUI library as `static` `Font`s, one cargo feature per font (`default = ["montserr… (L13359)
+  - mod `twine_assets::fonts` — The built-in fonts (each behind its cargo feature). (L13488)
+- crate `twine_extra` — Extras for the Twine GUI library, the equivalent of LVGL's "others" and "libs": QR codes, Code 128 barcodes, a… (L13688)
+  - mod `twine_extra::barcode` — Code 128 barcodes (LVGL `lv_barcode`): an encoder producing the symbol and drawing helpers. (L13731)
+  - mod `twine_extra::i18n` — Compile-time translations (the role of LVGL's `lv_translation`): a catalog generated at build time from transl… (L13786)
+  - mod `twine_extra::i18n::number` — Locale-aware number formatting without floating point or allocation: `Decimal` (an integer or a fixed-point va… (L13986)
+  - mod `twine_extra::i18n::plural` — CLDR plural rules: `PluralCategory`, the operands of a number (`PluralOperands`) and one function per rule (na… (L14010)
+  - mod `twine_extra::qrcode` — QR codes (LVGL `lv_qrcode`): an encoder producing a module matrix and drawing helpers. (L14125)
+- crate `twine_lottie` — Plays Lottie (Bodymovin JSON) animations for the Twine GUI library: `load` parses a file into a typed `Composi… (L14197)
+  - mod `twine_lottie::eval` — Evaluating animated properties at a frame: `Lerp`, keyframe segment lookup (cached for sequential playback), h… (L14324)
+  - mod `twine_lottie::model` — The typed Lottie (Bodymovin JSON) model produced by `load`. (L14355)
+  - mod `twine_lottie::view` — `lottie`: the declarative view of the `Lottie` widget. (L14698)
+  - mod `twine_lottie::widget` — `Lottie`: an engine widget playing a Lottie animation (LVGL `lv_lottie`), redrawing only when the frame change… (L14716)
+- crate `twine_hal` — The hardware abstraction of the Twine GUI library: the traits a display, input device, clock or platform (slee… (L14752)
+  - mod `twine_hal::buffer` — Draw buffer memory: `DrawBufferMem` (an owned `'static` buffer), `DrawBuffer` (the storage of one buffer, 4-by… (L15119)
+  - mod `twine_hal::calibration` — Touch calibration: `Calibration`, a 3-point affine mapping from raw touch-controller coordinates to the displa… (L15152)
+  - mod `twine_hal::clock` — The time source: `Clock`. (L15160)
+  - mod `twine_hal::display` — Display traits and descriptions: `DisplayDriver`, `AsyncDisplayDriver` (feature `async`), `FramebufferDisplay`… (L15167)
+  - mod `twine_hal::input` — Input devices: `InputDevice`, `InputData`, `Key`, `PollHint`, `DeviceHealth` and the per-kind data. (L15203)
+  - mod `twine_hal::platform` — Platform services: `Platform` (wait for a deadline or a wake-up, blocking) and `AsyncPlatform` (the same for a… (L15226)
+  - mod `twine_hal::touch` — Touch coordinates: `TouchTransform` maps raw panel coordinates of a touch controller to the logical (rotated)… (L15260)
+- crate `twine_drivers` — Display, touch and input drivers of the Twine GUI library, implementing the `twine-hal` traits on top of `embe… (L15283)
+  - mod `twine_drivers::co5300` — CO5300 AMOLED controller on quad SPI (Waveshare ESP32-S3-Touch-AMOLED-2.06: 410 × 502). (L15375)
+  - mod `twine_drivers::debounce` — `Debouncer`: time-based debouncing of a digital input. (L15429)
+  - mod `twine_drivers::encoder` — Rotary encoder on two GPIOs (quadrature A/B) plus an optional push button: `QuadratureDecoder` and `GpioQuadra… (L15442)
+  - mod `twine_drivers::gc9a01` — GC9A01 240 × 240 round IPS controller (1.28" round modules). (L15490)
+  - mod `twine_drivers::ili9341` — ILI9341 240 × 320 TFT controller (the common 2.4"/2.8"/3.2" SPI modules). (L15544)
+  - mod `twine_drivers::ili9342` — ILI9342C 320 × 240 TFT controller (landscape-native ILI9341 sibling: `M5Stack` Core, ESP32-S3-BOX-3). (L15598)
+  - mod `twine_drivers::ili9488` — ILI9488 320 × 480 TFT controller over SPI (18-bit colour only). (L15648)
+  - mod `twine_drivers::interface` — Byte-level transports for command/data display controllers: `DcsInterface` (blocking), `AsyncDcsInterface` (fe… (L15698)
+  - mod `twine_drivers::interface::qspi` — `QspiInterface`: quad-SPI transport of AMOLED controllers (CO5300, SH8601, RM67162, …). (L15838)
+  - mod `twine_drivers::interface::qspi::opcode` — QSPI instructions and DCS commands of the panel framing. (L15867)
+  - mod `twine_drivers::jd9853` — JD9853 IPS controller with a 172 × 320 panel (1.47" modules, e.g. (L15887)
+  - mod `twine_drivers::keypad` — Key matrix scanned over GPIOs: `GpioMatrix` (`InputKind::Keypad`). (L15941)
+  - mod `twine_drivers::mipi_dcs` — The generic MIPI DCS panel driver shared by every MIPI panel: `MipiDcs` (blocking, `DisplayDriver`) and `Async… (L15983)
+  - mod `twine_drivers::mipi_dcs::cmd` — MIPI DCS command codes (MIPI DCS 1.03 / ILI9341 datasheet §8.2). (L16116)
+  - mod `twine_drivers::mono` — Page conversion for monochrome OLED controllers (SSD1306, SH1106). (L16192)
+  - mod `twine_drivers::rm67162` — RM67162 AMOLED controller on quad SPI (`LilyGO` T-Display-S3 AMOLED 1.91": 240 × 536). (L16221)
+  - mod `twine_drivers::sh1106` — SH1106 monochrome OLED controller (1.3" 128 × 64 modules) over I2C or SPI. (L16275)
+  - mod `twine_drivers::sh8601` — SH8601 AMOLED controller on quad SPI (Waveshare ESP32-S3-Touch-AMOLED-1.8: 368 × 448). (L16328)
+  - mod `twine_drivers::ssd1306` — SSD1306 monochrome OLED controller (0.49"–1.3" 128 × 64, 128 × 32, 72 × 40 modules) over I2C or SPI. (L16382)
+  - mod `twine_drivers::st7735` — ST7735R / ST7735S 128 × 160 TFT controller ("tab" variants of the common 1.8" and 0.96" modules). (L16452)
+  - mod `twine_drivers::st7789` — ST7789 / ST7789V 240 × 320 IPS controller and its common module variants. (L16514)
+  - mod `twine_drivers::st7796` — ST7796S 320 × 480 TFT controller (3.5"/4.0" SPI modules). (L16572)
+  - mod `twine_drivers::touch` — Touch controllers implementing `InputDevice` (`Pointer`). (L16618)
+  - mod `twine_drivers::touch::axs5106l` — AXS5106L capacitive touch controller (I2C; 1.47" 172 × 320 IPS modules such as the Waveshare ESP32-C6-Touch-LC… (L16777)
+  - mod `twine_drivers::touch::cst816s` — Hynitron CST816S capacitive touch controller (I2C; round 1.28" GC9A01 boards and small watches). (L16820)
+  - mod `twine_drivers::touch::ft5x06` — Focaltech FT5206 / FT5306 / FT5406 capacitive touch controllers (I2C, up to 5 points). (L16859)
+  - mod `twine_drivers::touch::ft6x36` — Focaltech FT6206 / FT6236 / FT6336 (and FT3168) capacitive touch controllers (I2C). (L16881)
+  - mod `twine_drivers::touch::gt911` — Goodix GT911 capacitive touch controller (I2C, 16-bit register addresses). (L16921)
+  - mod `twine_drivers::touch::stmpe811` — ST STMPE811 resistive touch-screen controller with ADC (I2C; STM32F429I-DISC1 and many resistive modules). (L16980)
+  - mod `twine_drivers::touch::stmpe811::reg` — Register addresses. (L17023)
+  - mod `twine_drivers::touch::xpt2046` — XPT2046 (ADS7843-compatible) resistive touch controller on SPI. (L17091)
+  - mod `twine_drivers::testkit` — Recording mock buses for host-side driver tests. (L17146)
+- crate `twine_embassy` — Runs a Twine UI on an embassy executor: `run` updates the UI and then sleeps until the UI's next deadline, a c… (L17249)
+- crate `twine_embedded_graphics` — embedded-graphics adapter for the Twine GUI library, in both directions. (L17355)
+- crate `twine_accel_stm32` — STM32 DMA2D (Chrom-ART) draw acceleration for the Twine renderer. (L17412)
+  - mod `twine_accel_stm32::mock` — `MockRegs`: a recording DMA2D register file for host tests (feature `mock`). (L17527)
+  - mod `twine_accel_stm32::bits` — Register bit fields (RM0090 §9.5; v2 on the STM32H7 only adds bits that are not used here). (L17557)
+- crate `twine_sim` — The desktop simulator of the Twine GUI library: a native window (winit 0.30 + softbuffer 0.4, pure Rust) showi… (L17686)
+  - mod `twine_sim::config` — Simulator configuration: `SimConfig`, `SimInputs`, `Headless`. (L18061)
+  - mod `twine_sim::convert` — Conversion of the emulated panel memory to RGB for the window and PNGs. (L18083)
+  - mod `twine_sim::display` — `SimDisplay`: the simulator's emulated panel, a real `DisplayDriver`. (L18104)
+  - mod `twine_sim::hotkeys` — Simulator hotkeys (F1…F12). (L18113)
+  - mod `twine_sim::input` — Simulated input devices: mouse → `SimPointer`, wheel + middle button → `SimEncoder`, keyboard → `SimKeypad`. (L18148)
+  - mod `twine_sim::panels` — Multi-panel apps: several independent UIs side by side in one window (`SimApp::panels`, `run_panels`). (L18223)
+  - mod `twine_sim::paths` — Output locations of the simulator (`target/twine-sim/…`). (L18265)
+  - mod `twine_sim::script` — `.twinescript`: scripted input for headless runs. (L18281)
+- crate `twine_testing` — Test utilities of the Twine GUI library. (L18358)
+  - mod `twine_testing::alloc` — Allocation counting: `CountingAllocator`, `count_allocs` and `assert_no_alloc_after_seal`. (L18886)
+  - mod `twine_testing::clock` — `MockClock`: a manually advanced `Clock`. (L18930)
+  - mod `twine_testing::convert` — Pixel format conversion for assertions and snapshots: any supported `ColorFormat` buffer → 8-bit RGB. (L18937)
+  - mod `twine_testing::engine_harness` — `EngineHarness`: a bare `Engine` on an in-memory display with a mock clock, for engine tests (feature `engine`… (L18971)
+  - mod `twine_testing::fuzz` — Operation-sequence fuzzing beyond the decoders (R5.S08): interpreters that turn arbitrary bytes into sequences… (L18988)
+  - mod `twine_testing::gallery` — Renderer gallery pages (feature `render`): the reference drawings of the renderer's snapshot tests, also shown… (L19094)
+  - mod `twine_testing::logging` — Test logging: `init_test_logging` and `capture_logs`. (L19177)
+  - mod `twine_testing::memory_display` — `MemoryDisplay`: an in-memory `DisplayDriver` that records every flush, with optional DMA-like latency, plus `… (L19186)
+  - mod `twine_testing::mock_display` — Display mocks for engine tests (feature `engine`): `MockDmaDisplay` (a DMA-like `DisplayDriver` recording an e… (L19197)
+  - mod `twine_testing::mock_input` — Mock input devices: `MockPointer`, `MockKeypad`, `MockEncoder`, `MockButton`. (L19212)
+  - mod `twine_testing::platform` — `MockPlatform`: a `Platform` and `AsyncPlatform` on simulated time. (L19229)
+  - mod `twine_testing::png_io` — Deterministic PNG reading and writing of 8-bit RGB images. (L19236)
+  - mod `twine_testing::render_harness` — `RenderHarness`: an in-memory draw buffer with `RenderCaches` for renderer tests and snapshots (feature `rende… (L19264)
+  - mod `twine_testing::scenes` — Reference scenes for engine tests, benchmarks and examples (feature `engine`), so every buffer mode, rotation… (L19272)
+  - mod `twine_testing::snapshot` — Golden-image snapshots: `assert_rgb_snapshot`, `SnapshotConfig`, `Tolerance`, and the committed hash manifest… (L19316)
+  - mod `twine_testing::theme_coverage` — Theme coverage (design `docs/plan/r7-theming-design.md` §2.9.4): which recipe styles each theme class a UI cre… (L19462)
+  - mod `twine_testing::ui` — `TestUi`: the declarative `Ui` on an in-memory display with a mock clock and mock inputs (feature `ui`). (L19493)
+  - mod `twine_testing::logs` — Log capture for tests: `logs::capture(|| …)` runs a closure and returns the records it logged (on this thread)… (L19502)
+- crate `twine_build` — Build-script helpers for Twine applications: assets are compiled on the host, in `build.rs`, into Rust sources… (L19515)
+  - mod `twine_build::chars` — Character sets for glyph subsetting: which characters a generated font contains. (L19601)
+  - mod `twine_build::font` — Bitmap fonts from TrueType/OpenType files (feature `font`): a deterministic generator that writes a `static` `… (L19634)
+  - mod `twine_build::i18n` — Compile-time translations: read translation files (Fluent `.ftl`, gettext `.po` or TOML), check them, and gene… (L19756)
+  - mod `twine_build::image` — Images from PNG, JPEG, BMP, GIF or QOI files (feature `image`): a deterministic converter that writes a `stati… (L19919)
+- crate `twine_macros` — The procedural macros of Twine. (L20033)
+- crate `twine_core` — Foundations of the Twine GUI library: integer geometry, fixed-point math and trigonometry, transforms, colors… (L20068)
+  - mod `twine_core::alloc_guard` — The allocation guard: detects heap allocation by Twine after start-up ("seal"). (L20858)
+  - mod `twine_core::arena` — Generational arena (`Arena<T>`) with stale-handle detection (`Id<T>`). (L20972)
+  - mod `twine_core::audit` — Configuration evidence: a stable, machine-readable `key=value` dump of everything that bounds or configures Tw… (L20990)
+  - mod `twine_core::color` — Colors: the canonical `Color` (RGB888), opacity (`Opa`), the runtime format tag (`ColorFormat`), typed pixel f… (L21054)
+  - mod `twine_core::crc` — `Crc32`: the CRC-32 checksum (IEEE 802.3) used for display-integrity checks and digests. (L21133)
+  - mod `twine_core::error` — The crate error type. (L21154)
+  - mod `twine_core::fault` — Faults: the vocabulary every Twine crate uses to report a failure that the library recovered from but that may… (L21161)
+  - mod `twine_core::geometry` — Integer geometry: `Point`, `Size`, `Rect` (half-open), `Insets` and `Rotation`. (L21207)
+  - mod `twine_core::limits` — `Limits`: the memory bounds of a Twine application, in one value. (L21222)
+  - mod `twine_core::log` — Logging facade: `trace!`, `debug!`, `info!`, `warn!` and `error!`. (L21249)
+  - mod `twine_core::math` — Deterministic integer math: `Fx` (16.16 fixed point), `Angle` (0.1°), `Scale` (256 = 1.0), `Fraction` (0..=1),… (L21293)
+  - mod `twine_core::partition` — `Partition`: the identity of a partitioned runtime (ADR-001, `docs/design/adr-001-partitioned-runtimes.md`). (L21391)
+  - mod `twine_core::prelude` — The most used `twine-core` types: `use twine_core::prelude::*;`. (L21416)
+  - mod `twine_core::rect_set` — `RectSet`: the fixed-capacity dirty-area set used by the refresh pipeline. (L21440)
+  - mod `twine_core::rng` — Deterministic pseudo-random numbers (`XorShift32`). (L21448)
+  - mod `twine_core::small_vec` — `SmallVec`: an inline-first vector for small `Copy` elements. (L21455)
+  - mod `twine_core::symbol` — `Symbol`: the built-in icon glyphs (LVGL `LV_SYMBOL_*`), with the exact code points of LVGL v9 `src/font/lv_sy… (L21462)
+  - mod `twine_core::time` — Monotonic time in microseconds: `Instant` and `Duration`. (L21479)
+  - mod `twine_core::transform` — 2-D affine transforms in 16.16 fixed point. (L21489)
+  - mod `twine_core::validity` — `Validity`: a value together with how much it can be trusted, and its `ValidityStatus`. (L21496)
 
 ## crate twine
 
@@ -888,6 +888,7 @@ Fields:
 - `theme_mode: Option<twine_style::ThemeMode>` — The mode the (first) display starts in. `None` (default): the theme's first listed mode (`ThemeHook::modes`). Switch it at run time with `ThemeHandle::set_mode` / `Engine::set_theme_mode`.
 - `motion: twine_anim::Motion` — The initial motion preference (`Motion`). Default `Motion::Full`.
 - `rotation: Option<twine_core::Rotation>` — The rotation the screens are designed for. `None` (default) keeps the display's own rotation (the one its driver was created with). `Some(r)` different from it is requested when the UI is built and applied before the first frame is drawn (`Engine::set_rotation`): by the driver in hardware (`MADCTL` panels), else in software — which needs `UiBuilder::reserve_rotation`, or the rotation is refused with `FaultKind::DisplayControl`. The simulator emulates it in hardware; `TestUi` rotates its in-memory panel.
+- `text_gamma: Option<&'static twine_text::TextGamma>` — The text gamma of the (first) display, replacing the fonts' own coverage → opacity curves (`Engine::set_text_gamma`; `twine_text::gamma`). `None` (default): each font's own (the built-in fonts' are tuned for low-density panels). `Some(&gamma::LINEAR)` draws every font as LVGL does, which suits denser panels. A display built with `DisplayBuilder::text_gamma` keeps its own. Change it at run time with `DisplayMut::set_text_gamma`.
 - `fault_hook: Option<twine_engine::FaultHook>` — The function called for every fault (see `Engine::set_fault_hook`). Default `None`.
 Methods of `AppConfig`:
 - `pub fn new() -> Self` — The defaults: `EngineConfig::default`, `Limits::DEFAULT`, no theme, `Motion::Full`, the display's own rotation, no fault hook — exactly what a builder uses when it is given no `AppConfig`.
@@ -900,6 +901,7 @@ Methods of `AppConfig`:
 - `pub fn display_theme(&self) -> Option<twine_engine::DisplayTheme>` — The theme the (first) display is created with: `theme` starting in `theme_mode`. What hosts that create the engine themselves pass to `Engine::add_display` and its siblings (the builders, the simulator and the test harness do). `None` without a theme.
 - `pub fn motion(self, motion: twine_anim::Motion) -> Self` — Sets `motion`.
 - `pub fn rotation(self, rotation: twine_core::Rotation) -> Self` — Sets `rotation` to `Some(rotation)`.
+- `pub fn text_gamma(self, gamma: &'static twine_text::TextGamma) -> Self` — Sets `text_gamma` to `Some(gamma)`: the display's text gamma replacing the fonts' own.
 - `pub fn fault_hook(self, hook: twine_engine::FaultHook) -> Self` — Sets `fault_hook`.
 - `pub fn configure_engine(&self, engine: &mut twine_engine::Engine, display: twine_engine::DisplayId) -> Result<(), twine_engine::EngineError>` — Applies the configuration to an engine and its `display`, for hosts that create the engine themselves (the simulator, test harnesses, custom loops; the builders call it): the fault hook, the motion preference and the rotation (requested only when it differs from the display's). The theme is not applied here: it is attached when the display is created (`display_theme`). `engine` is not applied here — it is what the host creates the engine with (`Engine::new`) — and neither are the `limits` (they need the runtime too: `apply_limits`, which `UiCore::mount_configured` calls).
   Errors: `EngineError::DisplayNotFound` for an unknown display; `EngineError::InvalidConfig` when a rotation is configured for a framebuffer display (see `Engine::set_rotation`).
@@ -988,6 +990,7 @@ Methods of `DisplayBuilder`:
 - `pub fn input(self, d: impl twine_hal::InputDevice + 'static) -> Self` — Adds an input device of this display (any number; see `UiBuilder::input`). Pointer devices are fitted to this display and hit-test only its screens. Keypads and encoders join the `Ui`'s focus group (the engine's default group, created when the first one is added): the engine has one default group, so keypads of several displays share it.
 - `pub fn theme(self, theme: &'static dyn twine_engine::ThemeHook) -> Self` — The theme of this display (each display has its own theme and theme mode): a `static` theme, attached when the display is created and kept for its lifetime (one `static` can serve several displays). A later call replaces it. Without one, the first display of a `UiBuilder` takes `AppConfig::theme`; further displays get none.
 - `pub fn mode(self, mode: twine_style::ThemeMode) -> Self` — The mode this display starts in (default: its theme's first listed mode; a mode the theme does not list starts in that one instead, with a warning). Switch it at run time with `DisplayMut::set_theme_mode`. (Example: see `theme`.)
+- `pub fn text_gamma(self, gamma: &'static twine_text::TextGamma) -> Self` — The text gamma of this display, replacing the fonts' own (`Engine::set_text_gamma`): e.g. `gamma::LINEAR` on a dense panel next to a small one that keeps the fonts' crisp curves. Change it at run time with `DisplayMut::set_text_gamma`.
 - `pub fn reserve_rotation(self) -> Self` — Reserves the memory software rotation of this display needs (see `UiBuilder::reserve_rotation`).
 - `pub fn display_commands<const N: usize>(self, commands: &'static twine_reactive::Channel<twine_engine::DisplayCmd, N>) -> Self` — Applies the `DisplayCmd`s sent to `commands` to **this** display (see `UiBuilder::display_commands`); every display can have its own channel. A later call replaces the channel.
 Implements: Debug
@@ -1004,6 +1007,8 @@ Methods of `DisplayMut`:
 - `pub fn set_sleep(&mut self, sleep: bool)` — Puts the display to sleep (`true`) or wakes it (`false`) at the next update (see `Ui::set_display_sleep`); the other displays keep drawing. Idempotent; never panics.
 - `pub fn asleep(&self) -> bool` — Whether the display is asleep (a sleep request was applied by an update). Never panics.
 - `pub fn set_theme_mode(&mut self, mode: twine_style::ThemeMode)` — Switches the display's theme mode (`Engine::set_theme_mode`; e.g. dark on one display, night on another). The application on the display sees it through `use_theme`. Idempotent; never panics. (Example: see `Ui::display_mut`.)
+- `pub fn set_text_gamma(&mut self, gamma: Option<&'static twine_text::TextGamma>)` — Replaces the fonts' text gamma on the display (`Engine::set_text_gamma`; `None`: the fonts' own), e.g. from a settings screen. Redraws the display; idempotent; never panics.
+- `pub fn text_gamma(&self) -> Option<&'static twine_text::TextGamma>` — The display's text gamma (`None`: the fonts' own). Never panics.
 - `pub fn theme_mode(&self) -> twine_style::ThemeMode` — The display's theme mode. Never panics.
 - `pub fn health(&self) -> Option<twine_engine::DisplayHealth>` — The display's flush health (see `Engine::display_health`). Never panics.
 - `pub fn recover(&mut self)` — Recovers the display after flush failures (see `Ui::recover_display`). Never panics.
@@ -8513,6 +8518,8 @@ Methods of `Engine`:
 - `pub fn default_display(&self) -> Option<twine_engine::DisplayId>` — The first registered display.
 - `pub fn displays(&self) -> impl Iterator<Item = twine_engine::DisplayId> + '_` — Every registered display.
 - `pub fn display_info(&self, display: twine_engine::DisplayId) -> Option<twine_hal::DisplayInfo>` — The description of `display`.
+- `pub fn set_text_gamma(&mut self, display: twine_engine::DisplayId, gamma: Option<&'static twine_text::TextGamma>)` — Replaces the text gamma of the bitmap fonts drawn on `display` (`None`: each font's own, the default): how glyph coverage becomes opacity, see `twine_text::gamma`. A property of the panel more than of the font: `twine_text::gamma::LINEAR` draws every font as LVGL does (no lift of light text on dark), the built-in fonts' own curves (`twine_text::gamma::DEFAULT`) suit low-density panels. Every widget's text on the display uses it (`text_dsc` fills in `TextDsc::gamma`); the display is redrawn when it changes. An unknown display is ignored (warned). O(1) besides the redraw; never panics.
+- `pub fn text_gamma(&self, display: twine_engine::DisplayId) -> Option<&'static twine_text::TextGamma>` — The text gamma replacing the fonts' own on `display` (`None`: the fonts' own, or an unknown display); see `set_text_gamma`.
 - `pub fn driver<D: 'static>(&self, display: twine_engine::DisplayId) -> Option<&D>` — The driver of `display` as `D` (e.g. to read a test display's pixels).
 - `pub fn driver_mut<D: 'static>(&mut self, display: twine_engine::DisplayId) -> Option<&mut D>` — The driver of `display` as `&mut D`.
 - `pub fn create_screen(&mut self, display: twine_engine::DisplayId) -> Result<twine_engine::NodeId, twine_engine::EngineError>` — Creates a new (inactive) screen on `display`: a root `Obj` covering the display.
@@ -8554,7 +8561,7 @@ Methods of `Engine`:
 - `pub fn draw_area(&self, id: twine_engine::NodeId) -> twine_core::Rect` — The area the object's rectangle is drawn in: its coordinates grown by `transform_size`.
 - `pub fn rect_dsc(&self, id: twine_engine::NodeId, part: twine_style::Part, opa: twine_core::Opa) -> twine_engine::RectStyle` — The rectangle style of `part` of `id` (LVGL `lv_obj_init_draw_rect_dsc`): background (color or gradient), border, outline, shadow and radius, every opacity multiplied by `opa` and every color recolored.
 - `pub fn rect_dsc_for_state(&self, id: twine_engine::NodeId, part: twine_style::Part, state: twine_style::State, opa: twine_core::Opa) -> twine_engine::RectStyle` — The rectangle style of `part` of `id` as if the node were in `state`, with running transitions ignored (LVGL sets `obj->state` and `skip_trans` around `lv_obj_init_draw_rect_dsc`): for widgets that draw several items of one part in their own states, like the buttons of a button matrix. Opacity and recolor are applied as in `rect_dsc` (ancestors in their current state).
-- `pub fn text_dsc(&self, id: twine_engine::NodeId, part: twine_style::Part, opa: twine_core::Opa) -> twine_text::TextDsc` — The text style of `part` of `id` (LVGL `lv_obj_init_draw_label_dsc`): `Text*` properties (inherited ones included), opacity multiplied by `opa`, color recolored, and `TextDsc::background` set to the surface the text is drawn over (see `text_background`), so the run gets the text gamma of its real polarity.
+- `pub fn text_dsc(&self, id: twine_engine::NodeId, part: twine_style::Part, opa: twine_core::Opa) -> twine_text::TextDsc` — The text style of `part` of `id` (LVGL `lv_obj_init_draw_label_dsc`): `Text*` properties (inherited ones included), opacity multiplied by `opa`, color recolored, and `TextDsc::background` set to the surface the text is drawn over (see `text_background`), so the run gets the text gamma of its real polarity; `TextDsc::gamma` is the node's display's text gamma (`set_text_gamma`).
 - `pub fn text_background(&self, id: twine_engine::NodeId, part: twine_style::Part) -> Option<twine_core::Color>` — The color of the surface the text of `part` of `id` is drawn over: the background of `part` itself when it is opaque (a button-matrix item, a selected option, a block cursor), else the `Main` background of the nearest node — `id` itself first, then its ancestors — whose background is opaque (`BgOpacity` ≥ 253, LVGL's `LV_OPA_MAX`), with `id`'s recolor applied like the text's. `None` when nothing behind the text is opaque (the text color alone then decides its polarity).
 - `pub fn text_dsc_for_state(&self, id: twine_engine::NodeId, part: twine_style::Part, state: twine_style::State, opa: twine_core::Opa) -> twine_text::TextDsc` — The text style of `part` of `id` as if the node were in `state`, with transitions ignored (see `rect_dsc_for_state`); the `background` is `part`'s or the node's `Main` background in `state` when opaque, else the nearest opaque ancestor's (see `text_background`).
 - `pub fn image_dsc(&self, id: twine_engine::NodeId, part: twine_style::Part, opa: twine_core::Opa) -> twine_render::ImageDsc<'static>` — The image style of `part` of `id` (LVGL `lv_obj_init_draw_image_dsc`): `ImageOpa` multiplied by `opa`, `ImageRecolor` combined with the style recolor.
@@ -11656,7 +11663,7 @@ Fields:
 - `kern: twine_text::Kern` — Kerning.
 - `kern_scale: u16` — Kerning scale in 12.4 fixed point (16 = 1.0).
 - `format: twine_text::BitmapFormat` — Bitmap storage format.
-- `gamma: &'static twine_text::TextGamma` — Coverage → opacity curves, one per `Polarity` (see `gamma`): `gamma::DEFAULT` for generated fonts, `gamma::LINEAR` for LVGL's mapping.
+- `gamma: &'static twine_text::TextGamma` — Coverage → opacity curves, one per `Polarity` (see `gamma`): `gamma::DEFAULT` for generated fonts, `gamma::LINEAR` for LVGL's mapping. A run can replace them (`CoverageMap::gamma`: the display's text gamma).
 Methods of `BitmapFont`:
 - `pub fn glyph_id(&self, cp: char) -> Option<u16>` — The glyph id of `cp` (`None` when missing).
 - `pub fn kern(&self, left: u16, right: u16) -> i32` — Raw kerning value between two glyph ids in 1/16 px, `kern_scale` applied (`(value × kern_scale) >> 4`, arithmetic shift).
@@ -11759,12 +11766,12 @@ Methods of `GlyphCache`:
 - `pub fn clear(&mut self)` — Removes every entry (statistics are kept).
 - `pub fn take_glyph_scratch(&mut self, len: usize) -> Option<Vec<u8>>` — Takes the glyph scratch buffer out, sized to exactly `len` bytes (grown once if needed). `None` (with a warning) above `MAX_GLYPH_BYTES`. Return it with `put_glyph_scratch`.
 - `pub fn put_glyph_scratch(&mut self, buf: Vec<u8>)` — Returns the buffer taken with `take_glyph_scratch`.
-- `pub fn first_warning(&mut self, key: twine_text::GlyphKey) -> bool` — Records `key` (e.g. `(provider key, code point)`) in the "already warned" set; `true` if it was not there yet, i.e. the caller should log. Used to warn once per missing glyph or corrupt font. After `WARN_CAP` distinct keys the set is full: one last "further warnings suppressed" message is logged and every later call returns `false`.
+- `pub fn first_warning(&mut self, key: twine_text::GlyphKey) -> bool` — Records `key` (e.g. `(provider key, 0, code point)`) in the "already warned" set; `true` if it was not there yet, i.e. the caller should log. Used to warn once per missing glyph or corrupt font. After `WARN_CAP` distinct keys the set is full: one last "further warnings suppressed" message is logged and every later call returns `false`.
 Implements: Debug, Default
 
 #### type twine_text::GlyphKey
-`pub type GlyphKey = (usize, u32)`
-Cache key: `(provider address, glyph id)`.
+`pub type GlyphKey = (usize, usize, u32)`
+Cache key: `(provider address, coverage-map key, glyph id)`. The middle field tells apart glyphs decoded under a replacing text gamma (`CoverageMap::override_of`): `0` for the provider's own tables, else the replacing table's address. Warnings use `0`.
 
 #### const twine_text::MAX_ENTRIES
 `pub const MAX_ENTRIES: usize = 256`
@@ -11841,6 +11848,7 @@ Fields:
 - `font: &'static twine_text::Font` — The font (its fallback chain is used for missing characters).
 - `color: twine_core::Color` — Text color.
 - `background: Option<twine_core::Color>` — The color the text is drawn over, when the caller knows it (default `None`): with `color` it decides the run's `Polarity`, which picks the font's text gamma curve (`Polarity::of`). Without it the text color alone decides (light text is taken to be on a dark background). Widgets drawing through the engine get it filled in: `twine_engine::DrawCx::text_dsc` sets the nearest opaque background behind the text. Selected characters use `sel_color` over `sel_bg_color`.
+- `gamma: Option<&'static twine_text::TextGamma>` — The text gamma replacing the font's own for this text (default `None`: the font's, see `gamma`). Widgets drawing through the engine get the display's (`twine_engine::Engine::set_text_gamma`), e.g. `gamma::LINEAR` to draw every font as LVGL does. Applies to bitmap fonts; run-time TrueType glyphs have no gamma table.
 - `opa: twine_core::Opa` — Opacity of everything drawn.
 - `align: twine_text::TextAlign` — Line alignment inside the area.
 - `decor: twine_text::TextDecor` — Underline / strikethrough.
@@ -11906,8 +11914,8 @@ Implements: Clone, Copy, Debug, Default, PartialEq, Eq, Hash
 Source of glyph metrics and coverage bitmaps: a `BitmapFont`, a runtime TrueType font (feature `ttf`) or an `ImageFontProvider`.
 Items:
 - `fn glyph_info(&self, cp: char, next: Option<char>) -> Option<twine_text::GlyphInfo>` — Metrics of `cp`, with kerning against `next` included in `adv_w` (only when `next` is also provided by this provider). `None` when the character is missing: the caller then tries the font's fallback and finally draws a replacement box.
-- `fn render_a8(&self, info: &twine_text::GlyphInfo, polarity: twine_text::Polarity, out: &mut [u8], cache: &mut twine_text::GlyphCache) -> bool` — Writes the glyph's A8 opacity (`box_w × box_h`, stride `box_w`) into `out`: its coverage mapped through the provider's text gamma for `polarity` (see `gamma`; providers without gamma tables, such as 8-bit run-time TrueType glyphs, ignore it).
-- `fn render_rows(&self, info: &twine_text::GlyphInfo, polarity: twine_text::Polarity, cache: &mut twine_text::GlyphCache, sink: &mut dyn FnMut(usize, &[u8])) -> bool (provided)` — Streams the glyph's A8 opacity row by row to `sink(row_index, row)` (each row `box_w` bytes; `polarity` as for `render_a8`). Returns `false` if the glyph could not be decoded.
+- `fn render_a8(&self, info: &twine_text::GlyphInfo, map: twine_text::CoverageMap, out: &mut [u8], cache: &mut twine_text::GlyphCache) -> bool` — Writes the glyph's A8 opacity (`box_w × box_h`, stride `box_w`) into `out`: its coverage mapped through the provider's text gamma for the run's polarity, or through the table replacing it (`map`, see `CoverageMap` and `gamma`; providers without gamma tables, such as 8-bit run-time TrueType glyphs, ignore it).
+- `fn render_rows(&self, info: &twine_text::GlyphInfo, map: twine_text::CoverageMap, cache: &mut twine_text::GlyphCache, sink: &mut dyn FnMut(usize, &[u8])) -> bool (provided)` — Streams the glyph's A8 opacity row by row to `sink(row_index, row)` (each row `box_w` bytes; `map` as for `render_a8`). Returns `false` if the glyph could not be decoded.
 - `fn glyph_image(&self, cp: char, next: Option<char>) -> Option<&'static twine_render::ImagePixels<'static>> (provided)` — The image of an image glyph (one whose `GlyphInfo::bpp` is 0), drawn instead of A8 coverage. `cp` and `next` are the arguments `glyph_info` was called with. The default (coverage-only providers) returns `None`.
 Implemented by: twine_text::BitmapFont, twine_text::ImageFontProvider, twine_text::TtfProvider
 
@@ -11931,6 +11939,18 @@ Whether a character missing from every font is drawn as a replacement box (LVGL 
 `pub fn provider_key(p: &dyn twine_text::GlyphProvider) -> usize`
 Glyph-cache key of a provider: its address.
 
+#### struct twine_text::CoverageMap
+How a text run's glyph coverage becomes opacity: the run's `Polarity` and the `TextGamma` that replaces the font's own, if any. `draw_text` builds one per run from `TextDsc` and hands it to the glyph provider (`GlyphProvider::render_a8`); providers without gamma tables ignore it.
+Fields:
+- `polarity: twine_text::Polarity` — The run's contrast direction (picks one curve of the table).
+- `gamma: Option<&'static twine_text::TextGamma>` — The table replacing the font's own; `None`: the font's.
+Methods of `CoverageMap`:
+- `pub const fn new(polarity: twine_text::Polarity) -> Self` — The font's own tables for `polarity`.
+- `pub const fn with_gamma(self, gamma: Option<&'static twine_text::TextGamma>) -> Self` — This map with `gamma` replacing the font's tables (`None`: the font's own).
+- `pub fn ramp<'a>(&self, font: &'a twine_text::TextGamma) -> &'a twine_text::GammaRamp` — The curve to apply to a font whose own tables are `font`. Never panics; O(1).
+- `pub fn override_of(&self, font: &twine_text::TextGamma) -> Option<&'static twine_text::TextGamma>` — The replacing table when it is not `font` itself (`None` otherwise): what decoded glyphs are cached under besides the polarity. Compared by address, so two equal tables in different statics are cached separately (correct, merely twice).
+Implements: Clone, Copy, Debug, Default, PartialEq, Eq, From<twine_text::Polarity>
+
 #### struct twine_text::GammaRamp
 Coverage → opacity tables of one curve, for 2 and 4 bpp glyphs (1 bpp maps to `0, 255`, 8 bpp is used as stored).
 Methods of `GammaRamp`:
@@ -11947,7 +11967,7 @@ Variants:
 - `LightOnDark` — Text lighter than its background (dark themes, text on filled buttons).
 Methods of `Polarity`:
 - `pub const fn of(text: twine_core::Color, background: Option<twine_core::Color>) -> twine_text::Polarity` — The polarity of `text` drawn over `background`: `LightOnDark` when the text is brighter (`Color::luminance`). Without a known background the text alone decides: light text (luminance ≥ 128) is taken to be drawn on a dark background.
-Implements: Clone, Copy, Debug, Default, PartialEq, Eq, Hash
+Implements: Clone, Copy, Debug, Default, PartialEq, Eq, Hash, From<twine_text::Polarity>
 
 #### struct twine_text::TextGamma
 The coverage → opacity curves of a bitmap font, one per `Polarity` (see the module docs).
@@ -12256,12 +12276,12 @@ strengths are tuned per font when the font is generated (`twine-build`'s `Font::
 the built-in fonts use `DEFAULT` (γ = 1.2 dark-on-light, 1.8 light-on-dark), and
 `LINEAR` reproduces LVGL's mapping exactly.
 
-| Depth | Mapping |
-|-------|---------|
-| 1 bpp | `0, 255` (no levels in between) |
-| 2 bpp | `GammaRamp::table2` |
-| 4 bpp | `GammaRamp::table4` |
-| 8 bpp | identity (8-bit coverage is used as stored; run-time TrueType glyphs likewise) |
+A run can also replace the font's tables: `TextDsc::gamma` (filled
+in from the display's text gamma by the engine, `twine_engine::Engine::set_text_gamma`)
+travels to the glyph decoder in a `CoverageMap`. That suits a panel whose density or
+contrast calls for other curves than the fonts were generated with, e.g. `LINEAR` for
+LVGL's look on every font.
+
 (… see the full docs in rustdoc)
 
 #### static twine_text::gamma::LINEAR
@@ -12276,6 +12296,7 @@ Re-exports in `twine_text::gamma`:
 - `Polarity` — same as `twine_text::Polarity`
 - `GammaRamp` — same as `twine_text::GammaRamp`
 - `TextGamma` — same as `twine_text::TextGamma`
+- `CoverageMap` — same as `twine_text::CoverageMap`
 
 ## crate twine_image
 
@@ -13351,6 +13372,12 @@ feature per font (`default = ["montserrat-14"]`) plus bundles of them (see Bundl
   kept in the glyph cache). Kerning from the font's `GPOS` table is included.
 - **Montserrat Medium 14 px subpixel** (`montserrat-14-subpx`): horizontal RGB subpixel
   glyphs for LCD panels with a known subpixel order.
+- **Montserrat Medium smooth** 8–48 px (`montserrat-<size>-smooth`, statics
+  `MONTSERRAT_<size>_SMOOTH`): the same sizes and characters **unhinted with linear
+  coverage** (`twine_text::gamma::LINEAR`), as LVGL's `lv_font_conv` renders them — softer,
+  evenly weighted text for denser panels (e.g. 4.3" 800 × 480), where the hinted fonts'
+  one-pixel stems and light-on-dark lift read thin. Pick per display; a display's text gamma
+  (`twine_engine::Engine::set_text_gamma`) can also make the hinted fonts draw linearly.
 - **unscii** 8 and 16 px, 1 bpp, ASCII: pixel-exact bitmap fonts.
 - **`DejaVu` Sans 16 px** (`dejavu-16-persian-hebrew`), 4 bpp, compressed: ASCII, Hebrew,
   Arabic and Persian letters plus the Arabic presentation forms that
@@ -13364,7 +13391,8 @@ The files in `src/fonts/` are generated by `cargo xtask fonts` from
 `assets/fonts/SOURCES.md`); never edit them by hand. They are grid-fitted with full
 hinting (`twine_build::font::Hinting::Full`: one-pixel stems, whole-pixel advances) and
 carry the default text gamma (`twine_text::gamma::DEFAULT`: γ 1.2 dark-on-light, 1.8
-light-on-dark), so small text stays crisp on low-DPI panels. Applications that need other sizes,
+light-on-dark), so small text stays crisp on low-DPI panels; the `-smooth` fonts are
+generated unhinted (`Hinting::None`) with `gamma::LINEAR` instead. Applications that need other sizes,
 scripts or a subset of characters generate their own fonts with the same generator: the
 `twine-build` crate in `build.rs` (`twine_build::font::Font`, e.g. subset to the characters
 of the application's translations), `twine::include_font!`, or the `twine font` command.
@@ -13382,6 +13410,9 @@ features stay for precise flash budgets; bundles only add fonts and combine free
 | `fonts-latin-small` | Montserrat 12, 14, 16 | ~58 K |
 | `fonts-latin-medium` | `fonts-latin-small` + Montserrat 18, 20, 22, 24 | ~147 K |
 | `fonts-latin-all` | every Montserrat size, `montserrat-14-subpx`, `montserrat-16-latin-ext` | ~666 K |
+| `fonts-latin-small-smooth` | Montserrat 12, 14, 16, unhinted | ~59 K |
+| `fonts-latin-medium-smooth` | `fonts-latin-small-smooth` + Montserrat 18, 20, 22, 24, unhinted | ~150 K |
+| `fonts-latin-all-smooth` | every Montserrat size, unhinted | ~628 K |
 | `fonts-mono` | unscii 8, 16 | ~4 K |
 | `fonts-rtl` | `dejavu-16-persian-hebrew` | ~38 K |
 | `fonts-cjk` | Source Han Sans SC 14, 16 | ~289 K |
@@ -13421,6 +13452,27 @@ Static data per font (bitmaps, glyph descriptors, cmaps, kerning; descriptor siz
 | `dejavu-16-persian-hebrew` | 625 | 19 | 37983 |
 | `source-han-sans-sc-14-cjk` | 1630 | 22 | 139833 |
 | `source-han-sans-sc-16-cjk` | 1630 | 24 | 164904 |
+| `montserrat-8-smooth` | 157 | 11 | 13793 |
+| `montserrat-10-smooth` | 157 | 13 | 15494 |
+| `montserrat-12-smooth` | 157 | 16 | 17385 |
+| `montserrat-14-smooth` | 157 | 18 | 19589 |
+| `montserrat-16-smooth` | 157 | 21 | 21879 |
+| `montserrat-18-smooth` | 157 | 23 | 20608 |
+| `montserrat-20-smooth` | 157 | 26 | 21973 |
+| `montserrat-22-smooth` | 157 | 28 | 23754 |
+| `montserrat-24-smooth` | 157 | 31 | 24994 |
+| `montserrat-26-smooth` | 157 | 33 | 27208 |
+| `montserrat-28-smooth` | 157 | 36 | 28925 |
+| `montserrat-30-smooth` | 157 | 38 | 30705 |
+| `montserrat-32-smooth` | 157 | 40 | 32123 |
+| `montserrat-34-smooth` | 157 | 42 | 34828 |
+| `montserrat-36-smooth` | 157 | 45 | 36618 |
+| `montserrat-38-smooth` | 157 | 47 | 38479 |
+| `montserrat-40-smooth` | 157 | 50 | 39963 |
+| `montserrat-42-smooth` | 157 | 52 | 42331 |
+| `montserrat-44-smooth` | 157 | 55 | 44058 |
+| `montserrat-46-smooth` | 157 | 57 | 46121 |
+| `montserrat-48-smooth` | 157 | 60 | 46985 |
 
 **Example**
 
@@ -13519,6 +13571,90 @@ Montserrat-Medium.ttf at 46 px, 4 bpp, 157 glyphs (line height 57 px).
 
 #### static twine_assets::fonts::MONTSERRAT_48
 `pub static MONTSERRAT_48: twine_text::Font`
+Montserrat-Medium.ttf at 48 px, 4 bpp, 157 glyphs (line height 60 px).
+
+#### static twine_assets::fonts::MONTSERRAT_8_SMOOTH
+`pub static MONTSERRAT_8_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 8 px, 4 bpp, 157 glyphs (line height 11 px).
+
+#### static twine_assets::fonts::MONTSERRAT_10_SMOOTH
+`pub static MONTSERRAT_10_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 10 px, 4 bpp, 157 glyphs (line height 13 px).
+
+#### static twine_assets::fonts::MONTSERRAT_12_SMOOTH
+`pub static MONTSERRAT_12_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 12 px, 4 bpp, 157 glyphs (line height 16 px).
+
+#### static twine_assets::fonts::MONTSERRAT_14_SMOOTH
+`pub static MONTSERRAT_14_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 14 px, 4 bpp, 157 glyphs (line height 18 px).
+
+#### static twine_assets::fonts::MONTSERRAT_16_SMOOTH
+`pub static MONTSERRAT_16_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 16 px, 4 bpp, 157 glyphs (line height 21 px).
+
+#### static twine_assets::fonts::MONTSERRAT_18_SMOOTH
+`pub static MONTSERRAT_18_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 18 px, 4 bpp, 157 glyphs (line height 23 px).
+
+#### static twine_assets::fonts::MONTSERRAT_20_SMOOTH
+`pub static MONTSERRAT_20_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 20 px, 4 bpp, 157 glyphs (line height 26 px).
+
+#### static twine_assets::fonts::MONTSERRAT_22_SMOOTH
+`pub static MONTSERRAT_22_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 22 px, 4 bpp, 157 glyphs (line height 28 px).
+
+#### static twine_assets::fonts::MONTSERRAT_24_SMOOTH
+`pub static MONTSERRAT_24_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 24 px, 4 bpp, 157 glyphs (line height 31 px).
+
+#### static twine_assets::fonts::MONTSERRAT_26_SMOOTH
+`pub static MONTSERRAT_26_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 26 px, 4 bpp, 157 glyphs (line height 33 px).
+
+#### static twine_assets::fonts::MONTSERRAT_28_SMOOTH
+`pub static MONTSERRAT_28_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 28 px, 4 bpp, 157 glyphs (line height 36 px).
+
+#### static twine_assets::fonts::MONTSERRAT_30_SMOOTH
+`pub static MONTSERRAT_30_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 30 px, 4 bpp, 157 glyphs (line height 38 px).
+
+#### static twine_assets::fonts::MONTSERRAT_32_SMOOTH
+`pub static MONTSERRAT_32_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 32 px, 4 bpp, 157 glyphs (line height 40 px).
+
+#### static twine_assets::fonts::MONTSERRAT_34_SMOOTH
+`pub static MONTSERRAT_34_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 34 px, 4 bpp, 157 glyphs (line height 42 px).
+
+#### static twine_assets::fonts::MONTSERRAT_36_SMOOTH
+`pub static MONTSERRAT_36_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 36 px, 4 bpp, 157 glyphs (line height 45 px).
+
+#### static twine_assets::fonts::MONTSERRAT_38_SMOOTH
+`pub static MONTSERRAT_38_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 38 px, 4 bpp, 157 glyphs (line height 47 px).
+
+#### static twine_assets::fonts::MONTSERRAT_40_SMOOTH
+`pub static MONTSERRAT_40_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 40 px, 4 bpp, 157 glyphs (line height 50 px).
+
+#### static twine_assets::fonts::MONTSERRAT_42_SMOOTH
+`pub static MONTSERRAT_42_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 42 px, 4 bpp, 157 glyphs (line height 52 px).
+
+#### static twine_assets::fonts::MONTSERRAT_44_SMOOTH
+`pub static MONTSERRAT_44_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 44 px, 4 bpp, 157 glyphs (line height 55 px).
+
+#### static twine_assets::fonts::MONTSERRAT_46_SMOOTH
+`pub static MONTSERRAT_46_SMOOTH: twine_text::Font`
+Montserrat-Medium.ttf at 46 px, 4 bpp, 157 glyphs (line height 57 px).
+
+#### static twine_assets::fonts::MONTSERRAT_48_SMOOTH
+`pub static MONTSERRAT_48_SMOOTH: twine_text::Font`
 Montserrat-Medium.ttf at 48 px, 4 bpp, 157 glyphs (line height 60 px).
 
 #### static twine_assets::fonts::MONTSERRAT_14_SUBPX

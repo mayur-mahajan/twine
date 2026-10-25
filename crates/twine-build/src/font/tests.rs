@@ -80,10 +80,12 @@ fn generated_font_matches_fontdue_coverage() {
                 );
                 let mut out = vec![0u8; cov.data.len()];
                 for _pass in 0..2 {
-                    assert!(
-                        font.provider
-                            .render_a8(&info, Polarity::DarkOnLight, &mut out, &mut cache)
-                    );
+                    assert!(font.provider.render_a8(
+                        &info,
+                        Polarity::DarkOnLight.into(),
+                        &mut out,
+                        &mut cache
+                    ));
                     let expected: Vec<u8> = cov.data.iter().map(|&v| quantize(v, Bpp::Four) * 17).collect();
                     assert_eq!(out, expected, "{c:?} size {size} {format:?}");
                 }
@@ -106,10 +108,12 @@ fn every_depth_generates_a_loadable_font() {
         let (_, info) = font.glyph('W', None).unwrap();
         assert_eq!(info.bpp, Some(bpp));
         let mut out = vec![0u8; usize::from(info.box_w) * usize::from(info.box_h)];
-        assert!(
-            font.provider
-                .render_a8(&info, Polarity::DarkOnLight, &mut out, &mut GlyphCache::new(0))
-        );
+        assert!(font.provider.render_a8(
+            &info,
+            Polarity::DarkOnLight.into(),
+            &mut out,
+            &mut GlyphCache::new(0)
+        ));
         let max = out.iter().copied().max().unwrap_or(0);
         assert!(
             max > 200,
@@ -423,10 +427,12 @@ fn stem_row(g: &GeneratedFont, c: char) -> Vec<u8> {
     let (_, info) = font.glyph(c, None).unwrap();
     let (w, h) = (usize::from(info.box_w), usize::from(info.box_h));
     let mut out = vec![0u8; w * h];
-    assert!(
-        font.provider
-            .render_a8(&info, Polarity::DarkOnLight, &mut out, &mut GlyphCache::new(0))
-    );
+    assert!(font.provider.render_a8(
+        &info,
+        Polarity::DarkOnLight.into(),
+        &mut out,
+        &mut GlyphCache::new(0)
+    ));
     let row = h - 1 - h / 4;
     out[row * w..(row + 1) * w].to_vec()
 }

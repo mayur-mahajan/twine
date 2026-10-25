@@ -179,6 +179,7 @@ impl PanelMap {
 
     /// Sets the range of the raw axes (`None`: native pixels); raw points are scaled from it to
     /// the native size before the transform. A zero dimension counts as unknown.
+    #[cfg(feature = "gt911")]
     pub fn set_panel_size(&mut self, size: Option<(u16, u16)>) {
         self.panel_size = size.filter(|&(w, h)| w > 0 && h > 0);
     }

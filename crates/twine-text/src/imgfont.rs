@@ -4,7 +4,7 @@ use twine_render::ImagePixels;
 
 use crate::cache::GlyphCache;
 use crate::font::{Font, GlyphInfo, GlyphProvider, Subpx};
-use crate::gamma::Polarity;
+use crate::gamma::CoverageMap;
 
 /// Looks up the image of `cp` (with the following character `next`, for sequences such as
 /// emoji with variation selectors) and its vertical offset: how far the image's bottom edge
@@ -88,7 +88,7 @@ impl GlyphProvider for ImageFontProvider {
     fn render_a8(
         &self,
         _info: &GlyphInfo,
-        _polarity: Polarity,
+        _map: CoverageMap,
         _out: &mut [u8],
         _cache: &mut GlyphCache,
     ) -> bool {
@@ -98,7 +98,7 @@ impl GlyphProvider for ImageFontProvider {
     fn render_rows(
         &self,
         _info: &GlyphInfo,
-        _polarity: Polarity,
+        _map: CoverageMap,
         _cache: &mut GlyphCache,
         _sink: &mut dyn FnMut(usize, &[u8]),
     ) -> bool {

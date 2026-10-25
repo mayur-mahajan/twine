@@ -430,7 +430,8 @@ impl Engine {
     /// properties (inherited ones included), opacity multiplied by `opa`, color recolored, and
     /// [`TextDsc::background`] set to the surface the text is drawn over (see
     /// [`text_background`](Self::text_background)), so the run gets the text gamma of its
-    /// real [polarity](twine_text::Polarity).
+    /// real [polarity](twine_text::Polarity); [`TextDsc::gamma`] is the node's display's text
+    /// gamma ([`set_text_gamma`](Self::set_text_gamma)).
     ///
     /// ```
     /// use twine_core::{Color, Opa};
@@ -570,6 +571,8 @@ impl Engine {
         d.color = recolor_by(rc, props.color(part, PropId::TextColor));
         if background {
             d.background = self.surface_behind(props, part).map(|c| recolor_by(rc, c));
+            // Drawing only: the gamma changes no metrics.
+            d.gamma = self.node_text_gamma(props.id);
         }
         d.opa = props.opa(part, PropId::TextOpacity).mul(opa);
         d.align = props

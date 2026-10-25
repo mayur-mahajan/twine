@@ -103,6 +103,13 @@ pub struct AppConfig {
     /// or the rotation is refused with [`FaultKind::DisplayControl`](twine_core::fault::FaultKind::DisplayControl).
     /// The simulator emulates it in hardware; `TestUi` rotates its in-memory panel.
     pub rotation: Option<Rotation>,
+    /// The text gamma of the (first) display, replacing the fonts' own coverage → opacity
+    /// curves ([`Engine::set_text_gamma`]; `twine_text::gamma`). `None` (default): each font's
+    /// own (the built-in fonts' are tuned for low-density panels). `Some(&gamma::LINEAR)` draws
+    /// every font as LVGL does, which suits denser panels. A display built with
+    /// [`DisplayBuilder::text_gamma`](crate::DisplayBuilder::text_gamma) keeps its own. Change
+    /// it at run time with [`DisplayMut::set_text_gamma`](crate::DisplayMut::set_text_gamma).
+    pub text_gamma: Option<&'static twine_text::TextGamma>,
     /// The function called for every fault (see [`Engine::set_fault_hook`]). Default `None`.
     pub fault_hook: Option<FaultHook>,
 }
@@ -117,6 +124,7 @@ impl core::fmt::Debug for AppConfig {
             .field("theme_mode", &self.theme_mode)
             .field("motion", &self.motion)
             .field("rotation", &self.rotation)
+            .field("text_gamma", &self.text_gamma.map(gamma_name))
             .field("fault_hook", &self.fault_hook.is_some())
             .finish()
     }
@@ -150,6 +158,7 @@ impl AppConfig {
             theme_mode: None,
             motion: Motion::Full,
             rotation: None,
+            text_gamma: None,
             fault_hook: None,
         }
     }
@@ -286,6 +295,31 @@ impl AppConfig {
     /// ```
     pub fn rotation(mut self, rotation: Rotation) -> Self {
         self.rotation = Some(rotation);
+        self
+    }
+
+    /// Sets [`text_gamma`](Self::text_gamma) to `Some(gamma)`: the display's text gamma
+    /// replacing the fonts' own.
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::{MemoryDisplay, MockClock};
+    /// use twine_text::gamma;
+    /// use twine_view::prelude::*;
+    ///
+    /// let cfg = AppConfig::new().text_gamma(&gamma::LINEAR); // LVGL's rendering
+    /// let ui = Ui::builder(MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)))
+    ///     .runtime(Runtime::take().unwrap())
+    ///     .clock(MockClock::new())
+    ///     .buffers(BufferMode::alloc(BufferSpec::default()))
+    ///     .app_config(cfg)
+    ///     .build(|_| label("hi"));
+    /// let g = ui.engine().text_gamma(ui.display());
+    /// assert!(g.is_some_and(|g| core::ptr::eq(g, core::ptr::from_ref(&gamma::LINEAR))));
+    /// ```
+    pub fn text_gamma(mut self, gamma: &'static twine_text::TextGamma) -> Self {
+        self.text_gamma = Some(gamma);
         self
     }
 
@@ -455,6 +489,10 @@ impl AppConfig {
                 engine.set_rotation(display, r)?;
             }
         }
+        // A display given its own (`DisplayBuilder::text_gamma`) keeps it.
+        if self.text_gamma.is_some() && engine.text_gamma(display).is_none() {
+            engine.set_text_gamma(display, self.text_gamma);
+        }
         Ok(())
     }
 }
@@ -474,6 +512,18 @@ impl Audit for AppConfig {
 }
 
 /// The entries of an [`AppConfig`]'s audit report before its digest.
+/// The name of a text gamma for the audit report and `Debug`: the two shared tables by name,
+/// any other as `custom`.
+fn gamma_name(g: &'static twine_text::TextGamma) -> &'static str {
+    if core::ptr::eq(g, core::ptr::from_ref(&twine_text::gamma::LINEAR)) {
+        "linear"
+    } else if core::ptr::eq(g, core::ptr::from_ref(&twine_text::gamma::DEFAULT)) {
+        "default"
+    } else {
+        "custom"
+    }
+}
+
 struct Entries<'a>(&'a AppConfig);
 
 impl Audit for Entries<'_> {
@@ -534,6 +584,11 @@ impl Audit for Entries<'_> {
             "rotation_deg",
             this.rotation
                 .map_or(AuditValue::Absent, |r| AuditValue::Uint(u64::from(r.degrees()))),
+        );
+        out.entry(
+            "view",
+            "text_gamma",
+            AuditValue::Text(this.text_gamma.map_or("fonts", gamma_name)),
         );
         out.entry("view", "fault_hook", AuditValue::Bool(this.fault_hook.is_some()));
         out.entry("theme", "set", AuditValue::Bool(this.theme.is_some()));

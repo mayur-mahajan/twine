@@ -16,6 +16,12 @@
 //! the built-in fonts use [`DEFAULT`] (γ = 1.2 dark-on-light, 1.8 light-on-dark), and
 //! [`LINEAR`] reproduces LVGL's mapping exactly.
 //!
+//! A run can also replace the font's tables: [`TextDsc::gamma`](crate::TextDsc::gamma) (filled
+//! in from the display's text gamma by the engine, `twine_engine::Engine::set_text_gamma`)
+//! travels to the glyph decoder in a [`CoverageMap`]. That suits a panel whose density or
+//! contrast calls for other curves than the fonts were generated with, e.g. [`LINEAR`] for
+//! LVGL's look on every font.
+//!
 //! | Depth | Mapping |
 //! |-------|---------|
 //! | 1 bpp | `0, 255` (no levels in between) |
@@ -172,6 +178,70 @@ pub struct TextGamma {
     pub dark_on_light: GammaRamp,
     /// The curve for text lighter than its background.
     pub light_on_dark: GammaRamp,
+}
+
+/// How a text run's glyph coverage becomes opacity: the run's [`Polarity`] and the
+/// [`TextGamma`] that replaces the font's own, if any. [`draw_text`](crate::draw_text) builds
+/// one per run from [`TextDsc`](crate::TextDsc) and hands it to the glyph provider
+/// ([`GlyphProvider::render_a8`](crate::GlyphProvider::render_a8)); providers without gamma
+/// tables ignore it.
+///
+/// ```
+/// use twine_text::{CoverageMap, Polarity, gamma};
+///
+/// let own = CoverageMap::new(Polarity::LightOnDark);
+/// assert_eq!(own.ramp(&gamma::DEFAULT), gamma::DEFAULT.ramp(Polarity::LightOnDark));
+/// // A display configured for LVGL's mapping draws a DEFAULT-gamma font linearly.
+/// let linear = own.with_gamma(Some(&gamma::LINEAR));
+/// assert_eq!(linear.ramp(&gamma::DEFAULT).table4()[8], 8 * 17);
+/// assert!(linear.override_of(&gamma::DEFAULT).is_some());
+/// assert!(linear.override_of(&gamma::LINEAR).is_none()); // the font's own: no override
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CoverageMap {
+    /// The run's contrast direction (picks one curve of the table).
+    pub polarity: Polarity,
+    /// The table replacing the font's own; `None`: the font's.
+    pub gamma: Option<&'static TextGamma>,
+}
+
+impl CoverageMap {
+    /// The font's own tables for `polarity`.
+    #[must_use]
+    pub const fn new(polarity: Polarity) -> Self {
+        Self {
+            polarity,
+            gamma: None,
+        }
+    }
+
+    /// This map with `gamma` replacing the font's tables (`None`: the font's own).
+    #[must_use]
+    pub const fn with_gamma(self, gamma: Option<&'static TextGamma>) -> Self {
+        Self { gamma, ..self }
+    }
+
+    /// The curve to apply to a font whose own tables are `font`. Never panics; O(1).
+    #[inline]
+    #[must_use]
+    pub fn ramp<'a>(&self, font: &'a TextGamma) -> &'a GammaRamp {
+        self.gamma.unwrap_or(font).ramp(self.polarity)
+    }
+
+    /// The replacing table when it is not `font` itself (`None` otherwise): what decoded
+    /// glyphs are cached under besides the polarity. Compared by address, so two equal tables
+    /// in different statics are cached separately (correct, merely twice).
+    #[inline]
+    #[must_use]
+    pub fn override_of(&self, font: &TextGamma) -> Option<&'static TextGamma> {
+        self.gamma.filter(|g| !core::ptr::eq(*g, font))
+    }
+}
+
+impl From<Polarity> for CoverageMap {
+    fn from(polarity: Polarity) -> Self {
+        Self::new(polarity)
+    }
 }
 
 impl TextGamma {

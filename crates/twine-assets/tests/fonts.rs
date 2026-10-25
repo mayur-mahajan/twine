@@ -26,6 +26,27 @@ const MONTSERRAT: &[(&str, &Font)] = &[
     ("46", &MONTSERRAT_46),
     ("48", &MONTSERRAT_48),
     ("14-subpx", &MONTSERRAT_14_SUBPX),
+    ("8-smooth", &MONTSERRAT_8_SMOOTH),
+    ("10-smooth", &MONTSERRAT_10_SMOOTH),
+    ("12-smooth", &MONTSERRAT_12_SMOOTH),
+    ("14-smooth", &MONTSERRAT_14_SMOOTH),
+    ("16-smooth", &MONTSERRAT_16_SMOOTH),
+    ("18-smooth", &MONTSERRAT_18_SMOOTH),
+    ("20-smooth", &MONTSERRAT_20_SMOOTH),
+    ("22-smooth", &MONTSERRAT_22_SMOOTH),
+    ("24-smooth", &MONTSERRAT_24_SMOOTH),
+    ("26-smooth", &MONTSERRAT_26_SMOOTH),
+    ("28-smooth", &MONTSERRAT_28_SMOOTH),
+    ("30-smooth", &MONTSERRAT_30_SMOOTH),
+    ("32-smooth", &MONTSERRAT_32_SMOOTH),
+    ("34-smooth", &MONTSERRAT_34_SMOOTH),
+    ("36-smooth", &MONTSERRAT_36_SMOOTH),
+    ("38-smooth", &MONTSERRAT_38_SMOOTH),
+    ("40-smooth", &MONTSERRAT_40_SMOOTH),
+    ("42-smooth", &MONTSERRAT_42_SMOOTH),
+    ("44-smooth", &MONTSERRAT_44_SMOOTH),
+    ("46-smooth", &MONTSERRAT_46_SMOOTH),
+    ("48-smooth", &MONTSERRAT_48_SMOOTH),
 ];
 
 /// The code point of every [`Symbol`] that draws something (all but [`Symbol::Dummy`]).
@@ -56,7 +77,7 @@ fn check_renders(name: &str, font: &'static Font, c: char, cache: &mut GlyphCach
     let mut out = vec![0u8; usize::from(info.box_w) * usize::from(info.box_h)];
     assert!(
         f.provider
-            .render_a8(&info, Polarity::DarkOnLight, &mut out, cache),
+            .render_a8(&info, Polarity::DarkOnLight.into(), &mut out, cache),
         "{name}: {c:?} does not decode"
     );
 }
@@ -132,4 +153,44 @@ fn persian_font_has_presentation_forms() {
     for cp in [0xFEB3u32, 0xFEFC, 0xFEE1, 0xFB95, 0xFBFD, 0xFEFB, 0xFE91, 0xFE90] {
         check_renders("dejavu", f, char::from_u32(cp).unwrap(), &mut cache);
     }
+}
+
+/// The A8 opacity rows of `c` in `font`, light on dark.
+fn rows(font: &'static Font, c: char) -> Vec<Vec<u8>> {
+    let (f, info) = font.glyph(c, None).unwrap();
+    let w = usize::from(info.box_w);
+    let mut out = vec![0u8; w * usize::from(info.box_h)];
+    assert!(f.provider.render_a8(
+        &info,
+        Polarity::LightOnDark.into(),
+        &mut out,
+        &mut GlyphCache::new(0)
+    ));
+    out.chunks_exact(w).map(<[u8]>::to_vec).collect()
+}
+
+/// The `-smooth` fonts (R6.S05) are unhinted with LVGL's linear coverage: the stem of `l` at
+/// 14 px straddles two columns, none fully opaque, where the hinted font puts it on one full
+/// column; and every opacity is a step of the linear `× 17` expansion.
+#[test]
+fn smooth_fonts_are_unhinted_and_linear() {
+    let full_column = |rows: &[Vec<u8>]| {
+        let middle = &rows[rows.len() / 2];
+        middle.contains(&255)
+    };
+    assert!(full_column(&rows(&MONTSERRAT_14, 'l')), "hinted: one full column");
+    let smooth = rows(&MONTSERRAT_14_SMOOTH, 'l');
+    assert!(!full_column(&smooth), "unhinted: the stem is split: {smooth:?}");
+    for (name, font) in MONTSERRAT.iter().filter(|(n, _)| n.ends_with("-smooth")) {
+        for c in ['l', 'i', ',', '.', 'a'] {
+            for row in rows(font, c) {
+                assert!(
+                    row.iter().all(|a| a % 17 == 0),
+                    "{name} {c:?}: not linear: {row:?}"
+                );
+            }
+        }
+    }
+    // Same metrics as the hinted font except the advances: the line box is the font's.
+    assert_eq!(MONTSERRAT_14_SMOOTH.line_height, MONTSERRAT_14.line_height);
 }

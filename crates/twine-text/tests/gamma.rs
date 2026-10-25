@@ -1,5 +1,5 @@
 //! Text gamma (R6.S03): `draw_text` picks the font's coverage → opacity curve once per run from
-//! the text and background colors.
+//! the text and background colors; `TextDsc::gamma` (R6.S05) replaces the font's curves.
 
 use twine_assets::fonts::MONTSERRAT_14;
 use twine_core::{Color, ColorFormat, Rect};
@@ -29,7 +29,7 @@ fn ramp_values(polarity: Polarity) -> Vec<u8> {
     let mut out = vec![0u8; usize::from(info.box_w) * usize::from(info.box_h)];
     assert!(
         f.provider
-            .render_a8(&info, polarity, &mut out, &mut GlyphCache::new(0))
+            .render_a8(&info, polarity.into(), &mut out, &mut GlyphCache::new(0))
     );
     let mut v: Vec<u8> = out.into_iter().filter(|&a| a > 0).collect();
     v.sort_unstable();
@@ -86,4 +86,21 @@ fn selection_uses_its_own_polarity() {
     d.sel_bg_color = Color::BLACK;
     // The selection background is black, the selected "l" white: light on dark.
     assert_eq!(drawn(&d, 0), ramp_values(Polarity::LightOnDark));
+}
+
+#[test]
+fn text_dsc_gamma_replaces_the_font_curves() {
+    // White on black with the font's own curves: the strong light-on-dark lift.
+    let mut d = TextDsc::new(&MONTSERRAT_14);
+    d.color = Color::WHITE;
+    let own = drawn(&d, 0);
+    assert_eq!(own, ramp_values(Polarity::LightOnDark));
+    // LVGL's linear mapping instead: every partial pixel is at most as opaque, some less.
+    d.gamma = Some(&gamma::LINEAR);
+    let linear = drawn(&d, 0);
+    assert_eq!(linear.len(), own.len(), "the same pixels are covered");
+    assert!(linear.iter().zip(&own).all(|(l, o)| l <= o));
+    assert_ne!(linear, own);
+    let t = gamma::LINEAR.ramp(Polarity::LightOnDark).table4();
+    assert!(linear.iter().all(|v| t.contains(v)), "{linear:?}");
 }

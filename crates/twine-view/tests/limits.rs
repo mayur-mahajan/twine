@@ -225,6 +225,7 @@ fn audit_report_dumps_the_whole_configuration() {
         "fixed.static_wakers=4",
         "view.motion=reduced",
         "view.rotation_deg=90",
+        "view.text_gamma=fonts",
         "view.fault_hook=false",
         "theme.set=true",
         "theme.name=",

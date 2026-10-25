@@ -269,7 +269,7 @@ fn missing_glyph_draws_box_and_warns_once() {
     let mut h = RenderHarness::new(40, 20, ColorFormat::Rgb565);
     let mut c = GlyphCache::default();
     let d = TextDsc::new(&MONTSERRAT_14);
-    assert!(c.first_warning((0, 0)));
+    assert!(c.first_warning((0, 0, 0)));
     h.paint(|p| draw_text(p, Rect::from_xywh(0, 0, 40, 20), "中", &d, &mut c));
     // Box: 9 px wide (line height 18 / 2), ascent tall, 1 px outline.
     let px = |x: usize, y: usize| h.rgb888()[(y * 40 + x) * 3];
@@ -279,7 +279,7 @@ fn missing_glyph_draws_box_and_warns_once() {
     assert_eq!(px(4, 4), 255, "hollow");
     assert_eq!(px(9, 0), 255);
     // The warning key is now recorded: a second attempt reports "already warned".
-    assert!(!c.first_warning((MONTSERRAT_14.provider_key(), u32::from('中'))));
+    assert!(!c.first_warning((MONTSERRAT_14.provider_key(), 0, u32::from('中'))));
 }
 
 #[test]

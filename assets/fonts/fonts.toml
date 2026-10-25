@@ -354,3 +354,300 @@ chars_file = "assets/fonts/cjk_common_lvgl.txt"
 symbols = "fa"
 compress = true
 kerning = false
+
+# Montserrat "smooth": the same sizes unhinted with linear coverage (LVGL's `lv_font_conv`
+# rendering), for panels dense enough that full hinting reads thin (e.g. 4.3" 800 x 480).
+
+[[font]]
+name = "MONTSERRAT_8_SMOOTH"
+feature = "montserrat-8-smooth"
+file = "montserrat_8_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 8
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = false
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_10_SMOOTH"
+feature = "montserrat-10-smooth"
+file = "montserrat_10_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 10
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = false
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_12_SMOOTH"
+feature = "montserrat-12-smooth"
+file = "montserrat_12_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 12
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = false
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_14_SMOOTH"
+feature = "montserrat-14-smooth"
+file = "montserrat_14_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 14
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = false
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_16_SMOOTH"
+feature = "montserrat-16-smooth"
+file = "montserrat_16_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 16
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = false
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_18_SMOOTH"
+feature = "montserrat-18-smooth"
+file = "montserrat_18_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 18
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_20_SMOOTH"
+feature = "montserrat-20-smooth"
+file = "montserrat_20_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 20
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_22_SMOOTH"
+feature = "montserrat-22-smooth"
+file = "montserrat_22_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 22
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_24_SMOOTH"
+feature = "montserrat-24-smooth"
+file = "montserrat_24_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 24
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_26_SMOOTH"
+feature = "montserrat-26-smooth"
+file = "montserrat_26_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 26
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_28_SMOOTH"
+feature = "montserrat-28-smooth"
+file = "montserrat_28_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 28
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_30_SMOOTH"
+feature = "montserrat-30-smooth"
+file = "montserrat_30_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 30
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_32_SMOOTH"
+feature = "montserrat-32-smooth"
+file = "montserrat_32_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 32
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_34_SMOOTH"
+feature = "montserrat-34-smooth"
+file = "montserrat_34_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 34
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_36_SMOOTH"
+feature = "montserrat-36-smooth"
+file = "montserrat_36_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 36
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_38_SMOOTH"
+feature = "montserrat-38-smooth"
+file = "montserrat_38_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 38
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_40_SMOOTH"
+feature = "montserrat-40-smooth"
+file = "montserrat_40_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 40
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_42_SMOOTH"
+feature = "montserrat-42-smooth"
+file = "montserrat_42_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 42
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_44_SMOOTH"
+feature = "montserrat-44-smooth"
+file = "montserrat_44_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 44
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_46_SMOOTH"
+feature = "montserrat-46-smooth"
+file = "montserrat_46_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 46
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
+
+[[font]]
+name = "MONTSERRAT_48_SMOOTH"
+feature = "montserrat-48-smooth"
+file = "montserrat_48_smooth.rs"
+ttf = "assets/fonts/Montserrat-Medium.ttf"
+size = 48
+bpp = 4
+ranges = ["0x20-0x7F", "0xB0", "0x2022"]
+symbols = "fa"
+compress = true
+kerning = true
+hinting = "none"
+gamma = "linear"
