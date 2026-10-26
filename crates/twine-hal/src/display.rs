@@ -44,7 +44,7 @@
 //! own.
 
 pub use twine_core::Rotation;
-use twine_core::{ColorFormat, Duration, Fraction, Rect};
+use twine_core::{ColorFormat, DisplayScale, Duration, Fraction, Rect};
 
 use crate::DrawBufferMem;
 
@@ -78,13 +78,19 @@ pub struct DisplayInfo {
     /// Flush areas' x, y, width and height must be multiples of this (1, 2, 8…; 0 is treated
     /// as 1 by the engine).
     pub align: u8,
-    /// Dots per inch (used to scale default sizes, LVGL default 130).
+    /// Dots per inch of the display's **logical** pixels (used to scale default sizes and
+    /// `Dp` lengths, LVGL default 130). On a scaled display this is the density the UI is laid
+    /// out for (a 2× desktop screen still reports the 1× density), so a scale change never
+    /// changes `Dp` lengths in logical pixels.
     pub dpi: u16,
+    /// Device pixels per logical pixel (default [`DisplayScale::ONE`]; see
+    /// [`with_scale`](Self::with_scale)). `width` and `height` are always device pixels.
+    pub scale: DisplayScale,
 }
 
 impl DisplayInfo {
     /// A display of `width × height` in `format` with defaults: rotation `Deg0`,
-    /// `hw_rotation = false`, `align = 1`, `dpi = 130`.
+    /// `hw_rotation = false`, `align = 1`, `dpi = 130`, `scale = 1×`.
     #[must_use]
     pub const fn new(width: u16, height: u16, format: ColorFormat) -> Self {
         Self {
@@ -95,6 +101,7 @@ impl DisplayInfo {
             hw_rotation: false,
             align: 1,
             dpi: 130,
+            scale: DisplayScale::ONE,
         }
     }
 
@@ -124,6 +131,49 @@ impl DisplayInfo {
     pub const fn with_dpi(mut self, dpi: u16) -> Self {
         self.dpi = dpi;
         self
+    }
+
+    /// Sets the display scale: how many device pixels make one logical pixel (2× on a Retina
+    /// screen, 1.25× or 1.5× on many Windows and Linux desktops). `width` and `height` stay in
+    /// device pixels; the engine resolves logical lengths (`Length::Px`, bare integers) and
+    /// `Dp` lengths to device pixels with it, so the UI keeps its size and renders sharp.
+    ///
+    /// Honoured with the engine's `display-scale` feature (desktop hosts and simulators); a
+    /// build without it logs a warning once and lays the display out at 1×, so embedded
+    /// firmware pays nothing for it.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, DisplayScale};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// // A 960 × 600 logical window on a Retina screen: 1920 × 1200 device pixels.
+    /// let info = DisplayInfo::new(1920, 1200, ColorFormat::Xrgb8888).with_scale(DisplayScale::X2);
+    /// assert_eq!(info.scale.to_logical(i32::from(info.width)), 960);
+    /// assert_eq!(info.logical_size(), (960, 600));
+    /// ```
+    #[must_use]
+    pub const fn with_scale(mut self, scale: DisplayScale) -> Self {
+        self.scale = scale;
+        self
+    }
+
+    /// The (rotated) screen size in logical pixels: `width × height` divided by the
+    /// [`scale`](Self::scale) (equal to the device size at 1×).
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, DisplayScale};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let info = DisplayInfo::new(1200, 750, ColorFormat::Rgb565).with_scale(DisplayScale::pct(125));
+    /// assert_eq!(info.logical_size(), (960, 600));
+    /// assert_eq!(DisplayInfo::new(320, 240, ColorFormat::Rgb565).logical_size(), (320, 240));
+    /// ```
+    #[must_use]
+    pub const fn logical_size(&self) -> (i32, i32) {
+        (
+            self.scale.to_logical(self.width as i32),
+            self.scale.to_logical(self.height as i32),
+        )
     }
 
     /// Bytes of one full-width row in [`format`](Self::format) (sub-byte formats round up).
@@ -341,6 +391,29 @@ pub trait DisplayDriver {
     /// (the driver must then keep reporting its previous rotation).
     fn set_rotation(&mut self, rotation: Rotation) -> Result<DisplayInfo, ControlError<Self::Error>> {
         let _ = rotation;
+        Err(ControlError::Unsupported)
+    }
+
+    /// Changes the panel to `width × height` device pixels at display scale `scale` and returns
+    /// the new description (normally `DisplayInfo { width, height, scale, .. }` of the old one).
+    /// For hosted displays whose size follows a window: a desktop window moved to a monitor
+    /// with another scale keeps its logical size, so its device size changes with the scale
+    /// (`Engine::set_display_scale`, feature `display-scale` of the engine). The format and
+    /// rotation may not change. Default: [`ControlError::Unsupported`] (panels have one size).
+    ///
+    /// Called by the engine between frames with no flush in flight; the whole screen is laid
+    /// out and redrawn afterwards.
+    ///
+    /// # Errors
+    /// [`ControlError::Unsupported`] (default), or [`ControlError::Driver`] when the panel cannot
+    /// take the size (the driver must then keep its previous size).
+    fn resize(
+        &mut self,
+        width: u16,
+        height: u16,
+        scale: DisplayScale,
+    ) -> Result<DisplayInfo, ControlError<Self::Error>> {
+        let _ = (width, height, scale);
         Err(ControlError::Unsupported)
     }
 

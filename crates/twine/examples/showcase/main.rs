@@ -87,7 +87,7 @@ fn main() {
     twine_sim::run(
         SimConfig::new(480, 320)
             .title("Twine bedside monitor (demo)")
-            .scale(2)
+            .zoom(2)
             .theme(&theme::MONITOR_THEME),
         app,
     );

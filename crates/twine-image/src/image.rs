@@ -4,7 +4,7 @@
 use alloc::boxed::Box;
 use core::fmt;
 
-use twine_core::{ColorFormat, Symbol};
+use twine_core::{ColorFormat, DisplayScale, Symbol};
 use twine_render::ImagePixels;
 
 use crate::Error;
@@ -265,9 +265,42 @@ pub enum ImageSource {
     Symbol(&'static str),
     /// SVG bytes, rendered by the vector renderer when enabled.
     Svg(&'static [u8]),
+    /// A converted image with renderings for scaled (hi-DPI) displays: the image widget draws
+    /// the rendering for its display's scale ([`ImageSource::for_scale`]); everything else
+    /// draws the 1× image.
+    Scaled(&'static ScaledImage),
 }
 
 impl ImageSource {
+    /// The source to draw on a display of `scale` (device pixels per logical pixel) and the
+    /// scale its pixels were made for: a [`Scaled`](Self::Scaled) image's rendering
+    /// ([`ScaledImage::pick`]), every other source itself at 1×. Draw the result zoomed by
+    /// `scale / made-for scale` to keep the image's logical size.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, DisplayScale};
+    /// use twine_image::{Image, ImageHeader, ImageSource, ScaledImage};
+    ///
+    /// static ICON: Image = Image::new_static(ImageHeader::new(ColorFormat::A8, 2, 2), &[0; 4]);
+    /// static ICON_2X: Image = Image::new_static(ImageHeader::new(ColorFormat::A8, 4, 4), &[0; 16]);
+    /// static SET: ScaledImage = ScaledImage::new(&ICON, &[(DisplayScale::X2, &ICON_2X)]);
+    ///
+    /// let (src, made_for) = ImageSource::Scaled(&SET).for_scale(DisplayScale::X2);
+    /// assert_eq!((src, made_for), (ImageSource::Static(&ICON_2X), DisplayScale::X2));
+    /// let plain = ImageSource::Static(&ICON);
+    /// assert_eq!(plain.for_scale(DisplayScale::X2), (plain.clone(), DisplayScale::ONE));
+    /// ```
+    #[must_use]
+    pub fn for_scale(&self, scale: DisplayScale) -> (ImageSource, DisplayScale) {
+        match self {
+            ImageSource::Scaled(s) => {
+                let (img, made_for) = s.pick(scale);
+                (ImageSource::Static(img), made_for)
+            }
+            other => (other.clone(), DisplayScale::ONE),
+        }
+    }
+
     /// A file source (`None` when `path` is longer than [`MAX_PATH_LEN`] bytes).
     #[must_use]
     pub fn file(path: &str) -> Option<Self> {
@@ -312,6 +345,17 @@ impl fmt::Display for ImageSource {
             ImageSource::File(p) => write!(f, "file {p}"),
             ImageSource::Symbol(s) => write!(f, "symbol {s:?}"),
             ImageSource::Svg(b) => write!(f, "svg ({} bytes)", b.len()),
+            ImageSource::Scaled(sc) => {
+                let i = sc.base();
+                write!(
+                    f,
+                    "scaled {}x{} {} (+{})",
+                    i.header.w,
+                    i.header.h,
+                    i.header.format,
+                    sc.variants().len()
+                )
+            }
         }
     }
 }
@@ -325,6 +369,74 @@ impl defmt::Format for ImageSource {
             ImageSource::File(p) => defmt::write!(f, "file {=str}", p.as_str()),
             ImageSource::Symbol(s) => defmt::write!(f, "symbol {=str}", s),
             ImageSource::Svg(b) => defmt::write!(f, "svg ({} bytes)", b.len()),
+            ImageSource::Scaled(sc) => {
+                defmt::write!(f, "scaled {}x{}", sc.base().header.w, sc.base().header.h)
+            }
         }
+    }
+}
+
+/// A converted image with renderings for scaled (hi-DPI) displays: the 1× `base` and
+/// `variants`, each the same picture rendered for a display scale (e.g. a 2× PNG exported at
+/// twice the size). The image widget draws the smallest rendering made for at least its
+/// display's scale (the largest one beyond that), zoomed to the image's logical size, so icons
+/// stay sharp on Retina screens; on 1× displays and everywhere else (backgrounds, image
+/// buttons) the base is drawn. Only the variants listed are linked.
+///
+/// The renderings are separate images (e.g. two `include_image!` statics of `logo.png` and
+/// `logo@2x.png`); the asset generators do not make them from one source. An image widget with
+/// `ImageAlign::Tile` repeats the chosen rendering's own pixels (tiles are not zoomed to the
+/// display scale).
+///
+/// ```
+/// use twine_core::{ColorFormat, DisplayScale};
+/// use twine_image::{Image, ImageHeader, ImageSource, ScaledImage};
+///
+/// static LOGO: Image = Image::new_static(ImageHeader::new(ColorFormat::A8, 8, 8), &[0; 64]);
+/// static LOGO_2X: Image = Image::new_static(ImageHeader::new(ColorFormat::A8, 16, 16), &[0; 256]);
+/// static LOGO_SET: ScaledImage = ScaledImage::new(&LOGO, &[(DisplayScale::X2, &LOGO_2X)]);
+/// static SRC: ImageSource = ImageSource::Scaled(&LOGO_SET);
+///
+/// assert!(core::ptr::eq(LOGO_SET.pick(DisplayScale::pct(150)).0, &LOGO_2X)); // ≥ 1.5×
+/// assert!(core::ptr::eq(LOGO_SET.pick(DisplayScale::X3).0, &LOGO_2X)); // the largest
+/// assert!(core::ptr::eq(LOGO_SET.pick(DisplayScale::ONE).0, &LOGO));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScaledImage {
+    base: &'static Image,
+    variants: &'static [(DisplayScale, &'static Image)],
+}
+
+impl ScaledImage {
+    /// `base` (1×) with `variants`, each rendered for a display scale.
+    #[must_use]
+    pub const fn new(base: &'static Image, variants: &'static [(DisplayScale, &'static Image)]) -> Self {
+        Self { base, variants }
+    }
+
+    /// The 1× image.
+    #[must_use]
+    pub const fn base(&self) -> &'static Image {
+        self.base
+    }
+
+    /// The renderings for scaled displays.
+    #[must_use]
+    pub const fn variants(&self) -> &'static [(DisplayScale, &'static Image)] {
+        self.variants
+    }
+
+    /// The image to draw at `scale` and the scale it was made for: the smallest rendering
+    /// made for at least `scale` (downscaling keeps detail), else the largest; the base
+    /// counts as made for 1×.
+    #[must_use]
+    pub fn pick(&self, scale: DisplayScale) -> (&'static Image, DisplayScale) {
+        let all = core::iter::once((DisplayScale::ONE, self.base)).chain(self.variants.iter().copied());
+        let at_least = all.clone().filter(|(s, _)| *s >= scale).min_by_key(|(s, _)| *s);
+        let (s, img) = at_least.unwrap_or_else(|| {
+            all.max_by_key(|(s, _)| *s)
+                .unwrap_or((DisplayScale::ONE, self.base))
+        });
+        (img, s)
     }
 }

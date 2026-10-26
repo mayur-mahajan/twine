@@ -21,6 +21,10 @@ safety = [
     "twine-render/safety",
     "twine-text/safety",
 ]
+## Display scale (hi-DPI desktops): resolution converts logical lengths (`Length::Px`, and
+## `Dp` after the DPI) to device pixels with `StyleSource::scale`. Without it lengths resolve as
+## at 1× and the resolver has no scale stage.
+display-scale = []
 ## std-only conveniences.
 std = ["twine-core/std", "twine-anim/std", "twine-render/std", "twine-text/std", "twine-image/std"]
 ## Log through the `log` crate.
@@ -46,6 +50,7 @@ defmt = { version = "1", optional = true }
 
 [dev-dependencies]
 proptest = "1"
+twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-28"] }
 trybuild = "1"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 

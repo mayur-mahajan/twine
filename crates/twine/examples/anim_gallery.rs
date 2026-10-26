@@ -234,7 +234,7 @@ fn main() {
     let g = gallery.clone();
     let sim = SimConfig::new(W as u16, H as u16)
         .title("anim_gallery")
-        .scale(2)
+        .zoom(2)
         .on_raw_key(move |e, k| {
             if let Some(g) = g.borrow_mut().as_mut() {
                 on_key(e, g, k);

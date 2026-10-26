@@ -209,54 +209,62 @@ fn bar_gradient(bar_top: i32, top: i32, floor: i32) -> Gradient {
 }
 
 fn bars(f: &Frame, a: Rect, cx: &mut DrawCx<'_, '_>) {
+    // Fixed sizes are logical pixels (`px`): the canvas draws in device pixels.
+    let scale = cx.scale();
+    let px = |v: i32| scale.to_device(v);
     let n = BANDS as i32;
-    let gap = (a.width() / 80).max(2);
+    let gap = (a.width() / 80).max(px(2));
     let bw = ((a.width() - (n - 1) * gap) / n).max(1);
     let x0 = a.x0 + (a.width() - (bw * n + gap * (n - 1))) / 2;
     // 78 % for the bars, the rest for their reflection.
     let floor = a.y0 + a.height() * 78 / 100;
-    let top = a.y0 + 8;
+    let top = a.y0 + px(8);
     let full = floor - top;
+    let (hair, two, three, four) = (px(1), px(2), px(3), px(4));
     let p = cx.painter();
     // dB guides behind the bars.
     for k in 1..4 {
         let y = floor - full * k / 4;
-        p.fill(Rect::from_xywh(a.x0, y, a.width(), 1), FAINT, Opa::P20);
+        p.fill(Rect::from_xywh(a.x0, y, a.width(), hair), FAINT, Opa::P20);
     }
-    let r = (bw / 2).min(4);
+    let r = (bw / 2).min(four);
     for i in 0..BANDS {
         let x = x0 + i as i32 * (bw + gap);
-        let h = (full * i32::from(f.spectrum.bars[i]) / 1000).max(2);
+        let h = (full * i32::from(f.spectrum.bars[i]) / 1000).max(two);
         let bar = Rect::from_xywh(x, floor - h, bw, h);
         rrect_grad(p, bar, r, &bar_gradient(floor - h, top, floor));
         // The reflection: a third as tall, fading out downwards.
         let rh = h * 35 / 100;
-        if rh > 1 {
+        if rh > hair {
             let tint = mix(VIOLET, ACCENT, i32::from(f.spectrum.bars[i]));
-            let refl = Rect::from_xywh(x, floor + 2, bw, rh);
+            let refl = Rect::from_xywh(x, floor + two, bw, rh);
             let fade = gradient_opa(GradKind::Ver, (tint, Opa::from_raw(70)), (tint, Opa::TRANSP));
             rrect_grad(p, refl, r, &fade);
         }
-        // The peak cap, floating 3 px above where the bar was highest.
+        // The peak cap, floating above where the bar was highest.
         let ph = full * i32::from(f.spectrum.peaks[i]) / 1000;
-        if ph > 4 {
-            let y = floor - ph - 4;
-            rrect(p, Rect::from_xywh(x, y - 2, bw, 3), 1, TEXT, Opa::P90);
+        if ph > four {
+            let y = floor - ph - four;
+            rrect(p, Rect::from_xywh(x, y - two, bw, three), hair, TEXT, Opa::P90);
         }
     }
-    p.fill(Rect::from_xywh(a.x0, floor, a.width(), 1), FAINT, Opa::P40);
+    p.fill(Rect::from_xywh(a.x0, floor, a.width(), hair), FAINT, Opa::P40);
 }
 
 fn radial(f: &Frame, a: Rect, cx: &mut DrawCx<'_, '_>) {
     let c = a.center();
     let size = a.width().min(a.height());
     let bass = i32::from(f.spectrum.bass);
+    // Fixed sizes are logical pixels (`px`): the canvas draws in device pixels.
+    let scale = cx.scale();
+    let px = |v: i32| scale.to_device(v);
+    let (hair, two, three, gap, cap) = (px(1), px(2), px(3), px(6), px(5));
     // The record, its size breathing slightly with the bass.
     let r0 = size * 23 / 100 + size * bass / 40_000;
-    let max_len = size / 2 - r0 - 14;
+    let max_len = size / 2 - r0 - px(14);
     let p = cx.painter();
     // A glow behind everything, brighter on loud bass.
-    let glow_r = r0 + max_len / 2 + 8;
+    let glow_r = r0 + max_len / 2 + px(8);
     let glow = gradient_opa(
         GradKind::Radial {
             center: Point::new(glow_r, glow_r),
@@ -271,14 +279,14 @@ fn radial(f: &Frame, a: Rect, cx: &mut DrawCx<'_, '_>) {
     // 64 spokes: the 32 bands, then mirrored, so the figure is symmetric left/right.
     let spokes = 2 * BANDS as i32;
     let circumference = 2 * 314 * r0 / 100;
-    let w = (circumference / spokes * 55 / 100).max(2);
+    let w = (circumference / spokes * 55 / 100).max(two);
     for k in 0..spokes {
         let band = if k < BANDS as i32 { k } else { spokes - 1 - k } as usize;
         let ang = 2700 + k * 3600 / spokes + 3600 / spokes / 2;
         let v = i32::from(f.spectrum.bars[band]);
-        let len = (max_len * v / 1000).max(2);
-        let from = polar(c, r0 + 6, ang);
-        let to = polar(c, r0 + 6 + len, ang);
+        let len = (max_len * v / 1000).max(two);
+        let from = polar(c, r0 + gap, ang);
+        let to = polar(c, r0 + gap + len, ang);
         let col = if v < 600 {
             mix(VIOLET, ACCENT, v * 1000 / 600)
         } else {
@@ -286,20 +294,33 @@ fn radial(f: &Frame, a: Rect, cx: &mut DrawCx<'_, '_>) {
         };
         line(p, from, to, w, col, Opa::COVER);
         let pk = max_len * i32::from(f.spectrum.peaks[band]) / 1000;
-        if pk > 6 {
-            circle(p, polar(c, r0 + 6 + pk + 5, ang), (w / 2).max(1), TEXT, Opa::P80);
+        if pk > gap {
+            circle(
+                p,
+                polar(c, r0 + gap + pk + cap, ang),
+                (w / 2).max(hair),
+                TEXT,
+                Opa::P80,
+            );
         }
     }
     // The record: black vinyl with grooves, a colored label and a sheen that turns with it.
     circle(p, c, r0, Color::hex(0x0C_0C_10), Opa::COVER);
-    for g in (r0 * 45 / 100..r0 - 2).step_by(3) {
-        ring(p, c, g, 1, Color::hex(0x1C_1D_24), Opa::COVER);
+    for g in (r0 * 45 / 100..r0 - two).step_by(three.max(1) as usize) {
+        ring(p, c, g, hair, Color::hex(0x1C_1D_24), Opa::COVER);
     }
     let turn = i32::from(f.spectrum.turn);
     for side in [0, 1800] {
         let sheen = polar(c, r0 * 80 / 100, turn + side);
         let inner = polar(c, r0 * 52 / 100, turn + side);
-        line(p, inner, sheen, (r0 / 10).max(2), Color::WHITE, Opa::from_raw(28));
+        line(
+            p,
+            inner,
+            sheen,
+            (r0 / 10).max(two),
+            Color::WHITE,
+            Opa::from_raw(28),
+        );
     }
     let label_r = r0 * 40 / 100;
     circle_grad(
@@ -309,9 +330,9 @@ fn radial(f: &Frame, a: Rect, cx: &mut DrawCx<'_, '_>) {
         &gradient(GradKind::Ver, hsv(f.hue, 150, 250), hsv(f.hue + 30, 200, 170)),
     );
     let mark = polar(c, label_r * 60 / 100, turn);
-    circle(p, mark, (label_r / 6).max(1), Color::hex(0xFF_F4_E6), Opa::P70);
-    circle(p, c, (r0 / 22).max(2), Color::hex(0x0C_0C_10), Opa::COVER);
-    ring(p, c, r0, 1, RAISED, Opa::COVER);
+    circle(p, mark, (label_r / 6).max(hair), Color::hex(0xFF_F4_E6), Opa::P70);
+    circle(p, c, (r0 / 22).max(two), Color::hex(0x0C_0C_10), Opa::COVER);
+    ring(p, c, r0, hair, RAISED, Opa::COVER);
 }
 
 /// The level meters view: two LED rows, left over right.
@@ -324,15 +345,16 @@ const SEGMENTS: i32 = 24;
 
 fn paint_meters(l: Levels, cx: &mut DrawCx<'_, '_>) {
     let a = cx.coords();
-    let gap = 1;
-    let row_h = (a.height() - 2) / 2;
+    // Logical pixels (`px`): the canvas draws in device pixels.
+    let (gap, row_gap) = (cx.to_device(1), cx.to_device(2));
+    let row_h = (a.height() - row_gap) / 2;
     let seg_w = ((a.width() - (SEGMENTS - 1) * gap) / SEGMENTS).max(1);
     let p = cx.painter();
     for (row, (v, peak)) in [(l.left, l.peak_left), (l.right, l.peak_right)]
         .into_iter()
         .enumerate()
     {
-        let y = a.y0 + row as i32 * (row_h + 2);
+        let y = a.y0 + row as i32 * (row_h + row_gap);
         let lit = i32::from(v) * SEGMENTS / 1000;
         let peak_seg = (i32::from(peak) * SEGMENTS / 1000).min(SEGMENTS - 1);
         for s in 0..SEGMENTS {
@@ -363,13 +385,13 @@ pub fn icon_bars(s: &Spectrum) -> [u16; 3] {
 
 fn paint_icon(v: [u16; 3], cx: &mut DrawCx<'_, '_>) {
     let a = cx.coords();
-    let bw = 3;
-    let gap = 2;
+    // Logical pixels (`px`): the canvas draws in device pixels.
+    let (bw, gap, r, min_h) = (cx.to_device(3), cx.to_device(2), cx.to_device(1), cx.to_device(3));
     let x0 = a.x0 + (a.width() - (3 * bw + 2 * gap)) / 2;
     let p = cx.painter();
     for (i, lvl) in v.into_iter().enumerate() {
-        let h = (3 + (a.height() - 3) * i32::from(lvl) / 1000).min(a.height());
+        let h = (min_h + (a.height() - min_h) * i32::from(lvl) / 1000).min(a.height());
         let x = x0 + i as i32 * (bw + gap);
-        rrect(p, Rect::from_xywh(x, a.y1 - h, bw, h), 1, ACCENT, Opa::COVER);
+        rrect(p, Rect::from_xywh(x, a.y1 - h, bw, h), r, ACCENT, Opa::COVER);
     }
 }

@@ -19,9 +19,11 @@ twine-hal = { path = "../twine-hal", features = ["log"] }
 twine-view = { path = "../twine-view", features = ["std", "log", "theme-lvgl"] }
 twine-reactive = { path = "../twine-reactive", features = ["std", "log"] }
 twine-theme = { path = "../twine-theme", features = ["std", "log", "mono", "simple"] }
+# `display-scale`: desktop applications render sharp at the monitor's scale (`SimScale`).
 twine-engine = { path = "../twine-engine", features = [
     "std",
     "log",
+    "display-scale",
     "perf-monitor",
     "color-rgb565",
     "color-rgb565-swapped",

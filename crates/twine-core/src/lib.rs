@@ -37,7 +37,8 @@
 //! - Pixels are `i32`; [`Rect`] is **half-open** `[x0, x1) × [y0, y1)` (LVGL areas are
 //!   inclusive — ported algorithms convert explicitly).
 //! - Opacity is [`Opa`] (`u8`, 255 = cover); angles are [`Angle`] in 0.1°, clockwise on screen;
-//!   scale factors are [`Scale`] (`u16`, 256 = 1.0); fractions of a whole (gradient stops,
+//!   scale factors are [`Scale`] (`u16`, 256 = 1.0); a display's device pixels per logical
+//!   pixel is [`DisplayScale`] (`u16`, 256 = 1×); fractions of a whole (gradient stops,
 //!   brightness) are [`Fraction`] (`u8`, 255 = 1.0); angular speeds are [`AngularSpeed`]
 //!   (`u16`, whole degrees per second); time is [`Instant`]/[`Duration`] in µs (`u64`).
 //! - Arithmetic saturates rather than overflowing; invalid arguments log `warn!` and fall back
@@ -115,7 +116,7 @@ pub use error::Error;
 pub use fault::{FaultCounts, FaultKind, Faults};
 pub use geometry::*;
 pub use limits::Limits;
-pub use math::{Angle, AngularSpeed, Fraction, Fx, Scale};
+pub use math::{Angle, AngularSpeed, DisplayScale, Fraction, Fx, Scale};
 pub use partition::Partition;
 pub use rect_set::{AddResult, RectSet};
 pub use rng::XorShift32;

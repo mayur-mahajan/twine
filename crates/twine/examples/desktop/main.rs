@@ -1,6 +1,8 @@
 //! `cargo xtask sim desktop` (or `cargo run -p twine --example desktop`): **Twine Player**, a
 //! desktop music player built with Twine — a 960 × 600 window, an ordinary program on Linux,
-//! macOS or Windows.
+//! macOS or Windows, sharp on hi-DPI screens (it renders at the monitor's display scale: the
+//! layout is in logical pixels, the type scale follows the scale through `TtfScaledFont`, and
+//! the hand-drawn graphics size their fixed details with `DrawCx::to_device`).
 //!
 //! | Area | What it does |
 //! |------|--------------|
@@ -60,7 +62,7 @@ mod viz;
 
 use twine::core::ColorFormat;
 use twine::prelude::*;
-use twine_sim::SimConfig;
+use twine_sim::{SimConfig, SimScale};
 
 use catalog::catalog;
 use eq::Equalizer;
@@ -186,7 +188,9 @@ fn main() {
     twine_sim::run(
         SimConfig::new(WIDTH, HEIGHT)
             .title("Twine Player")
-            .scale(1)
+            // Sharp at the monitor's scale (Retina, 1.25×, 1.5× …), following the window
+            // across monitors; the layout is in logical pixels.
+            .display_scale(SimScale::Auto)
             .format(ColorFormat::Xrgb8888)
             .theme(&theme::THEME),
         app,

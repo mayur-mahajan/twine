@@ -3,7 +3,7 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use twine_core::{Angle, Color, Opa, Scale};
+use twine_core::{Angle, Color, DisplayScale, Opa, Scale};
 use twine_text::Font;
 
 use crate::design::{ElementKind, ElementRef};
@@ -70,6 +70,15 @@ pub trait StyleSource {
     fn dpi(&self, id: Self::Id) -> u16 {
         let _ = id;
         crate::REFERENCE_DPI
+    }
+    /// The display scale that logical lengths ([`Length::Px`], and `Dp` after the DPI
+    /// conversion) of `id` resolve with to device pixels ([`Length::Dev`]) (the engine: the
+    /// scale of the node's display). Only read with the `display-scale` feature, and only when
+    /// the winning value is a `Px` length, so it may be slow. Default:
+    /// [`DisplayScale::ONE`] (lengths stay as they are).
+    fn scale(&self, id: Self::Id) -> DisplayScale {
+        let _ = id;
+        DisplayScale::ONE
     }
     /// The value the theme of `id` gives the [design element](crate::design) `element` (the
     /// engine: the element table of the node's display), `None` if it does not define it.
@@ -231,8 +240,11 @@ fn default_value(prop: PropId, defaults: StyleDefaults) -> StyleValue {
 /// property's default (step 3, without inheritance) and logs a warning the first time per
 /// element kind. A density-independent length ([`Length::Dp`], also as an element's value)
 /// comes back in pixels, converted with [`StyleSource::dpi`] of `id`: callers see neither
-/// elements nor `Dp`. The common path costs one inlined test of the found value; elements and
-/// `Dp` are finished out of line.
+/// elements nor `Dp`. With the `display-scale` feature a logical length (`Px`, and `Dp` after
+/// the DPI) comes back in device pixels (`Dev`) and a font as the font to draw at the scale of
+/// [`StyleSource::scale`] of `id` (see [`Length`] and [`Font::for_scale`]). The common path
+/// costs one inlined test of the found value; elements, `Dp` and scaling are finished out of
+/// line.
 ///
 /// Worked example (same as the test `pressed_state_overrides_default_when_pressed`): a button
 /// has a theme style `bg_color: BLUE` and a normal style for `PRESSED` with
@@ -308,7 +320,11 @@ pub fn resolve_with<S: StyleSource>(
                 node = src.parent(n);
             }
         }
-        // Defaults are never elements or `Dp`.
+        // Defaults are never elements or `Dp`; only the default font depends on the scale.
+        #[cfg(feature = "display-scale")]
+        if prop == PropId::Font {
+            return finish_scale(src, id, prop, default_value(prop, *defaults));
+        }
         return default_value(prop, *defaults);
     };
     // The one conversion to a value, for the winning property only.
@@ -356,11 +372,37 @@ pub fn resolve_grid_tracks<S: StyleSource>(
     entries.get(i)?.style.grid_tracks(prop)
 }
 
-/// `v` with a design element replaced by the source's value and a [`Length::Dp`] converted
-/// with the source's DPI for `id`; any other value unchanged (one inlined test; the rest is out
-/// of line).
+/// `v` with a design element replaced by the source's value, a [`Length::Dp`] converted
+/// with the source's DPI for `id` and, with the `display-scale` feature, a logical length
+/// converted to device pixels with the source's scale; any other value unchanged (one inlined
+/// test per stage; the rest is out of line).
 #[inline(always)]
 fn finish<S: StyleSource>(
+    src: &S,
+    id: S::Id,
+    prop: PropId,
+    defaults: &StyleDefaults,
+    v: StyleValue,
+) -> StyleValue {
+    let v = finish_density(src, id, prop, defaults, v);
+    #[cfg(feature = "display-scale")]
+    if v.depends_on_scale() {
+        return finish_scale(src, id, prop, v);
+    }
+    v
+}
+
+/// The display-scale stage of [`finish`]: a logical length in device pixels, a font as the
+/// font to draw at the scale of `id`'s display ([`StyleValue::for_display`]).
+#[cfg(feature = "display-scale")]
+#[inline(never)]
+fn finish_scale<S: StyleSource>(src: &S, id: S::Id, prop: PropId, v: StyleValue) -> StyleValue {
+    v.for_display(prop, src.scale(id))
+}
+
+/// [`finish`] without the display-scale stage: elements and `Dp` lengths.
+#[inline(always)]
+fn finish_density<S: StyleSource>(
     src: &S,
     id: S::Id,
     prop: PropId,
@@ -387,7 +429,8 @@ fn finish<S: StyleSource>(
 /// [`StyleBuf::get`](crate::StyleBuf::get)) the way [`resolve`] finishes the value it found: a
 /// [design element](crate::design) becomes the value [`StyleSource::design_value`] of `id`
 /// gives it (the property's default if none), a `Dp` length becomes pixels for
-/// [`StyleSource::dpi`] of `id`; anything else is returned unchanged. For code that keeps its
+/// [`StyleSource::dpi`] of `id`, and with the `display-scale` feature a logical length becomes
+/// device pixels for [`StyleSource::scale`] of `id`; anything else is returned unchanged. For code that keeps its
 /// own small styles outside the cascade (e.g. the spans of a span group).
 ///
 /// ```
@@ -1503,6 +1546,80 @@ mod tests {
         fn dpi(&self, _: usize) -> u16 {
             self.1
         }
+    }
+
+    /// A [`Tree`] whose nodes are on a display of `dpi` and `scale`.
+    #[cfg(feature = "display-scale")]
+    struct Scaled<'a>(&'a Tree, u16, DisplayScale);
+
+    #[cfg(feature = "display-scale")]
+    impl StyleSource for Scaled<'_> {
+        type Id = usize;
+        fn entries(&self, id: usize) -> &[StyleEntry] {
+            self.0.entries(id)
+        }
+        fn state(&self, id: usize) -> State {
+            self.0.state(id)
+        }
+        fn parent(&self, id: usize) -> Option<usize> {
+            self.0.parent(id)
+        }
+        fn dpi(&self, _: usize) -> u16 {
+            self.1
+        }
+        fn scale(&self, _: usize) -> DisplayScale {
+            self.2
+        }
+    }
+
+    #[cfg(feature = "display-scale")]
+    #[test]
+    fn logical_lengths_resolve_to_device_pixels_with_the_source_scale() {
+        use crate::Radius;
+        let (t, n) = one(
+            State::DEFAULT,
+            vec![entry(
+                EntryKind::Normal,
+                Selector::MAIN,
+                &[
+                    StyleProp::PaddingTop(Length::Px(8).into()),
+                    StyleProp::PaddingLeft(Length::Dp(8).into()),
+                    StyleProp::PaddingRight(Length::Dev(1).into()),
+                    StyleProp::Width(Length::Pct(50).into()),
+                    StyleProp::Radius(Radius::Circle.into()),
+                    StyleProp::DropShadowRadius(Length::Px(6).into()),
+                ],
+            )],
+        );
+        let at = |dpi, scale, prop| resolve(&Scaled(&t, dpi, scale), n, Part::Main, prop, &D);
+        let x2 = DisplayScale::X2;
+        let dev = |v| StyleValue::Length(Length::Dev(v));
+        assert_eq!(at(160, x2, PropId::PaddingTop), dev(16));
+        // Dp: DPI first (logical), then the scale.
+        assert_eq!(at(320, x2, PropId::PaddingLeft), dev(32));
+        assert_eq!(at(320, DisplayScale::pct(150), PropId::PaddingLeft), dev(24));
+        assert_eq!(at(160, x2, PropId::PaddingRight), dev(1)); // device pixels stay
+        assert_eq!(at(160, x2, PropId::Width), StyleValue::Length(Length::Pct(50)));
+        assert_eq!(at(160, x2, PropId::DropShadowRadius), dev(12));
+        assert_eq!(
+            at(160, x2, PropId::Radius),
+            StyleValue::Length(Radius::Circle.to_length())
+        );
+        // Unset: the default (0) stays 0; max_width's `COORD_MAX` sentinel is never scaled.
+        assert_eq!(at(160, x2, PropId::MarginTop), StyleValue::Length(Length::Px(0)));
+        assert_eq!(
+            at(160, x2, PropId::MaxWidth),
+            StyleValue::Length(Length::Px(crate::COORD_MAX))
+        );
+        // 1×: nothing changes (the scale stage returns the value as is).
+        assert_eq!(
+            at(160, DisplayScale::ONE, PropId::PaddingTop),
+            StyleValue::Length(Length::Px(8))
+        );
+        assert_eq!(
+            resolve_i32(&Scaled(&t, 160, x2), n, Part::Main, PropId::PaddingTop, &D),
+            16
+        );
     }
 
     #[test]

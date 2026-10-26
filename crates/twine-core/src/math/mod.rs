@@ -1,10 +1,11 @@
 //! Deterministic integer math: [`Fx`] (16.16 fixed point), [`Angle`] (0.1°), [`Scale`]
-//! (256 = 1.0), [`Fraction`] (0..=1), [`AngularSpeed`], integer square roots, trigonometry,
+//! (256 = 1.0), [`DisplayScale`] (256 = 1×), [`Fraction`] (0..=1), [`AngularSpeed`], integer square roots, trigonometry,
 //! shared 128-bit division ([`div_rem_i128`]) and small helpers.
 //!
 //! Nothing here uses floating point (P5), so results are bit-identical on every target (P6).
 
 mod bezier;
+mod display_scale;
 mod fixed;
 mod sqrt;
 mod trig;
@@ -12,6 +13,7 @@ mod units;
 mod wide;
 
 pub use bezier::{CUBIC_BEZIER_ONE, bezier3, cubic_bezier};
+pub use display_scale::DisplayScale;
 pub use fixed::{Fx, Scale};
 pub use sqrt::{SqrtRes, isqrt64, sqrt, sqrt_fx};
 pub use trig::{Angle, TRIG_MAX, TRIG_SHIFT, atan2, cos, cos_fx, sin, sin_fx};

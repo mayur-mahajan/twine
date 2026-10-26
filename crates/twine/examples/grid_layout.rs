@@ -215,7 +215,7 @@ fn main() {
     let pg2 = pg.clone();
     let sim = SimConfig::new(320, 240)
         .title("grid_layout")
-        .scale(2)
+        .zoom(2)
         .on_raw_key(move |e, k| {
             if let Some(p) = pg2.borrow_mut().as_mut() {
                 p.on_key(e, k);

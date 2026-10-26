@@ -265,7 +265,7 @@ fn main() {
     twine_sim::init_logging();
     let cfg = SimConfig::new(400, 210)
         .title("engine_input")
-        .scale(2)
+        .zoom(2)
         .on_raw_key(on_raw_key);
     run_engine(cfg, scene);
 }

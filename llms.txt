@@ -28,199 +28,200 @@ This file is large: do not read it whole. Find the section you need, then read o
 
 ## Index
 
-- crate `twine` — Twine: a declarative, signal-based, low-power GUI library for embedded devices with the feature set of LVGL, `… (L225)
-  - mod `twine::guide` — Guides: walkthroughs of larger tasks, with compiled and tested examples. (L437)
-  - mod `twine::guide::custom_widgets` — Writing a custom widget: a gauge, step by step. (L448)
-  - mod `twine::guide::app_state` — Application state: the store pattern for large applications. (L476)
-  - mod `twine::prelude` — Everything an application needs: `use twine::prelude::*;`. (L504)
-- crate `twine_view` — The declarative layer of the Twine GUI library: an application is a function `fn app(cx: Scope) -> impl View`… (L515)
-  - mod `twine_view::component` — Components: functions describing a piece of UI, used like built-in widgets. (L2022)
-  - mod `twine_view::flow` — Control flow: `when`, `dynamic`, `for_each`, `virtual_list` (the keyed collections take their items as `IntoIt… (L2043)
-  - mod `twine_view::navigator` — Typed screen navigation: `navigator`, `Navigator`, `expect_navigator` / `use_navigator`, leave guards (`Naviga… (L2089)
-  - mod `twine_view::prelude` — Everything an application needs: `use twine_view::prelude::*;` (the `twine` facade's prelude re-exports this o… (L2126)
-  - mod `twine_view::prelude::draw_buffers` — Static draw buffers: `draw_buffers!` and `DrawBuffers`. (L2423)
-  - mod `twine_view::run` — Run loops: thin, optional adapters that step a `Ui` and sleep as it asks. (L2431)
-  - mod `twine_view::text` — Text properties: `IntoText`, `TextProp` and the zero-allocation `text!` macro. (L2476)
-  - mod `twine_view::typestate` — The parts a `UiBuilder` (and `AsyncUiBuilder`) must be given before it can build, checked by the compiler. (L2492)
-  - mod `twine_view::widgets` — Widget views: constructor functions returning `WidgetView`s with the widget-specific builder methods. (L2530)
-  - mod `twine_view::marker` — The markers of the conversion traits' impls, one per form of value: `IntoProp`, `IntoText`, `IntoOptions` and… (L2584)
-- crate `twine_widgets` — The basic widgets of the Twine GUI library, each a port of the LVGL widget of the same name: (L2616)
-  - mod `twine_widgets::animimg` — `AnimImg`: an image that plays a sequence of frames (LVGL `lv_animimg`). (L2725)
-  - mod `twine_widgets::arc` — `Arc`: an arc slider with a knob (LVGL `lv_arc`). (L2766)
-  - mod `twine_widgets::bar` — `Bar`: a progress bar (LVGL `lv_bar`). (L2823)
-  - mod `twine_widgets::button` — `Button`: a clickable container (LVGL `lv_button`). (L2881)
-  - mod `twine_widgets::buttonmatrix` — `ButtonMatrix`: a grid of text buttons drawn by one widget (LVGL `lv_buttonmatrix`). (L2930)
-  - mod `twine_widgets::checkbox` — `Checkbox`: a check box with a text (LVGL `lv_checkbox`). (L3071)
-  - mod `twine_widgets::container` — `Container`: the base object (LVGL `lv_obj`), a styled rectangle holding children. (L3105)
-  - mod `twine_widgets::image` — `Image`: an image source drawn with inner alignment, rotation, scaling and recoloring (LVGL `lv_image`). (L3141)
-  - mod `twine_widgets::image_button` — `ImageButton`: a button drawn from images, one set per state (LVGL `lv_imagebutton`). (L3212)
-  - mod `twine_widgets::keyboard` — `Keyboard`: an on-screen keyboard built on the button matrix (LVGL `lv_keyboard`). (L3250)
-  - mod `twine_widgets::label` — `Label`: text (LVGL `lv_label`) with every long mode, selection and in-place text storage. (L3323)
-  - mod `twine_widgets::led` — `Led`: a light-emitting diode (LVGL `lv_led`). (L3408)
-  - mod `twine_widgets::line` — `Line`: a polyline (LVGL `lv_line`). (L3456)
-  - mod `twine_widgets::prelude` — The widgets and their enums in one import: `use twine_widgets::prelude::*;`. (L3490)
-  - mod `twine_widgets::slider` — `Slider`: a bar with a draggable knob (LVGL `lv_slider`). (L3581)
-  - mod `twine_widgets::spangroup` — `SpanGroup`: rich text made of `Span`s with their own styles (LVGL `lv_spangroup`). (L3618)
-  - mod `twine_widgets::spinbox` — `Spinbox`: a numeric editor with digit-wise stepping (LVGL `lv_spinbox`). (L3698)
-  - mod `twine_widgets::spinner` — `Spinner`: the loading spinner, an endlessly animated arc (LVGL `lv_spinner`). (L3750)
-  - mod `twine_widgets::switch` — `Switch`: an animated on/off switch (LVGL `lv_switch`). (L3788)
-  - mod `twine_widgets::textarea` — `Textarea`: a scrollable text input with a cursor (LVGL `lv_textarea`). (L3826)
-- crate `twine_widgets_ext` — The complex widgets of the Twine GUI library, each a port of the LVGL widget of the same name, built on the ba… (L3953)
-  - mod `twine_widgets_ext::dropdown` — `Dropdown`: a button showing the selected option that opens a list of options (LVGL `lv_dropdown`), and its `D… (L4032)
-  - mod `twine_widgets_ext::list` — `List`: a scrollable column of text headers (`add_text`) and buttons with an icon and a text (`add_button`) (L… (L4099)
-  - mod `twine_widgets_ext::menu` — `Menu`: hierarchical pages with a header, a back button, an optional sidebar and a page history (LVGL `lv_menu… (L4171)
-  - mod `twine_widgets_ext::msgbox` — `Msgbox`: a message box with an optional header (title and buttons), a text content and a footer of buttons, m… (L4315)
-  - mod `twine_widgets_ext::prelude` — The complex widgets and their enums in one import: `use twine_widgets_ext::prelude::*;`. (L4387)
-  - mod `twine_widgets_ext::roller` — `Roller`: a drum-style picker (LVGL `lv_roller`). (L4427)
-  - mod `twine_widgets_ext::tabview` — `Tabview`: tabs with a button bar and swipeable, snap-scrolling content (LVGL `lv_tabview`, 9.x structure). (L4477)
-  - mod `twine_widgets_ext::tileview` — `Tileview`: a 2D grid of full-size tiles navigated by swipes in the allowed directions (LVGL `lv_tileview`). (L4528)
-  - mod `twine_widgets_ext::vector_view` — `VectorView`: a widget drawing a `VectorScene` (paths with fills, strokes and gradients; LVGL `lv_draw_vector`… (L4569)
-  - mod `twine_widgets_ext::window` — `Window`: a header (title and buttons) above a scrollable content area (LVGL `lv_win`). (L4597)
-- crate `twine_theme` — Themes for the Twine GUI library: they give every widget its default look, exactly like LVGL's themes (`src/th… (L4637)
-  - mod `twine_theme::lvgl` — `Lvgl`: a faithful port of LVGL's default theme (`src/themes/default/lv_theme_default.c`), light and dark, plu… (L4918)
-  - mod `twine_theme::lvgl::colors` — The colors of LVGL's default theme (`lv_theme_default.c`, the `LIGHT_COLOR_*` and `DARK_COLOR_*` macros). (L5204)
-  - mod `twine_theme::lvgl::metrics` — The LVGL theme's values that depend on the display: every size LVGL's `style_init()` scales with `LV_DPX_CALC`… (L5241)
-  - mod `twine_theme::lvgl::styles` — The styles of the LVGL theme, LVGL's `style_init()` of `src/themes/default/lv_theme_default.c` as `static` dat… (L5341)
-  - mod `twine_theme::mono` — `Mono`: LVGL's monochrome theme (`src/themes/mono/lv_theme_mono.c`) for 1-bit displays, as `static` data. (L5618)
-  - mod `twine_theme::mono::styles` — The styles of `lv_theme_mono.c` used by the widgets implemented so far, as `static`s (LVGL's names in capitals… (L5776)
-  - mod `twine_theme::simple` — `Simple`: LVGL's simple theme (`src/themes/simple/lv_theme_simple.c`), as `static` data. (L5854)
-  - mod `twine_theme::simple::styles` — The styles of `lv_theme_simple.c` (`my_theme_styles_t`) as `static`s (LVGL's names in capitals). (L6021)
-- crate `twine_style` — The style system of the Twine GUI library, independent of the widget tree: the complete LVGL v9 style property… (L6066)
-  - mod `twine_style::design` — Design elements: named, typed values (colors, spacings, radii, opacities, fonts, motion timings, icons) that a… (L7546)
-- crate `twine_engine` — The core of the Twine GUI library: the retained widget tree, the `Widget` trait, styles attached to nodes, pre… (L8143)
-  - mod `twine_engine::gridnav` — Grid navigation (LVGL `lv_gridnav`): arrow keys move the focus among the children of a container by their posi… (L9807)
-- crate `twine_reactive` — Fine-grained, push-pull, glitch-free reactive signals for a single UI thread The declarative view layer (`twin… (L9836)
-- crate `twine_layout` — Sizing, positioning, flex and grid layout of the Twine GUI library, with the semantics of LVGL 9 (`lv_obj_pos.… (L10379)
-- crate `twine_anim` — Animation building blocks of the Twine GUI library, below the widget engine in the layering (it depends only o… (L10591)
-- crate `twine_render` — The integer software renderer of the Twine GUI library: pixel operations only, no knowledge of widgets. (L10897)
-- crate `twine_text` — Fonts, text layout and text drawing for the Twine GUI library (layer 3, above the renderer). (L11519)
-  - mod `twine_text::encode` — Encoder helpers for font generators (feature `std`): bit packing, the XOR prefilter, the RLE encoder (the exac… (L12199)
-  - mod `twine_text::gamma` — Text gamma: how a glyph's stored coverage becomes opacity, chosen per text run by polarity. (L12280)
-- crate `twine_image` — Images for the Twine GUI library: the `Image` data model (every `ColorFormat` of the renderer, palettes, `Rgb5… (L12322)
-  - mod `twine_image::decoders` — Built-in decoders (each behind its `img-*` feature, except the raw `.tbin` format). (L12599)
-  - mod `twine_image::decoders::bmp` — In-house BMP decoder: 1, 4, 8 bpp paletted (uncompressed, RLE4, RLE8), 16 bpp (RGB555 or bit fields), 24 bpp a… (L12603)
-  - mod `twine_image::decoders::gif` — In-house GIF decoder: `GifDecoder` (first frame, for static use) and `GifPlayer` (animation with frame composi… (L12618)
-  - mod `twine_image::decoders::jpeg` — JPEG decoder over `zune-jpeg` (baseline and progressive, gray / YCbCr / CMYK input, all chroma subsamplings). (L12655)
-  - mod `twine_image::decoders::png` — In-house PNG decoder over `miniz_oxide` (zlib inflate). (L12671)
-  - mod `twine_image::decoders::qoi` — In-house QOI decoder (<https://qoiformat.org/qoi-specification.pdf>), plus an encoder (feature `std`) for tool… (L12687)
-  - mod `twine_image::decoders::tbin` — The raw twine binary image file (`.tbin`, written by `twine image --bin`): pixels in any `ColorFormat`, stored… (L12707)
-- crate `twine_vector` — Vector graphics for the Twine GUI library (the equivalent of LVGL's `lv_vector` API and SVG support): paths, c… (L12745)
-  - mod `twine_vector::svg` — SVG Tiny subset parser (feature `svg`): `parse_svg` turns SVG bytes into an `SvgDocument` holding a `VectorSce… (L13113)
-- crate `twine_fs` — File system abstraction of the Twine GUI library, the equivalent of LVGL's `lv_fs`: images, fonts and other as… (L13172)
-- crate `twine_assets` — Built-in fonts of the Twine GUI library as `static` `Font`s, one cargo feature per font (`default = ["montserr… (L13381)
-  - mod `twine_assets::fonts` — The built-in fonts (each behind its cargo feature). (L13510)
-- crate `twine_extra` — Extras for the Twine GUI library, the equivalent of LVGL's "others" and "libs": QR codes, Code 128 barcodes, a… (L13710)
-  - mod `twine_extra::barcode` — Code 128 barcodes (LVGL `lv_barcode`): an encoder producing the symbol and drawing helpers. (L13753)
-  - mod `twine_extra::i18n` — Compile-time translations (the role of LVGL's `lv_translation`): a catalog generated at build time from transl… (L13808)
-  - mod `twine_extra::i18n::number` — Locale-aware number formatting without floating point or allocation: `Decimal` (an integer or a fixed-point va… (L14008)
-  - mod `twine_extra::i18n::plural` — CLDR plural rules: `PluralCategory`, the operands of a number (`PluralOperands`) and one function per rule (na… (L14032)
-  - mod `twine_extra::qrcode` — QR codes (LVGL `lv_qrcode`): an encoder producing a module matrix and drawing helpers. (L14147)
-- crate `twine_lottie` — Plays Lottie (Bodymovin JSON) animations for the Twine GUI library: `load` parses a file into a typed `Composi… (L14219)
-  - mod `twine_lottie::eval` — Evaluating animated properties at a frame: `Lerp`, keyframe segment lookup (cached for sequential playback), h… (L14346)
-  - mod `twine_lottie::model` — The typed Lottie (Bodymovin JSON) model produced by `load`. (L14377)
-  - mod `twine_lottie::view` — `lottie`: the declarative view of the `Lottie` widget. (L14720)
-  - mod `twine_lottie::widget` — `Lottie`: an engine widget playing a Lottie animation (LVGL `lv_lottie`), redrawing only when the frame change… (L14738)
-- crate `twine_hal` — The hardware abstraction of the Twine GUI library: the traits a display, input device, clock or platform (slee… (L14774)
-  - mod `twine_hal::buffer` — Draw buffer memory: `DrawBufferMem` (an owned `'static` buffer), `DrawBuffer` (the storage of one buffer, 4-by… (L15141)
-  - mod `twine_hal::calibration` — Touch calibration: `Calibration`, a 3-point affine mapping from raw touch-controller coordinates to the displa… (L15174)
-  - mod `twine_hal::clock` — The time source: `Clock`. (L15182)
-  - mod `twine_hal::display` — Display traits and descriptions: `DisplayDriver`, `AsyncDisplayDriver` (feature `async`), `FramebufferDisplay`… (L15189)
-  - mod `twine_hal::input` — Input devices: `InputDevice`, `InputData`, `Key`, `PollHint`, `DeviceHealth` and the per-kind data. (L15225)
-  - mod `twine_hal::platform` — Platform services: `Platform` (wait for a deadline or a wake-up, blocking) and `AsyncPlatform` (the same for a… (L15248)
-  - mod `twine_hal::touch` — Touch coordinates: `TouchTransform` maps raw panel coordinates of a touch controller to the logical (rotated)… (L15282)
-- crate `twine_drivers` — Display, touch and input drivers of the Twine GUI library, implementing the `twine-hal` traits on top of `embe… (L15305)
-  - mod `twine_drivers::co5300` — CO5300 AMOLED controller on quad SPI (Waveshare ESP32-S3-Touch-AMOLED-2.06: 410 × 502). (L15397)
-  - mod `twine_drivers::debounce` — `Debouncer`: time-based debouncing of a digital input. (L15451)
-  - mod `twine_drivers::encoder` — Rotary encoder on two GPIOs (quadrature A/B) plus an optional push button: `QuadratureDecoder` and `GpioQuadra… (L15464)
-  - mod `twine_drivers::gc9a01` — GC9A01 240 × 240 round IPS controller (1.28" round modules). (L15512)
-  - mod `twine_drivers::ili9341` — ILI9341 240 × 320 TFT controller (the common 2.4"/2.8"/3.2" SPI modules). (L15566)
-  - mod `twine_drivers::ili9342` — ILI9342C 320 × 240 TFT controller (landscape-native ILI9341 sibling: `M5Stack` Core, ESP32-S3-BOX-3). (L15620)
-  - mod `twine_drivers::ili9488` — ILI9488 320 × 480 TFT controller over SPI (18-bit colour only). (L15670)
-  - mod `twine_drivers::interface` — Byte-level transports for command/data display controllers: `DcsInterface` (blocking), `AsyncDcsInterface` (fe… (L15720)
-  - mod `twine_drivers::interface::qspi` — `QspiInterface`: quad-SPI transport of AMOLED controllers (CO5300, SH8601, RM67162, …). (L15860)
-  - mod `twine_drivers::interface::qspi::opcode` — QSPI instructions and DCS commands of the panel framing. (L15889)
-  - mod `twine_drivers::jd9853` — JD9853 IPS controller with a 172 × 320 panel (1.47" modules, e.g. (L15909)
-  - mod `twine_drivers::keypad` — Key matrix scanned over GPIOs: `GpioMatrix` (`InputKind::Keypad`). (L15963)
-  - mod `twine_drivers::mipi_dcs` — The generic MIPI DCS panel driver shared by every MIPI panel: `MipiDcs` (blocking, `DisplayDriver`) and `Async… (L16005)
-  - mod `twine_drivers::mipi_dcs::cmd` — MIPI DCS command codes (MIPI DCS 1.03 / ILI9341 datasheet §8.2). (L16138)
-  - mod `twine_drivers::mono` — Page conversion for monochrome OLED controllers (SSD1306, SH1106). (L16214)
-  - mod `twine_drivers::rm67162` — RM67162 AMOLED controller on quad SPI (`LilyGO` T-Display-S3 AMOLED 1.91": 240 × 536). (L16243)
-  - mod `twine_drivers::sh1106` — SH1106 monochrome OLED controller (1.3" 128 × 64 modules) over I2C or SPI. (L16297)
-  - mod `twine_drivers::sh8601` — SH8601 AMOLED controller on quad SPI (Waveshare ESP32-S3-Touch-AMOLED-1.8: 368 × 448). (L16350)
-  - mod `twine_drivers::ssd1306` — SSD1306 monochrome OLED controller (0.49"–1.3" 128 × 64, 128 × 32, 72 × 40 modules) over I2C or SPI. (L16404)
-  - mod `twine_drivers::st7735` — ST7735R / ST7735S 128 × 160 TFT controller ("tab" variants of the common 1.8" and 0.96" modules). (L16474)
-  - mod `twine_drivers::st7789` — ST7789 / ST7789V 240 × 320 IPS controller and its common module variants. (L16536)
-  - mod `twine_drivers::st7796` — ST7796S 320 × 480 TFT controller (3.5"/4.0" SPI modules). (L16594)
-  - mod `twine_drivers::touch` — Touch controllers implementing `InputDevice` (`Pointer`). (L16640)
-  - mod `twine_drivers::touch::axs5106l` — AXS5106L capacitive touch controller (I2C; 1.47" 172 × 320 IPS modules such as the Waveshare ESP32-C6-Touch-LC… (L16799)
-  - mod `twine_drivers::touch::cst816s` — Hynitron CST816S capacitive touch controller (I2C; round 1.28" GC9A01 boards and small watches). (L16842)
-  - mod `twine_drivers::touch::ft5x06` — Focaltech FT5206 / FT5306 / FT5406 capacitive touch controllers (I2C, up to 5 points). (L16881)
-  - mod `twine_drivers::touch::ft6x36` — Focaltech FT6206 / FT6236 / FT6336 (and FT3168) capacitive touch controllers (I2C). (L16903)
-  - mod `twine_drivers::touch::gt911` — Goodix GT911 capacitive touch controller (I2C, 16-bit register addresses). (L16943)
-  - mod `twine_drivers::touch::stmpe811` — ST STMPE811 resistive touch-screen controller with ADC (I2C; STM32F429I-DISC1 and many resistive modules). (L17002)
-  - mod `twine_drivers::touch::stmpe811::reg` — Register addresses. (L17045)
-  - mod `twine_drivers::touch::xpt2046` — XPT2046 (ADS7843-compatible) resistive touch controller on SPI. (L17113)
-  - mod `twine_drivers::testkit` — Recording mock buses for host-side driver tests. (L17168)
-- crate `twine_embassy` — Runs a Twine UI on an embassy executor: `run` updates the UI and then sleeps until the UI's next deadline, a c… (L17271)
-- crate `twine_embedded_graphics` — embedded-graphics adapter for the Twine GUI library, in both directions. (L17377)
-- crate `twine_accel_stm32` — STM32 DMA2D (Chrom-ART) draw acceleration for the Twine renderer. (L17434)
-  - mod `twine_accel_stm32::mock` — `MockRegs`: a recording DMA2D register file for host tests (feature `mock`). (L17549)
-  - mod `twine_accel_stm32::bits` — Register bit fields (RM0090 §9.5; v2 on the STM32H7 only adds bits that are not used here). (L17579)
-- crate `twine_sim` — The desktop simulator of the Twine GUI library: a native window (winit 0.30 + softbuffer 0.4, pure Rust) showi… (L17708)
-  - mod `twine_sim::config` — Simulator configuration: `SimConfig`, `SimInputs`, `Headless`. (L18083)
-  - mod `twine_sim::convert` — Conversion of the emulated panel memory to RGB for the window and PNGs. (L18105)
-  - mod `twine_sim::display` — `SimDisplay`: the simulator's emulated panel, a real `DisplayDriver`. (L18126)
-  - mod `twine_sim::hotkeys` — Simulator hotkeys (F1…F12). (L18135)
-  - mod `twine_sim::input` — Simulated input devices: mouse → `SimPointer`, wheel + middle button → `SimEncoder`, keyboard → `SimKeypad`. (L18170)
-  - mod `twine_sim::panels` — Multi-panel apps: several independent UIs side by side in one window (`SimApp::panels`, `run_panels`). (L18245)
-  - mod `twine_sim::paths` — Output locations of the simulator (`target/twine-sim/…`). (L18287)
-  - mod `twine_sim::script` — `.twinescript`: scripted input for headless runs. (L18303)
-- crate `twine_testing` — Test utilities of the Twine GUI library. (L18380)
-  - mod `twine_testing::alloc` — Allocation counting: `CountingAllocator`, `count_allocs` and `assert_no_alloc_after_seal`. (L18908)
-  - mod `twine_testing::clock` — `MockClock`: a manually advanced `Clock`. (L18952)
-  - mod `twine_testing::convert` — Pixel format conversion for assertions and snapshots: any supported `ColorFormat` buffer → 8-bit RGB. (L18959)
-  - mod `twine_testing::engine_harness` — `EngineHarness`: a bare `Engine` on an in-memory display with a mock clock, for engine tests (feature `engine`… (L18993)
-  - mod `twine_testing::fuzz` — Operation-sequence fuzzing beyond the decoders (R5.S08): interpreters that turn arbitrary bytes into sequences… (L19010)
-  - mod `twine_testing::gallery` — Renderer gallery pages (feature `render`): the reference drawings of the renderer's snapshot tests, also shown… (L19116)
-  - mod `twine_testing::logging` — Test logging: `init_test_logging` and `capture_logs`. (L19199)
-  - mod `twine_testing::memory_display` — `MemoryDisplay`: an in-memory `DisplayDriver` that records every flush, with optional DMA-like latency, plus `… (L19208)
-  - mod `twine_testing::mock_display` — Display mocks for engine tests (feature `engine`): `MockDmaDisplay` (a DMA-like `DisplayDriver` recording an e… (L19219)
-  - mod `twine_testing::mock_input` — Mock input devices: `MockPointer`, `MockKeypad`, `MockEncoder`, `MockButton`. (L19234)
-  - mod `twine_testing::platform` — `MockPlatform`: a `Platform` and `AsyncPlatform` on simulated time. (L19251)
-  - mod `twine_testing::png_io` — Deterministic PNG reading and writing of 8-bit RGB images. (L19258)
-  - mod `twine_testing::render_harness` — `RenderHarness`: an in-memory draw buffer with `RenderCaches` for renderer tests and snapshots (feature `rende… (L19286)
-  - mod `twine_testing::scenes` — Reference scenes for engine tests, benchmarks and examples (feature `engine`), so every buffer mode, rotation… (L19294)
-  - mod `twine_testing::snapshot` — Golden-image snapshots: `assert_rgb_snapshot`, `SnapshotConfig`, `Tolerance`, and the committed hash manifest… (L19338)
-  - mod `twine_testing::theme_coverage` — Theme coverage (design `docs/plan/r7-theming-design.md` §2.9.4): which recipe styles each theme class a UI cre… (L19484)
-  - mod `twine_testing::ui` — `TestUi`: the declarative `Ui` on an in-memory display with a mock clock and mock inputs (feature `ui`). (L19515)
-  - mod `twine_testing::logs` — Log capture for tests: `logs::capture(|| …)` runs a closure and returns the records it logged (on this thread)… (L19524)
-- crate `twine_build` — Build-script helpers for Twine applications: assets are compiled on the host, in `build.rs`, into Rust sources… (L19537)
-  - mod `twine_build::chars` — Character sets for glyph subsetting: which characters a generated font contains. (L19623)
-  - mod `twine_build::font` — Bitmap fonts from TrueType/OpenType files (feature `font`): a deterministic generator that writes a `static` `… (L19656)
-  - mod `twine_build::i18n` — Compile-time translations: read translation files (Fluent `.ftl`, gettext `.po` or TOML), check them, and gene… (L19778)
-  - mod `twine_build::image` — Images from PNG, JPEG, BMP, GIF or QOI files (feature `image`): a deterministic converter that writes a `stati… (L19941)
-- crate `twine_macros` — The procedural macros of Twine. (L20055)
-- crate `twine_core` — Foundations of the Twine GUI library: integer geometry, fixed-point math and trigonometry, transforms, colors… (L20090)
-  - mod `twine_core::alloc_guard` — The allocation guard: detects heap allocation by Twine after start-up ("seal"). (L20883)
-  - mod `twine_core::arena` — Generational arena (`Arena<T>`) with stale-handle detection (`Id<T>`). (L20997)
-  - mod `twine_core::audit` — Configuration evidence: a stable, machine-readable `key=value` dump of everything that bounds or configures Tw… (L21015)
-  - mod `twine_core::color` — Colors: the canonical `Color` (RGB888), opacity (`Opa`), the runtime format tag (`ColorFormat`), typed pixel f… (L21079)
-  - mod `twine_core::crc` — `Crc32`: the CRC-32 checksum (IEEE 802.3) used for display-integrity checks and digests. (L21158)
-  - mod `twine_core::error` — The crate error type. (L21179)
-  - mod `twine_core::fault` — Faults: the vocabulary every Twine crate uses to report a failure that the library recovered from but that may… (L21186)
-  - mod `twine_core::geometry` — Integer geometry: `Point`, `Size`, `Rect` (half-open), `Insets` and `Rotation`. (L21232)
-  - mod `twine_core::limits` — `Limits`: the memory bounds of a Twine application, in one value. (L21247)
-  - mod `twine_core::log` — Logging facade: `trace!`, `debug!`, `info!`, `warn!` and `error!`. (L21274)
-  - mod `twine_core::math` — Deterministic integer math: `Fx` (16.16 fixed point), `Angle` (0.1°), `Scale` (256 = 1.0), `Fraction` (0..=1),… (L21318)
-  - mod `twine_core::partition` — `Partition`: the identity of a partitioned runtime (ADR-001, `docs/design/adr-001-partitioned-runtimes.md`). (L21416)
-  - mod `twine_core::prelude` — The most used `twine-core` types: `use twine_core::prelude::*;`. (L21441)
-  - mod `twine_core::rect_set` — `RectSet`: the fixed-capacity dirty-area set used by the refresh pipeline. (L21465)
-  - mod `twine_core::rng` — Deterministic pseudo-random numbers (`XorShift32`). (L21473)
-  - mod `twine_core::small_vec` — `SmallVec`: an inline-first vector for small `Copy` elements. (L21480)
-  - mod `twine_core::symbol` — `Symbol`: the built-in icon glyphs (LVGL `LV_SYMBOL_*`), with the exact code points of LVGL v9 `src/font/lv_sy… (L21487)
-  - mod `twine_core::time` — Monotonic time in microseconds: `Instant` and `Duration`. (L21504)
-  - mod `twine_core::transform` — 2-D affine transforms in 16.16 fixed point. (L21514)
-  - mod `twine_core::validity` — `Validity`: a value together with how much it can be trusted, and its `ValidityStatus`. (L21521)
+- crate `twine` — Twine: a declarative, signal-based, low-power GUI library for embedded devices with the feature set of LVGL, `… (L226)
+  - mod `twine::guide` — Guides: walkthroughs of larger tasks, with compiled and tested examples. (L439)
+  - mod `twine::guide::custom_widgets` — Writing a custom widget: a gauge, step by step. (L451)
+  - mod `twine::guide::app_state` — Application state: the store pattern for large applications. (L479)
+  - mod `twine::guide::units` — Twine lays out and draws the same UI on a 240 × 240 watch panel and on a Retina desktop window. (L507)
+  - mod `twine::prelude` — Everything an application needs: `use twine::prelude::*;`. (L535)
+- crate `twine_view` — The declarative layer of the Twine GUI library: an application is a function `fn app(cx: Scope) -> impl View`… (L546)
+  - mod `twine_view::component` — Components: functions describing a piece of UI, used like built-in widgets. (L2053)
+  - mod `twine_view::flow` — Control flow: `when`, `dynamic`, `for_each`, `virtual_list` (the keyed collections take their items as `IntoIt… (L2074)
+  - mod `twine_view::navigator` — Typed screen navigation: `navigator`, `Navigator`, `expect_navigator` / `use_navigator`, leave guards (`Naviga… (L2120)
+  - mod `twine_view::prelude` — Everything an application needs: `use twine_view::prelude::*;` (the `twine` facade's prelude re-exports this o… (L2157)
+  - mod `twine_view::prelude::draw_buffers` — Static draw buffers: `draw_buffers!` and `DrawBuffers`. (L2456)
+  - mod `twine_view::run` — Run loops: thin, optional adapters that step a `Ui` and sleep as it asks. (L2464)
+  - mod `twine_view::text` — Text properties: `IntoText`, `TextProp` and the zero-allocation `text!` macro. (L2509)
+  - mod `twine_view::typestate` — The parts a `UiBuilder` (and `AsyncUiBuilder`) must be given before it can build, checked by the compiler. (L2525)
+  - mod `twine_view::widgets` — Widget views: constructor functions returning `WidgetView`s with the widget-specific builder methods. (L2563)
+  - mod `twine_view::marker` — The markers of the conversion traits' impls, one per form of value: `IntoProp`, `IntoText`, `IntoOptions` and… (L2617)
+- crate `twine_widgets` — The basic widgets of the Twine GUI library, each a port of the LVGL widget of the same name: (L2649)
+  - mod `twine_widgets::animimg` — `AnimImg`: an image that plays a sequence of frames (LVGL `lv_animimg`). (L2758)
+  - mod `twine_widgets::arc` — `Arc`: an arc slider with a knob (LVGL `lv_arc`). (L2799)
+  - mod `twine_widgets::bar` — `Bar`: a progress bar (LVGL `lv_bar`). (L2856)
+  - mod `twine_widgets::button` — `Button`: a clickable container (LVGL `lv_button`). (L2914)
+  - mod `twine_widgets::buttonmatrix` — `ButtonMatrix`: a grid of text buttons drawn by one widget (LVGL `lv_buttonmatrix`). (L2963)
+  - mod `twine_widgets::checkbox` — `Checkbox`: a check box with a text (LVGL `lv_checkbox`). (L3104)
+  - mod `twine_widgets::container` — `Container`: the base object (LVGL `lv_obj`), a styled rectangle holding children. (L3138)
+  - mod `twine_widgets::image` — `Image`: an image source drawn with inner alignment, rotation, scaling and recoloring (LVGL `lv_image`). (L3174)
+  - mod `twine_widgets::image_button` — `ImageButton`: a button drawn from images, one set per state (LVGL `lv_imagebutton`). (L3245)
+  - mod `twine_widgets::keyboard` — `Keyboard`: an on-screen keyboard built on the button matrix (LVGL `lv_keyboard`). (L3283)
+  - mod `twine_widgets::label` — `Label`: text (LVGL `lv_label`) with every long mode, selection and in-place text storage. (L3356)
+  - mod `twine_widgets::led` — `Led`: a light-emitting diode (LVGL `lv_led`). (L3441)
+  - mod `twine_widgets::line` — `Line`: a polyline (LVGL `lv_line`). (L3489)
+  - mod `twine_widgets::prelude` — The widgets and their enums in one import: `use twine_widgets::prelude::*;`. (L3523)
+  - mod `twine_widgets::slider` — `Slider`: a bar with a draggable knob (LVGL `lv_slider`). (L3614)
+  - mod `twine_widgets::spangroup` — `SpanGroup`: rich text made of `Span`s with their own styles (LVGL `lv_spangroup`). (L3651)
+  - mod `twine_widgets::spinbox` — `Spinbox`: a numeric editor with digit-wise stepping (LVGL `lv_spinbox`). (L3731)
+  - mod `twine_widgets::spinner` — `Spinner`: the loading spinner, an endlessly animated arc (LVGL `lv_spinner`). (L3783)
+  - mod `twine_widgets::switch` — `Switch`: an animated on/off switch (LVGL `lv_switch`). (L3821)
+  - mod `twine_widgets::textarea` — `Textarea`: a scrollable text input with a cursor (LVGL `lv_textarea`). (L3859)
+- crate `twine_widgets_ext` — The complex widgets of the Twine GUI library, each a port of the LVGL widget of the same name, built on the ba… (L3986)
+  - mod `twine_widgets_ext::dropdown` — `Dropdown`: a button showing the selected option that opens a list of options (LVGL `lv_dropdown`), and its `D… (L4065)
+  - mod `twine_widgets_ext::list` — `List`: a scrollable column of text headers (`add_text`) and buttons with an icon and a text (`add_button`) (L… (L4132)
+  - mod `twine_widgets_ext::menu` — `Menu`: hierarchical pages with a header, a back button, an optional sidebar and a page history (LVGL `lv_menu… (L4204)
+  - mod `twine_widgets_ext::msgbox` — `Msgbox`: a message box with an optional header (title and buttons), a text content and a footer of buttons, m… (L4348)
+  - mod `twine_widgets_ext::prelude` — The complex widgets and their enums in one import: `use twine_widgets_ext::prelude::*;`. (L4420)
+  - mod `twine_widgets_ext::roller` — `Roller`: a drum-style picker (LVGL `lv_roller`). (L4460)
+  - mod `twine_widgets_ext::tabview` — `Tabview`: tabs with a button bar and swipeable, snap-scrolling content (LVGL `lv_tabview`, 9.x structure). (L4510)
+  - mod `twine_widgets_ext::tileview` — `Tileview`: a 2D grid of full-size tiles navigated by swipes in the allowed directions (LVGL `lv_tileview`). (L4561)
+  - mod `twine_widgets_ext::vector_view` — `VectorView`: a widget drawing a `VectorScene` (paths with fills, strokes and gradients; LVGL `lv_draw_vector`… (L4602)
+  - mod `twine_widgets_ext::window` — `Window`: a header (title and buttons) above a scrollable content area (LVGL `lv_win`). (L4630)
+- crate `twine_theme` — Themes for the Twine GUI library: they give every widget its default look, exactly like LVGL's themes (`src/th… (L4670)
+  - mod `twine_theme::lvgl` — `Lvgl`: a faithful port of LVGL's default theme (`src/themes/default/lv_theme_default.c`), light and dark, plu… (L4951)
+  - mod `twine_theme::lvgl::colors` — The colors of LVGL's default theme (`lv_theme_default.c`, the `LIGHT_COLOR_*` and `DARK_COLOR_*` macros). (L5237)
+  - mod `twine_theme::lvgl::metrics` — The LVGL theme's values that depend on the display: every size LVGL's `style_init()` scales with `LV_DPX_CALC`… (L5274)
+  - mod `twine_theme::lvgl::styles` — The styles of the LVGL theme, LVGL's `style_init()` of `src/themes/default/lv_theme_default.c` as `static` dat… (L5374)
+  - mod `twine_theme::mono` — `Mono`: LVGL's monochrome theme (`src/themes/mono/lv_theme_mono.c`) for 1-bit displays, as `static` data. (L5651)
+  - mod `twine_theme::mono::styles` — The styles of `lv_theme_mono.c` used by the widgets implemented so far, as `static`s (LVGL's names in capitals… (L5809)
+  - mod `twine_theme::simple` — `Simple`: LVGL's simple theme (`src/themes/simple/lv_theme_simple.c`), as `static` data. (L5887)
+  - mod `twine_theme::simple::styles` — The styles of `lv_theme_simple.c` (`my_theme_styles_t`) as `static`s (LVGL's names in capitals). (L6054)
+- crate `twine_style` — The style system of the Twine GUI library, independent of the widget tree: the complete LVGL v9 style property… (L6099)
+  - mod `twine_style::design` — Design elements: named, typed values (colors, spacings, radii, opacities, fonts, motion timings, icons) that a… (L7601)
+- crate `twine_engine` — The core of the Twine GUI library: the retained widget tree, the `Widget` trait, styles attached to nodes, pre… (L8198)
+  - mod `twine_engine::gridnav` — Grid navigation (LVGL `lv_gridnav`): arrow keys move the focus among the children of a container by their posi… (L9876)
+- crate `twine_reactive` — Fine-grained, push-pull, glitch-free reactive signals for a single UI thread The declarative view layer (`twin… (L9905)
+- crate `twine_layout` — Sizing, positioning, flex and grid layout of the Twine GUI library, with the semantics of LVGL 9 (`lv_obj_pos.… (L10448)
+- crate `twine_anim` — Animation building blocks of the Twine GUI library, below the widget engine in the layering (it depends only o… (L10661)
+- crate `twine_render` — The integer software renderer of the Twine GUI library: pixel operations only, no knowledge of widgets. (L10967)
+- crate `twine_text` — Fonts, text layout and text drawing for the Twine GUI library (layer 3, above the renderer). (L11590)
+  - mod `twine_text::encode` — Encoder helpers for font generators (feature `std`): bit packing, the XOR prefilter, the RLE encoder (the exac… (L12315)
+  - mod `twine_text::gamma` — Text gamma: how a glyph's stored coverage becomes opacity, chosen per text run by polarity. (L12396)
+- crate `twine_image` — Images for the Twine GUI library: the `Image` data model (every `ColorFormat` of the renderer, palettes, `Rgb5… (L12438)
+  - mod `twine_image::decoders` — Built-in decoders (each behind its `img-*` feature, except the raw `.tbin` format). (L12727)
+  - mod `twine_image::decoders::bmp` — In-house BMP decoder: 1, 4, 8 bpp paletted (uncompressed, RLE4, RLE8), 16 bpp (RGB555 or bit fields), 24 bpp a… (L12731)
+  - mod `twine_image::decoders::gif` — In-house GIF decoder: `GifDecoder` (first frame, for static use) and `GifPlayer` (animation with frame composi… (L12746)
+  - mod `twine_image::decoders::jpeg` — JPEG decoder over `zune-jpeg` (baseline and progressive, gray / YCbCr / CMYK input, all chroma subsamplings). (L12783)
+  - mod `twine_image::decoders::png` — In-house PNG decoder over `miniz_oxide` (zlib inflate). (L12799)
+  - mod `twine_image::decoders::qoi` — In-house QOI decoder (<https://qoiformat.org/qoi-specification.pdf>), plus an encoder (feature `std`) for tool… (L12815)
+  - mod `twine_image::decoders::tbin` — The raw twine binary image file (`.tbin`, written by `twine image --bin`): pixels in any `ColorFormat`, stored… (L12835)
+- crate `twine_vector` — Vector graphics for the Twine GUI library (the equivalent of LVGL's `lv_vector` API and SVG support): paths, c… (L12873)
+  - mod `twine_vector::svg` — SVG Tiny subset parser (feature `svg`): `parse_svg` turns SVG bytes into an `SvgDocument` holding a `VectorSce… (L13241)
+- crate `twine_fs` — File system abstraction of the Twine GUI library, the equivalent of LVGL's `lv_fs`: images, fonts and other as… (L13300)
+- crate `twine_assets` — Built-in fonts of the Twine GUI library as `static` `Font`s, one cargo feature per font (`default = ["montserr… (L13509)
+  - mod `twine_assets::fonts` — The built-in fonts (each behind its cargo feature). (L13638)
+- crate `twine_extra` — Extras for the Twine GUI library, the equivalent of LVGL's "others" and "libs": QR codes, Code 128 barcodes, a… (L13838)
+  - mod `twine_extra::barcode` — Code 128 barcodes (LVGL `lv_barcode`): an encoder producing the symbol and drawing helpers. (L13881)
+  - mod `twine_extra::i18n` — Compile-time translations (the role of LVGL's `lv_translation`): a catalog generated at build time from transl… (L13936)
+  - mod `twine_extra::i18n::number` — Locale-aware number formatting without floating point or allocation: `Decimal` (an integer or a fixed-point va… (L14136)
+  - mod `twine_extra::i18n::plural` — CLDR plural rules: `PluralCategory`, the operands of a number (`PluralOperands`) and one function per rule (na… (L14160)
+  - mod `twine_extra::qrcode` — QR codes (LVGL `lv_qrcode`): an encoder producing a module matrix and drawing helpers. (L14275)
+- crate `twine_lottie` — Plays Lottie (Bodymovin JSON) animations for the Twine GUI library: `load` parses a file into a typed `Composi… (L14347)
+  - mod `twine_lottie::eval` — Evaluating animated properties at a frame: `Lerp`, keyframe segment lookup (cached for sequential playback), h… (L14474)
+  - mod `twine_lottie::model` — The typed Lottie (Bodymovin JSON) model produced by `load`. (L14505)
+  - mod `twine_lottie::view` — `lottie`: the declarative view of the `Lottie` widget. (L14848)
+  - mod `twine_lottie::widget` — `Lottie`: an engine widget playing a Lottie animation (LVGL `lv_lottie`), redrawing only when the frame change… (L14866)
+- crate `twine_hal` — The hardware abstraction of the Twine GUI library: the traits a display, input device, clock or platform (slee… (L14902)
+  - mod `twine_hal::buffer` — Draw buffer memory: `DrawBufferMem` (an owned `'static` buffer), `DrawBuffer` (the storage of one buffer, 4-by… (L15274)
+  - mod `twine_hal::calibration` — Touch calibration: `Calibration`, a 3-point affine mapping from raw touch-controller coordinates to the displa… (L15307)
+  - mod `twine_hal::clock` — The time source: `Clock`. (L15315)
+  - mod `twine_hal::display` — Display traits and descriptions: `DisplayDriver`, `AsyncDisplayDriver` (feature `async`), `FramebufferDisplay`… (L15322)
+  - mod `twine_hal::input` — Input devices: `InputDevice`, `InputData`, `Key`, `PollHint`, `DeviceHealth` and the per-kind data. (L15358)
+  - mod `twine_hal::platform` — Platform services: `Platform` (wait for a deadline or a wake-up, blocking) and `AsyncPlatform` (the same for a… (L15381)
+  - mod `twine_hal::touch` — Touch coordinates: `TouchTransform` maps raw panel coordinates of a touch controller to the logical (rotated)… (L15415)
+- crate `twine_drivers` — Display, touch and input drivers of the Twine GUI library, implementing the `twine-hal` traits on top of `embe… (L15438)
+  - mod `twine_drivers::co5300` — CO5300 AMOLED controller on quad SPI (Waveshare ESP32-S3-Touch-AMOLED-2.06: 410 × 502). (L15530)
+  - mod `twine_drivers::debounce` — `Debouncer`: time-based debouncing of a digital input. (L15584)
+  - mod `twine_drivers::encoder` — Rotary encoder on two GPIOs (quadrature A/B) plus an optional push button: `QuadratureDecoder` and `GpioQuadra… (L15597)
+  - mod `twine_drivers::gc9a01` — GC9A01 240 × 240 round IPS controller (1.28" round modules). (L15645)
+  - mod `twine_drivers::ili9341` — ILI9341 240 × 320 TFT controller (the common 2.4"/2.8"/3.2" SPI modules). (L15699)
+  - mod `twine_drivers::ili9342` — ILI9342C 320 × 240 TFT controller (landscape-native ILI9341 sibling: `M5Stack` Core, ESP32-S3-BOX-3). (L15753)
+  - mod `twine_drivers::ili9488` — ILI9488 320 × 480 TFT controller over SPI (18-bit colour only). (L15803)
+  - mod `twine_drivers::interface` — Byte-level transports for command/data display controllers: `DcsInterface` (blocking), `AsyncDcsInterface` (fe… (L15853)
+  - mod `twine_drivers::interface::qspi` — `QspiInterface`: quad-SPI transport of AMOLED controllers (CO5300, SH8601, RM67162, …). (L15993)
+  - mod `twine_drivers::interface::qspi::opcode` — QSPI instructions and DCS commands of the panel framing. (L16022)
+  - mod `twine_drivers::jd9853` — JD9853 IPS controller with a 172 × 320 panel (1.47" modules, e.g. (L16042)
+  - mod `twine_drivers::keypad` — Key matrix scanned over GPIOs: `GpioMatrix` (`InputKind::Keypad`). (L16096)
+  - mod `twine_drivers::mipi_dcs` — The generic MIPI DCS panel driver shared by every MIPI panel: `MipiDcs` (blocking, `DisplayDriver`) and `Async… (L16138)
+  - mod `twine_drivers::mipi_dcs::cmd` — MIPI DCS command codes (MIPI DCS 1.03 / ILI9341 datasheet §8.2). (L16271)
+  - mod `twine_drivers::mono` — Page conversion for monochrome OLED controllers (SSD1306, SH1106). (L16347)
+  - mod `twine_drivers::rm67162` — RM67162 AMOLED controller on quad SPI (`LilyGO` T-Display-S3 AMOLED 1.91": 240 × 536). (L16376)
+  - mod `twine_drivers::sh1106` — SH1106 monochrome OLED controller (1.3" 128 × 64 modules) over I2C or SPI. (L16430)
+  - mod `twine_drivers::sh8601` — SH8601 AMOLED controller on quad SPI (Waveshare ESP32-S3-Touch-AMOLED-1.8: 368 × 448). (L16483)
+  - mod `twine_drivers::ssd1306` — SSD1306 monochrome OLED controller (0.49"–1.3" 128 × 64, 128 × 32, 72 × 40 modules) over I2C or SPI. (L16537)
+  - mod `twine_drivers::st7735` — ST7735R / ST7735S 128 × 160 TFT controller ("tab" variants of the common 1.8" and 0.96" modules). (L16607)
+  - mod `twine_drivers::st7789` — ST7789 / ST7789V 240 × 320 IPS controller and its common module variants. (L16669)
+  - mod `twine_drivers::st7796` — ST7796S 320 × 480 TFT controller (3.5"/4.0" SPI modules). (L16727)
+  - mod `twine_drivers::touch` — Touch controllers implementing `InputDevice` (`Pointer`). (L16773)
+  - mod `twine_drivers::touch::axs5106l` — AXS5106L capacitive touch controller (I2C; 1.47" 172 × 320 IPS modules such as the Waveshare ESP32-C6-Touch-LC… (L16932)
+  - mod `twine_drivers::touch::cst816s` — Hynitron CST816S capacitive touch controller (I2C; round 1.28" GC9A01 boards and small watches). (L16975)
+  - mod `twine_drivers::touch::ft5x06` — Focaltech FT5206 / FT5306 / FT5406 capacitive touch controllers (I2C, up to 5 points). (L17014)
+  - mod `twine_drivers::touch::ft6x36` — Focaltech FT6206 / FT6236 / FT6336 (and FT3168) capacitive touch controllers (I2C). (L17036)
+  - mod `twine_drivers::touch::gt911` — Goodix GT911 capacitive touch controller (I2C, 16-bit register addresses). (L17076)
+  - mod `twine_drivers::touch::stmpe811` — ST STMPE811 resistive touch-screen controller with ADC (I2C; STM32F429I-DISC1 and many resistive modules). (L17135)
+  - mod `twine_drivers::touch::stmpe811::reg` — Register addresses. (L17178)
+  - mod `twine_drivers::touch::xpt2046` — XPT2046 (ADS7843-compatible) resistive touch controller on SPI. (L17246)
+  - mod `twine_drivers::testkit` — Recording mock buses for host-side driver tests. (L17301)
+- crate `twine_embassy` — Runs a Twine UI on an embassy executor: `run` updates the UI and then sleeps until the UI's next deadline, a c… (L17404)
+- crate `twine_embedded_graphics` — embedded-graphics adapter for the Twine GUI library, in both directions. (L17510)
+- crate `twine_accel_stm32` — STM32 DMA2D (Chrom-ART) draw acceleration for the Twine renderer. (L17567)
+  - mod `twine_accel_stm32::mock` — `MockRegs`: a recording DMA2D register file for host tests (feature `mock`). (L17682)
+  - mod `twine_accel_stm32::bits` — Register bit fields (RM0090 §9.5; v2 on the STM32H7 only adds bits that are not used here). (L17712)
+- crate `twine_sim` — The desktop simulator of the Twine GUI library: a native window (winit 0.30 + softbuffer 0.4, pure Rust) showi… (L17841)
+  - mod `twine_sim::config` — Simulator configuration: `SimConfig`, `SimInputs`, `Headless`. (L18227)
+  - mod `twine_sim::convert` — Conversion of the emulated panel memory to RGB for the window and PNGs. (L18250)
+  - mod `twine_sim::display` — `SimDisplay`: the simulator's emulated panel, a real `DisplayDriver`. (L18271)
+  - mod `twine_sim::hotkeys` — Simulator hotkeys (F1…F12). (L18280)
+  - mod `twine_sim::input` — Simulated input devices: mouse → `SimPointer`, wheel + middle button → `SimEncoder`, keyboard → `SimKeypad`. (L18315)
+  - mod `twine_sim::panels` — Multi-panel apps: several independent UIs side by side in one window (`SimApp::panels`, `run_panels`). (L18390)
+  - mod `twine_sim::paths` — Output locations of the simulator (`target/twine-sim/…`). (L18432)
+  - mod `twine_sim::script` — `.twinescript`: scripted input for headless runs. (L18448)
+- crate `twine_testing` — Test utilities of the Twine GUI library. (L18527)
+  - mod `twine_testing::alloc` — Allocation counting: `CountingAllocator`, `count_allocs` and `assert_no_alloc_after_seal`. (L19057)
+  - mod `twine_testing::clock` — `MockClock`: a manually advanced `Clock`. (L19101)
+  - mod `twine_testing::convert` — Pixel format conversion for assertions and snapshots: any supported `ColorFormat` buffer → 8-bit RGB. (L19108)
+  - mod `twine_testing::engine_harness` — `EngineHarness`: a bare `Engine` on an in-memory display with a mock clock, for engine tests (feature `engine`… (L19142)
+  - mod `twine_testing::fuzz` — Operation-sequence fuzzing beyond the decoders (R5.S08): interpreters that turn arbitrary bytes into sequences… (L19159)
+  - mod `twine_testing::gallery` — Renderer gallery pages (feature `render`): the reference drawings of the renderer's snapshot tests, also shown… (L19265)
+  - mod `twine_testing::logging` — Test logging: `init_test_logging` and `capture_logs`. (L19348)
+  - mod `twine_testing::memory_display` — `MemoryDisplay`: an in-memory `DisplayDriver` that records every flush, with optional DMA-like latency, plus `… (L19357)
+  - mod `twine_testing::mock_display` — Display mocks for engine tests (feature `engine`): `MockDmaDisplay` (a DMA-like `DisplayDriver` recording an e… (L19368)
+  - mod `twine_testing::mock_input` — Mock input devices: `MockPointer`, `MockKeypad`, `MockEncoder`, `MockButton`. (L19383)
+  - mod `twine_testing::platform` — `MockPlatform`: a `Platform` and `AsyncPlatform` on simulated time. (L19400)
+  - mod `twine_testing::png_io` — Deterministic PNG reading and writing of 8-bit RGB images. (L19407)
+  - mod `twine_testing::render_harness` — `RenderHarness`: an in-memory draw buffer with `RenderCaches` for renderer tests and snapshots (feature `rende… (L19435)
+  - mod `twine_testing::scenes` — Reference scenes for engine tests, benchmarks and examples (feature `engine`), so every buffer mode, rotation… (L19443)
+  - mod `twine_testing::snapshot` — Golden-image snapshots: `assert_rgb_snapshot`, `SnapshotConfig`, `Tolerance`, and the committed hash manifest… (L19487)
+  - mod `twine_testing::theme_coverage` — Theme coverage (design `docs/plan/r7-theming-design.md` §2.9.4): which recipe styles each theme class a UI cre… (L19633)
+  - mod `twine_testing::ui` — `TestUi`: the declarative `Ui` on an in-memory display with a mock clock and mock inputs (feature `ui`). (L19664)
+  - mod `twine_testing::logs` — Log capture for tests: `logs::capture(|| …)` runs a closure and returns the records it logged (on this thread)… (L19673)
+- crate `twine_build` — Build-script helpers for Twine applications: assets are compiled on the host, in `build.rs`, into Rust sources… (L19686)
+  - mod `twine_build::chars` — Character sets for glyph subsetting: which characters a generated font contains. (L19772)
+  - mod `twine_build::font` — Bitmap fonts from TrueType/OpenType files (feature `font`): a deterministic generator that writes a `static` `… (L19805)
+  - mod `twine_build::i18n` — Compile-time translations: read translation files (Fluent `.ftl`, gettext `.po` or TOML), check them, and gene… (L19929)
+  - mod `twine_build::image` — Images from PNG, JPEG, BMP, GIF or QOI files (feature `image`): a deterministic converter that writes a `stati… (L20092)
+- crate `twine_macros` — The procedural macros of Twine. (L20206)
+- crate `twine_core` — Foundations of the Twine GUI library: integer geometry, fixed-point math and trigonometry, transforms, colors… (L20241)
+  - mod `twine_core::alloc_guard` — The allocation guard: detects heap allocation by Twine after start-up ("seal"). (L21052)
+  - mod `twine_core::arena` — Generational arena (`Arena<T>`) with stale-handle detection (`Id<T>`). (L21166)
+  - mod `twine_core::audit` — Configuration evidence: a stable, machine-readable `key=value` dump of everything that bounds or configures Tw… (L21184)
+  - mod `twine_core::color` — Colors: the canonical `Color` (RGB888), opacity (`Opa`), the runtime format tag (`ColorFormat`), typed pixel f… (L21248)
+  - mod `twine_core::crc` — `Crc32`: the CRC-32 checksum (IEEE 802.3) used for display-integrity checks and digests. (L21327)
+  - mod `twine_core::error` — The crate error type. (L21348)
+  - mod `twine_core::fault` — Faults: the vocabulary every Twine crate uses to report a failure that the library recovered from but that may… (L21355)
+  - mod `twine_core::geometry` — Integer geometry: `Point`, `Size`, `Rect` (half-open), `Insets` and `Rotation`. (L21401)
+  - mod `twine_core::limits` — `Limits`: the memory bounds of a Twine application, in one value. (L21416)
+  - mod `twine_core::log` — Logging facade: `trace!`, `debug!`, `info!`, `warn!` and `error!`. (L21443)
+  - mod `twine_core::math` — Deterministic integer math: `Fx` (16.16 fixed point), `Angle` (0.1°), `Scale` (256 = 1.0), `DisplayScale` (256… (L21487)
+  - mod `twine_core::partition` — `Partition`: the identity of a partitioned runtime (ADR-001, `docs/design/adr-001-partitioned-runtimes.md`). (L21586)
+  - mod `twine_core::prelude` — The most used `twine-core` types: `use twine_core::prelude::*;`. (L21611)
+  - mod `twine_core::rect_set` — `RectSet`: the fixed-capacity dirty-area set used by the refresh pipeline. (L21635)
+  - mod `twine_core::rng` — Deterministic pseudo-random numbers (`XorShift32`). (L21643)
+  - mod `twine_core::small_vec` — `SmallVec`: an inline-first vector for small `Copy` elements. (L21650)
+  - mod `twine_core::symbol` — `Symbol`: the built-in icon glyphs (LVGL `LV_SYMBOL_*`), with the exact code points of LVGL v9 `src/font/lv_sy… (L21657)
+  - mod `twine_core::time` — Monotonic time in microseconds: `Instant` and `Duration`. (L21674)
+  - mod `twine_core::transform` — 2-D affine transforms in 16.16 fixed point. (L21684)
+  - mod `twine_core::validity` — `Validity`: a value together with how much it can be trusted, and its `ValidityStatus`. (L21691)
 
 ## crate twine
 
@@ -303,7 +304,8 @@ to every Twine crate that has it (`cargo xtask layers` checks the forwarding).
   named in the application (`AppConfig::new().theme(&lvgl::THEME)`): a theme, a mode table
   or a style is linked only when it is named; the features only compile them.
 - `full`: every optional, platform-neutral part above (all pixel formats, decoders, fonts,
-  the three themes, `vector`, `svg`, `ttf`, `include-assets`, `fs`, `bidi`, `arabic-shaping`, `async`, `perf-monitor`, `display-integrity`) — for
+  the three themes, `vector`, `svg`, `ttf`, `include-assets`, `fs`, `bidi`, `arabic-shaping`,
+  `async`, `perf-monitor`, `display-integrity`, `display-scale`) — for
   hosts, simulators, tests and documentation. It leaves out `std`, the logging backends,
   platforms, drivers and the debugging aids; firmware enables only what it uses.
 
@@ -311,6 +313,11 @@ to every Twine crate that has it (`cargo xtask layers` checks the forwarding).
 - `display-integrity`: frame observers, region checks against the panel's read-back,
   safety-critical nodes, the fail-safe screen and the `Validity` looks
   (`docs/safety/profile.md` § 11); in `full`, implied by `safety`, otherwise not linked.
+- `display-scale`: hi-DPI desktop displays (Retina 2×, 1.25×/1.5× desktops) — logical lengths
+  resolve to `length × DisplayInfo::scale` device pixels, fonts and images pick their
+  renderings for the scale, and `Engine::set_display_scale` changes it at run time (a window
+  moved to another monitor). Desktop hosts and the simulator enable it; firmware leaves it
+  off and links none of it (displays are laid out at 1×). See `guide::units`.
 - `no-panic-runtime`: reactive failures that can be skipped (a write to a disposed signal, a
   creation in a disposed scope or a full arena, a memo cycle) raise a fault instead of
   panicking (`reactive` crate docs § Failures); implied by `safety`.
@@ -381,11 +388,6 @@ twine = { version = "0.1", default-features = false, features = ["safety", "colo
 overflow-checks = true
 panic = "abort"
 ```
-
-`core::SAFETY_PROFILE` tells code whether it is built in the profile. Further run-time
-guarantees of the profile (wide arena generations, bounded time, …) are listed with their
-status in `docs/safety/profile.md`.
-
 (… see the full docs in rustdoc)
 
 #### macro twine::feature_rules!
@@ -443,6 +445,7 @@ This module holds documentation only: it has no items, so it adds nothing to any
 | Guide | What it covers |
 |-------|----------------|
 | `app_state` | application state for large apps: the store pattern (a `Copy` struct of signals and memos with action methods, provided as context), scoped stores and shadowing, testing with `TestUi`, stores fed by ports, lookup cost and the `use_*` / `expect_*` failure convention |
+| `units` | logical pixels, `Dp` and device pixels; the display scale of hi-DPI desktop screens; drawing, fonts and images that stay sharp at every scale; the simulator's `SimScale` |
 | `custom_widgets` | writing a widget outside Twine: class and parts, drawing, input, theming with design elements and modes, a typed view, animations and motion, tests; components composing views (`#[component]` or plain functions) |
 
 ### mod twine::guide::custom_widgets
@@ -499,6 +502,34 @@ Every code block below is compiled and run as a doctest.
 
 **1. The store**
 
+(… see the full docs in rustdoc)
+
+### mod twine::guide::units
+
+**Units and display scale**
+
+Twine lays out and draws the same UI on a 240 × 240 watch panel and on a Retina desktop
+window. This guide explains the units it measures in, how a display's **scale** turns them
+into pixels, and what an application does to stay sharp on hi-DPI screens.
+
+**1. Three units**
+
+| Unit | Written | Becomes (device pixels) | Use it for |
+|------|---------|-------------------------|------------|
+| logical pixels, `Length::Px` | `8`, `8.px()` | `8 × scale` | almost everything |
+| density-independent, `Length::Dp` | `8.dp()` | `dpx(8, dpi) × scale` | one UI on panels of different density |
+| device pixels, `Length::Dev` | `1.dev()` | `1` | hairlines, pixel-exact art |
+
+Bare integers are logical pixels, and so are the sizes, paddings, gaps, radii, border and
+shadow widths, translations and fixed grid tracks a view sets.
+
+
+**2. The display scale**
+
+A display's `DisplayScale` (`DisplayInfo::scale`) is the number
+of device pixels per logical pixel: 1× on every embedded panel (a logical pixel *is* a device
+pixel), 2× on a Retina screen, often 1.25× or 1.5× on Windows and Linux desktops. It is a
+fixed-point ratio (256 = 1×), so fractional scales are exact for the common factors.
 (… see the full docs in rustdoc)
 
 ### mod twine::prelude
@@ -798,7 +829,7 @@ Methods of `WidgetView`:
 - `pub fn y_invert<M>(self, on: impl twine_view::IntoProp<bool, M>) -> Self` — Mirrors the y coordinates (y grows upwards).
 - `pub fn width<M>(self, w: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self` — The stroke width (`line_width`: pixels, a `Length` or a length design element). This shadows `StyleExt::width` on line views.
 - `pub fn rounded<M>(self, on: impl twine_view::IntoProp<bool, M>) -> Self` — Rounded line ends and joints (`line_rounded`).
-- `pub fn dash<M1, M2>(self, w: impl twine_view::IntoProp<i32, M1>, gap: impl twine_view::IntoProp<i32, M2>) -> Self` — A dashed line: `w` px dashes with `gap` px gaps.
+- `pub fn dash<M1, M2>(self, w: impl twine_view::IntoProp<twine_style::design::LengthValue, M1>, gap: impl twine_view::IntoProp<twine_style::design::LengthValue, M2>) -> Self` — A dashed line: `w` dashes with `gap` gaps (lengths: logical pixels for bare integers).
 - `pub fn period<M>(self, d: impl twine_view::IntoProp<twine_core::Duration, M>) -> Self` — The time of one turn (default 1 s).
 - `pub fn arc_angle<M>(self, a: impl twine_view::IntoProp<twine_core::Angle, M>) -> Self` — The length of the chasing arc (default 200°).
 - `pub fn long_mode<M>(self, m: impl twine_view::IntoProp<twine_text::LongMode, M>) -> Self` — What happens with text that does not fit (`LongMode`).
@@ -1262,7 +1293,7 @@ Items:
 - `fn on_value_changed<R>(self, f: impl FnMut() -> R + 'static) -> Self (provided)` — The widget's value changed (widgets with a value also have a typed `.on_change`).
 - `fn on_gesture(self, f: impl FnMut(twine_style::Side) + 'static) -> Self (provided)` — A swipe gesture on the node, with the side it moved towards.
 - `fn on_key(self, f: impl FnMut(twine_hal::Key) + 'static) -> Self (provided)` — A key sent to the focused node.
-- `fn on_scroll(self, f: impl FnMut(twine_core::Point) + 'static) -> Self (provided)` — The node scrolled; `f` receives the new scroll offset.
+- `fn on_scroll(self, f: impl FnMut(twine_core::Point) + 'static) -> Self (provided)` — The node scrolled; `f` receives the new scroll offset in logical pixels (the unit of the view's lengths; the engine's device offset divided by the display scale).
 - `fn on_event(self, code: twine_engine::EventCode, f: impl FnMut(&mut twine_engine::EventCx<'_>) + 'static) -> Self (provided)` — Any event with full access to the `EventCx` (the engine is reached through the context itself here, not through `EngineAccess`).
 - `fn variant<M>(self, variant: impl twine_view::IntoVariant<Self::Widget, M>) -> Self (provided)` — Themes the widget as `variant` (design `docs/plan/r7-theming-design.md` §2.4): a typed choice among the theme classes of the widget type (`Variant`, e.g. `ButtonVariant::Tinted` on a button; a variant of another widget type does not compile). A theme that does not know the variant styles the widget like its own class. A constant is set once; a signal, memo or closure re-themes the node whenever the variant changes (an unchanged variant does nothing).
 - `fn role(self, role: &'static twine_engine::WidgetClass) -> Self (provided)` — Themes the node as `role`: a `WidgetClass` derived from the widget's class (its `base` chain reaches it), so a component or container gets a look of its own in every theme that knows the role, and its base's look in the others (design `docs/plan/r7-theming-design.md` §2.4). A role that does not derive from the widget's class is refused (warning; the node keeps its look).
@@ -1398,7 +1429,7 @@ Items:
 - `fn transform_height<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Draws the object taller on both sides (`LV_STYLE_TRANSFORM_HEIGHT`).
 - `fn translate_x<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Moves the object after layout; percent of its width (`LV_STYLE_TRANSLATE_X`).
 - `fn translate_y<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Moves the object after layout; percent of its height (`LV_STYLE_TRANSLATE_Y`).
-- `fn translate_radial<M>(self, v: impl twine_view::IntoProp<i32, M>) -> Self (provided)` — Moves radial items (e.g. scale labels) outward (`LV_STYLE_TRANSLATE_RADIAL`).
+- `fn translate_radial<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Moves radial items (e.g. scale labels) outward (`LV_STYLE_TRANSLATE_RADIAL`).
 - `fn transform_scale_x<M>(self, v: impl twine_view::IntoProp<twine_core::Scale, M>) -> Self (provided)` — Horizontal zoom (`LV_STYLE_TRANSFORM_SCALE_X`).
 - `fn transform_scale_y<M>(self, v: impl twine_view::IntoProp<twine_core::Scale, M>) -> Self (provided)` — Vertical zoom (`LV_STYLE_TRANSFORM_SCALE_Y`).
 - `fn transform_rotation<M>(self, v: impl twine_view::IntoProp<twine_core::Angle, M>) -> Self (provided)` — Rotation (`LV_STYLE_TRANSFORM_ROTATION`).
@@ -1412,7 +1443,7 @@ Items:
 - `fn padding_right<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Right padding (`LV_STYLE_PAD_RIGHT`).
 - `fn row_gap<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Gap between rows of a flex or grid container (`LV_STYLE_PAD_ROW`).
 - `fn column_gap<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Gap between columns of a flex or grid container (`LV_STYLE_PAD_COLUMN`).
-- `fn padding_radial<M>(self, v: impl twine_view::IntoProp<i32, M>) -> Self (provided)` — Radial padding of radial items (`LV_STYLE_PAD_RADIAL`).
+- `fn padding_radial<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Radial padding of radial items (`LV_STYLE_PAD_RADIAL`).
 - `fn margin_top<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Top margin, used by flex/grid placement (`LV_STYLE_MARGIN_TOP`).
 - `fn margin_bottom<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Bottom margin (`LV_STYLE_MARGIN_BOTTOM`).
 - `fn margin_left<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Left margin (`LV_STYLE_MARGIN_LEFT`).
@@ -1446,13 +1477,13 @@ Items:
 - `fn shadow_spread<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Shadow spread (`LV_STYLE_SHADOW_SPREAD`).
 - `fn shadow_color<M>(self, v: impl twine_view::IntoProp<twine_style::design::ColorValue, M>) -> Self (provided)` — Shadow color (`LV_STYLE_SHADOW_COLOR`).
 - `fn shadow_opacity<M>(self, v: impl twine_view::IntoProp<twine_style::design::OpacityValue, M>) -> Self (provided)` — Shadow opacity (`LV_STYLE_SHADOW_OPA`).
-- `fn drop_shadow_radius<M>(self, v: impl twine_view::IntoProp<i32, M>) -> Self (provided)` — Drop shadow blur radius (`LV_STYLE_DROP_SHADOW_RADIUS`).
-- `fn drop_shadow_offset_x<M>(self, v: impl twine_view::IntoProp<i32, M>) -> Self (provided)` — Drop shadow horizontal offset (`LV_STYLE_DROP_SHADOW_OFFSET_X`).
-- `fn drop_shadow_offset_y<M>(self, v: impl twine_view::IntoProp<i32, M>) -> Self (provided)` — Drop shadow vertical offset (`LV_STYLE_DROP_SHADOW_OFFSET_Y`).
+- `fn drop_shadow_radius<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Drop shadow blur radius (`LV_STYLE_DROP_SHADOW_RADIUS`).
+- `fn drop_shadow_offset_x<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Drop shadow horizontal offset (`LV_STYLE_DROP_SHADOW_OFFSET_X`).
+- `fn drop_shadow_offset_y<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Drop shadow vertical offset (`LV_STYLE_DROP_SHADOW_OFFSET_Y`).
 - `fn drop_shadow_color<M>(self, v: impl twine_view::IntoProp<twine_style::design::ColorValue, M>) -> Self (provided)` — Drop shadow color (`LV_STYLE_DROP_SHADOW_COLOR`).
 - `fn drop_shadow_opacity<M>(self, v: impl twine_view::IntoProp<twine_style::design::OpacityValue, M>) -> Self (provided)` — Drop shadow opacity (`LV_STYLE_DROP_SHADOW_OPA`).
 - `fn drop_shadow_quality<M>(self, v: impl twine_view::IntoProp<twine_style::BlurQuality, M>) -> Self (provided)` — Drop shadow blur quality (`LV_STYLE_DROP_SHADOW_QUALITY`).
-- `fn blur_radius<M>(self, v: impl twine_view::IntoProp<i32, M>) -> Self (provided)` — Blur radius of the part (`LV_STYLE_BLUR_RADIUS`).
+- `fn blur_radius<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Blur radius of the part (`LV_STYLE_BLUR_RADIUS`).
 - `fn blur_backdrop<M>(self, v: impl twine_view::IntoProp<bool, M>) -> Self (provided)` — Blur what is behind the part instead of the part itself (`LV_STYLE_BLUR_BACKDROP`).
 - `fn blur_quality<M>(self, v: impl twine_view::IntoProp<twine_style::BlurQuality, M>) -> Self (provided)` — Blur quality (`LV_STYLE_BLUR_QUALITY`).
 - `fn image_opacity<M>(self, v: impl twine_view::IntoProp<twine_style::design::OpacityValue, M>) -> Self (provided)` — Image opacity (`LV_STYLE_IMAGE_OPA`).
@@ -1460,8 +1491,8 @@ Items:
 - `fn image_recolor_opacity<M>(self, v: impl twine_view::IntoProp<twine_style::design::OpacityValue, M>) -> Self (provided)` — Image recolor intensity (`LV_STYLE_IMAGE_RECOLOR_OPA`).
 - `fn image_color_key<M>(self, v: impl twine_view::IntoProp<&'static twine_style::ImageColorkey, M>) -> Self (provided)` — Colors made transparent in images (`LV_STYLE_IMAGE_COLORKEY`).
 - `fn line_width<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Line width (`LV_STYLE_LINE_WIDTH`).
-- `fn line_dash_width<M>(self, v: impl twine_view::IntoProp<i32, M>) -> Self (provided)` — Dash length (`LV_STYLE_LINE_DASH_WIDTH`).
-- `fn line_dash_gap<M>(self, v: impl twine_view::IntoProp<i32, M>) -> Self (provided)` — Gap between dashes (`LV_STYLE_LINE_DASH_GAP`).
+- `fn line_dash_width<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Dash length (`LV_STYLE_LINE_DASH_WIDTH`).
+- `fn line_dash_gap<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Gap between dashes (`LV_STYLE_LINE_DASH_GAP`).
 - `fn line_rounded<M>(self, v: impl twine_view::IntoProp<bool, M>) -> Self (provided)` — Rounded line ends (`LV_STYLE_LINE_ROUNDED`).
 - `fn line_color<M>(self, v: impl twine_view::IntoProp<twine_style::design::ColorValue, M>) -> Self (provided)` — Line color (`LV_STYLE_LINE_COLOR`).
 - `fn line_opacity<M>(self, v: impl twine_view::IntoProp<twine_style::design::OpacityValue, M>) -> Self (provided)` — Line opacity (`LV_STYLE_LINE_OPA`).
@@ -1478,7 +1509,7 @@ Items:
 - `fn text_decoration<M>(self, v: impl twine_view::IntoProp<twine_text::TextDecor, M>) -> Self (provided)` — Underline/strikethrough, inherited (`LV_STYLE_TEXT_DECOR`).
 - `fn text_align<M>(self, v: impl twine_view::IntoProp<twine_text::TextAlign, M>) -> Self (provided)` — Horizontal text alignment, inherited (`LV_STYLE_TEXT_ALIGN`).
 - `fn text_outline_color<M>(self, v: impl twine_view::IntoProp<twine_style::design::ColorValue, M>) -> Self (provided)` — Text outline color (`LV_STYLE_TEXT_OUTLINE_STROKE_COLOR`).
-- `fn text_outline_width<M>(self, v: impl twine_view::IntoProp<i32, M>) -> Self (provided)` — Text outline width (`LV_STYLE_TEXT_OUTLINE_STROKE_WIDTH`).
+- `fn text_outline_width<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Text outline width (`LV_STYLE_TEXT_OUTLINE_STROKE_WIDTH`).
 - `fn text_outline_opacity<M>(self, v: impl twine_view::IntoProp<twine_style::design::OpacityValue, M>) -> Self (provided)` — Text outline opacity (`LV_STYLE_TEXT_OUTLINE_STROKE_OPA`).
 - `fn text_leading_trim<M>(self, v: impl twine_view::IntoProp<twine_style::TextLeadingTrim, M>) -> Self (provided)` — Trims the space above/below text by font metrics, inherited (`LV_STYLE_TEXT_LEADING_TRIM`).
 - `fn radius<M>(self, v: impl twine_view::IntoProp<twine_style::design::RadiusValue, M>) -> Self (provided)` — Corner radius; `Radius::Circle` for fully round (`LV_STYLE_RADIUS`).
@@ -1489,8 +1520,8 @@ Items:
 - `fn recolor_opacity<M>(self, v: impl twine_view::IntoProp<twine_style::design::OpacityValue, M>) -> Self (provided)` — Recolor intensity (`LV_STYLE_RECOLOR_OPA`).
 - `fn color_filter<M>(self, v: impl twine_view::IntoProp<&'static twine_style::ColorFilter, M>) -> Self (provided)` — Color filter, inherited (`LV_STYLE_COLOR_FILTER_DSC`).
 - `fn color_filter_opacity<M>(self, v: impl twine_view::IntoProp<twine_style::design::OpacityValue, M>) -> Self (provided)` — Color filter intensity, inherited (`LV_STYLE_COLOR_FILTER_OPA`).
-- `fn length<M>(self, v: impl twine_view::IntoProp<i32, M>) -> Self (provided)` — Generic length, e.g. of scale ticks (`LV_STYLE_LENGTH`).
-- `fn radial_offset<M>(self, v: impl twine_view::IntoProp<i32, M>) -> Self (provided)` — Offset of radial items (`LV_STYLE_RADIAL_OFFSET`).
+- `fn length<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Generic length, e.g. of scale ticks (`LV_STYLE_LENGTH`).
+- `fn radial_offset<M>(self, v: impl twine_view::IntoProp<twine_style::design::LengthValue, M>) -> Self (provided)` — Offset of radial items (`LV_STYLE_RADIAL_OFFSET`).
 - `fn anim<M>(self, v: impl twine_view::IntoProp<twine_style::design::MotionValue, M>) -> Self (provided)` — Animation timing used by some widgets (`LV_STYLE_ANIM`).
 - `fn anim_duration<M>(self, v: impl twine_view::IntoProp<twine_style::DurationMs, M>) -> Self (provided)` — Animation duration used by some widgets (`LV_STYLE_ANIM_DURATION`).
 - `fn transition<M>(self, t: impl twine_view::IntoProp<twine_style::TransitionValue, M>) -> Self (provided)` — Transition to run when entering the state: which properties animate and how (`LV_STYLE_TRANSITION`; see `Transition`).
@@ -2267,6 +2298,7 @@ Re-exports in `twine_view::prelude`:
 - `Angle` = `twine_core::Angle`
 - `AngularSpeed` = `twine_core::AngularSpeed`
 - `Color` = `twine_core::Color`
+- `DisplayScale` = `twine_core::DisplayScale`
 - `Duration` = `twine_core::Duration`
 - `Fraction` = `twine_core::Fraction`
 - `Insets` = `twine_core::Insets`
@@ -2348,6 +2380,7 @@ Re-exports in `twine_view::prelude`:
 - `GridTracks` = `twine_style::GridTracks`
 - `LayoutKind` = `twine_style::LayoutKind`
 - `Length` = `twine_style::Length`
+- `LengthUnits` = `twine_style::LengthUnits`
 - `MainAlign` = `twine_style::MainAlign`
 - `Part` = `twine_style::Part`
 - `PropId` = `twine_style::PropId`
@@ -3176,8 +3209,8 @@ An image widget (LVGL `lv_image`): shows an `ImageSource` — a converted image 
 Methods of `Image`:
 - `pub const fn new() -> Self` — An image without a source.
 - `pub fn src(&self) -> Option<&twine_image::ImageSource>` — The source.
-- `pub fn header(&self) -> Option<twine_image::ImageHeader>` — The source's header (`None` without a source, for symbols and unreadable sources).
-- `pub fn src_size(&self) -> twine_core::Size` — The source's size (0×0 without a readable source).
+- `pub fn header(&self) -> Option<twine_image::ImageHeader>` — The header of the drawn source (for an `ImageSource::Scaled` image, of the rendering picked for the display; `None` without a source, for symbols and unreadable sources).
+- `pub fn src_size(&self) -> twine_core::Size` — The image's untransformed size on the display in device pixels: the source's size, zoomed by the display scale on a scaled display (0×0 without a readable source).
 - `pub fn rotation(&self) -> twine_core::Angle` — The rotation.
 - `pub fn scale_x(&self) -> twine_core::Scale` — The horizontal scale.
 - `pub fn scale_y(&self) -> twine_core::Scale` — The vertical scale.
@@ -3471,7 +3504,7 @@ Methods of `LinePoints`:
 Implements: Clone, Debug, PartialEq, Eq, Hash
 
 #### struct twine_widgets::line::Line
-A polyline through points relative to the widget's top-left corner (LVGL `lv_line`), drawn with the `Line*` styles of `Main` (`LineWidth`, `LineColor`, `LineOpa`, `LineRounded`, `LineDashWidth`, `LineDashGap`). Each segment is drawn like LVGL: rounded ends (when `LineRounded`) at the first point and at every segment's end.
+A polyline through points relative to the widget's top-left corner (LVGL `lv_line`), in logical pixels (scaled to device pixels on a scaled display, like every length), drawn with the `Line*` styles of `Main` (`LineWidth`, `LineColor`, `LineOpa`, `LineRounded`, `LineDashWidth`, `LineDashGap`). Each segment is drawn like LVGL: rounded ends (when `LineRounded`) at the first point and at every segment's end.
 Methods of `Line`:
 - `pub const fn new() -> Self` — A line without points.
 - `pub fn points(&self) -> &[twine_core::Point]` — The points.
@@ -6065,7 +6098,7 @@ The text area cursor: a 2 px `ON_SURFACE` left border, transparent, blinking eve
 
 ## crate twine_style
 
-Documented with features: `std`.
+Documented with features: `std,display-scale`.
 
 **twine-style**
 
@@ -6210,6 +6243,11 @@ conveniences of the dependencies.
 
 `safety`: the safety profile (enabled by the `twine` facade's `safety` feature, see
 `docs/safety/profile.md` in the repository): the profile's lints.
+
+`display-scale`: hi-DPI desktop displays. Resolution converts logical lengths
+(`Length::Px`, bare integers, and `Dp` after the DPI) to device pixels (`Length::Dev`)
+with `StyleSource::scale`. Without it (every embedded build) the resolver has no scale
+stage and lengths resolve as on a 1× display.
 
 #### enum twine_style::ThemeMode
 The mode of a theme: which of its element tables is active. Switching the mode (`Engine::set_theme_mode` in `twine-engine`, `ThemeHandle::set_mode` in `twine-view`) swaps the table, so everything styled with design elements changes at once.
@@ -6453,7 +6491,7 @@ Variants:
 - `TransformHeight(twine_style::design::LengthValue)` — Draws the object taller on both sides (`LV_STYLE_TRANSFORM_HEIGHT`).
 - `TranslateX(twine_style::design::LengthValue)` — Moves the object after layout; percent of its width (`LV_STYLE_TRANSLATE_X`).
 - `TranslateY(twine_style::design::LengthValue)` — Moves the object after layout; percent of its height (`LV_STYLE_TRANSLATE_Y`).
-- `TranslateRadial(i32)` — Moves radial items (e.g. scale labels) outward (`LV_STYLE_TRANSLATE_RADIAL`).
+- `TranslateRadial(twine_style::design::LengthValue)` — Moves radial items (e.g. scale labels) outward (`LV_STYLE_TRANSLATE_RADIAL`).
 - `TransformScaleX(twine_core::Scale)` — Horizontal zoom (`LV_STYLE_TRANSFORM_SCALE_X`).
 - `TransformScaleY(twine_core::Scale)` — Vertical zoom (`LV_STYLE_TRANSFORM_SCALE_Y`).
 - `TransformRotation(twine_core::Angle)` — Rotation (`LV_STYLE_TRANSFORM_ROTATION`).
@@ -6467,7 +6505,7 @@ Variants:
 - `PaddingRight(twine_style::design::LengthValue)` — Right padding (`LV_STYLE_PAD_RIGHT`).
 - `RowGap(twine_style::design::LengthValue)` — Gap between rows of a flex or grid container (`LV_STYLE_PAD_ROW`).
 - `ColumnGap(twine_style::design::LengthValue)` — Gap between columns of a flex or grid container (`LV_STYLE_PAD_COLUMN`).
-- `PaddingRadial(i32)` — Radial padding of radial items (`LV_STYLE_PAD_RADIAL`).
+- `PaddingRadial(twine_style::design::LengthValue)` — Radial padding of radial items (`LV_STYLE_PAD_RADIAL`).
 - `MarginTop(twine_style::design::LengthValue)` — Top margin, used by flex/grid placement (`LV_STYLE_MARGIN_TOP`).
 - `MarginBottom(twine_style::design::LengthValue)` — Bottom margin (`LV_STYLE_MARGIN_BOTTOM`).
 - `MarginLeft(twine_style::design::LengthValue)` — Left margin (`LV_STYLE_MARGIN_LEFT`).
@@ -6501,13 +6539,13 @@ Variants:
 - `ShadowSpread(twine_style::design::LengthValue)` — Shadow spread (`LV_STYLE_SHADOW_SPREAD`).
 - `ShadowColor(twine_style::design::ColorValue)` — Shadow color (`LV_STYLE_SHADOW_COLOR`).
 - `ShadowOpacity(twine_style::design::OpacityValue)` — Shadow opacity (`LV_STYLE_SHADOW_OPA`).
-- `DropShadowRadius(i32)` — Drop shadow blur radius (`LV_STYLE_DROP_SHADOW_RADIUS`).
-- `DropShadowOffsetX(i32)` — Drop shadow horizontal offset (`LV_STYLE_DROP_SHADOW_OFFSET_X`).
-- `DropShadowOffsetY(i32)` — Drop shadow vertical offset (`LV_STYLE_DROP_SHADOW_OFFSET_Y`).
+- `DropShadowRadius(twine_style::design::LengthValue)` — Drop shadow blur radius (`LV_STYLE_DROP_SHADOW_RADIUS`).
+- `DropShadowOffsetX(twine_style::design::LengthValue)` — Drop shadow horizontal offset (`LV_STYLE_DROP_SHADOW_OFFSET_X`).
+- `DropShadowOffsetY(twine_style::design::LengthValue)` — Drop shadow vertical offset (`LV_STYLE_DROP_SHADOW_OFFSET_Y`).
 - `DropShadowColor(twine_style::design::ColorValue)` — Drop shadow color (`LV_STYLE_DROP_SHADOW_COLOR`).
 - `DropShadowOpacity(twine_style::design::OpacityValue)` — Drop shadow opacity (`LV_STYLE_DROP_SHADOW_OPA`).
 - `DropShadowQuality(twine_style::BlurQuality)` — Drop shadow blur quality (`LV_STYLE_DROP_SHADOW_QUALITY`).
-- `BlurRadius(i32)` — Blur radius of the part (`LV_STYLE_BLUR_RADIUS`).
+- `BlurRadius(twine_style::design::LengthValue)` — Blur radius of the part (`LV_STYLE_BLUR_RADIUS`).
 - `BlurBackdrop(bool)` — Blur what is behind the part instead of the part itself (`LV_STYLE_BLUR_BACKDROP`).
 - `BlurQuality(twine_style::BlurQuality)` — Blur quality (`LV_STYLE_BLUR_QUALITY`).
 - `ImageOpacity(twine_style::design::OpacityValue)` — Image opacity (`LV_STYLE_IMAGE_OPA`).
@@ -6515,8 +6553,8 @@ Variants:
 - `ImageRecolorOpacity(twine_style::design::OpacityValue)` — Image recolor intensity (`LV_STYLE_IMAGE_RECOLOR_OPA`).
 - `ImageColorKey(&'static twine_style::ImageColorkey)` — Colors made transparent in images (`LV_STYLE_IMAGE_COLORKEY`).
 - `LineWidth(twine_style::design::LengthValue)` — Line width (`LV_STYLE_LINE_WIDTH`).
-- `LineDashWidth(i32)` — Dash length (`LV_STYLE_LINE_DASH_WIDTH`).
-- `LineDashGap(i32)` — Gap between dashes (`LV_STYLE_LINE_DASH_GAP`).
+- `LineDashWidth(twine_style::design::LengthValue)` — Dash length (`LV_STYLE_LINE_DASH_WIDTH`).
+- `LineDashGap(twine_style::design::LengthValue)` — Gap between dashes (`LV_STYLE_LINE_DASH_GAP`).
 - `LineRounded(bool)` — Rounded line ends (`LV_STYLE_LINE_ROUNDED`).
 - `LineColor(twine_style::design::ColorValue)` — Line color (`LV_STYLE_LINE_COLOR`).
 - `LineOpacity(twine_style::design::OpacityValue)` — Line opacity (`LV_STYLE_LINE_OPA`).
@@ -6533,7 +6571,7 @@ Variants:
 - `TextDecoration(twine_text::TextDecor)` — Underline/strikethrough, inherited (`LV_STYLE_TEXT_DECOR`).
 - `TextAlign(twine_text::TextAlign)` — Horizontal text alignment, inherited (`LV_STYLE_TEXT_ALIGN`).
 - `TextOutlineColor(twine_style::design::ColorValue)` — Text outline color (`LV_STYLE_TEXT_OUTLINE_STROKE_COLOR`).
-- `TextOutlineWidth(i32)` — Text outline width (`LV_STYLE_TEXT_OUTLINE_STROKE_WIDTH`).
+- `TextOutlineWidth(twine_style::design::LengthValue)` — Text outline width (`LV_STYLE_TEXT_OUTLINE_STROKE_WIDTH`).
 - `TextOutlineOpacity(twine_style::design::OpacityValue)` — Text outline opacity (`LV_STYLE_TEXT_OUTLINE_STROKE_OPA`).
 - `TextLeadingTrim(twine_style::TextLeadingTrim)` — Trims the space above/below text by font metrics, inherited (`LV_STYLE_TEXT_LEADING_TRIM`).
 - `Radius(twine_style::design::RadiusValue)` — Corner radius; `Radius::Circle` for fully round (`LV_STYLE_RADIUS`).
@@ -6544,8 +6582,8 @@ Variants:
 - `RecolorOpacity(twine_style::design::OpacityValue)` — Recolor intensity (`LV_STYLE_RECOLOR_OPA`).
 - `ColorFilter(&'static twine_style::ColorFilter)` — Color filter, inherited (`LV_STYLE_COLOR_FILTER_DSC`).
 - `ColorFilterOpacity(twine_style::design::OpacityValue)` — Color filter intensity, inherited (`LV_STYLE_COLOR_FILTER_OPA`).
-- `Length(i32)` — Generic length, e.g. of scale ticks (`LV_STYLE_LENGTH`).
-- `RadialOffset(i32)` — Offset of radial items (`LV_STYLE_RADIAL_OFFSET`).
+- `Length(twine_style::design::LengthValue)` — Generic length, e.g. of scale ticks (`LV_STYLE_LENGTH`).
+- `RadialOffset(twine_style::design::LengthValue)` — Offset of radial items (`LV_STYLE_RADIAL_OFFSET`).
 - `Anim(twine_style::design::MotionValue)` — Animation timing used by some widgets (`LV_STYLE_ANIM`).
 - `AnimDuration(twine_style::DurationMs)` — Animation duration used by some widgets (`LV_STYLE_ANIM_DURATION`).
 - `Transition(twine_style::TransitionRef)` — Transition to run when entering the state: which properties animate and how (`LV_STYLE_TRANSITION`; see `Transition`).
@@ -6672,6 +6710,7 @@ Items:
 - `fn state(&self, id: Self::Id) -> twine_style::State` — The node's current state.
 - `fn parent(&self, id: Self::Id) -> Option<Self::Id>` — The parent node, `None` for a root.
 - `fn dpi(&self, id: Self::Id) -> u16 (provided)` — The DPI that density-independent lengths (`Length::Dp`) of `id` resolve with (the engine: the DPI of the node's display). The resolver calls it only when the winning value is a `Dp` length, so it may be slow (e.g. walk to the root). Default: `REFERENCE_DPI`, i.e. 1 dp = 1 px.
+- `fn scale(&self, id: Self::Id) -> twine_core::DisplayScale (provided)` — The display scale that logical lengths (`Length::Px`, and `Dp` after the DPI conversion) of `id` resolve with to device pixels (`Length::Dev`) (the engine: the scale of the node's display). Only read with the `display-scale` feature, and only when the winning value is a `Px` length, so it may be slow. Default: `DisplayScale::ONE` (lengths stay as they are).
 - `fn design_value(&self, id: Self::Id, element: twine_style::design::ElementRef) -> Option<twine_style::StyleValue> (provided)` — The value the theme of `id` gives the design element `element` (the engine: the element table of the node's display), `None` if it does not define it. The resolver calls it only when the winning value is an element, so a style without elements never pays for it. Default: `None` (the element resolves to the property's default, see `resolve`).
 
 #### enum twine_style::TraceEvent<Id>
@@ -6736,7 +6775,7 @@ The value set by the node's own entries for `part` in its current state, without
 
 #### fn twine_style::resolve_value
 `pub fn resolve_value<S: twine_style::StyleSource>(src: &S, id: <S as twine_style::StyleSource>::Id, prop: twine_style::PropId, defaults: &twine_style::StyleDefaults, v: twine_style::StyleValue) -> twine_style::StyleValue`
-Finishes a value read straight from a style (`Style::get`, `StyleBuf::get`) the way `resolve` finishes the value it found: a design element becomes the value `StyleSource::design_value` of `id` gives it (the property's default if none), a `Dp` length becomes pixels for `StyleSource::dpi` of `id`; anything else is returned unchanged. For code that keeps its own small styles outside the cascade (e.g. the spans of a span group).
+Finishes a value read straight from a style (`Style::get`, `StyleBuf::get`) the way `resolve` finishes the value it found: a design element becomes the value `StyleSource::design_value` of `id` gives it (the property's default if none), a `Dp` length becomes pixels for `StyleSource::dpi` of `id`, and with the `display-scale` feature a logical length becomes device pixels for `StyleSource::scale` of `id`; anything else is returned unchanged. For code that keeps its own small styles outside the cascade (e.g. the spans of a span group).
 
 #### fn twine_style::resolve_with
 `pub fn resolve_with<S: twine_style::StyleSource>(src: &S, id: <S as twine_style::StyleSource>::Id, part: twine_style::Part, prop: twine_style::PropId, defaults: &twine_style::StyleDefaults, opts: twine_style::ResolveOptions) -> twine_style::StyleValue`
@@ -6870,7 +6909,7 @@ Methods of `StyleBuf`:
 - `pub fn transform_height(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Draws the object taller on both sides (`LV_STYLE_TRANSFORM_HEIGHT`).
 - `pub fn translate_x(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Moves the object after layout; percent of its width (`LV_STYLE_TRANSLATE_X`).
 - `pub fn translate_y(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Moves the object after layout; percent of its height (`LV_STYLE_TRANSLATE_Y`).
-- `pub fn translate_radial(self, v: impl Into<i32>) -> Self` — Moves radial items (e.g. scale labels) outward (`LV_STYLE_TRANSLATE_RADIAL`).
+- `pub fn translate_radial(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Moves radial items (e.g. scale labels) outward (`LV_STYLE_TRANSLATE_RADIAL`).
 - `pub fn transform_scale_x(self, v: impl Into<twine_core::Scale>) -> Self` — Horizontal zoom (`LV_STYLE_TRANSFORM_SCALE_X`).
 - `pub fn transform_scale_y(self, v: impl Into<twine_core::Scale>) -> Self` — Vertical zoom (`LV_STYLE_TRANSFORM_SCALE_Y`).
 - `pub fn transform_rotation(self, v: impl Into<twine_core::Angle>) -> Self` — Rotation (`LV_STYLE_TRANSFORM_ROTATION`).
@@ -6884,7 +6923,7 @@ Methods of `StyleBuf`:
 - `pub fn padding_right(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Right padding (`LV_STYLE_PAD_RIGHT`).
 - `pub fn row_gap(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Gap between rows of a flex or grid container (`LV_STYLE_PAD_ROW`).
 - `pub fn column_gap(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Gap between columns of a flex or grid container (`LV_STYLE_PAD_COLUMN`).
-- `pub fn padding_radial(self, v: impl Into<i32>) -> Self` — Radial padding of radial items (`LV_STYLE_PAD_RADIAL`).
+- `pub fn padding_radial(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Radial padding of radial items (`LV_STYLE_PAD_RADIAL`).
 - `pub fn margin_top(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Top margin, used by flex/grid placement (`LV_STYLE_MARGIN_TOP`).
 - `pub fn margin_bottom(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Bottom margin (`LV_STYLE_MARGIN_BOTTOM`).
 - `pub fn margin_left(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Left margin (`LV_STYLE_MARGIN_LEFT`).
@@ -6918,13 +6957,13 @@ Methods of `StyleBuf`:
 - `pub fn shadow_spread(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Shadow spread (`LV_STYLE_SHADOW_SPREAD`).
 - `pub fn shadow_color(self, v: impl Into<twine_style::design::ColorValue>) -> Self` — Shadow color (`LV_STYLE_SHADOW_COLOR`).
 - `pub fn shadow_opacity(self, v: impl Into<twine_style::design::OpacityValue>) -> Self` — Shadow opacity (`LV_STYLE_SHADOW_OPA`).
-- `pub fn drop_shadow_radius(self, v: impl Into<i32>) -> Self` — Drop shadow blur radius (`LV_STYLE_DROP_SHADOW_RADIUS`).
-- `pub fn drop_shadow_offset_x(self, v: impl Into<i32>) -> Self` — Drop shadow horizontal offset (`LV_STYLE_DROP_SHADOW_OFFSET_X`).
-- `pub fn drop_shadow_offset_y(self, v: impl Into<i32>) -> Self` — Drop shadow vertical offset (`LV_STYLE_DROP_SHADOW_OFFSET_Y`).
+- `pub fn drop_shadow_radius(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Drop shadow blur radius (`LV_STYLE_DROP_SHADOW_RADIUS`).
+- `pub fn drop_shadow_offset_x(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Drop shadow horizontal offset (`LV_STYLE_DROP_SHADOW_OFFSET_X`).
+- `pub fn drop_shadow_offset_y(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Drop shadow vertical offset (`LV_STYLE_DROP_SHADOW_OFFSET_Y`).
 - `pub fn drop_shadow_color(self, v: impl Into<twine_style::design::ColorValue>) -> Self` — Drop shadow color (`LV_STYLE_DROP_SHADOW_COLOR`).
 - `pub fn drop_shadow_opacity(self, v: impl Into<twine_style::design::OpacityValue>) -> Self` — Drop shadow opacity (`LV_STYLE_DROP_SHADOW_OPA`).
 - `pub fn drop_shadow_quality(self, v: impl Into<twine_style::BlurQuality>) -> Self` — Drop shadow blur quality (`LV_STYLE_DROP_SHADOW_QUALITY`).
-- `pub fn blur_radius(self, v: impl Into<i32>) -> Self` — Blur radius of the part (`LV_STYLE_BLUR_RADIUS`).
+- `pub fn blur_radius(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Blur radius of the part (`LV_STYLE_BLUR_RADIUS`).
 - `pub fn blur_backdrop(self, v: impl Into<bool>) -> Self` — Blur what is behind the part instead of the part itself (`LV_STYLE_BLUR_BACKDROP`).
 - `pub fn blur_quality(self, v: impl Into<twine_style::BlurQuality>) -> Self` — Blur quality (`LV_STYLE_BLUR_QUALITY`).
 - `pub fn image_opacity(self, v: impl Into<twine_style::design::OpacityValue>) -> Self` — Image opacity (`LV_STYLE_IMAGE_OPA`).
@@ -6932,8 +6971,8 @@ Methods of `StyleBuf`:
 - `pub fn image_recolor_opacity(self, v: impl Into<twine_style::design::OpacityValue>) -> Self` — Image recolor intensity (`LV_STYLE_IMAGE_RECOLOR_OPA`).
 - `pub fn image_color_key(self, v: impl Into<&'static twine_style::ImageColorkey>) -> Self` — Colors made transparent in images (`LV_STYLE_IMAGE_COLORKEY`).
 - `pub fn line_width(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Line width (`LV_STYLE_LINE_WIDTH`).
-- `pub fn line_dash_width(self, v: impl Into<i32>) -> Self` — Dash length (`LV_STYLE_LINE_DASH_WIDTH`).
-- `pub fn line_dash_gap(self, v: impl Into<i32>) -> Self` — Gap between dashes (`LV_STYLE_LINE_DASH_GAP`).
+- `pub fn line_dash_width(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Dash length (`LV_STYLE_LINE_DASH_WIDTH`).
+- `pub fn line_dash_gap(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Gap between dashes (`LV_STYLE_LINE_DASH_GAP`).
 - `pub fn line_rounded(self, v: impl Into<bool>) -> Self` — Rounded line ends (`LV_STYLE_LINE_ROUNDED`).
 - `pub fn line_color(self, v: impl Into<twine_style::design::ColorValue>) -> Self` — Line color (`LV_STYLE_LINE_COLOR`).
 - `pub fn line_opacity(self, v: impl Into<twine_style::design::OpacityValue>) -> Self` — Line opacity (`LV_STYLE_LINE_OPA`).
@@ -6950,7 +6989,7 @@ Methods of `StyleBuf`:
 - `pub fn text_decoration(self, v: impl Into<twine_text::TextDecor>) -> Self` — Underline/strikethrough, inherited (`LV_STYLE_TEXT_DECOR`).
 - `pub fn text_align(self, v: impl Into<twine_text::TextAlign>) -> Self` — Horizontal text alignment, inherited (`LV_STYLE_TEXT_ALIGN`).
 - `pub fn text_outline_color(self, v: impl Into<twine_style::design::ColorValue>) -> Self` — Text outline color (`LV_STYLE_TEXT_OUTLINE_STROKE_COLOR`).
-- `pub fn text_outline_width(self, v: impl Into<i32>) -> Self` — Text outline width (`LV_STYLE_TEXT_OUTLINE_STROKE_WIDTH`).
+- `pub fn text_outline_width(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Text outline width (`LV_STYLE_TEXT_OUTLINE_STROKE_WIDTH`).
 - `pub fn text_outline_opacity(self, v: impl Into<twine_style::design::OpacityValue>) -> Self` — Text outline opacity (`LV_STYLE_TEXT_OUTLINE_STROKE_OPA`).
 - `pub fn text_leading_trim(self, v: impl Into<twine_style::TextLeadingTrim>) -> Self` — Trims the space above/below text by font metrics, inherited (`LV_STYLE_TEXT_LEADING_TRIM`).
 - `pub fn radius(self, v: impl Into<twine_style::design::RadiusValue>) -> Self` — Corner radius; `Radius::Circle` for fully round (`LV_STYLE_RADIUS`).
@@ -6961,8 +7000,8 @@ Methods of `StyleBuf`:
 - `pub fn recolor_opacity(self, v: impl Into<twine_style::design::OpacityValue>) -> Self` — Recolor intensity (`LV_STYLE_RECOLOR_OPA`).
 - `pub fn color_filter(self, v: impl Into<&'static twine_style::ColorFilter>) -> Self` — Color filter, inherited (`LV_STYLE_COLOR_FILTER_DSC`).
 - `pub fn color_filter_opacity(self, v: impl Into<twine_style::design::OpacityValue>) -> Self` — Color filter intensity, inherited (`LV_STYLE_COLOR_FILTER_OPA`).
-- `pub fn length(self, v: impl Into<i32>) -> Self` — Generic length, e.g. of scale ticks (`LV_STYLE_LENGTH`).
-- `pub fn radial_offset(self, v: impl Into<i32>) -> Self` — Offset of radial items (`LV_STYLE_RADIAL_OFFSET`).
+- `pub fn length(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Generic length, e.g. of scale ticks (`LV_STYLE_LENGTH`).
+- `pub fn radial_offset(self, v: impl Into<twine_style::design::LengthValue>) -> Self` — Offset of radial items (`LV_STYLE_RADIAL_OFFSET`).
 - `pub fn anim(self, v: impl Into<twine_style::design::MotionValue>) -> Self` — Animation timing used by some widgets (`LV_STYLE_ANIM`).
 - `pub fn anim_duration(self, v: impl Into<twine_style::DurationMs>) -> Self` — Animation duration used by some widgets (`LV_STYLE_ANIM_DURATION`).
 - `pub fn transition(self, v: impl Into<twine_style::TransitionValue>) -> Self` — Transition to run when entering the state: which properties animate and how (`LV_STYLE_TRANSITION`; see `Transition`).
@@ -7160,8 +7199,11 @@ Variants:
 Methods of `StyleValue`:
 - `pub fn as_grid_tracks(self) -> Option<twine_style::TracksRef>` — The `GridTracks` payload: a `'static` template, or a container's run-time template (its tracks are read through the container, see `TracksRef`).
 - `pub fn get<T: twine_style::PropValue>(self) -> Option<T>` — The payload as `T` if the variant (and, for enums, the code) matches.
-- `pub const fn as_px(self) -> Option<i32>` — The value in pixels of an `Int` or a `Length::Px` (spacing properties such as padding are pixel lengths; `resolve` has converted `Dp` by the time a resolved value is read). `None` for anything else.
-- `pub const fn with_dpi(self, dpi: u16) -> twine_style::StyleValue` — This value with a `Length::Dp` converted to pixels for a `dpi` display; every other value is returned unchanged (the engine calls it on resolved values).
+- `pub const fn as_px(self) -> Option<i32>` — The value in pixels of an `Int`, a `Length::Px` or a `Length::Dev` (spacing properties such as padding are pixel lengths; `resolve` has converted `Dp`, and on a scaled display `Px`, to device pixels by the time a resolved value is read). `None` for anything else.
+- `pub const fn with_scale(self, prop: twine_style::PropId, scale: twine_core::DisplayScale) -> twine_style::StyleValue` — This value of `prop` with a logical length (`Length::Px`) converted to device pixels (`Length::Dev`) for a display of `scale` (see `Length::with_scale`); every other value, and every value at 1×, is returned unchanged. The `radius` circle marker (`Radius::Circle`) is kept. The resolver calls it on resolved values with the `display-scale` feature; `Dev` results are final, so scaling twice is harmless.
+- `pub fn for_display(self, prop: twine_style::PropId, scale: twine_core::DisplayScale) -> twine_style::StyleValue` — This value for a display of `scale`: `with_scale` for lengths, and a font replaced by the font to draw it with at that scale (`Font::for_scale`: a `ScaledFont`'s variant or a scalable TrueType font's rendering; plain fonts are kept). The resolver's display-scale stage.
+- `pub const fn depends_on_scale(&self) -> bool` — Whether the display scale can change this value: a logical length (`Length::Px`) or a font (see `for_display`).
+- `pub const fn with_dpi(self, dpi: u16) -> twine_style::StyleValue` — This value with a `Length::Dp` converted to logical pixels for a `dpi` display; every other value is returned unchanged (the engine calls it on resolved values).
 - `pub const fn is_dp(&self) -> bool` — Whether this is a density-independent length (`Length::Dp`).
 - `pub const fn is_element(&self) -> bool` — Whether this is an unresolved design element.
 - `pub const fn as_element(self) -> Option<twine_style::design::ElementRef>` — The unresolved design element (`None` for any other value).
@@ -7370,21 +7412,33 @@ Variants:
 Implements: PropValue, From<twine_style::LayoutKind>, Clone, Copy, Debug, Default, PartialEq, Eq, Hash, StyleEnum
 
 #### enum twine_style::Length
-A size, position or spacing that may depend on the display density, the parent or the content (LVGL coordinates with `LV_PCT(x)` / `LV_SIZE_CONTENT` / `LV_DPX(x)`).
+A size, position or spacing that may depend on the display density, the display scale, the parent or the content (LVGL coordinates with `LV_PCT(x)` / `LV_SIZE_CONTENT` / `LV_DPX(x)`).
 Variants:
-- `Px(i32)` — Pixels.
+- `Px(i32)` — Logical pixels (the default unit: bare integers are `Px`): device pixels on a 1× display, `v × scale` device pixels on a scaled one (see the table above).
 - `Pct(i16)` — Percent of the reference size (usually the parent's content area); values above 100 are allowed.
 - `Content` — Sized by the content (LVGL `LV_SIZE_CONTENT`).
-- `Dp(i32)` — Density-independent pixels: pixels on a `REFERENCE_DPI` (160 DPI) display, scaled to the display's DPI when the style is resolved (LVGL `LV_DPX`).
+- `Dp(i32)` — Density-independent pixels: pixels on a `REFERENCE_DPI` (160 DPI) display, scaled to the display's DPI when the style is resolved (LVGL `LV_DPX`), then by the display scale like `Px`.
+- `Dev(i32)` — Device pixels: never scaled. For hairlines and pixel-exact drawing on scaled displays, and the form in which the engine keeps lengths it has already scaled (resolving a `Dev` again changes nothing).
 Methods of `Length`:
-- `pub const fn px(v: i32) -> Self` — `v` pixels.
+- `pub const fn px(v: i32) -> Self` — `v` logical pixels (see `Length::Px`).
+- `pub const fn dev(v: i32) -> Self` — `v` device pixels (see `Length::Dev`).
 - `pub const fn pct(p: i16) -> Self` — `p` percent (LVGL `lv_pct`).
 - `pub const fn dp(v: i32) -> Self` — `v` density-independent pixels (see `Length::Dp`).
-- `pub const fn from_i32(v: i32) -> Self` — `v` pixels (`const` counterpart of `From<i32>`).
-- `pub const fn with_dpi(self, dpi: u16) -> Self` — The length with a `Dp` value converted to pixels for a `dpi` display (see `dpx`); other lengths are unchanged.
-- `pub const fn resolve(self, parent: i32, content: i32) -> i32` — The length in pixels: `Pct` is relative to `parent` (truncated like LVGL `lv_pct_to_px`, saturating), `Content` is `content`. A `Dp` that was not converted with `with_dpi` counts at the reference 160 DPI (1 dp = 1 px); style resolution converts `Dp` with the DPI of the source (`StyleSource::dpi`).
-- `pub const fn as_px(self) -> Option<i32>` — The pixel value of a `Px` length.
+- `pub const fn from_i32(v: i32) -> Self` — `v` logical pixels (`const` counterpart of `From<i32>`).
+- `pub const fn with_dpi(self, dpi: u16) -> Self` — The length with a `Dp` value converted to logical pixels for a `dpi` display (see `dpx`); other lengths are unchanged.
+- `pub const fn with_scale(self, scale: twine_core::DisplayScale) -> Self` — The length with a logical value (`Px`) converted to device pixels (`Dev`) for a display of `scale`; at 1× and for every other kind it is unchanged. The layout limit `COORD_MAX` (the default of `max_width`/`max_height`) is a sentinel and is never scaled; results are clamped to `±COORD_MAX` so layout arithmetic cannot overflow. Convert `Dp` with `with_dpi` first.
+- `pub const fn resolve(self, parent: i32, content: i32) -> i32` — The length in pixels: `Pct` is relative to `parent` (truncated like LVGL `lv_pct_to_px`, saturating), `Content` is `content`. A `Dp` that was not converted with `with_dpi` counts at the reference 160 DPI (1 dp = 1 px), a `Px` that was not converted with `with_scale` at 1×; style resolution converts both with the source (`StyleSource::dpi`, `StyleSource::scale`).
+- `pub const fn as_px(self) -> Option<i32>` — The pixel value of a `Px` or `Dev` length (a resolved length: `Px` at 1×, `Dev` on a scaled display).
 Implements: ElementType, PropValue, Clone, Copy, Debug, PartialEq, Eq, Hash, Default, From<i32>
+
+#### trait twine_style::LengthUnits
+`pub trait LengthUnits`
+Unit suffixes for integer lengths: `8.px()`, `8.dp()`, `1.dev()` (see `Length`). Bare integers are already logical pixels, so `.px()` only documents intent.
+Items:
+- `fn px(self) -> twine_style::Length` — Logical pixels (`Length::Px`).
+- `fn dp(self) -> twine_style::Length` — Density-independent pixels (`Length::Dp`).
+- `fn dev(self) -> twine_style::Length` — Device pixels (`Length::Dev`).
+Implemented by: i32
 
 #### enum twine_style::MainAlign
 Placement of flex items along the main axis (`flex_main_align`, `justify`) and of the tracks of a wrapping flex container (`flex_track_align`, `align_content`) — LVGL `lv_flex_align_t`, same discriminants.
@@ -7398,10 +7452,11 @@ Variants:
 Implements: PropValue, From<twine_style::MainAlign>, Clone, Copy, Debug, Default, PartialEq, Eq, Hash, From<twine_style::CrossAlign>, StyleEnum
 
 #### enum twine_style::Radius
-A corner radius (the `radius` style property): pixels, density-independent pixels, or fully round.
+A corner radius (the `radius` style property): logical pixels, density-independent pixels, device pixels, or fully round (see `Length` for the units).
 Variants:
 - `Px(i32)` — Pixels. Drawn clamped to `0..=` half the shorter side of the node, so a negative value draws square corners and a large one a fully round shape. A value at or above the renderer's circle marker (`twine_render::RADIUS_CIRCLE`, 32 767) is stored like `Circle` and reads back as `Circle` (it draws the same).
 - `Dp(i32)` — Density-independent pixels (see `Length::Dp`).
+- `Dev(i32)` — Device pixels (see `Length::Dev`); what a scaled radius resolves to.
 - `Circle` — Fully round: a circle for a square node, a pill otherwise (LVGL `LV_RADIUS_CIRCLE`).
 Methods of `Radius`:
 - `pub const fn to_length(self) -> twine_style::Length` — The radius as the pixel `Length` stored in styles (`Circle` → the renderer's circle marker).
@@ -8142,7 +8197,7 @@ Re-exports in `twine_style::design`:
 
 ## crate twine_engine
 
-Documented with features: `std,fs,svg,perf-monitor,color-argb8888,color-i1,color-l8,color-rgb565,color-rgb565-swapped,color-rgb888,color-xrgb8888`.
+Documented with features: `std,fs,svg,perf-monitor,display-scale,color-argb8888,color-i1,color-l8,color-rgb565,color-rgb565-swapped,color-rgb888,color-xrgb8888`.
 
 **twine-engine**
 
@@ -8309,12 +8364,12 @@ Fields:
 - `on_chunk: Option<fn()>` — Called between the chunks of a frame — after each chunk is rendered and handed to the driver (and after each chunk of the chunk-level API): the place to feed a watchdog or yield to a scheduler during a long frame. A plain `fn` (no allocation, no state in the engine); it must not touch the engine. Default `None` (one branch per chunk).
 - `long_press_time: twine_core::Duration` — Press duration that triggers a long press (default 400 ms).
 - `long_press_repeat: twine_core::Duration` — Repeat period of long-press-repeat events (default 100 ms).
-- `scroll_limit: i32` — Pointer movement in pixels that starts scrolling (default 10).
+- `scroll_limit: i32` — Pointer movement in logical pixels that starts scrolling (default 10; scaled to the input's display with the `display-scale` feature, like the other distances below).
 - `scroll_throw: NonZeroU8` — Momentum decay of a scroll throw in percent per input read (default 10): each read keeps `100 − scroll_throw` percent of the throw vector; 100 or more stops a throw at once. Non-zero by its type: a throw always decays, so it always ends (a snapped throw's predicted distance is finite). Never panics.
-- `gesture_limit: i32` — Movement in pixels that makes a gesture (default 50).
-- `gesture_min_velocity: i32` — Minimum velocity of a gesture in pixels per read period (default 3).
+- `gesture_limit: i32` — Movement in logical pixels that makes a gesture (default 50).
+- `gesture_min_velocity: i32` — Minimum velocity of a gesture in logical pixels per read period (default 3).
 - `multi_click_time: twine_core::Duration` — Maximum gap between clicks of a double / triple click (default 300 ms).
-- `multi_click_distance: i32` — Maximum distance in pixels between clicks of a multi-click (default 5).
+- `multi_click_distance: i32` — Maximum distance in logical pixels between clicks of a multi-click (default 5).
 - `read_period: twine_core::Duration` — Input device read period while pressed or for polled devices (default 30 ms).
 - `idle_timeout: Option<twine_core::Duration>` — After this long without user input (see `Engine::inactive_for`), a step that has nothing to do returns `Wake::IdleFor` instead of `Wake::Idle`, so the run loop can pick a deep-sleep mode or put the display to sleep. Until then, an otherwise idle step asks to be woken once, when the timeout passes (one wake-up per inactive period; no polling). Default `None`: never (no extra wake-up). Must be > 0 when set.
 Methods of `EngineConfig`:
@@ -8414,6 +8469,8 @@ Variants:
 - `RotationFailed = 6` — The driver failed to rotate; the display keeps its rotation.
 - `RotationNotReserved = 7` — The rotation needs software rotation and its scratch memory was not reserved (`Engine::reserve_rotation`); the display keeps its rotation.
 - `RotationRefused = 8` — The rotated display does not fit its buffers or its draw format is not compiled in (a `FaultKind::FormatDisabled` fault is raised as well); the display keeps its rotation.
+- `ResizeFailed = 9` — The driver cannot resize or failed to (`DisplayDriver::resize`, a display-scale change); the display keeps its size and scale.
+- `ResizeRefused = 10` — The resized display does not fit its draw buffers; the driver is set back and the display keeps its size and scale.
 Methods of `DisplayControlFault`:
 - `pub const fn code(self) -> u32` — The fault record's `code`.
 - `pub fn from_code(code: u32) -> Option<twine_engine::DisplayControlFault>` — The fault for a record's `code` (`None` for unknown codes).
@@ -8445,6 +8502,8 @@ Methods of `DrawCx`:
 - `pub fn engine(&self) -> &'a twine_engine::Engine` — The engine (styles, tree).
 - `pub fn coords(&self) -> twine_core::Rect` — Absolute coordinates of the node.
 - `pub fn content_area(&self) -> twine_core::Rect` — The coordinates minus padding and border width of `Part::Main`.
+- `pub fn scale(&self) -> twine_core::DisplayScale` — The scale of the node's display: device pixels per logical pixel (`Engine::node_scale`; 1× on every embedded panel, and always without the `display-scale` feature). Everything a `DrawCx` hands out (`coords`, the painter, resolved styles) is in device pixels already; the scale matters only for sizes the widget makes up itself.
+- `pub fn to_device(&self, logical: i32) -> i32` — `logical` pixels in device pixels for the node's display (`logical × ` `scale`, rounded; non-zero stays non-zero): for the sizes a custom-drawn widget makes up itself (a stroke width, a bar gap, a marker), so they keep their size on a hi-DPI screen. Sizes read from styles are already device pixels.
 - `pub fn clip(&self) -> twine_core::Rect` — What the node may draw into (the chunk, clipped by its ancestors).
 - `pub fn state(&self) -> twine_style::State` — The node's state.
 - `pub fn opa(&self) -> twine_core::Opa` — The node's effective opacity (own `Opa` × ancestors').
@@ -8463,7 +8522,7 @@ Methods of `DrawCx`:
 - `pub fn with_svg_images<R>(&mut self, bytes: &'static [u8], f: impl FnOnce(&mut twine_render::Painter<'p>, &twine_vector::SvgDocument, &mut twine_image::ImageContext<'_>) -> R) -> Result<R, twine_vector::SvgError>` — Calls `f` with the painter, the parsed SVG document of `bytes` and the image context (to cache a rasterized copy), feature `svg`.
   Errors: The parse error of a malformed document.
 - `pub fn with_clip<R>(&mut self, area: twine_core::Rect, f: impl FnOnce(&mut twine_engine::DrawCx<'_, 'p>) -> R) -> Option<R>` — Runs `f` with the clip narrowed to `area` (intersected with the current clip).
-- `pub fn draw_text(&mut self, area: twine_core::Rect, text: &str, dsc: &twine_text::TextDsc)` — Draws `text` in `area` with `dsc` (uses the engine's glyph cache).
+- `pub fn draw_text(&mut self, area: twine_core::Rect, text: &str, dsc: &twine_text::TextDsc)` — Draws `text` in `area` with `dsc` (uses the engine's glyph cache). The font is drawn in its rendering for the node's display scale (`Font::for_scale`; fonts resolved from styles already are), so a widget may put any font in `dsc` — a `ScaledFont` or `TtfScaledFont` stays sharp on a hi-DPI display. 1× and builds without `display-scale` draw `dsc.font` as is.
 - `pub fn draw_base(&mut self, part: twine_style::Part)` — Draws the styled rectangle of `part` over the node's coordinates, like LVGL's `lv_obj` draw: shadow → background (color or gradient) → background image → border (unless `BorderPost`) → outline. Invisible elements are skipped.
 - `pub fn draw_rect_style(&mut self, area: twine_core::Rect, part: twine_style::Part)` — Like `draw_base` over `area` instead of the node's coordinates.
 - `pub fn draw_border_post(&mut self, part: twine_style::Part)` — Draws the border of `part` when it has `BorderPost` (called by the engine after the children).
@@ -8519,6 +8578,7 @@ Methods of `Engine`:
 - `pub fn default_display(&self) -> Option<twine_engine::DisplayId>` — The first registered display.
 - `pub fn displays(&self) -> impl Iterator<Item = twine_engine::DisplayId> + '_` — Every registered display.
 - `pub fn display_info(&self, display: twine_engine::DisplayId) -> Option<twine_hal::DisplayInfo>` — The description of `display`.
+- `pub fn display_scale(&self, display: twine_engine::DisplayId) -> twine_core::DisplayScale` — The scale of `display`: device pixels per logical pixel (`DisplayInfo::scale`; 1× for an unknown display, and always 1× without the `display-scale` feature). Logical lengths of its nodes resolve to `length × scale` device pixels.
 - `pub fn set_text_gamma(&mut self, display: twine_engine::DisplayId, gamma: Option<&'static twine_text::TextGamma>)` — Replaces the text gamma of the bitmap fonts drawn on `display` (`None`: each font's own, the default): how glyph coverage becomes opacity, see `twine_text::gamma`. A property of the panel more than of the font: `twine_text::gamma::LINEAR` draws every font as LVGL does (no lift of light text on dark), the built-in fonts' own curves (`twine_text::gamma::DEFAULT`) suit low-density panels. Every widget's text on the display uses it (`text_dsc` fills in `TextDsc::gamma`); the display is redrawn when it changes. An unknown display is ignored (warned). O(1) besides the redraw; never panics.
 - `pub fn text_gamma(&self, display: twine_engine::DisplayId) -> Option<&'static twine_text::TextGamma>` — The text gamma replacing the fonts' own on `display` (`None`: the fonts' own, or an unknown display); see `set_text_gamma`.
 - `pub fn driver<D: 'static>(&self, display: twine_engine::DisplayId) -> Option<&D>` — The driver of `display` as `D` (e.g. to read a test display's pixels).
@@ -8548,6 +8608,8 @@ Methods of `Engine`:
   Errors: `EngineError::DisplayNotFound`.
 - `pub fn set_rotation(&mut self, display: twine_engine::DisplayId, rotation: twine_core::Rotation) -> Result<(), twine_engine::EngineError>` — Requests the rotation `rotation` for `display`, applied by the next step between frames: hardware rotation through the driver, or software rotation (needs `reserve_rotation`); then a re-layout, a full redraw and the input devices fitted again (see the `DisplayCmd` docs). Idempotent: the current rotation cancels a pending request. Allocates nothing.
   Errors: `EngineError::DisplayNotFound`; `EngineError::InvalidConfig` for a framebuffer display (they cannot be rotated at run time). A rotation that turns out not to fit when it is applied raises `FaultKind::DisplayControl` instead.
+- `pub fn set_display_scale(&mut self, display: twine_engine::DisplayId, scale: twine_core::DisplayScale) -> Result<(), twine_engine::EngineError>` — Requests the display scale `scale` (device pixels per logical pixel) for `display` (feature `display-scale`): the display keeps its logical size and gets `logical × scale` device pixels. Applied by the next step between frames, like a rotation: the driver resizes its panel (`DisplayDriver::resize`), every style of the display is resolved again for the new scale (lengths, fonts, image renderings), the display is laid out and redrawn and its input devices are fitted again. For a desktop window moved to a monitor with another scale. Theme tables are not rebuilt (they are logical). Idempotent: the current scale cancels a pending request. Allocates nothing in the engine.
+  Errors: `EngineError::DisplayNotFound`; `EngineError::InvalidConfig` for framebuffer and chunked displays (only displays with a flush driver can resize) and for a scale whose device size does not fit in `u16`.
 - `pub fn display_command(&mut self, display: twine_engine::DisplayId, cmd: twine_engine::DisplayCmd) -> Result<(), twine_engine::EngineError>` — Applies a `DisplayCmd` to `display` (the `set_*` method it names).
   Errors: As the method it calls.
 - `pub fn display_asleep(&self, display: twine_engine::DisplayId) -> bool` — Whether `display` is asleep (a sleep request was applied, and no wake since). `false` for unknown displays. Never panics.
@@ -8770,6 +8832,9 @@ Methods of `Engine`:
 - `pub fn style_prop(&self, id: twine_engine::NodeId, part: twine_style::Part, prop: twine_style::PropId) -> twine_style::StyleValue` — The value of `prop` for `part` of `id` with full LVGL resolution (state weights, priority, inheritance, defaults). Unknown ids give the default. A density-independent length (`Length::Dp`) comes back in pixels for the DPI of `id`'s display (`node_dpi`), converted by the resolver (`StyleSource::dpi`).
 - `pub fn finish_style_value(&self, id: twine_engine::NodeId, prop: twine_style::PropId, v: twine_style::StyleValue) -> twine_style::StyleValue` — Finishes a value read straight from a style of `id` (outside the cascade) like `style_prop` finishes what it resolves: a design element becomes its theme value, a `Dp` length pixels (`twine_style::resolve_value`); any other value is returned unchanged.
 - `pub fn node_dpi(&self, id: twine_engine::NodeId) -> u16` — The DPI that density-independent lengths of `id` resolve with: the DPI of the display showing `id` (`DisplayInfo::dpi`), else of the default display, else `twine_style::DEFAULT_DPI`. With one display this is a direct read; the resolver asks only when it finds a `Dp` value.
+- `pub fn node_scale(&self, id: twine_engine::NodeId) -> twine_core::DisplayScale` — The display scale that logical lengths of `id` resolve with: the scale of the display showing `id` (`Engine::display_scale`), else of the default display, else 1×. Always 1× (a constant) without the `display-scale` feature.
+- `pub fn node_to_device(&self, id: twine_engine::NodeId, logical: i32) -> i32` — `logical` pixels in device pixels for the display of `id` (`logical × ` `node_scale`, rounded; unchanged at 1×). For widget code that turns a logical size into geometry directly (hit-test margins, minimum sizes) instead of through a style.
+- `pub fn node_dpx(&self, id: twine_engine::NodeId, dp: i32) -> i32` — `dp` density-independent pixels in device pixels for the display of `id`: `dpx` with its DPI, then its scale (LVGL `lv_dpx`, scale-aware).
 - `pub fn style_i32(&self, id: twine_engine::NodeId, part: twine_style::Part, prop: twine_style::PropId) -> i32` — An integer property in pixels (`Int`, pixel lengths and `Dp` lengths; other kinds give 0).
 - `pub fn style_color(&self, id: twine_engine::NodeId, part: twine_style::Part, prop: twine_style::PropId) -> twine_core::Color` — A color property (black if the property is not a color).
 - `pub fn style_opa(&self, id: twine_engine::NodeId, part: twine_style::Part, prop: twine_style::PropId) -> twine_core::Opa` — An opacity property (cover if the property is not an opacity).
@@ -9487,7 +9552,7 @@ Methods of `ThemeCx`:
 - `pub fn add_recipe(&mut self, recipe: impl Into<twine_engine::RecipeRef>)` — Adds `recipe` (a `Recipe` or a `ComputedRecipe`) to the node: a static recipe's entries in order, each as a theme style (`add_style` with a `StyleRef::Static`: no reference counting); a computed recipe's function runs with this context. Allocates only the node's entry list growth; never panics.
 - `pub fn dpx(&self, px: i32) -> i32` — `px` pixels at 160 DPI scaled to the display's DPI (LVGL `LV_DPX_CALC`): `(px · dpi + 80) / 160`, at least 1 for positive `px`; negative values are scaled symmetrically.
 - `pub fn dpi(&self) -> u16` — The display's DPI.
-- `pub fn resolution(&self) -> twine_core::Size` — The display's logical resolution.
+- `pub fn resolution(&self) -> twine_core::Size` — The display's rotated resolution in logical pixels (the device size divided by the display scale; equal to it at 1×).
 - `pub fn display(&self) -> twine_engine::DisplayId` — The display the node belongs to.
 Implements: Debug
 
@@ -9668,6 +9733,8 @@ Methods of `MeasureCx`:
 - `pub fn flags(&self) -> twine_engine::ObjFlags` — The node's flags.
 - `pub fn style(&self, part: twine_style::Part, prop: twine_style::PropId) -> twine_style::StyleValue` — A resolved style property.
 - `pub fn style_i32(&self, part: twine_style::Part, prop: twine_style::PropId) -> i32` — A resolved integer property (0 if it is not an integer).
+- `pub fn scale(&self) -> twine_core::DisplayScale` — The scale of the node's display (see `DrawCx::scale`).
+- `pub fn to_device(&self, logical: i32) -> i32` — `logical` pixels in device pixels for the node's display, for sizes a widget makes up itself (hit-test margins, minimum sizes; see `DrawCx::to_device`).
 - `pub fn finish_style_value(&self, prop: twine_style::PropId, v: twine_style::StyleValue) -> twine_style::StyleValue` — Finishes a value the widget read from a style it keeps itself (outside the node's cascade): a design element becomes the value of the node's theme, a `Dp` length pixels (see `Engine::finish_style_value`, which also gives the cost). Never panics.
 - `pub fn font(&self, part: twine_style::Part) -> &'static twine_text::Font` — The resolved font of `part`.
 - `pub fn padding(&self, part: twine_style::Part) -> twine_core::Insets` — Padding of `part`.
@@ -9744,6 +9811,8 @@ Methods of `WidgetCx`:
 - `pub fn content_area(&self) -> twine_core::Rect` — The coordinates minus padding and border width of `Part::Main`.
 - `pub fn style(&self, part: twine_style::Part, prop: twine_style::PropId) -> twine_style::StyleValue` — A resolved style property.
 - `pub fn style_i32(&self, part: twine_style::Part, prop: twine_style::PropId) -> i32` — A resolved integer property (0 if it is not an integer).
+- `pub fn scale(&self) -> twine_core::DisplayScale` — The scale of the node's display (see `DrawCx::scale`).
+- `pub fn to_device(&self, logical: i32) -> i32` — `logical` pixels in device pixels for the node's display (see `DrawCx::to_device`).
 - `pub fn style_color(&self, part: twine_style::Part, prop: twine_style::PropId) -> twine_core::Color` — A resolved color property.
 - `pub fn font(&self, part: twine_style::Part) -> &'static twine_text::Font` — The resolved font of `part`.
 - `pub fn rect_dsc(&self, part: twine_style::Part) -> twine_engine::RectStyle` — The rectangle style of `part` (see `MeasureCx::rect_dsc`).
@@ -10585,6 +10654,7 @@ Items:
 - `fn coords(&self, id: Self::Id) -> twine_core::Rect` — The current absolute rectangle of `id`.
 - `fn align_to(&self, id: Self::Id) -> Option<twine_layout::AlignTo<Self::Id>> (provided)` — The node `id` is aligned to, if any (see `AlignTo`). Default: none.
 - `fn grid_tracks(&self, id: Self::Id, axis: twine_layout::Axis) -> Option<&[twine_style::GridTrack]> (provided)` — The grid column (`Axis::X`) or row (`Axis::Y`) template of `id`. The default implementation reads the `GridColumnTracks`/`GridRowTracks` style properties and knows only `'static` templates (`TracksRef::Static`): a resolved value carries only the identity of a shared template, so a tree with shared templates (the engine) borrows them from the style that holds them here, typically with `twine_style::resolve_grid_tracks` (the cascade lookup that returns the template's slice for any `TracksRef`).
+- `fn scale(&self, id: Self::Id) -> twine_core::DisplayScale (provided)` — Device pixels per logical pixel for `id` (its display's scale): fixed grid tracks (`GridTrack::Px`) are logical pixels and are scaled with it; every other length reaches the layout already resolved to device pixels. Default: 1×.
 - `fn scroll(&self, id: Self::Id) -> twine_core::Point (provided)` — How far the content of `id` is scrolled: children (except `FLOATING` ones) are placed at their content position minus this offset. Default: not scrolled.
 - `fn is_content_sized(&self, id: Self::Id, axis: twine_layout::Axis) -> bool (provided)` — Whether the `Width` (for `Axis::X`) or `Height` style of `id` is `Length::Content`.
 
@@ -11113,6 +11183,7 @@ All scratch memory and caches of the renderer, created once (e.g. when the engin
 Methods of `RenderCaches`:
 - `pub fn new(cfg: &twine_render::RenderConfig) -> Self` — Allocates every buffer and cache arena of `cfg`, the layer buffer (`cfg.layer_buf_bytes`) included.
 - `pub fn with_layer_buf(cfg: &twine_render::RenderConfig, layer_buf: &'static mut [u8]) -> Self` — Like `new`, but the layer buffer is `layer_buf` — caller memory, typically a `static`, so the largest scratch buffer of the renderer stays out of the heap. `cfg.layer_buf_bytes` is ignored; `config` reports `layer_buf.len()` (saturated to `u32::MAX`). The bytes need no particular alignment or initial content (every layer clears what it uses).
+- `pub fn reserve_for_scale(&mut self, scale: twine_core::DisplayScale)` — Grows the caches whose need grows with the square of the drawing size (the blurred shadow corners) for a display of `scale`, so shadows keep their full blur on a hi-DPI display (a 2× display needs 4× the corner memory). Never shrinks; a 1× scale changes nothing. Allocates: the engine calls it when a scaled display is added or changes its scale (feature `display-scale`), never while drawing.
 - `pub fn config(&self) -> &twine_render::RenderConfig` — The configuration.
 - `pub fn max_span(&self) -> usize` — Widest span processed at once.
 - `pub fn bytes_reserved(&self) -> usize` — Heap bytes reserved by the scratch buffers, the caches and a heap layer buffer: `scratch_bytes` + `cache_bytes` + the layer buffer unless it is static. The extension slot (`put_extension`) is not included.
@@ -11912,6 +11983,7 @@ Methods of `Font`:
 - `pub fn advance_px(&'static self, cp: char, next: Option<char>) -> i32` — Advance of `cp` in whole pixels (LVGL rounding), including kerning with `next`.
 - `pub const fn ascent(&self) -> i32` — Distance from the top of a line to the baseline: `line_height - base_line`.
 - `pub const fn placeholder_width(&self) -> i32` — Width of the replacement box drawn for missing characters: `line_height / 2`.
+- `pub fn for_scale(&'static self, scale: twine_core::DisplayScale) -> &'static twine_text::Font` — The font to draw this font with on a display of `scale` (device pixels per logical pixel): the provider's `font_for_scale`, else the font itself. The style resolver calls it for the `font` property on scaled displays (feature `display-scale` of `twine-style`), so code that draws a resolved font never calls it.
 - `pub fn provider_key(&self) -> usize` — The glyph provider's address, used as the glyph-cache key of this font's provider.
 Implements: Debug
 
@@ -11938,7 +12010,8 @@ Items:
 - `fn render_a8(&self, info: &twine_text::GlyphInfo, map: twine_text::CoverageMap, out: &mut [u8], cache: &mut twine_text::GlyphCache) -> bool` — Writes the glyph's A8 opacity (`box_w × box_h`, stride `box_w`) into `out`: its coverage mapped through the provider's text gamma for the run's polarity, or through the table replacing it (`map`, see `CoverageMap` and `gamma`; providers without gamma tables, such as 8-bit run-time TrueType glyphs, ignore it).
 - `fn render_rows(&self, info: &twine_text::GlyphInfo, map: twine_text::CoverageMap, cache: &mut twine_text::GlyphCache, sink: &mut dyn FnMut(usize, &[u8])) -> bool (provided)` — Streams the glyph's A8 opacity row by row to `sink(row_index, row)` (each row `box_w` bytes; `map` as for `render_a8`). Returns `false` if the glyph could not be decoded.
 - `fn glyph_image(&self, cp: char, next: Option<char>) -> Option<&'static twine_render::ImagePixels<'static>> (provided)` — The image of an image glyph (one whose `GlyphInfo::bpp` is 0), drawn instead of A8 coverage. `cp` and `next` are the arguments `glyph_info` was called with. The default (coverage-only providers) returns `None`.
-Implemented by: twine_text::BitmapFont, twine_text::ImageFontProvider, twine_text::TtfProvider
+- `fn font_for_scale(&self, scale: twine_core::DisplayScale) -> Option<&'static twine_text::Font> (provided)` — The font to draw with instead of the font over this provider on a display of `scale` (device pixels per logical pixel, see `Font::for_scale`): a larger rendering of the same face, so text keeps its size and stays sharp on a hi-DPI screen. The default (plain fonts) returns `None`: the font is drawn as is at every scale. Overridden by `ScaledFont` (bitmap variants) and the scalable TrueType fonts of `TtfFont::scalable` (feature `ttf`).
+Implemented by: twine_text::BitmapFont, twine_text::ImageFontProvider, twine_text::ScaledFont, twine_text::TtfProvider, twine_text::TtfScaledFont
 
 #### const twine_text::MAX_FALLBACK_DEPTH
 `pub const MAX_FALLBACK_DEPTH: usize = 8`
@@ -12149,6 +12222,15 @@ Implements: Clone, Copy, Debug
 `pub const fn is_wide(c: char) -> bool`
 Whether `c` is a wide (CJK-like) character that may break anywhere: U+2E80–U+9FFF, U+AC00–U+D7AF, U+F900–U+FAFF, U+FF00–U+FFEF.
 
+#### struct twine_text::ScaledFont
+A font that follows the display scale: the `base` font on 1× displays, and on a scaled display the variant whose scale is nearest (a larger one on a tie) — the same face rendered at `scale ×` the base size, e.g. Montserrat 28 as the 2× variant of Montserrat 14.
+Methods of `ScaledFont`:
+- `pub const fn new(base: &'static twine_text::Font, variants: &'static [(twine_core::DisplayScale, &'static twine_text::Font)]) -> Self` — `base` (the 1× font) with `variants`: each the same face rendered for a display scale.
+- `pub const fn font(&'static self) -> twine_text::Font` — The font to put in styles: the base font's metrics, fallback and subpixel layout over this scaled font (see the type documentation for the `static` pattern).
+- `pub const fn base(&self) -> &'static twine_text::Font` — The base (1×) font.
+- `pub fn pick(&self, scale: twine_core::DisplayScale) -> &'static twine_text::Font` — The font for `scale`: the base or the variant nearest to it (the larger one on a tie).
+Implements: Debug, GlyphProvider
+
 #### trait twine_text::FontFileSource
 `pub trait FontFileSource`
 Reads whole font files for `TtfFont::from_file`. `twine-text` has no file system of its own: an adapter over the application's file system implements this (for example over `twine_fs::Vfs`: `vfs.read_to_vec(path)`).
@@ -12159,6 +12241,10 @@ Items:
 #### const twine_text::TTF_MAX_PX
 `pub const TTF_MAX_PX: u16 = 200`
 Largest supported pixel size (glyph boxes must fit the 255 × 255 glyph scratch).
+
+#### const twine_text::TTF_MAX_SCALES
+`pub const TTF_MAX_SCALES: usize = 4`
+Most display scales a scalable TrueType font (`TtfFont::scalable`) keeps a rasterized font for. Desktops have one or two (a laptop panel and an external monitor).
 
 #### enum twine_text::TtfError
 Errors of `TtfFont` / `TtfProvider` creation.
@@ -12178,6 +12264,10 @@ Methods of `TtfFont`:
   Errors: As `TtfFont::new`.
 - `pub fn new_in(cell: &'static static_cell::StaticCell<twine_text::TtfFont>, data: &[u8], px: u16) -> Result<&'static twine_text::Font, twine_text::TtfError>` — Parses `data` into the caller's `static` cell instead of leaking. `TtfError::AlreadyInitialized` if `cell` was used before (a `StaticCell` is initialized once).
   Errors: `TtfError::AlreadyInitialized` when `cell` was used before, and the errors of `TtfFont::new`.
+- `pub fn scalable(data: &'static [u8], px: u16) -> Result<&'static twine_text::Font, twine_text::TtfError>` — A `'static` font of `px` pixels at 1× that follows the display scale (a `TtfScaledFont` over the face at `px`): on a display of scale `s` the style resolver draws it with the same face rasterized at `px × s` pixels (feature `display-scale` of `twine-style`), so text keeps its size and stays sharp at every scale, fractional ones included. `data` stays borrowed (`include_bytes!` or a leaked file) because each new scale parses it again; the font of a scale is created the first time it is drawn there and kept (at most `TTF_MAX_SCALES` scales; a further one uses the nearest kept scale and logs a warning). Leaks like `new`: call it once per font and size at startup.
+  Errors: As `TtfFont::new`.
+- `pub fn scalable_with_fallback(data: &'static [u8], px: u16, fallback: Option<&'static twine_text::Font>) -> Result<&'static twine_text::Font, twine_text::TtfError>` — Like `scalable`, with a fallback font for characters the TTF lacks (itself scaled with `Font::for_scale` for each scale).
+  Errors: As `TtfFont::new`.
 - `pub fn from_file(files: &mut dyn twine_text::FontFileSource, path: &str, px: u16) -> Result<&'static twine_text::Font, twine_text::TtfError>` — Reads the font file `path` (e.g. `"A:/fonts/heading.ttf"`) from `files` and returns a leaked font of `px` pixels (the file data is freed after parsing).
   Errors: `TtfError::File` when the file cannot be read, and the errors of `TtfFont::new`.
 Implements: Debug
@@ -12193,7 +12283,33 @@ Methods of `TtfProvider`:
 - `pub fn font(&'static self, fallback: Option<&'static twine_text::Font>) -> twine_text::Font` — A `Font` over this provider with the given fallback.
 Implements: Debug, GlyphProvider
 
+#### struct twine_text::TtfScaledFont
+A font that follows the display scale through a TrueType face: `base` (any font, typically the bitmap rendering of the same face, so 1× looks exactly as without scaling) on 1× displays, and the face rasterized at `px × scale` on any other scale — Retina, 1.25×, 1.5× — made the first time it is drawn there and kept (at most `TTF_MAX_SCALES` scales; a further one uses the nearest kept scale and logs a warning). `const`: it goes into `static` themes and type scales like any font. Feature `ttf` (rasterization uses `f32`; desktop targets).
+Methods of `TtfScaledFont`:
+- `pub const fn new(base: &'static twine_text::Font, data: &'static [u8], px: u16) -> Self` — `base` at 1×, and the TrueType/OpenType font `data` rasterized at `px × scale` pixels on other scales (`px`: the base font's size). `data` is parsed when a scale is first drawn; invalid data is logged then and the base font is drawn instead.
+- `pub const fn fallback(self, font: &'static twine_text::Font) -> Self` — Characters the face lacks come from `font` (scaled with `Font::for_scale`).
+- `pub const fn font(&'static self) -> twine_text::Font` — The font to put in styles: the base font's metrics over this scaled font (see the type documentation for the `static` pattern).
+Implements: Debug, GlyphProvider
+
+#### macro twine_text::scaled_font!
+```rust
+macro_rules! scaled_font {
+    (
+        $(#[$meta:meta])*
+        $vis:vis static $name:ident = ttf($base:expr, $data:expr, $px:expr)
+            . fallback ( ttf ( $fb_base:expr, $fb_data:expr, $fb_px:expr ) ) ;
+    ) => { ... };
+    (
+        $(#[$meta:meta])*
+        $vis:vis static $name:ident = ttf($base:expr, $data:expr, $px:expr) . fallback ( $fb_data:expr ) ;
+    ) => { ... };
+    (
+        $(#[$meta:meta])*
+```
+Declares a `static` `Font` that follows the display scale, in one line (the `ScaledFont` / `TtfScaledFont` and the font over it are generated):
+
 Re-exports in `twine_text`:
+- `DisplayScale` = `twine_core::DisplayScale`
 - `Symbol` = `twine_core::Symbol`
 
 ### mod twine_text::encode
@@ -12529,7 +12645,9 @@ Variants:
 - `File(heapless::string::String<MAX_PATH_LEN>)` — A file path read through a file source.
 - `Symbol(&'static str)` — Text drawn with the widget's font instead of an image: usually a built-in `Symbol` (`ImageSource::from(Symbol::Ok)` or `ImageSource::symbol`), or any `'static` text, e.g. a glyph of an application icon font.
 - `Svg(&'static [u8])` — SVG bytes, rendered by the vector renderer when enabled.
+- `Scaled(&'static twine_image::ScaledImage)` — A converted image with renderings for scaled (hi-DPI) displays: the image widget draws the rendering for its display's scale (`ImageSource::for_scale`); everything else draws the 1× image.
 Methods of `ImageSource`:
+- `pub fn for_scale(&self, scale: twine_core::DisplayScale) -> (twine_image::ImageSource, twine_core::DisplayScale)` — The source to draw on a display of `scale` (device pixels per logical pixel) and the scale its pixels were made for: a `Scaled` image's rendering (`ScaledImage::pick`), every other source itself at 1×. Draw the result zoomed by `scale / made-for scale` to keep the image's logical size.
 - `pub fn file(path: &str) -> Option<Self>` — A file source (`None` when `path` is longer than `MAX_PATH_LEN` bytes).
 - `pub const fn symbol(s: twine_core::Symbol) -> Self` — A built-in symbol, drawn as text with the symbol font (`const`: usable in `static`s).
 Implements: Clone, Debug, PartialEq, Eq, From<twine_core::Symbol>, From<&'static twine_image::Image>, Display
@@ -12537,6 +12655,15 @@ Implements: Clone, Debug, PartialEq, Eq, From<twine_core::Symbol>, From<&'static
 #### const twine_image::MAX_PATH_LEN
 `pub const MAX_PATH_LEN: usize = 64`
 Longest path of `ImageSource::File`.
+
+#### struct twine_image::ScaledImage
+A converted image with renderings for scaled (hi-DPI) displays: the 1× `base` and `variants`, each the same picture rendered for a display scale (e.g. a 2× PNG exported at twice the size). The image widget draws the smallest rendering made for at least its display's scale (the largest one beyond that), zoomed to the image's logical size, so icons stay sharp on Retina screens; on 1× displays and everywhere else (backgrounds, image buttons) the base is drawn. Only the variants listed are linked.
+Methods of `ScaledImage`:
+- `pub const fn new(base: &'static twine_image::Image, variants: &'static [(twine_core::DisplayScale, &'static twine_image::Image)]) -> Self` — `base` (1×) with `variants`, each rendered for a display scale.
+- `pub const fn base(&self) -> &'static twine_image::Image` — The 1× image.
+- `pub const fn variants(&self) -> &'static [(twine_core::DisplayScale, &'static twine_image::Image)]` — The renderings for scaled displays.
+- `pub fn pick(&self, scale: twine_core::DisplayScale) -> (&'static twine_image::Image, twine_core::DisplayScale)` — The image to draw at `scale` and the scale it was made for: the smallest rendering made for at least `scale` (downscaling keeps detail), else the largest; the base counts as made for 1×.
+Implements: Clone, Copy, Debug, PartialEq, Eq
 
 #### fn twine_image::pixels_of
 `pub fn pixels_of<'a>(header: &twine_image::ImageHeader, data: &'a [u8]) -> Option<twine_render::ImagePixels<'a>>`
@@ -12594,6 +12721,7 @@ Errors: `Error::Decode` for truncated input or an overflow of `output` by a bloc
 
 Re-exports in `twine_image`:
 - `ColorFormat` = `twine_core::ColorFormat`
+- `DisplayScale` = `twine_core::DisplayScale`
 - `Symbol` = `twine_core::Symbol`
 
 ### mod twine_image::decoders
@@ -14931,6 +15059,8 @@ Items:
   Errors: `ControlError::Unsupported` (default), or `ControlError::Driver` when sending failed.
 - `fn set_rotation(&mut self, rotation: twine_core::Rotation) -> Result<twine_hal::DisplayInfo, twine_hal::ControlError<Self::Error>> (provided)` — Rotates the picture in hardware (e.g. MIPI DCS `MADCTL`) and returns the new description: logical size and `rotation` of `rotation`, and `hw_rotation` telling whether flush areas are now logical (`true`) or still native. The format may not change. Default: `ControlError::Unsupported`, and the engine rotates in software instead (with the scratch buffers `Engine::reserve_rotation` allocated at start-up).
   Errors: `ControlError::Unsupported` (default), or `ControlError::Driver` when sending failed (the driver must then keep reporting its previous rotation).
+- `fn resize(&mut self, width: u16, height: u16, scale: twine_core::DisplayScale) -> Result<twine_hal::DisplayInfo, twine_hal::ControlError<Self::Error>> (provided)` — Changes the panel to `width × height` device pixels at display scale `scale` and returns the new description (normally `DisplayInfo { width, height, scale, .. }` of the old one). For hosted displays whose size follows a window: a desktop window moved to a monitor with another scale keeps its logical size, so its device size changes with the scale (`Engine::set_display_scale`, feature `display-scale` of the engine). The format and rotation may not change. Default: `ControlError::Unsupported` (panels have one size).
+  Errors: `ControlError::Unsupported` (default), or `ControlError::Driver` when the panel cannot take the size (the driver must then keep its previous size).
 - `fn read_back(&mut self, area: twine_core::Rect, buf: &mut [u8]) -> Result<(), twine_hal::ControlError<Self::Error>> (provided)` — Reads the pixels of `area` back from the panel's frame memory (GRAM; MIPI DCS `RAMRD`) into `buf`, in the layout of a flush (see § Pixel layout: rows of `area`, tightly packed, in `DisplayInfo::format`; `area` in the same coordinates as a flush). It is the "actual" half of a display-integrity check: the engine compares a checksum of what the panel holds with a checksum of an independent re-render (`Engine::check_region`). Optional — the default answers `ControlError::Unsupported`; panels without a readable frame memory (no MISO line, write-only interfaces) keep it.
   Errors: `ControlError::Unsupported` (default), or `ControlError::Driver` when reading failed (bus error, `area` outside the panel, `buf` too short).
 
@@ -14943,13 +15073,16 @@ Fields:
 - `rotation: twine_core::Rotation` — Rotation of the logical screen relative to the panel.
 - `hw_rotation: bool` — `true`: the panel rotates in hardware and flush areas are logical; `false`: the engine rotates each chunk in software before flushing.
 - `align: u8` — Flush areas' x, y, width and height must be multiples of this (1, 2, 8…; 0 is treated as 1 by the engine).
-- `dpi: u16` — Dots per inch (used to scale default sizes, LVGL default 130).
+- `dpi: u16` — Dots per inch of the display's **logical** pixels (used to scale default sizes and `Dp` lengths, LVGL default 130). On a scaled display this is the density the UI is laid out for (a 2× desktop screen still reports the 1× density), so a scale change never changes `Dp` lengths in logical pixels.
+- `scale: twine_core::DisplayScale` — Device pixels per logical pixel (default `DisplayScale::ONE`; see `with_scale`). `width` and `height` are always device pixels.
 Methods of `DisplayInfo`:
-- `pub const fn new(width: u16, height: u16, format: twine_core::ColorFormat) -> Self` — A display of `width × height` in `format` with defaults: rotation `Deg0`, `hw_rotation = false`, `align = 1`, `dpi = 130`.
+- `pub const fn new(width: u16, height: u16, format: twine_core::ColorFormat) -> Self` — A display of `width × height` in `format` with defaults: rotation `Deg0`, `hw_rotation = false`, `align = 1`, `dpi = 130`, `scale = 1×`.
 - `pub const fn with_rotation(self, rotation: twine_core::Rotation) -> Self` — Sets the rotation.
 - `pub const fn with_hw_rotation(self, hw_rotation: bool) -> Self` — Sets whether the panel rotates in hardware.
 - `pub const fn with_align(self, align: u8) -> Self` — Sets the flush area alignment.
 - `pub const fn with_dpi(self, dpi: u16) -> Self` — Sets the DPI.
+- `pub const fn with_scale(self, scale: twine_core::DisplayScale) -> Self` — Sets the display scale: how many device pixels make one logical pixel (2× on a Retina screen, 1.25× or 1.5× on many Windows and Linux desktops). `width` and `height` stay in device pixels; the engine resolves logical lengths (`Length::Px`, bare integers) and `Dp` lengths to device pixels with it, so the UI keeps its size and renders sharp.
+- `pub const fn logical_size(&self) -> (i32, i32)` — The (rotated) screen size in logical pixels: `width × height` divided by the `scale` (equal to the device size at 1×).
 - `pub const fn bytes_per_row(&self) -> usize` — Bytes of one full-width row in `format` (sub-byte formats round up).
 - `pub const fn area(&self) -> twine_core::Rect` — The whole (logical) screen as a rectangle at the origin.
 - `pub const fn native_size(&self) -> (u16, u16)` — The panel's native (unrotated) size `(width, height)`: the logical size with the axes swapped back for `Rotation::Deg90` and `Rotation::Deg270`. Touch transforms (`TouchTransform::for_display`) and anything else that works in panel coordinates start from it.
@@ -17749,7 +17882,7 @@ engine and view crates for the engine and declarative runners.
 use twine_core::ColorFormat;
 use twine_sim::{SimConfig, show_framebuffer};
 
-show_framebuffer(SimConfig::new(320, 240).scale(2), |fb, format, frame| {
+show_framebuffer(SimConfig::new(320, 240).zoom(2), |fb, format, frame| {
     assert_eq!(format, ColorFormat::Rgb565);
     fb.fill((frame % 256) as u8);
 });
@@ -17785,6 +17918,8 @@ Methods of `SimApp`:
 - `pub fn window_size(&self) -> (u16, u16)` — The window's size in panel pixels (for a multi-panel app: the layout's size).
 - `pub fn engine_ref(&self) -> Option<&twine_engine::Engine>` — The engine of an engine app.
 - `pub fn engine_mut(&mut self) -> Option<&mut twine_engine::Engine>` — The engine of an engine app, mutably.
+- `pub fn set_display_scale(&mut self, scale: twine_core::DisplayScale) -> bool` — Lays the panel out and draws it at `scale` from the next frame on: the panel keeps its logical size (`SimConfig::width` × `height`) and gets `width × scale` device pixels (`Engine::set_display_scale`). The window does this itself for `SimScale::Auto` and fixed scales; call it to switch scales from a test or a hotkey. Only engine and declarative apps with a partial-buffer panel can change their scale; for the others (framebuffer panels, multi-panel and framebuffer programs) it logs a warning and returns `false`.
+- `pub fn display_scale(&self) -> twine_core::DisplayScale` — The display scale the panel is laid out at (1× for programs that cannot be scaled).
 - `pub fn set_step_fn(&mut self, f: twine_sim::StepFn)` — Runs `f` instead of `Engine::step` for engine apps (e.g. the declarative `Ui` update cycle); the simulator keeps notifying input changes and waiting for the returned `Wake`.
 - `pub fn set_teardown_fn(&mut self, f: twine_sim::TeardownFn)` — Runs `f` with the engine when an engine app is dropped, before the engine (e.g. `UiCore::dispose`, so the application's scopes are disposed with the engine lent).
 - `pub fn on_waker(&mut self, sink: Box<dyn FnOnce(Waker)>)` — `sink` receives a waker (usable from any thread) that wakes the window's event loop, e.g. to register it where background tasks signal new data.
@@ -17857,10 +17992,11 @@ Implements: Debug
 #### struct twine_sim::SimConfig
 Configuration of the simulator.
 Fields:
-- `width: u16` — Panel width in pixels (logical, after rotation).
-- `height: u16` — Panel height in pixels (logical, after rotation).
+- `width: u16` — Panel width in logical pixels (after rotation): the device width at 1×; on a scaled display (`display_scale`) the panel has `width × scale` device pixels.
+- `height: u16` — Panel height in logical pixels (after rotation; see `width`).
 - `title: String` — Window title.
-- `scale: u8` — Integer window scale, `1..=4`.
+- `zoom: u8` — Integer window zoom, `1..=4`: each logical pixel of the panel is shown `zoom × zoom` window points large (nearest neighbour), to inspect small panels. Not a display scale: the UI is laid out the same at every zoom.
+- `display_scale: twine_sim::SimScale` — The display scale the UI is laid out and drawn at (default `1×`, a faithful emulation of an embedded panel). `SimScale::Auto` follows the monitor the window is on (sharp text on Retina and other hi-DPI screens, for desktop applications), including when the window moves to another monitor. Headless runs use `1×` for `Auto` (deterministic).
 - `format: twine_core::ColorFormat` — Emulated panel pixel format (default `Rgb565`).
 - `buffer_mode: twine_engine::BufferMode` — The draw buffers of engine apps (default: two 40-row heap buffers, `BufferMode::Alloc(BufferSpec::default())`). `Full` / `Direct` emulate a framebuffer panel; `Partial` / `Alloc` a panel with its own frame memory. Consumed by `SimApp::engine` (the memory moves into the engine).
 - `bus_hz: Option<u32>` — Emulated bus throughput in bits per second (`None` = instant flushes).
@@ -17873,7 +18009,7 @@ Fields:
 - `fps_limit: Option<u16>` — Frame rate limit of continuously animating apps (default 60, `None` = unlimited).
 - `on_raw_key: Option<twine_sim::RawKeyHook>` — Engine apps: called with every key pressed (see `RawKeyHook`).
 Methods of `SimConfig`:
-- `pub fn new(width: u16, height: u16) -> Self` — A `width × height` panel with defaults: title "twine", scale 1, `Rgb565`, 40-row double buffers, no bus emulation, no rotation, all inputs, windowed, 60 fps.
+- `pub fn new(width: u16, height: u16) -> Self` — A `width × height` panel with defaults: title "twine", zoom 1, display scale 1×, `Rgb565`, 40-row double buffers, no bus emulation, no rotation, all inputs, windowed, 60 fps.
 - `pub fn panel_size(&self) -> (u16, u16)` — The physical panel size: `width × height`, swapped for a 90°/270° rotation done in software (`hw_rotation == false`). The window and screenshots show the physical panel.
 - `pub fn hw_rotation(self, hw: bool) -> Self` — Whether the rotation is emulated in hardware (default) or done by the engine in software (see `SimConfig::hw_rotation`).
 - `pub fn engine_config(self, cfg: twine_engine::EngineConfig) -> Self` — Uses `cfg` for the engine (sets `AppConfig::engine` of `app`; e.g. to give the image cache a budget).
@@ -17882,7 +18018,8 @@ Methods of `SimConfig`:
 - `pub fn app_config(self, config: twine_view::AppConfig) -> Self` — Runs the application with `config` — the very `AppConfig` the firmware ships (`Ui::builder(..).app_config(config())`) — so the simulator shows the shipped engine configuration, theme, motion, channel and queue budgets and fault hook. A configured rotation becomes the simulated panel's rotation (`rotation`, emulated in hardware like `MADCTL`); `TWINE_SIM_ROTATION` still overrides it. The window, panel format, buffers and bus emulation stay the simulator's (the engine draws the same pixels with any buffer geometry). Later builder methods refine it.
 - `pub fn on_raw_key(self, f: impl FnMut(&mut twine_engine::Engine, twine_hal::Key) + 'static) -> Self` — Calls `f` with the engine for every key pressed (engine apps).
 - `pub fn title(self, title: impl Into<String>) -> Self` — Sets the window title.
-- `pub fn scale(self, scale: u8) -> Self` — Sets the window scale; values outside `1..=4` are clamped with a warning.
+- `pub fn zoom(self, zoom: u8) -> Self` — Sets the window zoom (see `zoom`); values outside `1..=4` are clamped with a warning.
+- `pub fn display_scale(self, scale: impl Into<twine_sim::SimScale>) -> Self` — Sets the display scale (see `display_scale`): `SimScale::Auto` for desktop applications that should be sharp on hi-DPI monitors, or a fixed `DisplayScale` (to preview an app at 2× on any monitor).
 - `pub fn format(self, format: twine_core::ColorFormat) -> Self` — Sets the emulated panel format; unsupported formats are ignored with a warning (see `SUPPORTED_FORMATS`).
 - `pub fn buffers(self, mode: twine_engine::BufferMode) -> Self` — Sets the draw buffers of engine apps: `BufferMode::alloc` (heap partial buffers), caller memory (`BufferMode::partial_double_from` with `draw_buffers!` statics, as on firmware), or `Full` / `Direct` (a framebuffer panel).
 - `pub fn bus_hz(self, hz: Option<u32>) -> Self` — Emulates a bus of `hz` bits per second (`None` or 0 = instant).
@@ -17890,7 +18027,7 @@ Methods of `SimConfig`:
 - `pub fn headless(self, headless: Option<twine_sim::Headless>) -> Self` — Runs headless (or windowed with `None`).
 - `pub fn mono_colors(self, zero: twine_core::Color, one: twine_core::Color) -> Self` — Sets the colors of `0` and `1` bits of an `I1` panel.
 - `pub fn fps_limit(self, fps: Option<u16>) -> Self` — Sets the frame rate limit (`None` = unlimited; 0 is treated as `None`).
-- `pub fn from_env(self) -> Self` — Applies the environment: `TWINE_SIM_SCALE`, `TWINE_SIM_HEADLESS=1`, `TWINE_SIM_SCRIPT`, `TWINE_SIM_FRAMES`, `TWINE_SIM_BUS_HZ`, `TWINE_SIM_FORMAT`, `TWINE_SIM_BUFFERS=single|double|full|direct` (the draw buffers of engine apps; partial modes keep the configured rows, default 40) and `TWINE_SIM_ROTATION=0|90|180|270` (the engine rotates in software, the window shows the physical panel: see `hw_rotation`).
+- `pub fn from_env(self) -> Self` — Applies the environment: `TWINE_SIM_ZOOM=1..4`, `TWINE_SIM_DISPLAY_SCALE=auto|<percent>` (e.g. `200` for 2×), `TWINE_SIM_HEADLESS=1`, `TWINE_SIM_SCRIPT`, `TWINE_SIM_FRAMES`, `TWINE_SIM_BUS_HZ`, `TWINE_SIM_FORMAT`, `TWINE_SIM_BUFFERS=single|double|full|direct` (the draw buffers of engine apps; partial modes keep the configured rows, default 40) and `TWINE_SIM_ROTATION=0|90|180|270` (the engine rotates in software, the window shows the physical panel: see `hw_rotation`).
 - `pub fn from_lookup(self, lookup: impl Fn(&str) -> Option<String>) -> Self` — Like `from_env` with a custom variable lookup (for tests).
 Implements: Debug
 
@@ -17901,6 +18038,13 @@ Fields:
 - `keypad: bool` — Keyboard → keypad.
 - `encoder: bool` — Mouse wheel and middle button → encoder.
 Implements: Clone, Copy, Debug, PartialEq, Eq, Hash, Default
+
+#### enum twine_sim::SimScale
+The display scale of a simulated panel (`SimConfig::display_scale`).
+Variants:
+- `Auto` — The scale of the monitor the window is on (its backing scale factor), followed when the window moves to another monitor; `1×` headless.
+- `Fixed(twine_core::DisplayScale)` — This scale on every monitor (the window is stretched to fit when the monitor's differs).
+Implements: Clone, Copy, Debug, PartialEq, Eq, From<twine_core::DisplayScale>
 
 #### struct twine_sim::FlushStat
 Statistics of one flush.
@@ -18101,6 +18245,7 @@ Re-exports in `twine_sim::config`:
 - `SimInputs` — same as `twine_sim::SimInputs`
 - `Headless` — same as `twine_sim::Headless`
 - `SimConfig` — same as `twine_sim::SimConfig`
+- `SimScale` — same as `twine_sim::SimScale`
 
 ### mod twine_sim::convert
 
@@ -18305,7 +18450,9 @@ The file stem of the running executable (the example name), or `"sim"`.
 `.twinescript`: scripted input for headless runs.
 
 One command per line; `#` starts a comment (outside quotes); blank lines are ignored;
-integers are decimal (coordinates and wheel steps may be negative).
+integers are decimal (coordinates and wheel steps may be negative). Coordinates are logical
+pixels of the panel: on a scaled display (`SimConfig::display_scale`)
+they are multiplied by the scale, so one script drives the app at every scale.
 
 | Command | Effect |
 |---------|--------|
@@ -18452,6 +18599,7 @@ Methods of `EngineHarness`:
 - `pub fn rotation(self, r: twine_core::Rotation) -> Self` — Software rotation of the panel (rebuilds the engine).
 - `pub fn align(self, a: u8) -> Self` — Flush area alignment of the panel (rebuilds the engine).
 - `pub fn dpi(self, dpi: u16) -> Self` — DPI of the panel (`DisplayInfo::dpi`, default 130; rebuilds the engine). Themes and density-independent lengths (`Length::dp`) scale with it.
+- `pub fn display_scale(self, scale: twine_core::DisplayScale) -> Self` — Display scale of the panel (`DisplayInfo::scale`, default 1×; rebuilds the engine): the panel keeps its size in device pixels, logical lengths resolve to `length × scale` of them. Honoured when the engine is built with its `display-scale` feature (otherwise the engine warns and lays the panel out at 1×).
 - `pub fn mount_engine(self, f: impl FnOnce(&mut twine_engine::Engine)) -> Self` — Runs `f` on the engine (build the scene).
 - `pub fn engine(&self) -> &twine_engine::Engine` — The engine.
 - `pub fn engine_mut(&mut self) -> &mut twine_engine::Engine` — The engine, mutably.
@@ -18585,6 +18733,7 @@ Methods of `MemoryDisplay`:
 - `pub fn with_power_control(self) -> Self` — Supports brightness and sleep (`DisplayDriver::set_brightness`, `DisplayDriver::sleep`): recorded and readable with `brightness` and `is_asleep`. Without it the display answers `Unsupported`, like a driver that does not override them.
 - `pub fn with_sleep_settle(self, settle: twine_core::Duration) -> Self` — The settle time `DisplayDriver::sleep` reports (default zero).
 - `pub fn with_rotation_control(self) -> Self` — Supports hardware rotation at run time (`DisplayDriver::set_rotation`): the description becomes the rotated logical size with `hw_rotation = true`, and the framebuffer is laid out in logical coordinates from then on (its content is scrambled until redrawn, as on a panel whose `MADCTL` changed).
+- `pub fn with_resize(self) -> Self` — Supports resizing (`DisplayDriver::resize`, a desktop window changing its display scale): the panel takes the new size (cleared) and reports the new scale. Without it the display answers `Unsupported`, like a panel with one size.
 - `pub fn brightness(&self) -> Option<twine_core::Fraction>` — The brightness last set (`None` before any).
 - `pub fn is_asleep(&self) -> bool` — Whether the display was put to sleep (and not woken since).
 - `pub fn flushes_while_asleep(&self) -> u64` — Flushes begun while the display was asleep (the engine sends none).
@@ -19738,6 +19887,7 @@ Methods of `Font`:
 - `pub fn name(self, name: &str) -> twine_build::font::Font` — The name of the generated static (a Rust identifier, checked by `build`); its data statics are named after it (`<NAME>_BITMAP`, `<NAME>_GLYPHS`, …).
 - `pub fn visibility(self, visibility: &str) -> twine_build::font::Font` — The visibility of the generated static (default `pub`; `""` for private, `pub(crate)`, …).
 - `pub fn crate_path(self, path: &str) -> twine_build::font::Font` — The path through which the generated code names the text crate (default `twine::text`, for applications using the `twine` facade; `twine_text` for code that depends on `twine-text` directly).
+- `pub fn scales(self, scales: &[twine_core::DisplayScale]) -> twine_build::font::Font` — Also generates the font for each display scale of `scales` (the same face and options at `size × scale` px, rounded), for hi-DPI desktop displays: the generated static is then a `ScaledFont` over the 1× font and its variants (`<NAME>_1X`, `<NAME>_2X`, `<NAME>_1_5X`, … private statics), and the style resolver draws the variant nearest to each display's scale. 1× in `scales` is ignored; an empty list (the default) generates a plain font. Every variant is linked with the font, so list only the scales the application's displays have.
 - `pub fn chars(&self) -> &BTreeSet<char>` — The characters added with `chars_from` so far (files and Rust sources are read by `build`).
 - `pub fn static_name(&self) -> String` — The name of the generated static: `name`, or the file stem and size.
 - `pub fn command_line(&self) -> String` — The `twine font` command line that generates the same font (recorded in the generated header; characters are written as code-point ranges, and `--crate-path` when it is not the command's default `twine_text`).
@@ -19773,6 +19923,7 @@ Errors: When the font file cannot be read or parsed, or the auto-hinter fails.
 Re-exports in `twine_build::font`:
 - `BitmapFormat` = `twine_text::BitmapFormat`
 - `Bpp` = `twine_text::Bpp`
+- `DisplayScale` = `twine_core::DisplayScale`
 - `Subpx` = `twine_text::Subpx`
 
 ### mod twine_build::i18n
@@ -20130,7 +20281,8 @@ P6).
 - Pixels are `i32`; `Rect` is **half-open** `[x0, x1) × [y0, y1)` (LVGL areas are
   inclusive — ported algorithms convert explicitly).
 - Opacity is `Opa` (`u8`, 255 = cover); angles are `Angle` in 0.1°, clockwise on screen;
-  scale factors are `Scale` (`u16`, 256 = 1.0); fractions of a whole (gradient stops,
+  scale factors are `Scale` (`u16`, 256 = 1.0); a display's device pixels per logical
+  pixel is `DisplayScale` (`u16`, 256 = 1×); fractions of a whole (gradient stops,
   brightness) are `Fraction` (`u8`, 255 = 1.0); angular speeds are `AngularSpeed`
   (`u16`, whole degrees per second); time is `Instant`/`Duration` in µs (`u64`).
 - Arithmetic saturates rather than overflowing; invalid arguments log `warn!` and fall back
@@ -20449,6 +20601,23 @@ Methods of `AngularSpeed`:
 - `pub const fn deg_per_s(d: u16) -> twine_core::AngularSpeed` — `d` degrees per second.
 - `pub const fn as_deg_per_s(self) -> u16` — The speed in degrees per second.
 Implements: Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord
+
+#### struct twine_core::DisplayScale
+Device pixels per logical pixel of a display, stored with 256 = 1× (CSS `devicePixelRatio`, the scale factor of macOS, Windows and Wayland).
+Methods of `DisplayScale`:
+- `const ONE: twine_core::DisplayScale` — 1×: a logical pixel is a device pixel (every embedded panel).
+- `const X2: twine_core::DisplayScale` — 2× (Retina and most hi-DPI desktop screens).
+- `const X3: twine_core::DisplayScale` — 3× (phones and some 5K/6K screens).
+- `const MIN: twine_core::DisplayScale` — The smallest scale, ½×.
+- `const MAX: twine_core::DisplayScale` — The largest scale, 8×.
+- `pub const fn from_raw_256(raw: u16) -> twine_core::DisplayScale` — The scale whose 256-based representation is `raw` (`256` = 1×, `384` = 1.5×), clamped to `MIN`..=`MAX`.
+- `pub const fn pct(p: u16) -> twine_core::DisplayScale` — `p` percent (`125` → 1.25×), rounded to the nearest 1/256 and clamped like `from_raw_256`.
+- `pub const fn from_ratio(num: u16, den: u16) -> twine_core::DisplayScale` — `num / den` (`from_ratio(3, 2)` = 1.5×), rounded to the nearest 1/256 and clamped like `from_raw_256`. A zero `den` gives `MAX`.
+- `pub const fn raw_256(self) -> u16` — The 256-based representation (`DisplayScale::ONE.raw_256() == 256`).
+- `pub const fn is_one(self) -> bool` — Whether this is 1× (logical and device pixels coincide).
+- `pub const fn to_device(self, logical: i32) -> i32` — `logical` pixels in device pixels: `v · scale`, rounded half away from zero, saturating; a non-zero length stays non-zero (a 1 px hairline is at least one device pixel at every scale).
+- `pub const fn to_logical(self, device: i32) -> i32` — `device` pixels in logical pixels: `v / scale`, rounded half away from zero (the inverse of `to_device` for exact multiples).
+Implements: Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Display
 
 #### struct twine_core::Fraction
 A fraction from 0 to 1, stored in 1/255 steps (`255` = 1.0): gradient stop positions, LED brightness and other "how far along" values.
@@ -21318,7 +21487,7 @@ Re-exports in `twine_core::log`:
 ### mod twine_core::math
 
 Deterministic integer math: `Fx` (16.16 fixed point), `Angle` (0.1°), `Scale`
-(256 = 1.0), `Fraction` (0..=1), `AngularSpeed`, integer square roots, trigonometry,
+(256 = 1.0), `DisplayScale` (256 = 1×), `Fraction` (0..=1), `AngularSpeed`, integer square roots, trigonometry,
 shared 128-bit division (`div_rem_i128`) and small helpers.
 
 Nothing here uses floating point (P5), so results are bit-identical on every target (P6).
@@ -21407,6 +21576,7 @@ Clamps `v` into `[lo, hi]`. Unlike `Ord::clamp` it never panics: if `lo > hi` th
 Linear interpolation `a + (b − a)·t/1024` with `t` in `0..=1024` (values above 1024 extrapolate), rounded half up. `t = 0` gives `a`, `t = 1024` gives `b` exactly.
 
 Re-exports in `twine_core::math`:
+- `DisplayScale` — same as `twine_core::DisplayScale`
 - `Fx` — same as `twine_core::Fx`
 - `Scale` — same as `twine_core::Scale`
 - `Angle` — same as `twine_core::Angle`

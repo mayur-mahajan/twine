@@ -52,10 +52,10 @@ pub const CRATES: &[(&str, &str)] = &[
     ("twine-widgets", "std,gif,svg,bidi,arabic-shaping"),
     ("twine-widgets-ext", "std,vector,bidi,arabic-shaping"),
     ("twine-theme", "std,assets,lvgl,mono,simple"),
-    ("twine-style", "std"),
+    ("twine-style", "std,display-scale"),
     (
         "twine-engine",
-        "std,fs,svg,perf-monitor,color-argb8888,color-i1,color-l8,color-rgb565,color-rgb565-swapped,color-rgb888,color-xrgb8888",
+        "std,fs,svg,perf-monitor,display-scale,color-argb8888,color-i1,color-l8,color-rgb565,color-rgb565-swapped,color-rgb888,color-xrgb8888",
     ),
     ("twine-reactive", "std,async"),
     ("twine-layout", "std"),

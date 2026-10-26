@@ -12,7 +12,7 @@ fn main() {
     twine_sim::run(
         SimConfig::new(320, 240)
             .title("Controls")
-            .scale(3)
+            .zoom(3)
             .app_config(perf_overlay_font(twine_demos::config())),
         twine_demos::controls::app,
     );

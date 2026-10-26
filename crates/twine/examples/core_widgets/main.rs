@@ -18,7 +18,7 @@ use twine_sim::{SimConfig, run_engine};
 fn main() {
     let cfg = SimConfig::new(W, H)
         .title("core widgets")
-        .scale(2)
+        .zoom(2)
         .engine_config(engine_config())
         .theme(&lvgl::THEME);
     run_engine(cfg, |engine| {

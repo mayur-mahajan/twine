@@ -1,7 +1,7 @@
 //! [`EngineHarness`]: a bare [`Engine`] on an in-memory display with a mock clock, for engine
 //! tests (feature `engine`).
 
-use twine_core::{ColorFormat, Duration, Instant, Limits, Point, Rect, Rotation};
+use twine_core::{ColorFormat, DisplayScale, Duration, Instant, Limits, Point, Rect, Rotation};
 
 use twine_engine::{
     BufferMode, BufferSpec, DisplayId, DisplayTheme, Engine, EngineConfig, InputId, InvalidateReason, NodeId,
@@ -175,6 +175,8 @@ struct Settings {
     align: u8,
     /// `DisplayInfo::dpi` of the panel.
     dpi: u16,
+    /// `DisplayInfo::scale` of the panel.
+    scale: DisplayScale,
     /// The display's theme (attached when it is added).
     theme: Option<DisplayTheme>,
 }
@@ -231,6 +233,7 @@ impl Settings {
             .with_hw_rotation(false)
             .with_align(self.align)
             .with_dpi(self.dpi)
+            .with_scale(self.scale)
     }
 
     /// A fresh engine with the harness display.
@@ -301,6 +304,7 @@ impl EngineHarness {
             rotation: Rotation::Deg0,
             align: 1,
             dpi: twine_style::DEFAULT_DPI,
+            scale: DisplayScale::ONE,
             theme: Some(DisplayTheme::new(&twine_theme::lvgl::THEME)),
         };
         let (engine, display) = s.build();
@@ -520,6 +524,27 @@ impl EngineHarness {
     #[must_use]
     pub fn dpi(mut self, dpi: u16) -> Self {
         self.s.dpi = dpi;
+        self.rebuild();
+        self
+    }
+
+    /// Display scale of the panel (`DisplayInfo::scale`, default 1×; rebuilds the engine): the
+    /// panel keeps its size in device pixels, logical lengths resolve to `length × scale` of
+    /// them. Honoured when the engine is built with its `display-scale` feature (otherwise
+    /// the engine warns and lays the panel out at 1×).
+    ///
+    /// ```
+    /// use twine_core::DisplayScale;
+    /// use twine_testing::EngineHarness;
+    ///
+    /// // A 100 × 60 logical screen on a 2× panel of 200 × 120 device pixels.
+    /// let h = EngineHarness::new(200, 120).display_scale(DisplayScale::X2);
+    /// let info = h.engine().display_info(h.display()).unwrap();
+    /// assert_eq!((info.width, info.height), (200, 120));
+    /// ```
+    #[must_use]
+    pub fn display_scale(mut self, scale: DisplayScale) -> Self {
+        self.s.scale = scale;
         self.rebuild();
         self
     }

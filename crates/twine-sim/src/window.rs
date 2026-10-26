@@ -1,6 +1,10 @@
 //! The simulator window: winit 0.30 event loop + softbuffer presentation.
 //!
 //! The panel image is converted to `0x00RRGGBB` and scaled nearest-neighbour to the window.
+//! The window is sized in logical units (points): `panel / display scale × zoom`, so it has
+//! its intended size on every monitor; with [`SimScale::Auto`] the panel follows the monitor's
+//! scale factor (also when the window moves to another monitor) and maps 1:1 to the window's
+//! device pixels.
 //! Presentation happens only when the panel changed; between frames the event loop sleeps with
 //! `ControlFlow::WaitUntil(next deadline)`, so an idle simulator uses no CPU.
 
@@ -9,14 +13,16 @@ use std::rc::Rc;
 use std::time::Instant as StdInstant;
 
 use softbuffer::{Context, Surface};
+use twine_core::DisplayScale;
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
+use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::Key as WKey;
 use winit::window::{Window, WindowId};
 
 use crate::app::{Deadline, InputEvent, SimApp, SimError};
+use crate::config::SimScale;
 use crate::hotkeys::Hotkey;
 use crate::input::{WheelAccum, map_key, mouse_to_panel};
 use crate::panels::PointerEvent;
@@ -67,11 +73,12 @@ pub(crate) fn run(app: SimApp) -> Result<(), SimError> {
     }
     log::info!(
         target: "twine::sim",
-        "window {}x{} {} scale {}{} — press F1 for hotkeys",
+        "window {}x{} {} zoom {} display scale {:?}{} — press F1 for hotkeys",
         app.cfg.width,
         app.cfg.height,
         app.cfg.format,
-        app.cfg.scale,
+        app.cfg.zoom,
+        app.cfg.display_scale,
         app.cfg.bus_hz.map_or_else(String::new, |hz| format!(", bus {hz} Hz"))
     );
     let mut runner = Runner {
@@ -98,9 +105,12 @@ impl Runner {
     fn create_window(&mut self, el: &ActiveEventLoop) -> Result<Gfx, SimError> {
         let cfg = &self.app.cfg;
         let (pw, ph) = self.app.panel_size();
-        let size = PhysicalSize::new(
-            u32::from(pw) * u32::from(cfg.scale),
-            u32::from(ph) * u32::from(cfg.scale),
+        // Logical units: the panel's logical size (device size / display scale) × zoom.
+        let s = self.app.display_scale();
+        let zoom = f64::from(cfg.zoom);
+        let size = LogicalSize::new(
+            f64::from(s.to_logical(i32::from(pw))) * zoom,
+            f64::from(s.to_logical(i32::from(ph))) * zoom,
         );
         let attrs = Window::default_attributes()
             .with_title(cfg.title.clone())
@@ -119,9 +129,22 @@ impl Runner {
         })
     }
 
-    /// Window pixels per panel pixel (the actual ratio, normally the configured scale).
+    /// Lays the panel out at the display scale the configuration asks for on a monitor of
+    /// `factor` (its backing scale factor): the monitor's for `Auto`, the fixed one otherwise.
+    fn follow_monitor(&mut self, factor: f64) {
+        let want = match self.app.cfg.display_scale {
+            SimScale::Auto => scale_of(factor),
+            SimScale::Fixed(s) => s,
+        };
+        if want != self.app.display_scale() && self.app.set_display_scale(want) {
+            log::info!(target: "twine::sim", "display scale {want} (monitor {factor})");
+            self.needs_present = true;
+        }
+    }
+
+    /// Window pixels per panel pixel (the actual ratio, normally zoom × monitor / display scale).
     fn scale(&self) -> f64 {
-        self.gfx.as_ref().map_or(f64::from(self.app.cfg.scale), |g| {
+        self.gfx.as_ref().map_or(f64::from(self.app.cfg.zoom), |g| {
             f64::from(g.window.inner_size().width) / f64::from(self.app.panel_size().0.max(1))
         })
     }
@@ -208,8 +231,10 @@ impl ApplicationHandler for Runner {
         }
         match self.create_window(el) {
             Ok(g) => {
+                let factor = g.window.scale_factor();
                 g.window.request_redraw();
                 self.gfx = Some(g);
+                self.follow_monitor(factor);
             }
             Err(e) => {
                 self.error = Some(e);
@@ -221,6 +246,10 @@ impl ApplicationHandler for Runner {
     fn window_event(&mut self, el: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => el.exit(),
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                // The window keeps its logical size (winit resizes it); the panel follows.
+                self.follow_monitor(scale_factor);
+            }
             WindowEvent::Resized(_) => {
                 self.needs_present = true;
                 if let Some(g) = &self.gfx {
@@ -283,5 +312,28 @@ impl ApplicationHandler for Runner {
             Deadline::Wait => el.set_control_flow(ControlFlow::Wait),
             Deadline::Poll => el.set_control_flow(ControlFlow::Poll),
         }
+    }
+}
+
+/// A monitor's backing scale factor as a [`DisplayScale`] (rounded to 1/256, clamped to
+/// ½×..=8×).
+fn scale_of(factor: f64) -> DisplayScale {
+    let raw = (factor * 256.0).round().clamp(1.0, f64::from(u16::MAX));
+    // The clamp keeps the value in `u16` range.
+    DisplayScale::from_raw_256(raw as u16)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scale_of;
+    use twine_core::DisplayScale;
+
+    #[test]
+    fn monitor_factors_become_display_scales() {
+        assert_eq!(scale_of(1.0), DisplayScale::ONE);
+        assert_eq!(scale_of(2.0), DisplayScale::X2);
+        assert_eq!(scale_of(1.25), DisplayScale::pct(125));
+        assert_eq!(scale_of(0.0), DisplayScale::MIN);
+        assert_eq!(scale_of(40.0), DisplayScale::MAX);
     }
 }

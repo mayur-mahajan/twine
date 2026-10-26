@@ -2,7 +2,7 @@
 
 use std::fmt;
 use std::path::PathBuf;
-use twine_core::{Color, ColorFormat, Rotation};
+use twine_core::{Color, ColorFormat, DisplayScale, Rotation};
 use twine_engine::{BufferMode, BufferSpec, ThemeHook, ThemeMode};
 use twine_view::AppConfig;
 
@@ -71,21 +71,30 @@ impl Default for Headless {
 /// use twine_core::ColorFormat;
 /// use twine_sim::SimConfig;
 ///
-/// let cfg = SimConfig::new(320, 240).title("demo").scale(9).format(ColorFormat::Rgb565Swapped);
-/// assert_eq!(cfg.scale, 4); // clamped to 1..=4
+/// let cfg = SimConfig::new(320, 240).title("demo").zoom(9).format(ColorFormat::Rgb565Swapped);
+/// assert_eq!(cfg.zoom, 4); // clamped to 1..=4
 /// assert_eq!(cfg.format, ColorFormat::Rgb565Swapped);
 /// assert_eq!(cfg.fps_limit, Some(60));
 /// ```
 #[derive(Debug)]
 pub struct SimConfig {
-    /// Panel width in pixels (logical, after rotation).
+    /// Panel width in logical pixels (after rotation): the device width at 1×; on a scaled
+    /// display ([`display_scale`](Self::display_scale)) the panel has `width × scale` device
+    /// pixels.
     pub width: u16,
-    /// Panel height in pixels (logical, after rotation).
+    /// Panel height in logical pixels (after rotation; see [`width`](Self::width)).
     pub height: u16,
     /// Window title.
     pub title: String,
-    /// Integer window scale, `1..=4`.
-    pub scale: u8,
+    /// Integer window zoom, `1..=4`: each logical pixel of the panel is shown `zoom × zoom`
+    /// window points large (nearest neighbour), to inspect small panels. Not a display scale:
+    /// the UI is laid out the same at every zoom.
+    pub zoom: u8,
+    /// The display scale the UI is laid out and drawn at (default `1×`, a faithful emulation of
+    /// an embedded panel). [`SimScale::Auto`] follows the monitor the window is on (sharp text
+    /// on Retina and other hi-DPI screens, for desktop applications), including when the window
+    /// moves to another monitor. Headless runs use `1×` for `Auto` (deterministic).
+    pub display_scale: SimScale,
     /// Emulated panel pixel format (default `Rgb565`).
     pub format: ColorFormat,
     /// The draw buffers of engine apps (default: two 40-row heap buffers,
@@ -133,6 +142,34 @@ pub const SUPPORTED_FORMATS: [ColorFormat; 7] = [
     ColorFormat::I1,
 ];
 
+/// The display scale of a simulated panel ([`SimConfig::display_scale`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimScale {
+    /// The scale of the monitor the window is on (its backing scale factor), followed when the
+    /// window moves to another monitor; `1×` headless.
+    Auto,
+    /// This scale on every monitor (the window is stretched to fit when the monitor's differs).
+    Fixed(DisplayScale),
+}
+
+impl From<DisplayScale> for SimScale {
+    fn from(s: DisplayScale) -> Self {
+        SimScale::Fixed(s)
+    }
+}
+
+/// Parses `TWINE_SIM_DISPLAY_SCALE`: `auto`, or a percentage `50..=800` (`200` for 2×).
+fn parse_display_scale(v: &str) -> Option<SimScale> {
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("auto") {
+        return Some(SimScale::Auto);
+    }
+    match v.parse::<u16>() {
+        Ok(p) if (50..=800).contains(&p) => Some(SimScale::Fixed(DisplayScale::pct(p))),
+        _ => None,
+    }
+}
+
 /// Rows per partial buffer when `TWINE_SIM_BUFFERS` selects a partial mode while no heap
 /// partial mode is configured (the rows of [`BufferSpec::default`]).
 const DEFAULT_PARTIAL_ROWS: u16 = 40;
@@ -175,7 +212,7 @@ pub fn parse_format(name: &str) -> Option<ColorFormat> {
 }
 
 impl SimConfig {
-    /// A `width × height` panel with defaults: title "twine", scale 1, `Rgb565`, 40-row double
+    /// A `width × height` panel with defaults: title "twine", zoom 1, display scale 1×, `Rgb565`, 40-row double
     /// buffers, no bus emulation, no rotation, all inputs, windowed, 60 fps.
     #[must_use]
     pub fn new(width: u16, height: u16) -> Self {
@@ -183,7 +220,8 @@ impl SimConfig {
             width,
             height,
             title: "twine".into(),
-            scale: 1,
+            zoom: 1,
+            display_scale: SimScale::Fixed(DisplayScale::ONE),
             format: ColorFormat::Rgb565,
             buffer_mode: BufferMode::alloc(BufferSpec::default()),
             bus_hz: None,
@@ -305,14 +343,34 @@ impl SimConfig {
         self
     }
 
-    /// Sets the window scale; values outside `1..=4` are clamped with a warning.
+    /// Sets the window zoom (see [`zoom`](Self::zoom)); values outside `1..=4` are clamped
+    /// with a warning.
     #[must_use]
-    pub fn scale(mut self, scale: u8) -> Self {
-        let clamped = scale.clamp(1, 4);
-        if clamped != scale {
-            log::warn!(target: "twine::sim", "scale {scale} out of range 1..=4, using {clamped}");
+    pub fn zoom(mut self, zoom: u8) -> Self {
+        let clamped = zoom.clamp(1, 4);
+        if clamped != zoom {
+            log::warn!(target: "twine::sim", "zoom {zoom} out of range 1..=4, using {clamped}");
         }
-        self.scale = clamped;
+        self.zoom = clamped;
+        self
+    }
+
+    /// Sets the display scale (see [`display_scale`](Self::display_scale)): `SimScale::Auto`
+    /// for desktop applications that should be sharp on hi-DPI monitors, or a fixed
+    /// [`DisplayScale`] (to preview an app at 2× on any monitor).
+    ///
+    /// ```
+    /// use twine_core::DisplayScale;
+    /// use twine_sim::{SimConfig, SimScale};
+    ///
+    /// let desktop = SimConfig::new(960, 600).display_scale(SimScale::Auto);
+    /// assert_eq!(desktop.display_scale, SimScale::Auto);
+    /// let preview = SimConfig::new(320, 240).display_scale(DisplayScale::X2);
+    /// assert_eq!(preview.display_scale, SimScale::Fixed(DisplayScale::X2));
+    /// ```
+    #[must_use]
+    pub fn display_scale(mut self, scale: impl Into<SimScale>) -> Self {
+        self.display_scale = scale.into();
         self
     }
 
@@ -380,7 +438,8 @@ impl SimConfig {
         self
     }
 
-    /// Applies the environment: `TWINE_SIM_SCALE`, `TWINE_SIM_HEADLESS=1`,
+    /// Applies the environment: `TWINE_SIM_ZOOM=1..4`,
+    /// `TWINE_SIM_DISPLAY_SCALE=auto|<percent>` (e.g. `200` for 2×), `TWINE_SIM_HEADLESS=1`,
     /// `TWINE_SIM_SCRIPT`, `TWINE_SIM_FRAMES`, `TWINE_SIM_BUS_HZ`, `TWINE_SIM_FORMAT`,
     /// `TWINE_SIM_BUFFERS=single|double|full|direct` (the draw buffers of engine apps; partial
     /// modes keep the configured rows, default 40) and `TWINE_SIM_ROTATION=0|90|180|270` (the
@@ -403,8 +462,17 @@ impl SimConfig {
             }
             r
         }
-        if let Some(s) = lookup("TWINE_SIM_SCALE").and_then(|v| parse::<u8>("TWINE_SIM_SCALE", &v)) {
-            self = self.scale(s);
+        if let Some(z) = lookup("TWINE_SIM_ZOOM").and_then(|v| parse::<u8>("TWINE_SIM_ZOOM", &v)) {
+            self = self.zoom(z);
+        }
+        if let Some(v) = lookup("TWINE_SIM_DISPLAY_SCALE") {
+            match parse_display_scale(&v) {
+                Some(s) => self.display_scale = s,
+                None => log::warn!(
+                    target: "twine::sim",
+                    "ignoring invalid TWINE_SIM_DISPLAY_SCALE={v:?} (auto or a percentage 50..=800)"
+                ),
+            }
         }
         if let Some(hz) = lookup("TWINE_SIM_BUS_HZ").and_then(|v| parse::<u32>("TWINE_SIM_BUS_HZ", &v)) {
             self = self.bus_hz(Some(hz));
@@ -460,16 +528,32 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn scale_is_clamped() {
-        assert_eq!(SimConfig::new(10, 10).scale(0).scale, 1);
-        assert_eq!(SimConfig::new(10, 10).scale(3).scale, 3);
-        assert_eq!(SimConfig::new(10, 10).scale(200).scale, 4);
+    fn zoom_is_clamped() {
+        assert_eq!(SimConfig::new(10, 10).zoom(0).zoom, 1);
+        assert_eq!(SimConfig::new(10, 10).zoom(3).zoom, 3);
+        assert_eq!(SimConfig::new(10, 10).zoom(200).zoom, 4);
+    }
+
+    #[test]
+    fn display_scale_parses_auto_and_percentages() {
+        assert_eq!(parse_display_scale("auto"), Some(SimScale::Auto));
+        assert_eq!(
+            parse_display_scale(" 150 "),
+            Some(SimScale::Fixed(DisplayScale::pct(150)))
+        );
+        assert_eq!(parse_display_scale("2x"), None);
+        assert_eq!(parse_display_scale("900"), None);
+        assert_eq!(
+            SimConfig::new(1, 1).display_scale,
+            SimScale::Fixed(DisplayScale::ONE)
+        );
     }
 
     #[test]
     fn from_env_parses_values() {
         let env: HashMap<&str, &str> = [
-            ("TWINE_SIM_SCALE", "3"),
+            ("TWINE_SIM_ZOOM", "3"),
+            ("TWINE_SIM_DISPLAY_SCALE", "auto"),
             ("TWINE_SIM_HEADLESS", "1"),
             ("TWINE_SIM_BUS_HZ", "10000000"),
             ("TWINE_SIM_SCRIPT", "a/b.twinescript"),
@@ -481,7 +565,8 @@ mod tests {
         .into_iter()
         .collect();
         let cfg = SimConfig::new(320, 240).from_lookup(|k| env.get(k).map(ToString::to_string));
-        assert_eq!(cfg.scale, 3);
+        assert_eq!(cfg.zoom, 3);
+        assert_eq!(cfg.display_scale, SimScale::Auto);
         assert_eq!(cfg.bus_hz, Some(10_000_000));
         assert_eq!(cfg.format, ColorFormat::Rgb565Swapped);
         assert!(matches!(cfg.buffer_mode, BufferMode::Full));
@@ -496,7 +581,8 @@ mod tests {
 
         // Invalid or absent values leave the defaults.
         let bad: HashMap<&str, &str> = [
-            ("TWINE_SIM_SCALE", "x"),
+            ("TWINE_SIM_ZOOM", "x"),
+            ("TWINE_SIM_DISPLAY_SCALE", "big"),
             ("TWINE_SIM_HEADLESS", "0"),
             ("TWINE_SIM_BUFFERS", "triple"),
             ("TWINE_SIM_ROTATION", "45"),
@@ -505,9 +591,10 @@ mod tests {
         .into_iter()
         .collect();
         let cfg = SimConfig::new(1, 1)
-            .scale(2)
+            .zoom(2)
             .from_lookup(|k| bad.get(k).map(ToString::to_string));
-        assert_eq!(cfg.scale, 2);
+        assert_eq!(cfg.zoom, 2);
+        assert_eq!(cfg.display_scale, SimScale::Fixed(DisplayScale::ONE));
         assert!(cfg.headless.is_none());
         assert!(matches!(cfg.buffer_mode, BufferMode::Alloc(spec) if spec == BufferSpec::default()));
         assert_eq!(cfg.rotation, Rotation::Deg0);

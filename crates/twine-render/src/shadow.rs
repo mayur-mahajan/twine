@@ -205,6 +205,18 @@ impl ShadowCache {
         }
     }
 
+    /// Grows the arena to `factor` times its configured budget (never shrinks; keeps the cached
+    /// corners). Shadows drawn `k` times larger need `k²` times the corner-map memory.
+    pub(crate) fn reserve_factor(&mut self, factor: usize) {
+        let want = self
+            .max_entries
+            .saturating_mul(MAP_BYTES_PER_ENTRY)
+            .saturating_mul(factor.max(1));
+        if self.arena.capacity() < want {
+            self.arena.reserve_exact(want.saturating_sub(self.arena.len()));
+        }
+    }
+
     /// Fresh mode: every [`corner`](Self::corner) recomputes the map it returns.
     #[cfg(feature = "display-integrity")]
     pub(crate) fn set_fresh(&mut self, on: bool) {

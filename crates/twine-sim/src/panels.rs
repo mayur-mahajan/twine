@@ -31,7 +31,7 @@
 //!
 //! let left = SimPanel::new(160, 120, Runtime::take().unwrap(), |_| label("left"));
 //! let right = SimPanel::new(160, 120, Runtime::current_thread(), |_| label("right"));
-//! run_panels(SimConfig::new(320, 120).title("Two panels").scale(2), vec![left, right]);
+//! run_panels(SimConfig::new(320, 120).title("Two panels").zoom(2), vec![left, right]);
 //! ```
 
 use std::time::Instant as StdInstant;

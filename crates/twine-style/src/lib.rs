@@ -143,6 +143,11 @@
 //!
 //! `safety`: the safety profile (enabled by the `twine` facade's `safety` feature, see
 //! `docs/safety/profile.md` in the repository): the profile's lints.
+//!
+//! `display-scale`: hi-DPI desktop displays. Resolution converts logical lengths
+//! ([`Length::Px`], bare integers, and `Dp` after the DPI) to device pixels ([`Length::Dev`])
+//! with [`StyleSource::scale`]. Without it (every embedded build) the resolver has no scale
+//! stage and lengths resolve as on a 1× display.
 #![no_std]
 #![forbid(unsafe_code)]
 // The safety profile's lints (`docs/safety/profile.md` § Lints): denied in library code under
@@ -209,8 +214,8 @@ pub use value_types::{__DurationArg, __LengthArg, __RadiusArg};
 pub use value_types::{
     Align, Anchor, Axis, BaseDir, BlendMode, BlurQuality, BorderSide, COORD_MAX, ColorFilter, CrossAlign,
     DurationMs, FlexDirection, FlexFlow, GradDir, Gradient, GridAlign, GridSpan, GridTrack, ImageColorkey,
-    LayoutKind, Length, MainAlign, Radius, ScrollSnap, ScrollbarMode, Side, Sides, StyleEnum, TextAlign,
-    TextDecor, TextLeadingTrim,
+    LayoutKind, Length, LengthUnits, MainAlign, Radius, ScrollSnap, ScrollbarMode, Side, Sides, StyleEnum,
+    TextAlign, TextDecor, TextLeadingTrim,
 };
 pub use value_types::{DEFAULT_DPI, REFERENCE_DPI, dpx};
 

@@ -5,8 +5,8 @@ use std::fmt;
 use std::num::NonZeroU32;
 use std::time::{Duration as StdDuration, Instant as StdInstant};
 
-use twine_core::{Color, ColorFormat, Rect, Rotation};
-use twine_hal::{DisplayDriver, DisplayInfo, DrawBufferMem};
+use twine_core::{Color, ColorFormat, DisplayScale, Rect, Rotation};
+use twine_hal::{ControlError, DisplayDriver, DisplayInfo, DrawBufferMem};
 
 use crate::config::{SUPPORTED_FORMATS, SimConfig};
 use crate::convert;
@@ -303,6 +303,37 @@ impl DisplayDriver for SimDisplay {
 
     fn info(&self) -> DisplayInfo {
         self.info
+    }
+
+    /// The window changed its display scale (`Engine::set_display_scale`): a panel of the new
+    /// device size (cleared; the engine redraws it all), same format and rotation.
+    fn resize(
+        &mut self,
+        width: u16,
+        height: u16,
+        scale: DisplayScale,
+    ) -> Result<DisplayInfo, ControlError<Self::Error>> {
+        if !self.in_flight.is_empty() {
+            // The engine resizes between frames; a flush in flight would land on the old panel.
+            log::warn!(target: "twine::sim", "SimDisplay: resize with a flush in flight");
+        }
+        self.info = DisplayInfo {
+            width,
+            height,
+            scale,
+            ..self.info
+        };
+        (self.panel_w, self.panel_h) = if !self.info.hw_rotation && self.info.rotation.swaps_axes() {
+            (height, width)
+        } else {
+            (width, height)
+        };
+        self.stride = self.info.format.stride(u32::from(self.panel_w)) as usize;
+        self.panel.clear();
+        self.panel.resize(self.stride * usize::from(self.panel_h), 0);
+        self.dirty = Some(Rect::new(0, 0, i32::from(self.panel_w), i32::from(self.panel_h)));
+        log::info!(target: "twine::sim", "panel {width}x{height} at {scale}");
+        Ok(self.info)
     }
 
     fn begin_flush(&mut self, area: Rect, buf: DrawBufferMem) -> Result<(), Self::Error> {

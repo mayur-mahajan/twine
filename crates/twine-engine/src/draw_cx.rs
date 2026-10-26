@@ -3,7 +3,7 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use twine_core::{Opa, Rect};
+use twine_core::{DisplayScale, Opa, Rect};
 use twine_image::{DecoderRegistry, ImageCache, ImageContext, ImageHeaderCache, ImageSource, with_pixels};
 use twine_render::{ArcDsc, ImageDsc, LineDsc, Painter, RectDsc, ShadowDsc};
 use twine_style::{Part, PropId, State, StyleValue, TextAlign};
@@ -107,6 +107,45 @@ impl<'a, 'p> DrawCx<'a, 'p> {
     #[must_use]
     pub fn content_area(&self) -> Rect {
         self.engine.content_area(self.node)
+    }
+
+    /// The scale of the node's display: device pixels per logical pixel ([`Engine::node_scale`];
+    /// 1× on every embedded panel, and always without the `display-scale` feature). Everything
+    /// a `DrawCx` hands out ([`coords`](Self::coords), the painter, resolved styles) is in device
+    /// pixels already; the scale matters only for sizes the widget makes up itself.
+    #[must_use]
+    pub fn scale(&self) -> DisplayScale {
+        self.engine.node_scale(self.node)
+    }
+
+    /// `logical` pixels in device pixels for the node's display (`logical × `
+    /// [`scale`](Self::scale), rounded; non-zero stays non-zero): for the sizes a custom-drawn
+    /// widget makes up itself (a stroke width, a bar gap, a marker), so they keep their size on
+    /// a hi-DPI screen. Sizes read from styles are already device pixels.
+    ///
+    /// ```
+    /// use twine_core::{Color, Opa, Rect};
+    /// use twine_engine::{DrawCx, Widget, WidgetClass};
+    ///
+    /// /// A 2 px (logical) underline at the bottom of the node, sharp at every scale.
+    /// struct Underline;
+    /// static UNDERLINE_CLASS: WidgetClass = WidgetClass::new("underline");
+    ///
+    /// impl Widget for Underline {
+    ///     fn class(&self) -> &'static WidgetClass {
+    ///         &UNDERLINE_CLASS
+    ///     }
+    ///     fn draw(&self, cx: &mut DrawCx<'_, '_>) {
+    ///         let c = cx.coords();
+    ///         let h = cx.to_device(2);
+    ///         let line = Rect::new(c.x0, c.y1 - h + 1, c.x1, c.y1);
+    ///         cx.painter().fill(line, Color::BLACK, Opa::COVER);
+    ///     }
+    /// }
+    /// ```
+    #[must_use]
+    pub fn to_device(&self, logical: i32) -> i32 {
+        self.scale().to_device(logical)
     }
 
     /// What the node may draw into (the chunk, clipped by its ancestors).
@@ -268,8 +307,43 @@ impl<'a, 'p> DrawCx<'a, 'p> {
         }))
     }
 
-    /// Draws `text` in `area` with `dsc` (uses the engine's glyph cache).
+    /// Draws `text` in `area` with `dsc` (uses the engine's glyph cache). The font is drawn in
+    /// its rendering for the node's display scale ([`Font::for_scale`](twine_text::Font::for_scale);
+    /// fonts resolved from styles already are), so a widget may put any font in `dsc` — a
+    /// `ScaledFont` or `TtfScaledFont` stays sharp on a hi-DPI display. 1× and builds without
+    /// `display-scale` draw `dsc.font` as is.
+    ///
+    /// ```
+    /// use twine_core::Rect;
+    /// use twine_engine::{DrawCx, Widget, WidgetClass};
+    /// use twine_style::Part;
+    ///
+    /// /// A caption in the theme's small font, whatever the node's style says.
+    /// struct Caption(&'static twine_text::Font);
+    /// static CAPTION_CLASS: WidgetClass = WidgetClass::new("caption");
+    ///
+    /// impl Widget for Caption {
+    ///     fn class(&self) -> &'static WidgetClass {
+    ///         &CAPTION_CLASS
+    ///     }
+    ///     fn draw(&self, cx: &mut DrawCx<'_, '_>) {
+    ///         let mut dsc = cx.text_dsc(Part::Main);
+    ///         dsc.font = self.0; // scaled for the display by `draw_text`
+    ///         let area: Rect = cx.coords();
+    ///         cx.draw_text(area, "Volume", &dsc);
+    ///     }
+    /// }
+    /// ```
     pub fn draw_text(&mut self, area: Rect, text: &str, dsc: &TextDsc) {
+        #[cfg(feature = "display-scale")]
+        {
+            let font = dsc.font.for_scale(self.scale());
+            if !core::ptr::eq(font, dsc.font) {
+                let scaled = TextDsc { font, ..*dsc };
+                twine_text::draw_text(self.painter, area, text, &scaled, &mut self.aux.glyphs);
+                return;
+            }
+        }
         twine_text::draw_text(self.painter, area, text, dsc, &mut self.aux.glyphs);
     }
 

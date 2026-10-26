@@ -4,6 +4,8 @@
 //!
 //! How requests are applied, the asleep state, rotation and faults: see [`DisplayCmd`].
 
+#[cfg(feature = "display-scale")]
+use twine_core::DisplayScale;
 use twine_core::fault::FaultKind;
 use twine_core::{Duration, Fraction, Instant, RectSet, Rotation};
 use twine_hal::{ControlError, DisplayInfo};
@@ -112,10 +114,16 @@ pub enum DisplayControlFault {
     /// The rotated display does not fit its buffers or its draw format is not compiled in (a
     /// [`FaultKind::FormatDisabled`] fault is raised as well); the display keeps its rotation.
     RotationRefused = 8,
+    /// The driver cannot resize or failed to (`DisplayDriver::resize`, a display-scale change);
+    /// the display keeps its size and scale.
+    ResizeFailed = 9,
+    /// The resized display does not fit its draw buffers; the driver is set back and the display
+    /// keeps its size and scale.
+    ResizeRefused = 10,
 }
 
 impl DisplayControlFault {
-    const ALL: [DisplayControlFault; 8] = [
+    const ALL: [DisplayControlFault; 10] = [
         Self::BrightnessUnsupported,
         Self::BrightnessFailed,
         Self::SleepUnsupported,
@@ -124,6 +132,8 @@ impl DisplayControlFault {
         Self::RotationFailed,
         Self::RotationNotReserved,
         Self::RotationRefused,
+        Self::ResizeFailed,
+        Self::ResizeRefused,
     ];
 
     /// The fault record's `code`.
@@ -186,6 +196,9 @@ pub(crate) struct ControlState {
     /// The rotation of the driver's flush coordinates: what it rotates in hardware (`Deg0` when
     /// flush areas are native). Software rotation does the rest.
     base: Rotation,
+    /// A requested display-scale change: the new scale and device size.
+    #[cfg(feature = "display-scale")]
+    resize: Option<(DisplayScale, u16, u16)>,
 }
 
 impl ControlState {
@@ -200,19 +213,36 @@ impl ControlState {
             } else {
                 Rotation::Deg0
             },
+            #[cfg(feature = "display-scale")]
+            resize: None,
         }
+    }
+
+    /// Whether a display-scale change waits.
+    #[cfg(feature = "display-scale")]
+    #[inline]
+    fn resize_pending(&self) -> bool {
+        self.resize.is_some()
+    }
+
+    /// Whether a display-scale change waits: never without `display-scale`.
+    #[cfg(not(feature = "display-scale"))]
+    #[inline]
+    fn resize_pending(&self) -> bool {
+        let _ = self;
+        false
     }
 
     /// Whether the refresh must look at the control state (one load per display and step).
     #[inline]
     pub(crate) fn needs_attention(&self) -> bool {
-        self.asleep || self.ready_at.is_some() || !self.req.is_empty()
+        self.asleep || self.ready_at.is_some() || !self.req.is_empty() || self.resize_pending()
     }
 
     /// Whether requests wait.
     #[inline]
     pub(crate) fn pending(&self) -> bool {
-        !self.req.is_empty()
+        !self.req.is_empty() || self.resize_pending()
     }
 
     /// Whether the display is asleep or settling (nothing may be drawn).
@@ -341,6 +371,66 @@ impl Engine {
             ));
         }
         d.control.req.rotation = (d.info.rotation != rotation).then_some(rotation);
+        Ok(())
+    }
+
+    /// Requests the display scale `scale` (device pixels per logical pixel) for `display`
+    /// (feature `display-scale`): the display keeps its logical size and gets `logical × scale`
+    /// device pixels. Applied by the next step between frames, like a rotation: the driver
+    /// resizes its panel ([`DisplayDriver::resize`](twine_hal::DisplayDriver::resize)), every
+    /// style of the display is resolved again for the new scale (lengths, fonts, image
+    /// renderings), the display is laid out and redrawn and its input devices are fitted again.
+    /// For a desktop window moved to a monitor with another scale. Theme tables are not rebuilt
+    /// (they are logical). Idempotent: the current scale cancels a pending request. Allocates
+    /// nothing in the engine.
+    ///
+    /// A driver that cannot resize, or a size that does not fit the draw buffers, raises
+    /// [`FaultKind::DisplayControl`] ([`DisplayControlFault::ResizeFailed`] /
+    /// [`DisplayControlFault::ResizeRefused`]) and the display keeps its scale.
+    ///
+    /// # Errors
+    /// [`EngineError::DisplayNotFound`]; [`EngineError::InvalidConfig`] for framebuffer and
+    /// chunked displays (only displays with a flush driver can resize) and for a scale whose
+    /// device size does not fit in `u16`.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, DisplayScale, Instant};
+    /// use twine_engine::{BufferMode, BufferSpec, Engine, EngineConfig};
+    /// use twine_hal::DisplayInfo;
+    /// use twine_testing::MemoryDisplay;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let panel = MemoryDisplay::new(DisplayInfo::new(64, 32, ColorFormat::Rgb565)).with_resize();
+    /// let d = e.add_display(panel, BufferMode::alloc(BufferSpec::default()), None).unwrap();
+    /// // The window moved to a 2× monitor: the same 64 × 32 logical pixels, 128 × 64 device ones.
+    /// e.set_display_scale(d, DisplayScale::X2).unwrap();
+    /// e.step(Instant::from_millis(0));
+    /// let info = e.display_info(d).unwrap();
+    /// assert_eq!((info.width, info.height, info.scale), (128, 64, DisplayScale::X2));
+    /// assert_eq!(info.logical_size(), (64, 32));
+    /// ```
+    #[cfg(feature = "display-scale")]
+    pub fn set_display_scale(&mut self, display: DisplayId, scale: DisplayScale) -> Result<(), EngineError> {
+        let Some(d) = self.displays.get_mut(display.index()) else {
+            twine_core::warn!(target: "twine::engine", "set_display_scale: display {} not found", display);
+            return Err(EngineError::DisplayNotFound(display));
+        };
+        if !matches!(d.backend, Backend::Flush(_)) {
+            twine_core::warn!(target: "twine::engine", "set_display_scale: display {} has no flush driver", display);
+            return Err(EngineError::InvalidConfig(
+                "only displays with a flush driver can change their scale at run time",
+            ));
+        }
+        let (lw, lh) = d.info.logical_size();
+        let device = |v: i32| u16::try_from(scale.to_device(v)).ok().filter(|&v| v > 0);
+        let (Some(width), Some(height)) = (device(lw), device(lh)) else {
+            twine_core::warn!(target: "twine::engine", "set_display_scale: display {} at {} is too large", display, scale);
+            return Err(EngineError::InvalidConfig(
+                "the scaled display does not fit in u16 pixels",
+            ));
+        };
+        let same = d.info.scale == scale;
+        d.control.resize = (!same).then_some((scale, width, height));
         Ok(())
     }
 
@@ -739,11 +829,12 @@ impl Engine {
         self.refit_inputs(id, &info);
         twine_core::info!(
             target: "twine::engine",
-            "display {} rotated: {}x{} rotation {:?}{}",
+            "display {} geometry: {}x{} rotation {:?} scale {}{}",
             id,
             info.width,
             info.height,
             info.rotation,
+            info.scale,
             if info.hw_rotation { " (hw)" } else { "" }
         );
     }
@@ -810,6 +901,51 @@ impl Engine {
                 }
             }
         }
+        #[cfg(feature = "display-scale")]
+        self.apply_resize(d);
+    }
+
+    /// Applies a pending display-scale change of display `d` (see
+    /// [`set_display_scale`](Self::set_display_scale)).
+    #[cfg(feature = "display-scale")]
+    fn apply_resize(&mut self, d: usize) {
+        let Some(disp) = self.displays.get_mut(d) else {
+            return;
+        };
+        let Some((scale, width, height)) = disp.control.resize.take() else {
+            return;
+        };
+        let old = disp.info;
+        let base = disp.control.base;
+        let Backend::Flush(b) = &mut disp.backend else {
+            return;
+        };
+        let info = match b.resize(width, height, scale) {
+            Ok(i) => i,
+            Err(e) => {
+                self.control_fault(d, DisplayControlFault::ResizeFailed, e);
+                return;
+            }
+        };
+        let refit = match self.displays.get_mut(d).map(|x| &mut x.refresher.strategy) {
+            Some(Strategy::Partial(p)) => p.refit(&info, info.rotation.relative_to(base)),
+            _ => Err(Refit::TooSmall),
+        };
+        if refit.is_err() {
+            if let Some(Backend::Flush(b)) = self.displays.get_mut(d).map(|x| &mut x.backend) {
+                if let Err(e) = b.resize(old.width, old.height, old.scale) {
+                    self.control_fault(d, DisplayControlFault::ResizeFailed, e);
+                }
+            }
+            self.control_fault(d, DisplayControlFault::ResizeRefused, ControlError::Unsupported);
+            return;
+        }
+        if let Some(r) = self.res.as_mut() {
+            r.caches.reserve_for_scale(info.scale);
+        }
+        self.apply_geometry(d, info);
+        // New scale: every length, font and image rendering of the display resolves again.
+        self.restyle_display(d);
     }
 
     /// What the refresh of display `d` does about its control state (only called when

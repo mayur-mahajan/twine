@@ -535,7 +535,8 @@ pub trait ViewExt: View + Sized {
         })
     }
 
-    /// The node scrolled; `f` receives the new scroll offset.
+    /// The node scrolled; `f` receives the new scroll offset in logical pixels (the unit of
+    /// the view's lengths; the engine's device offset divided by the display scale).
     #[must_use]
     fn on_scroll(self, mut f: impl FnMut(Point) + 'static) -> Self {
         self.op(move |cx, node| {
@@ -543,7 +544,9 @@ pub trait ViewExt: View + Sized {
             cx.engine()
                 .add_event_handler(node, EventFilter::Code(EventCode::Scroll), move |ecx, ev| {
                     if ev.target == ecx.node() {
-                        let p = ecx.engine().scroll_offset(ev.target);
+                        let e = ecx.engine();
+                        let (s, p) = (e.node_scale(ev.target), e.scroll_offset(ev.target));
+                        let p = Point::new(s.to_logical(p.x), s.to_logical(p.y));
                         EngineAccess::provide(rt, ecx.engine_mut(), || f(p));
                     }
                     EventResult::Continue

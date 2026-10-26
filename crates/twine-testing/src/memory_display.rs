@@ -4,7 +4,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use twine_core::{Color, Duration, Fraction, Rect, Rotation};
+use twine_core::{Color, DisplayScale, Duration, Fraction, Rect, Rotation};
 use twine_hal::{ControlError, DisplayDriver, DisplayInfo, DrawBufferMem};
 
 use crate::convert;
@@ -155,6 +155,8 @@ pub struct MemoryDisplay {
     power_control: bool,
     /// Hardware rotation at run time is supported (`with_rotation_control`).
     rotation_control: bool,
+    /// Resizing (a display-scale change) is supported (`with_resize`).
+    resizable: bool,
     brightness: Option<Fraction>,
     asleep: bool,
     sleep_settle: Duration,
@@ -203,6 +205,7 @@ impl MemoryDisplay {
             hung: false,
             power_control: false,
             rotation_control: false,
+            resizable: false,
             brightness: None,
             asleep: false,
             sleep_settle: Duration::ZERO,
@@ -258,6 +261,26 @@ impl MemoryDisplay {
     #[must_use]
     pub fn with_rotation_control(mut self) -> Self {
         self.rotation_control = true;
+        self
+    }
+
+    /// Supports resizing ([`DisplayDriver::resize`], a desktop window changing its display
+    /// scale): the panel takes the new size (cleared) and reports the new scale. Without it the
+    /// display answers `Unsupported`, like a panel with one size.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, DisplayScale};
+    /// use twine_hal::{DisplayDriver, DisplayInfo};
+    /// use twine_testing::MemoryDisplay;
+    ///
+    /// let mut d = MemoryDisplay::new(DisplayInfo::new(8, 4, ColorFormat::L8)).with_resize();
+    /// let info = d.resize(16, 8, DisplayScale::X2).unwrap();
+    /// assert_eq!((info.width, info.height, info.scale), (16, 8, DisplayScale::X2));
+    /// assert_eq!(d.panel_size(), (16, 8));
+    /// ```
+    #[must_use]
+    pub fn with_resize(mut self) -> Self {
+        self.resizable = true;
         self
     }
 
@@ -724,6 +747,34 @@ impl DisplayDriver for MemoryDisplay {
         if self.framebuffer.len() != len {
             self.framebuffer.resize(len, 0);
         }
+        Ok(self.info)
+    }
+
+    fn resize(
+        &mut self,
+        width: u16,
+        height: u16,
+        scale: DisplayScale,
+    ) -> Result<DisplayInfo, ControlError<Self::Error>> {
+        if !self.resizable {
+            return Err(ControlError::Unsupported);
+        }
+        self.info = DisplayInfo {
+            width,
+            height,
+            scale,
+            ..self.info
+        };
+        let (w, h) = if !self.info.hw_rotation && self.info.rotation.swaps_axes() {
+            (height, width)
+        } else {
+            (width, height)
+        };
+        self.panel_w = w;
+        self.panel_h = h;
+        self.stride = self.info.format.stride(u32::from(w)) as usize;
+        self.framebuffer.clear();
+        self.framebuffer.resize(self.stride * usize::from(h), 0);
         Ok(self.info)
     }
 }

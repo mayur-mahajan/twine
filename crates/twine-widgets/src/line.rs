@@ -3,7 +3,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use twine_core::{Point, Rect, Size};
+use twine_core::{DisplayScale, Point, Rect, Size};
 use twine_engine::{
     DrawCx, Engine, EngineError, Event, EventCode, EventCx, EventResult, MeasureCx, NodeId, OBJ_FLAGS,
     ObjFlags, Widget, WidgetClass, WidgetCx,
@@ -39,7 +39,8 @@ impl LinePoints {
     }
 }
 
-/// A polyline through points relative to the widget's top-left corner (LVGL `lv_line`),
+/// A polyline through points relative to the widget's top-left corner (LVGL `lv_line`), in
+/// logical pixels (scaled to device pixels on a scaled display, like every length),
 /// drawn with the `Line*` styles of `Main` (`LineWidth`, `LineColor`, `LineOpa`,
 /// `LineRounded`, `LineDashWidth`, `LineDashGap`). Each segment is drawn like LVGL: rounded
 /// ends (when `LineRounded`) at the first point and at every segment's end.
@@ -73,10 +74,19 @@ pub struct Line {
     y_invert: bool,
 }
 
-/// The bounding box of `pts` (relative), `None` when empty.
-fn bbox(pts: &[Point]) -> Option<Rect> {
+/// A point of the line (logical pixels) in device pixels for a display of `s`.
+fn device(p: Point, s: DisplayScale) -> Point {
+    Point::new(s.to_device(p.x), s.to_device(p.y))
+}
+
+/// The bounding box of `pts` (relative, device pixels for a display of `s`), `None` when
+/// empty.
+fn bbox(pts: &[Point], s: DisplayScale) -> Option<Rect> {
     // The pixel of each point (saturating at the coordinate range's end).
-    let px = |p: &Point| Rect::new(p.x, p.y, p.x.saturating_add(1), p.y.saturating_add(1));
+    let px = |p: &Point| {
+        let p = device(*p, s);
+        Rect::new(p.x, p.y, p.x.saturating_add(1), p.y.saturating_add(1))
+    };
     let (first, rest) = pts.split_first()?;
     Some(rest.iter().fold(px(first), |r, p| r.union(&px(p))))
 }
@@ -160,13 +170,13 @@ impl Line {
     /// The drawn bounding box (absolute, with the stroke) and the content size.
     fn snapshot(&self, cx: &WidgetCx<'_>) -> (Option<Rect>, Size) {
         let m = cx.measure();
-        (self.abs_bbox(&m), self.content())
+        (self.abs_bbox(&m), self.content(m.scale()))
     }
 
     /// The bounding box of the points on screen, grown by the line width.
     fn abs_bbox(&self, m: &MeasureCx<'_>) -> Option<Rect> {
         let c = m.coords();
-        let b = bbox(self.points())?;
+        let b = bbox(self.points(), m.scale())?;
         let b = if self.y_invert {
             let h = c.height();
             let flip = |y: i32| h.saturating_sub(y);
@@ -183,14 +193,15 @@ impl Line {
         Some(b.translate(c.x0, c.y0).expand((w / 2).saturating_add(1)))
     }
 
-    fn content(&self) -> Size {
+    /// The content size in device pixels for a display of `s`.
+    fn content(&self, s: DisplayScale) -> Size {
         let pts = self.points();
         if pts.is_empty() {
             return Size::ZERO;
         }
         let w = pts.iter().map(|p| p.x).fold(0, i32::max);
         let h = pts.iter().map(|p| p.y).fold(0, i32::max);
-        Size::new(w, h)
+        Size::new(s.to_device(w), s.to_device(h))
     }
 
     /// Invalidates the old and new bounding boxes; marks the layout when the content size
@@ -233,8 +244,8 @@ impl Widget for Line {
     }
 
     /// LVGL `LV_EVENT_GET_SELF_SIZE`: the largest x and y of the points.
-    fn content_size(&self, _cx: &MeasureCx<'_>) -> Size {
-        self.content()
+    fn content_size(&self, cx: &MeasureCx<'_>) -> Size {
+        self.content(cx.scale())
     }
 
     /// LVGL `LV_EVENT_REFR_EXT_DRAW_SIZE`: the line width (the corners of skewed lines).
@@ -250,8 +261,10 @@ impl Widget for Line {
         }
         let c = cx.coords();
         let h = c.height();
+        let s = cx.scale();
         let mut dsc = cx.line_dsc(Part::Main);
         let map = |p: Point| {
+            let p = device(p, s);
             let y = if self.y_invert { h.saturating_sub(p.y) } else { p.y };
             Point::new(c.x0.saturating_add(p.x), c.y0.saturating_add(y))
         };

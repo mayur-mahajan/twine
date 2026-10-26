@@ -3494,6 +3494,7 @@ dependencies = [
  "proptest",
  "trybuild",
  "twine-anim",
+ "twine-assets",
  "twine-core",
  "twine-image",
  "twine-render",
@@ -3528,6 +3529,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
+ "critical-section",
  "defmt",
  "fontdue",
  "iai-callgrind",

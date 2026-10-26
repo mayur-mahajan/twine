@@ -85,7 +85,8 @@
 //!   named in the application (`AppConfig::new().theme(&lvgl::THEME)`): a theme, a mode table
 //!   or a style is linked only when it is named; the features only compile them.
 //! - `full`: every optional, platform-neutral part above (all pixel formats, decoders, fonts,
-//!   the three themes, `vector`, `svg`, `ttf`, `include-assets`, `fs`, `bidi`, `arabic-shaping`, `async`, `perf-monitor`, `display-integrity`) — for
+//!   the three themes, `vector`, `svg`, `ttf`, `include-assets`, `fs`, `bidi`, `arabic-shaping`,
+//!   `async`, `perf-monitor`, `display-integrity`, `display-scale`) — for
 //!   hosts, simulators, tests and documentation. It leaves out `std`, the logging backends,
 //!   platforms, drivers and the debugging aids; firmware enables only what it uses.
 //!
@@ -93,6 +94,11 @@
 //! - `display-integrity`: frame observers, region checks against the panel's read-back,
 //!   safety-critical nodes, the fail-safe screen and the `Validity` looks
 //!   (`docs/safety/profile.md` § 11); in `full`, implied by `safety`, otherwise not linked.
+//! - `display-scale`: hi-DPI desktop displays (Retina 2×, 1.25×/1.5× desktops) — logical lengths
+//!   resolve to `length × DisplayInfo::scale` device pixels, fonts and images pick their
+//!   renderings for the scale, and `Engine::set_display_scale` changes it at run time (a window
+//!   moved to another monitor). Desktop hosts and the simulator enable it; firmware leaves it
+//!   off and links none of it (displays are laid out at 1×). See [`guide::units`].
 //! - `no-panic-runtime`: reactive failures that can be skipped (a write to a disposed signal, a
 //!   creation in a disposed scope or a full arena, a memo cycle) raise a fault instead of
 //!   panicking (`reactive` crate docs § Failures); implied by `safety`.

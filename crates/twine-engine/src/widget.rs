@@ -3,7 +3,7 @@
 
 use core::any::Any;
 
-use twine_core::{Color, Insets, Point, Rect, Size};
+use twine_core::{Color, DisplayScale, Insets, Point, Rect, Size};
 use twine_render::{ArcDsc, ImageDsc, LineDsc};
 use twine_style::{Part, PropId, State, StyleValue};
 use twine_text::{Font, TextDsc};
@@ -596,6 +596,30 @@ impl<'a> MeasureCx<'a> {
         self.engine.style_i32(self.node, part, prop)
     }
 
+    /// The scale of the node's display (see [`DrawCx::scale`](crate::DrawCx::scale)).
+    #[must_use]
+    pub fn scale(&self) -> DisplayScale {
+        self.engine.node_scale(self.node)
+    }
+
+    /// `logical` pixels in device pixels for the node's display, for sizes a widget makes up
+    /// itself (hit-test margins, minimum sizes; see [`DrawCx::to_device`](crate::DrawCx::to_device)).
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_engine::{Engine, EngineConfig, MeasureCx};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::Rgb565), 64 * 2 * 8, None).unwrap();
+    /// let m = MeasureCx::new(&e, e.active_screen(d).unwrap());
+    /// assert_eq!(m.to_device(8), 8); // a 1× display
+    /// ```
+    #[must_use]
+    pub fn to_device(&self, logical: i32) -> i32 {
+        self.engine.node_to_device(self.node, logical)
+    }
+
     /// Finishes a value the widget read from a style it keeps itself (outside the node's
     /// cascade): a [design element](twine_style::design) becomes the value of the node's theme,
     /// a `Dp` length pixels (see [`Engine::finish_style_value`], which also gives the cost).
@@ -814,6 +838,31 @@ impl<'a> WidgetCx<'a> {
     #[must_use]
     pub fn style_i32(&self, part: Part, prop: PropId) -> i32 {
         self.engine.style_i32(self.node, part, prop)
+    }
+
+    /// The scale of the node's display (see [`DrawCx::scale`](crate::DrawCx::scale)).
+    #[must_use]
+    pub fn scale(&self) -> DisplayScale {
+        self.engine.node_scale(self.node)
+    }
+
+    /// `logical` pixels in device pixels for the node's display (see
+    /// [`DrawCx::to_device`](crate::DrawCx::to_device)).
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, DisplayScale};
+    /// use twine_engine::{Engine, EngineConfig, WidgetCx};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::Rgb565), 64 * 2 * 8, None).unwrap();
+    /// let screen = e.active_screen(d).unwrap();
+    /// let cx = WidgetCx::new(&mut e, screen);
+    /// assert_eq!((cx.scale(), cx.to_device(8)), (DisplayScale::ONE, 8));
+    /// ```
+    #[must_use]
+    pub fn to_device(&self, logical: i32) -> i32 {
+        self.engine.node_to_device(self.node, logical)
     }
 
     /// A resolved color property.

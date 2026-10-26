@@ -1,6 +1,6 @@
 //! Value types of style properties and layout enums (LVGL equivalents noted on every type).
 
-use twine_core::{Color, Duration, Opa};
+use twine_core::{Color, DisplayScale, Duration, Opa};
 
 use crate::design::{DesignValue, Element};
 
@@ -59,16 +59,29 @@ pub const fn dpx(dp: i32, dpi: u16) -> i32 {
     }
 }
 
-/// A size, position or spacing that may depend on the display density, the parent or the
-/// content (LVGL coordinates with `LV_PCT(x)` / `LV_SIZE_CONTENT` / `LV_DPX(x)`).
+/// A size, position or spacing that may depend on the display density, the display scale, the
+/// parent or the content (LVGL coordinates with `LV_PCT(x)` / `LV_SIZE_CONTENT` /
+/// `LV_DPX(x)`).
 ///
-/// `Dp` lengths are converted to pixels with the DPI of the node's display when the engine
-/// resolves the style (one multiply/divide per resolved value, see [`dpx`]); `Px` values pass
-/// through unchanged. Spacing properties (padding, margin, gaps, border width) accept `Px` and
-/// `Dp`; `Pct` and `Content` resolve to 0 there.
+/// **Units.** Three pixel units, from most to least common:
+///
+/// | Unit | Written | Resolves to (device pixels) | Use it for |
+/// |------|---------|-----------------------------|------------|
+/// | [`Px`](Self::Px) — logical pixels | `8`, `Length::px(8)`, `8.px()` | `8 × scale` | almost everything |
+/// | [`Dp`](Self::Dp) — density-independent | `Length::dp(8)`, `8.dp()` | `dpx(8, dpi) × scale` | one UI on panels of different density |
+/// | [`Dev`](Self::Dev) — device pixels | `Length::dev(1)`, `1.dev()` | `1` | hairlines, pixel-exact art |
+///
+/// The **display scale** ([`DisplayScale`](twine_core::DisplayScale), device pixels per logical
+/// pixel) is 1× on embedded panels, where `Px` *is* a device pixel, and 2× or fractional on
+/// hi-DPI desktop screens. The engine converts `Dp` with the DPI of the node's display and
+/// `Px`/`Dp` with its scale when it resolves the style (once per resolved value; with the
+/// `display-scale` feature only); `Dev` values pass through unchanged, and so does everything
+/// at 1×. Spacing properties (padding, margin, gaps, border width) accept `Px`, `Dp` and
+/// `Dev`; `Pct` and `Content` resolve to 0 there.
 ///
 /// ```
-/// use twine_style::Length;
+/// use twine_core::DisplayScale;
+/// use twine_style::{Length, LengthUnits};
 ///
 /// assert_eq!(Length::px(40).resolve(200, 10), 40);
 /// assert_eq!(Length::pct(25).resolve(200, 10), 50);
@@ -77,11 +90,15 @@ pub const fn dpx(dp: i32, dpi: u16) -> i32 {
 /// // 8 dp are 8 px at 160 DPI and 16 px at 320 DPI.
 /// assert_eq!(Length::dp(8).with_dpi(160), Length::Px(8));
 /// assert_eq!(Length::dp(8).with_dpi(320), Length::Px(16));
+/// // Logical pixels become device pixels on a 2× screen; device pixels stay.
+/// assert_eq!(8.px().with_scale(DisplayScale::X2), Length::Dev(16));
+/// assert_eq!(1.dev().with_scale(DisplayScale::X2), Length::Dev(1));
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Length {
-    /// Pixels.
+    /// Logical pixels (the default unit: bare integers are `Px`): device pixels on a 1×
+    /// display, `v × scale` device pixels on a scaled one (see the table above).
     Px(i32),
     /// Percent of the reference size (usually the parent's content area); values above 100
     /// are allowed.
@@ -89,15 +106,31 @@ pub enum Length {
     /// Sized by the content (LVGL `LV_SIZE_CONTENT`).
     Content,
     /// Density-independent pixels: pixels on a [`REFERENCE_DPI`] (160 DPI) display, scaled
-    /// to the display's DPI when the style is resolved (LVGL `LV_DPX`).
+    /// to the display's DPI when the style is resolved (LVGL `LV_DPX`), then by the display
+    /// scale like [`Px`](Self::Px).
     Dp(i32),
+    /// Device pixels: never scaled. For hairlines and pixel-exact drawing on scaled displays,
+    /// and the form in which the engine keeps lengths it has already scaled (resolving a `Dev`
+    /// again changes nothing).
+    Dev(i32),
 }
 
 impl Length {
-    /// `v` pixels.
+    /// `v` logical pixels (see [`Length::Px`]).
     #[must_use]
     pub const fn px(v: i32) -> Self {
         Length::Px(v)
+    }
+
+    /// `v` device pixels (see [`Length::Dev`]).
+    ///
+    /// ```
+    /// use twine_style::Length;
+    /// assert_eq!(Length::dev(1), Length::Dev(1));
+    /// ```
+    #[must_use]
+    pub const fn dev(v: i32) -> Self {
+        Length::Dev(v)
     }
 
     /// `p` percent (LVGL `lv_pct`).
@@ -112,14 +145,14 @@ impl Length {
         Length::Dp(v)
     }
 
-    /// `v` pixels (`const` counterpart of `From<i32>`).
+    /// `v` logical pixels (`const` counterpart of `From<i32>`).
     #[must_use]
     pub const fn from_i32(v: i32) -> Self {
         Length::Px(v)
     }
 
-    /// The length with a `Dp` value converted to pixels for a `dpi` display (see [`dpx`]);
-    /// other lengths are unchanged.
+    /// The length with a `Dp` value converted to logical pixels for a `dpi` display (see
+    /// [`dpx`]); other lengths are unchanged.
     #[inline]
     #[must_use]
     pub const fn with_dpi(self, dpi: u16) -> Self {
@@ -129,14 +162,51 @@ impl Length {
         }
     }
 
+    /// The length with a logical value ([`Px`](Self::Px)) converted to device pixels
+    /// ([`Dev`](Self::Dev)) for a display of `scale`; at 1× and for every other kind it is
+    /// unchanged. The layout limit [`COORD_MAX`] (the default of `max_width`/`max_height`) is
+    /// a sentinel and is never scaled; results are clamped to `±COORD_MAX` so layout arithmetic
+    /// cannot overflow. Convert `Dp` with [`with_dpi`](Self::with_dpi) first.
+    ///
+    /// ```
+    /// use twine_core::DisplayScale;
+    /// use twine_style::{COORD_MAX, Length};
+    ///
+    /// let s = DisplayScale::pct(150);
+    /// assert_eq!(Length::px(10).with_scale(s), Length::Dev(15));
+    /// assert_eq!(Length::px(10).with_scale(DisplayScale::ONE), Length::Px(10));
+    /// assert_eq!(Length::pct(50).with_scale(s), Length::pct(50));
+    /// assert_eq!(Length::px(COORD_MAX).with_scale(s), Length::px(COORD_MAX));
+    /// assert_eq!(Length::dp(8).with_dpi(320).with_scale(s), Length::Dev(24));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn with_scale(self, scale: DisplayScale) -> Self {
+        match self {
+            Length::Px(v) if !scale.is_one() && v.abs() < COORD_MAX => {
+                let d = scale.to_device(v);
+                Length::Dev(if d > COORD_MAX {
+                    COORD_MAX
+                } else if d < -COORD_MAX {
+                    -COORD_MAX
+                } else {
+                    d
+                })
+            }
+            other => other,
+        }
+    }
+
     /// The length in pixels: `Pct` is relative to `parent` (truncated like LVGL
     /// `lv_pct_to_px`, saturating), `Content` is `content`. A `Dp` that was not converted
-    /// with [`with_dpi`](Self::with_dpi) counts at the reference 160 DPI (1 dp = 1 px); style
-    /// resolution converts `Dp` with the DPI of the source ([`StyleSource::dpi`](crate::StyleSource::dpi)).
+    /// with [`with_dpi`](Self::with_dpi) counts at the reference 160 DPI (1 dp = 1 px), a `Px`
+    /// that was not converted with [`with_scale`](Self::with_scale) at 1×; style resolution
+    /// converts both with the source ([`StyleSource::dpi`](crate::StyleSource::dpi),
+    /// [`StyleSource::scale`](crate::StyleSource::scale)).
     #[must_use]
     pub const fn resolve(self, parent: i32, content: i32) -> i32 {
         match self {
-            Length::Px(v) | Length::Dp(v) => v,
+            Length::Px(v) | Length::Dp(v) | Length::Dev(v) => v,
             Length::Pct(p) => {
                 // SAFE-ARITH: a product of two 32-bit values fits in `i64`.
                 let v = (p as i64).wrapping_mul(parent as i64) / 100;
@@ -152,13 +222,58 @@ impl Length {
         }
     }
 
-    /// The pixel value of a `Px` length.
+    /// The pixel value of a `Px` or `Dev` length (a resolved length: `Px` at 1×, `Dev` on a
+    /// scaled display).
+    ///
+    /// ```
+    /// use twine_style::Length;
+    /// assert_eq!(Length::px(3).as_px(), Some(3));
+    /// assert_eq!(Length::dev(6).as_px(), Some(6));
+    /// assert_eq!(Length::dp(3).as_px(), None);
+    /// ```
     #[must_use]
     pub const fn as_px(self) -> Option<i32> {
         match self {
-            Length::Px(v) => Some(v),
+            Length::Px(v) | Length::Dev(v) => Some(v),
             _ => None,
         }
+    }
+}
+
+/// Unit suffixes for integer lengths: `8.px()`, `8.dp()`, `1.dev()` (see [`Length`]). Bare
+/// integers are already logical pixels, so `.px()` only documents intent.
+///
+/// ```
+/// use twine_style::{Length, LengthUnits};
+///
+/// assert_eq!(12.px(), Length::Px(12));
+/// assert_eq!(12.dp(), Length::Dp(12));
+/// assert_eq!(1.dev(), Length::Dev(1));
+/// ```
+pub trait LengthUnits {
+    /// Logical pixels ([`Length::Px`]).
+    #[must_use]
+    fn px(self) -> Length;
+    /// Density-independent pixels ([`Length::Dp`]).
+    #[must_use]
+    fn dp(self) -> Length;
+    /// Device pixels ([`Length::Dev`]).
+    #[must_use]
+    fn dev(self) -> Length;
+}
+
+impl LengthUnits for i32 {
+    #[inline]
+    fn px(self) -> Length {
+        Length::Px(self)
+    }
+    #[inline]
+    fn dp(self) -> Length {
+        Length::Dp(self)
+    }
+    #[inline]
+    fn dev(self) -> Length {
+        Length::Dev(self)
     }
 }
 
@@ -175,8 +290,8 @@ impl From<i32> for Length {
     }
 }
 
-/// A corner radius (the `radius` style property): pixels, density-independent pixels, or
-/// fully round.
+/// A corner radius (the `radius` style property): logical pixels, density-independent pixels,
+/// device pixels, or fully round (see [`Length`] for the units).
 ///
 /// Stored in styles as a pixel [`Length`], with `Circle` in the renderer's compact encoding
 /// (`twine_render::RADIUS_CIRCLE`, clamped to half the shorter side when drawn), so it costs
@@ -205,6 +320,14 @@ pub enum Radius {
     Px(i32),
     /// Density-independent pixels (see [`Length::Dp`]).
     Dp(i32),
+    /// Device pixels (see [`Length::Dev`]); what a scaled radius resolves to.
+    ///
+    /// ```
+    /// use twine_style::{Length, Radius};
+    /// assert_eq!(Radius::Dev(6).to_length(), Length::Dev(6));
+    /// assert_eq!(Radius::from_length(Length::Dev(6)), Some(Radius::Dev(6)));
+    /// ```
+    Dev(i32),
     /// Fully round: a circle for a square node, a pill otherwise (LVGL `LV_RADIUS_CIRCLE`).
     #[doc(alias = "RADIUS_CIRCLE")]
     #[doc(alias = "LV_RADIUS_CIRCLE")]
@@ -220,6 +343,7 @@ impl Radius {
         match self {
             Radius::Px(v) => Length::Px(v),
             Radius::Dp(v) => Length::Dp(v),
+            Radius::Dev(v) => Length::Dev(v),
             Radius::Circle => Length::Px(RADIUS_CIRCLE),
         }
     }
@@ -232,6 +356,8 @@ impl Radius {
             Length::Px(v) if v >= RADIUS_CIRCLE => Some(Radius::Circle),
             Length::Px(v) => Some(Radius::Px(v)),
             Length::Dp(v) => Some(Radius::Dp(v)),
+            Length::Dev(v) if v >= RADIUS_CIRCLE => Some(Radius::Circle),
+            Length::Dev(v) => Some(Radius::Dev(v)),
             Length::Pct(_) | Length::Content => None,
         }
     }

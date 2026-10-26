@@ -100,7 +100,7 @@ impl Engine {
         let left_space = Saturating(self.style_i32(id, part, PropId::PaddingLeft));
         let right_space = Saturating(self.style_i32(id, part, PropId::PaddingRight));
         let length = Saturating(self.style_i32(id, part, PropId::Length));
-        let min_size = Saturating(twine_style::dpx(10, self.node_dpi(id)));
+        let min_size = Saturating(self.node_dpx(id, 10));
         let thickness = Saturating(thickness);
         let (st, sb, sl, sr) = (Saturating(st), Saturating(sb), Saturating(sl), Saturating(sr));
         let c = n.coords;

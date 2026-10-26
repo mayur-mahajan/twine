@@ -107,7 +107,7 @@ fn second_screen(e: &mut Engine) -> NodeId {
 
 fn main() {
     twine_sim::init_logging();
-    let cfg = SimConfig::new(320, 240).title("engine_boxes").scale(2);
+    let cfg = SimConfig::new(320, 240).title("engine_boxes").zoom(2);
     // Filled by the setup: the pulsing box and the two screens.
     let ids: Rc<Cell<Option<(NodeId, NodeId, NodeId)>>> = Rc::default();
     let keys = ids.clone();

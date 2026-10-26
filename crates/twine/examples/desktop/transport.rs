@@ -14,7 +14,7 @@ use twine::prelude::*;
 use crate::art::{Cover, cover};
 use crate::catalog::catalog;
 use crate::player::Repeat;
-use crate::theme::{CAPTION, LINE, S1, S2, S3, S4, SIDEBAR, palette};
+use crate::theme::{CAPTION, CONTROL, LINE, S1, S2, S3, S4, SIDEBAR, palette};
 use crate::ui::{App, caption, icon_button, slim_slider, text};
 use crate::util::clock;
 use crate::viz::meters;
@@ -63,7 +63,7 @@ pub fn bar(cx: Scope, app: App) -> impl View {
             Symbol::Play
         }
     ))
-    .font(&fonts::MONTSERRAT_18))
+    .font(CONTROL))
     .size(40, 40)
     .radius(Radius::Circle)
     .bg(palette::TEXT)

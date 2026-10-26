@@ -196,7 +196,7 @@ fn main() {
     let mut cfg = Config::default();
     let sim = SimConfig::new(320, 240)
         .title("flex_layout")
-        .scale(2)
+        .zoom(2)
         .on_raw_key(move |e, k| {
             if let Some(c) = c2.get() {
                 on_key(e, c, &mut cfg, k);

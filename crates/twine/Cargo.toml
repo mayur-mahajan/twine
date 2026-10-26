@@ -87,6 +87,11 @@ defmt = [
 ]
 ## On-screen performance overlay.
 perf-monitor = ["twine-engine/perf-monitor"]
+## Display scale for hi-DPI desktop screens (Retina 2×, 1.25×/1.5× desktops): logical lengths
+## resolve to `length × DisplayInfo::scale` device pixels, so the UI keeps its size and renders
+## sharp. Desktop hosts and the simulator enable it; embedded firmware leaves it off and links
+## none of it.
+display-scale = ["twine-style/display-scale", "twine-engine/display-scale"]
 ## Expensive engine invariant checks, and the reactive runtime's interrupt-context assertion.
 debug-checks = ["twine-engine/debug-checks", "twine-reactive/debug-checks"]
 ## Keep test ids in release builds.
@@ -361,6 +366,7 @@ full = [
     "theme-mono",
     "theme-simple",
     "display-integrity",
+    "display-scale",
     "perf-monitor",
     "color-rgb565",
     "color-rgb565-swapped",

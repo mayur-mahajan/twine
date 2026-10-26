@@ -119,6 +119,7 @@ mod font;
 mod hit;
 mod imgfont;
 mod layout;
+mod scaled;
 #[cfg(test)]
 mod test_font;
 
@@ -146,8 +147,11 @@ pub use font::{
 pub use gamma::{CoverageMap, GammaRamp, Polarity, TextGamma};
 pub use hit::{DOTS, Ellipsis, LongMode, TextAlign, TextDecor};
 pub use imgfont::{ImageFontProvider, ImageGlyphLookup};
+/// Re-exported for [`ScaledFont`] tables (generated code names it through this crate).
+pub use twine_core::DisplayScale;
 pub use twine_core::Symbol;
 
 pub use layout::{BREAK_CHARS, Line, LineIter, TextFlags, TextLayout, is_wide};
+pub use scaled::ScaledFont;
 #[cfg(feature = "ttf")]
-pub use ttf::{FontFileSource, TTF_MAX_PX, TtfError, TtfFont, TtfProvider};
+pub use ttf::{FontFileSource, TTF_MAX_PX, TTF_MAX_SCALES, TtfError, TtfFont, TtfProvider, TtfScaledFont};

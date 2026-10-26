@@ -126,7 +126,7 @@ pub fn icon_button<MT, MA, R>(
     active: impl IntoProp<bool, MA>,
     mut on_click: impl FnMut() -> R + 'static,
 ) -> Flex {
-    row(label(glyph).font(&fonts::MONTSERRAT_16))
+    row(label(glyph).font(theme::TITLE))
         .size(size, size)
         .radius(Radius::Circle)
         .justify(MainAlign::Center)
@@ -206,7 +206,8 @@ fn paint_icon(g: Glyph, cx: &mut DrawCx<'_, '_>) {
     let pt = |x: i32, y: i32| Point::new(ox + x * s / 20, oy + y * s / 20);
     let u = |v: i32| v * s / 20;
     let col = if g.active { palette::ACCENT } else { palette::MUTED };
-    let w = (s / 10).max(2);
+    // At least 2 logical pixels (`px`): the canvas draws in device pixels.
+    let w = (s / 10).max(cx.to_device(2));
     let p = cx.painter();
     let o = Opa::COVER;
     match g.icon {

@@ -72,7 +72,7 @@ pub use compress::*;
 pub use decoder::{Decoder, DecoderRegistry, MAX_DECODERS};
 pub use error::Error;
 pub use image::{
-    Compression, Image, ImageData, ImageFlags, ImageHeader, ImageSource, MAX_PATH_LEN, pixels_of,
+    Compression, Image, ImageData, ImageFlags, ImageHeader, ImageSource, MAX_PATH_LEN, ScaledImage, pixels_of,
 };
 pub use resolve::{FileSource, HEADER_PROBE_BYTES, ImageContext, header_of, with_pixels};
-pub use twine_core::{ColorFormat, Symbol};
+pub use twine_core::{ColorFormat, DisplayScale, Symbol};

@@ -68,19 +68,65 @@ pub const S3: i32 = 12;
 pub const S4: i32 = 16;
 pub const S5: i32 = 24;
 
-// The type scale (Montserrat Medium, the bundled UI font).
+// The type scale (Montserrat Medium, the bundled UI font). Sharp at every display scale: each
+// size is the bundled bitmap font at 1× (the look of the embedded build, pixel for pixel) and
+// Montserrat rasterized at `size × scale` elsewhere (Retina, 1.25×, 1.5× …), with Font Awesome
+// for the symbols, made the first time a scale is drawn (`TtfScaledFont`).
+
+/// Montserrat Medium, the face of the bundled bitmap fonts.
+static MONTSERRAT: &[u8] = include_bytes!("../../../../assets/fonts/Montserrat-Medium.ttf");
+/// Font Awesome (solid), the face of the symbols merged into the bundled bitmap fonts.
+static FONT_AWESOME: &[u8] = include_bytes!("../../../../assets/fonts/fa-solid-900.ttf");
+
+twine::text::scaled_font! {
+    static DISPLAY_FONT =
+        ttf(fonts::MONTSERRAT_28, MONTSERRAT, 28).fallback(FONT_AWESOME);
+}
+twine::text::scaled_font! {
+    static HEADLINE_FONT =
+        ttf(fonts::MONTSERRAT_22, MONTSERRAT, 22).fallback(FONT_AWESOME);
+}
+twine::text::scaled_font! {
+    static CONTROL_FONT =
+        ttf(fonts::MONTSERRAT_18, MONTSERRAT, 18).fallback(FONT_AWESOME);
+}
+twine::text::scaled_font! {
+    static TITLE_FONT =
+        ttf(fonts::MONTSERRAT_16, MONTSERRAT, 16).fallback(FONT_AWESOME);
+}
+twine::text::scaled_font! {
+    static BODY_FONT =
+        ttf(fonts::MONTSERRAT_14, MONTSERRAT, 14).fallback(FONT_AWESOME);
+}
+twine::text::scaled_font! {
+    static CAPTION_FONT =
+        ttf(fonts::MONTSERRAT_12, MONTSERRAT, 12).fallback(FONT_AWESOME);
+}
+twine::text::scaled_font! {
+    static OVERLINE_FONT =
+        ttf(fonts::MONTSERRAT_10, MONTSERRAT, 10).fallback(FONT_AWESOME);
+}
+twine::text::scaled_font! {
+    static MICRO_FONT =
+        ttf(fonts::MONTSERRAT_8, MONTSERRAT, 8).fallback(FONT_AWESOME);
+}
+
 /// Page titles.
-pub static DISPLAY: &Font = &fonts::MONTSERRAT_28;
+pub static DISPLAY: &Font = &DISPLAY_FONT;
 /// The now-playing title.
-pub static HEADLINE: &Font = &fonts::MONTSERRAT_22;
-/// Card titles, sidebar brand.
-pub static TITLE: &Font = &fonts::MONTSERRAT_16;
+pub static HEADLINE: &Font = &HEADLINE_FONT;
+/// The play / pause glyph.
+pub static CONTROL: &Font = &CONTROL_FONT;
+/// Card titles, sidebar brand, icon glyphs.
+pub static TITLE: &Font = &TITLE_FONT;
 /// Body text, list rows.
-pub static BODY: &Font = &fonts::MONTSERRAT_14;
+pub static BODY: &Font = &BODY_FONT;
 /// Secondary lines, times.
-pub static CAPTION: &Font = &fonts::MONTSERRAT_12;
-/// Column headers and section labels (upper case, spaced out).
-pub static OVERLINE: &Font = &fonts::MONTSERRAT_10;
+pub static CAPTION: &Font = &CAPTION_FONT;
+/// Column headers and section labels (upper case, spaced out), chart labels.
+pub static OVERLINE: &Font = &OVERLINE_FONT;
+/// Tiny marks: sort arrows, slider ticks.
+pub static MICRO: &Font = &MICRO_FONT;
 
 /// The app's only mode: the LVGL theme's dark table with the palette above, the type scale
 /// and the app's own elements (`const`, in flash).
@@ -88,9 +134,9 @@ pub static DARK: ElementTable = Lvgl::SET
     .primary(palette::ACCENT)
     .secondary(palette::VIOLET)
     .fonts(FontScale {
-        small: &fonts::MONTSERRAT_12,
-        normal: &fonts::MONTSERRAT_14,
-        large: &fonts::MONTSERRAT_16,
+        small: &CAPTION_FONT,
+        normal: &BODY_FONT,
+        large: &TITLE_FONT,
     })
     .table(ThemeMode::Dark)
     .color(design::BACKGROUND, palette::BG)

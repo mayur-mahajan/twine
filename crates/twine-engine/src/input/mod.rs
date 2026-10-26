@@ -346,6 +346,28 @@ impl Engine {
         }
     }
 
+    /// [`input_timing`](Self::input_timing) for a device on `display`: with the
+    /// `display-scale` feature, the distance thresholds (logical pixels in
+    /// [`EngineConfig`](crate::EngineConfig)) in the display's device pixels, so a drag starts
+    /// after the same physical distance at every scale.
+    pub(crate) fn input_timing_for(&self, display: DisplayId) -> Timing {
+        #[cfg_attr(not(feature = "display-scale"), allow(unused_mut))]
+        let mut t = self.input_timing();
+        #[cfg(feature = "display-scale")]
+        {
+            let s = self.display_scale(display);
+            if !s.is_one() {
+                t.multi_click_distance = s.to_device(t.multi_click_distance);
+                t.scroll_limit = s.to_device(t.scroll_limit);
+                t.gesture_limit = s.to_device(t.gesture_limit);
+                t.gesture_min_velocity = s.to_device(t.gesture_min_velocity);
+            }
+        }
+        #[cfg(not(feature = "display-scale"))]
+        let _ = display;
+        t
+    }
+
     pub(crate) fn input_state(&self, id: InputId) -> Option<&InputState> {
         self.inputs.get(id.index()).and_then(Option::as_ref)
     }
@@ -874,7 +896,7 @@ impl Engine {
         self.sync_indev_scroll(id, proc.scroll_obj());
         if data.kind() == kind {
             let prev = self.input_active.replace((id, kind));
-            let t = self.input_timing();
+            let t = self.input_timing_for(display);
             match (&mut proc, data) {
                 (Proc::Pointer(p), InputData::Pointer(d)) => p.process(self, id, display, d, now, &t),
                 (Proc::Button(b), InputData::Button(d)) => b.process(self, id, display, d, now, &t),

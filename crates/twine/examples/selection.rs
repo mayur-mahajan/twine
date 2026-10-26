@@ -9,7 +9,7 @@ fn main() {
     twine_sim::run(
         SimConfig::new(320, 240)
             .title("Selection")
-            .scale(3)
+            .zoom(3)
             // The configuration the firmware ships (theme, engine, motion).
             .app_config(twine_demos::config()),
         twine_demos::selection::app,

@@ -1,6 +1,6 @@
 //! The [`LayoutTree`] trait: the boundary between the layout algorithms and a widget tree.
 
-use twine_core::{Insets, Point, Rect, Size};
+use twine_core::{DisplayScale, Insets, Point, Rect, Size};
 use twine_style::{Anchor, BaseDir, BorderSide, GridTrack, Length, PropId, StyleValue};
 
 use crate::LayoutScratch;
@@ -200,6 +200,14 @@ pub trait LayoutTree {
         self.style_prop(id, prop)
             .as_grid_tracks()
             .and_then(twine_style::TracksRef::as_static)
+    }
+
+    /// Device pixels per logical pixel for `id` (its display's scale): fixed grid tracks
+    /// ([`GridTrack::Px`]) are logical pixels and are scaled with it; every other length
+    /// reaches the layout already resolved to device pixels. Default: 1×.
+    fn scale(&self, id: Self::Id) -> DisplayScale {
+        let _ = id;
+        DisplayScale::ONE
     }
 
     /// How far the content of `id` is scrolled: children (except `FLOATING` ones) are placed

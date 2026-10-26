@@ -2,6 +2,7 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use twine_core::DisplayScale;
 use twine_render::ImagePixels;
 
 use crate::cache::GlyphCache;
@@ -120,6 +121,17 @@ pub trait GlyphProvider: Sync {
     /// (coverage-only providers) returns `None`.
     fn glyph_image(&self, cp: char, next: Option<char>) -> Option<&'static ImagePixels<'static>> {
         let _ = (cp, next);
+        None
+    }
+
+    /// The font to draw with instead of the font over this provider on a display of `scale`
+    /// (device pixels per logical pixel, see [`Font::for_scale`]): a larger rendering of the
+    /// same face, so text keeps its size and stays sharp on a hi-DPI screen. The default
+    /// (plain fonts) returns `None`: the font is drawn as is at every scale. Overridden by
+    /// [`ScaledFont`](crate::ScaledFont) (bitmap variants) and the scalable TrueType fonts of
+    /// `TtfFont::scalable` (feature `ttf`).
+    fn font_for_scale(&self, scale: DisplayScale) -> Option<&'static Font> {
+        let _ = scale;
         None
     }
 }
@@ -259,6 +271,31 @@ impl Font {
     #[must_use]
     pub const fn placeholder_width(&self) -> i32 {
         self.line_height as i32 / 2
+    }
+
+    /// The font to draw this font with on a display of `scale` (device pixels per logical
+    /// pixel): the provider's [`font_for_scale`](GlyphProvider::font_for_scale), else the font
+    /// itself. The style resolver calls it for the `font` property on scaled displays (feature
+    /// `display-scale` of `twine-style`), so code that draws a resolved font never calls it.
+    ///
+    /// ```
+    /// use twine_assets::fonts::{MONTSERRAT_14, MONTSERRAT_28};
+    /// use twine_core::DisplayScale;
+    /// use twine_text::{Font, ScaledFont};
+    ///
+    /// // A plain font is the same at every scale.
+    /// assert!(core::ptr::eq(MONTSERRAT_14.for_scale(DisplayScale::X2), &MONTSERRAT_14));
+    /// // A scaled font picks its variant.
+    /// static BODY: Font = {
+    ///     static SET: ScaledFont = ScaledFont::new(&MONTSERRAT_14, &[(DisplayScale::X2, &MONTSERRAT_28)]);
+    ///     SET.font()
+    /// };
+    /// assert!(core::ptr::eq(BODY.for_scale(DisplayScale::X2), &MONTSERRAT_28));
+    /// assert!(core::ptr::eq(BODY.for_scale(DisplayScale::ONE), &MONTSERRAT_14));
+    /// ```
+    #[must_use]
+    pub fn for_scale(&'static self, scale: DisplayScale) -> &'static Font {
+        self.provider.font_for_scale(scale).unwrap_or(self)
     }
 
     /// The glyph provider's address, used as the glyph-cache key of this font's provider.

@@ -699,9 +699,10 @@ impl ButtonMatrix {
     pub fn btn_invalidation_area(&self, m: &MeasureCx<'_>, idx: u16) -> Option<Rect> {
         let a = *self.areas.get(usize::from(idx))?;
         let c = m.coords();
-        let dpi = i32::from(util::display_dpi(m.engine(), m.node()));
-        let row_gap = m.style_i32(Part::Main, PropId::RowGap).max(dpi / 10);
-        let col_gap = m.style_i32(Part::Main, PropId::ColumnGap).max(dpi / 10);
+        // `dpi / 10` logical pixels, compared with gaps resolved to device pixels.
+        let margin = m.to_device(i32::from(util::display_dpi(m.engine(), m.node())) / 10);
+        let row_gap = m.style_i32(Part::Main, PropId::RowGap).max(margin);
+        let col_gap = m.style_i32(Part::Main, PropId::ColumnGap).max(margin);
         // LVGL grows x by the row gap and y by the column gap.
         let lo = |v: i32, o: i32, d: i32| v.saturating_add(o).saturating_sub(d);
         let hi = |v: i32, o: i32, d: i32| v.saturating_add(o).saturating_add(d);
@@ -975,7 +976,7 @@ impl ButtonMatrix {
         let node_state = cx.state();
         let m = MeasureCx::new(e, node);
         let pad = m.padding(Part::Main);
-        let dpi_margin = i32::from(util::display_dpi(e, node)) / 10;
+        let dpi_margin = util::device_px(e, node, i32::from(util::display_dpi(e, node)) / 10);
         let clip_margin = m
             .style_i32(Part::Main, PropId::RowGap)
             .max(dpi_margin)

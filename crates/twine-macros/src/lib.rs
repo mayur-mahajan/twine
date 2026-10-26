@@ -60,6 +60,16 @@ use syn::{
 ///     gamma = [1.3, 2.0],
 /// );
 /// assert!(SMALL.glyph('q', None).is_some());
+///
+/// // Sharp on hi-DPI desktops: 1× plus a 2× rendering (a `ScaledFont`).
+/// twine_macros::include_font!(
+///     static TITLE = "../../assets/fonts/Montserrat-Medium.ttf",
+///     size = 16,
+///     chars = 'A'..='Z',
+///     scales = [200],
+/// );
+/// let at_2x = TITLE.for_scale(twine_core::DisplayScale::X2); // Montserrat at 32 px
+/// assert!(at_2x.line_height > TITLE.line_height * 3 / 2);
 /// ```
 ///
 /// # Syntax
@@ -81,6 +91,7 @@ use syn::{
 /// | `subpx` | `None`, `Hor`, `Ver` | `None` |
 /// | `hinting` | `None`, `Light`, `Full` (grid-fitting, see `twine_build::font::Hinting`) | `Full` |
 /// | `gamma` | `Default`, `Linear` or `[dark_on_light, light_on_dark]` strengths such as `[1.3, 2.0]` (text gamma, see `twine_build::font::Gamma`) | `Default` (1.2 / 1.8) |
+/// | `scales` | display scales in percent, `[200]` or `[150, 200]`: also generate those renderings, the static becomes a `ScaledFont` (see `twine_build::font::Font::scales`) | none |
 ///
 /// The generated code names the text crate through the `twine` facade when the crate depends
 /// on it (`twine::text`), else through `twine-text`. Every input file is tracked: changing it

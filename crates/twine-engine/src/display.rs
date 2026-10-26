@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use core::any::Any;
 
 use twine_core::fault::{CapacityFault, FaultKind};
-use twine_core::{ColorFormat, Duration, Fraction, Rect, Rotation};
+use twine_core::{ColorFormat, DisplayScale, Duration, Fraction, Rect, Rotation, Size};
 use twine_hal::{
     ControlError, DisplayDriver, DisplayInfo, DrawBuffer, DrawBufferMem, FramebufferDisplay, buffer_bytes,
 };
@@ -380,6 +380,13 @@ pub(crate) trait FlushBackend {
         &mut self,
         rotation: Rotation,
     ) -> Result<DisplayInfo, ControlError<crate::DriverErrorCode>>;
+    #[cfg(feature = "display-scale")]
+    fn resize(
+        &mut self,
+        width: u16,
+        height: u16,
+        scale: DisplayScale,
+    ) -> Result<DisplayInfo, ControlError<crate::DriverErrorCode>>;
     #[cfg(feature = "display-integrity")]
     fn read_back(&mut self, area: Rect, buf: &mut [u8]) -> Result<(), EngineError>;
     fn as_any(&self) -> &dyn Any;
@@ -411,6 +418,15 @@ impl<D: DisplayDriver + 'static> FlushBackend for D {
         rotation: Rotation,
     ) -> Result<DisplayInfo, ControlError<crate::DriverErrorCode>> {
         DisplayDriver::set_rotation(self, rotation).map_err(|e| self.control_code(e))
+    }
+    #[cfg(feature = "display-scale")]
+    fn resize(
+        &mut self,
+        width: u16,
+        height: u16,
+        scale: DisplayScale,
+    ) -> Result<DisplayInfo, ControlError<crate::DriverErrorCode>> {
+        DisplayDriver::resize(self, width, height, scale).map_err(|e| self.control_code(e))
     }
     fn begin_flush(&mut self, area: Rect, buf: DrawBufferMem) -> Result<(), EngineError> {
         DisplayDriver::begin_flush(self, area, buf).map_err(|e| {
@@ -637,10 +653,33 @@ impl Display {
             || self.screens.contains(&root)
     }
 
-    /// The logical screen area.
+    /// The (rotated) screen area in device pixels.
     pub(crate) fn area(&self) -> Rect {
         self.info.area()
     }
+
+    /// The screen size in logical pixels (the device size at 1×): what themes see as the
+    /// display's resolution, so their size classes and tables do not depend on the scale.
+    pub(crate) fn logical_size(&self) -> Size {
+        let (w, h) = self.info.logical_size();
+        Size::new(w, h)
+    }
+}
+
+/// `info` as the engine keeps it: without the `display-scale` feature a display is laid out at
+/// 1×, so a scaled one is logged once and its scale reset (the UI then draws at its logical size
+/// in device pixels: small on a hi-DPI screen, but complete).
+fn accepted_scale(id: DisplayId, info: DisplayInfo) -> DisplayInfo {
+    if cfg!(feature = "display-scale") || info.scale.is_one() {
+        return info;
+    }
+    twine_core::warn!(
+        target: "twine::display",
+        "display {}: scale {} needs the `display-scale` feature; laid out at 1×",
+        id,
+        info.scale
+    );
+    info.with_scale(DisplayScale::ONE)
 }
 
 impl Engine {
@@ -857,6 +896,11 @@ impl Engine {
         theme: Option<DisplayTheme>,
     ) -> Result<DisplayId, EngineError> {
         let id = DisplayId(self.displays.len() as u8);
+        let info = accepted_scale(id, info);
+        #[cfg(feature = "display-scale")]
+        if let Some(r) = self.res.as_mut() {
+            r.caches.reserve_for_scale(info.scale);
+        }
         let area = info.area();
         // `check_display_nodes` reserved room for these `DISPLAY_NODES` nodes.
         let layer = |engine: &mut Engine, clickable: bool| -> Result<NodeId, EngineError> {
@@ -946,6 +990,26 @@ impl Engine {
     #[must_use]
     pub fn display_info(&self, display: DisplayId) -> Option<DisplayInfo> {
         self.display(display).map(|d| d.info)
+    }
+
+    /// The scale of `display`: device pixels per logical pixel ([`DisplayInfo::scale`]; 1× for
+    /// an unknown display, and always 1× without the `display-scale` feature). Logical lengths
+    /// of its nodes resolve to `length × scale` device pixels.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, DisplayScale};
+    /// use twine_engine::{Engine, EngineConfig};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let info = DisplayInfo::new(64, 32, ColorFormat::Rgb565).with_scale(DisplayScale::X2);
+    /// let d = e.add_chunked_display(info, 64 * 2 * 8, None).unwrap();
+    /// let expected = if cfg!(feature = "display-scale") { DisplayScale::X2 } else { DisplayScale::ONE };
+    /// assert_eq!(e.display_scale(d), expected);
+    /// ```
+    #[must_use]
+    pub fn display_scale(&self, display: DisplayId) -> DisplayScale {
+        self.display(display).map_or(DisplayScale::ONE, |d| d.info.scale)
     }
 
     /// Replaces the text gamma of the bitmap fonts drawn on `display` (`None`: each font's own,

@@ -60,7 +60,7 @@ fn main() {
     twine_sim::run(
         SimConfig::new(320, 240)
             .title("Gauge")
-            .scale(2)
+            .zoom(2)
             .theme(&GAUGE_THEME),
         app,
     );

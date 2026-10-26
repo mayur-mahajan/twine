@@ -696,7 +696,7 @@ fn assets_drive() -> Vfs {
 }
 
 fn main() {
-    let cfg = SimConfig::new(W as u16, H as u16).title("image_gallery").scale(2);
+    let cfg = SimConfig::new(W as u16, H as u16).title("image_gallery").zoom(2);
     let gif = match GifPlayer::new(SPINNER_GIF) {
         Ok(g) => Some(g),
         Err(e) => {

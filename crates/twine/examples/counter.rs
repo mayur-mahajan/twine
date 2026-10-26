@@ -8,7 +8,7 @@ fn main() {
     twine_sim::run(
         SimConfig::new(320, 240)
             .title("Counter")
-            .scale(2)
+            .zoom(2)
             // The configuration the firmware ships (theme, engine, motion).
             .app_config(twine_demos::config()),
         twine_demos::counter::app,

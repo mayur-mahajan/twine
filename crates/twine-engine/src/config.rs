@@ -175,7 +175,8 @@ pub struct EngineConfig {
     pub long_press_time: Duration,
     /// Repeat period of long-press-repeat events (default 100 ms).
     pub long_press_repeat: Duration,
-    /// Pointer movement in pixels that starts scrolling (default 10).
+    /// Pointer movement in logical pixels that starts scrolling (default 10; scaled to the
+    /// input's display with the `display-scale` feature, like the other distances below).
     pub scroll_limit: i32,
     /// Momentum decay of a scroll throw in percent per input read (default 10): each read
     /// keeps `100 − scroll_throw` percent of the throw vector; 100 or more stops a throw at
@@ -192,13 +193,13 @@ pub struct EngineConfig {
     /// assert_eq!(cfg.scroll_throw.get(), 1);
     /// ```
     pub scroll_throw: NonZeroU8,
-    /// Movement in pixels that makes a gesture (default 50).
+    /// Movement in logical pixels that makes a gesture (default 50).
     pub gesture_limit: i32,
-    /// Minimum velocity of a gesture in pixels per read period (default 3).
+    /// Minimum velocity of a gesture in logical pixels per read period (default 3).
     pub gesture_min_velocity: i32,
     /// Maximum gap between clicks of a double / triple click (default 300 ms).
     pub multi_click_time: Duration,
-    /// Maximum distance in pixels between clicks of a multi-click (default 5).
+    /// Maximum distance in logical pixels between clicks of a multi-click (default 5).
     pub multi_click_distance: i32,
     /// Input device read period while pressed or for polled devices (default 30 ms).
     pub read_period: Duration,

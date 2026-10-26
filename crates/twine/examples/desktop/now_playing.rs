@@ -12,7 +12,7 @@ use twine::prelude::*;
 use crate::art::{Cover, cover};
 use crate::catalog::catalog;
 use crate::player::Entry;
-use crate::theme::{BODY, CAPTION, HEADLINE, LINE, PRESSED, RAISED, S1, S2, S3, S4, S5};
+use crate::theme::{BODY, CAPTION, HEADLINE, LINE, OVERLINE, PRESSED, RAISED, S1, S2, S3, S4, S5};
 use crate::ui::{App, caption, overline, text};
 use crate::viz::{Frame, VizMode, visualizer};
 
@@ -167,16 +167,14 @@ fn shortcuts_legend() -> Flex {
         .into_iter()
         .map(|(cap, what)| {
             row((
-                row(label(cap)
-                    .font(&fonts::MONTSERRAT_10)
-                    .text_color(design::ON_SURFACE))
-                .padding_x(6)
-                .height(18)
-                .radius(4)
-                .bg(RAISED)
-                .border(1, LINE)
-                .align_items(CrossAlign::Center)
-                .scrollable(false),
+                row(label(cap).font(OVERLINE).text_color(design::ON_SURFACE))
+                    .padding_x(6)
+                    .height(18)
+                    .radius(4)
+                    .bg(RAISED)
+                    .border(1, LINE)
+                    .align_items(CrossAlign::Center)
+                    .scrollable(false),
                 caption(what),
             ))
             .gap(6)

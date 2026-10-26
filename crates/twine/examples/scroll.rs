@@ -274,7 +274,7 @@ fn main() {
     twine_sim::init_logging();
     let cfg = SimConfig::new(W as u16, H as u16)
         .title("scroll")
-        .scale(2)
+        .zoom(2)
         .on_raw_key(on_raw_key);
     run_engine(cfg, scene);
 }

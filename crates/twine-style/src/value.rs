@@ -3,12 +3,13 @@
 use core::fmt;
 
 use twine_anim::AnimSpec;
-use twine_core::{Angle, Color, Duration, Fraction, Opa, Scale};
+use twine_core::{Angle, Color, DisplayScale, Duration, Fraction, Opa, Scale};
 use twine_image::ImageSource;
 use twine_render::Gradient;
 use twine_text::Font;
 
 use crate::design::ElementRef;
+use crate::prop::PropId;
 use crate::tracks::TracksRef;
 use crate::transition::TransitionRef;
 use crate::value_types::{
@@ -127,6 +128,7 @@ impl fmt::Display for StyleValue {
             StyleValue::Length(Length::Pct(v)) => write!(f, "{v}%"),
             StyleValue::Length(Length::Content) => f.write_str("content"),
             StyleValue::Length(Length::Dp(v)) => write!(f, "{v}dp"),
+            StyleValue::Length(Length::Dev(v)) => write!(f, "{v}dev"),
             StyleValue::Color(c) => write!(f, "{c}"),
             StyleValue::Opa(o) => write!(f, "opa {}", o.raw()),
             StyleValue::Angle(a) => {
@@ -378,21 +380,94 @@ impl StyleValue {
         T::from_value(self)
     }
 
-    /// The value in pixels of an `Int` or a `Length::Px` (spacing properties such as padding
-    /// are pixel lengths; [`resolve`](crate::resolve) has converted `Dp` by the time a
-    /// resolved value is read).
+    /// The value in pixels of an `Int`, a `Length::Px` or a `Length::Dev` (spacing properties
+    /// such as padding are pixel lengths; [`resolve`](crate::resolve) has converted `Dp`, and
+    /// on a scaled display `Px`, to device pixels by the time a resolved value is read).
     /// `None` for anything else.
+    ///
+    /// ```
+    /// use twine_style::{Length, StyleValue};
+    /// assert_eq!(StyleValue::Length(Length::Dev(4)).as_px(), Some(4));
+    /// assert_eq!(StyleValue::Length(Length::Dp(4)).as_px(), None);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn as_px(self) -> Option<i32> {
         match self {
-            StyleValue::Int(v) | StyleValue::Length(Length::Px(v)) => Some(v),
+            StyleValue::Int(v) | StyleValue::Length(Length::Px(v) | Length::Dev(v)) => Some(v),
             _ => None,
         }
     }
 
-    /// This value with a `Length::Dp` converted to pixels for a `dpi` display; every other
-    /// value is returned unchanged (the engine calls it on resolved values).
+    /// This value of `prop` with a logical length (`Length::Px`) converted to device pixels
+    /// (`Length::Dev`) for a display of `scale` (see [`Length::with_scale`]); every other value,
+    /// and every value at 1×, is returned unchanged. The `radius` circle marker
+    /// ([`Radius::Circle`](crate::Radius::Circle)) is kept. The resolver calls it on resolved
+    /// values with the `display-scale` feature; `Dev` results are final, so scaling twice is
+    /// harmless.
+    ///
+    /// ```
+    /// use twine_core::DisplayScale;
+    /// use twine_style::{Length, PropId, Radius, StyleValue};
+    ///
+    /// let pad = StyleValue::Length(Length::Px(6));
+    /// let scaled = pad.with_scale(PropId::PaddingTop, DisplayScale::X2);
+    /// assert_eq!(scaled, StyleValue::Length(Length::Dev(12)));
+    /// assert_eq!(scaled.with_scale(PropId::PaddingTop, DisplayScale::X2), scaled); // final
+    /// let pill = StyleValue::Length(Radius::Circle.to_length());
+    /// assert_eq!(pill.with_scale(PropId::Radius, DisplayScale::X2), pill);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn with_scale(self, prop: PropId, scale: DisplayScale) -> StyleValue {
+        match self {
+            StyleValue::Length(Length::Px(v))
+                if matches!(prop, PropId::Radius) && v >= twine_render::RADIUS_CIRCLE =>
+            {
+                self
+            }
+            StyleValue::Length(l) => StyleValue::Length(l.with_scale(scale)),
+            other => other,
+        }
+    }
+
+    /// This value for a display of `scale`: [`with_scale`](Self::with_scale) for lengths, and
+    /// a font replaced by the font to draw it with at that scale ([`Font::for_scale`]: a
+    /// [`ScaledFont`](twine_text::ScaledFont)'s variant or a scalable TrueType font's
+    /// rendering; plain fonts are kept). The resolver's display-scale stage.
+    ///
+    /// ```
+    /// use twine_assets::fonts::{MONTSERRAT_14, MONTSERRAT_28};
+    /// use twine_core::DisplayScale;
+    /// use twine_style::{PropId, StyleValue};
+    /// use twine_text::{Font, ScaledFont};
+    ///
+    /// static BODY: Font = {
+    ///     static SET: ScaledFont = ScaledFont::new(&MONTSERRAT_14, &[(DisplayScale::X2, &MONTSERRAT_28)]);
+    ///     SET.font()
+    /// };
+    /// let v = StyleValue::Font(&BODY).for_display(PropId::Font, DisplayScale::X2);
+    /// assert!(matches!(v, StyleValue::Font(f) if core::ptr::eq(f, &MONTSERRAT_28)));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn for_display(self, prop: PropId, scale: DisplayScale) -> StyleValue {
+        match self {
+            StyleValue::Font(f) => StyleValue::Font(f.for_scale(scale)),
+            other => other.with_scale(prop, scale),
+        }
+    }
+
+    /// Whether the display scale can change this value: a logical length (`Length::Px`) or a
+    /// font (see [`for_display`](Self::for_display)).
+    #[inline]
+    #[must_use]
+    pub const fn depends_on_scale(&self) -> bool {
+        matches!(self, StyleValue::Length(Length::Px(_)) | StyleValue::Font(_))
+    }
+
+    /// This value with a `Length::Dp` converted to logical pixels for a `dpi` display; every
+    /// other value is returned unchanged (the engine calls it on resolved values).
     #[inline]
     #[must_use]
     pub const fn with_dpi(self, dpi: u16) -> StyleValue {

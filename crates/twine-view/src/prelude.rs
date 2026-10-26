@@ -29,8 +29,8 @@ pub use crate::{VectorCanvas, vector_canvas};
 pub use twine_anim::{Anim, AnimSpec, Easing, Interpolate, Motion, Repeat};
 pub use twine_core::fault::{CapacityFault, FaultCounts, FaultKind, Faults};
 pub use twine_core::{
-    Angle, AngularSpeed, Color, Duration, Fraction, Insets, Instant, Limits, Opa, Partition, Point, Rect,
-    Rotation, Scale, Size, Validity, ValidityStatus,
+    Angle, AngularSpeed, Color, DisplayScale, Duration, Fraction, Insets, Instant, Limits, Opa, Partition,
+    Point, Rect, Rotation, Scale, Size, Validity, ValidityStatus,
 };
 pub use twine_engine::{
     BufferMode, BufferSpec, DEAD_NODE, DisplayCmd, DisplayControlFault, DisplayHealth, DisplayState, DrawCx,
@@ -53,9 +53,9 @@ pub use twine_render::{BlendMode, BorderSide, Gradient, ShadowDsc};
 pub use twine_style::design;
 pub use twine_style::{
     Align, Anchor, Axis, BaseDir, CrossAlign, FlexDirection, FlexFlow, GridAlign, GridSpan, GridTrack,
-    GridTracks, LayoutKind, Length, MainAlign, Part, PropId, Props, Radius, ScrollSnap, ScrollbarMode,
-    Selector, Side, Sides, State, Style, StyleBuf, StyleProp, StyleRef, Transition, elements, grid_tracks,
-    style,
+    GridTracks, LayoutKind, Length, LengthUnits, MainAlign, Part, PropId, Props, Radius, ScrollSnap,
+    ScrollbarMode, Selector, Side, Sides, State, Style, StyleBuf, StyleProp, StyleRef, Transition, elements,
+    grid_tracks, style,
 };
 pub use twine_text::{Font, LongMode, Symbol, TextAlign, TextDecor};
 pub use twine_theme::{FontScale, Palette, Theme, ThemeMode, Tone};

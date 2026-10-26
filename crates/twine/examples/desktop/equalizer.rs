@@ -18,7 +18,7 @@ use twine::prelude::*;
 use crate::canvas::canvas;
 use crate::eq::{self, CURVE_POINTS, Equalizer, LABELS, PRESET_NAMES, RANGE, Response};
 use crate::paint::{circle, ring};
-use crate::theme::{BODY, CAPTION, DISPLAY, LINE, RAISED, S1, S2, S3, S4, S5, palette};
+use crate::theme::{self, BODY, CAPTION, DISPLAY, LINE, MICRO, RAISED, S1, S2, S3, S4, S5, palette};
 use crate::ui::{App, caption, overline, pill, slim_slider};
 
 /// Where 20 Hz, 50 Hz, 100 Hz, … sit on the logarithmic axis, in per-mille:
@@ -145,9 +145,7 @@ fn band(eq: Equalizer, i: usize) -> Flex {
         label(LABELS[i])
             .font(CAPTION)
             .text_color(design::ON_SURFACE_MUTED),
-        label("Hz")
-            .font(&fonts::MONTSERRAT_8)
-            .text_color(crate::theme::FAINT),
+        label("Hz").font(MICRO).text_color(crate::theme::FAINT),
     ))
     .width(44)
     .gap(S1)
@@ -160,32 +158,37 @@ fn band(eq: Equalizer, i: usize) -> Flex {
 
 fn paint_response(r: Response, cx: &mut DrawCx<'_, '_>) {
     let a = cx.coords();
+    // Sizes below are logical pixels (`px`): the canvas draws in device pixels.
+    let scale = cx.scale();
+    let px = |v: i32| scale.to_device(v);
     // The plot area, leaving room for the dB labels (left) and the Hz labels (below).
-    let plot = Rect::new(a.x0 + 38, a.y0 + 10, a.x1 - 22, a.y1 - 22);
+    let plot = Rect::new(a.x0 + px(38), a.y0 + px(10), a.x1 - px(22), a.y1 - px(22));
     let (pw, ph) = (plot.width(), plot.height());
     let mid = plot.y0 + ph / 2;
     let y_of = |db10: i32| mid - db10.clamp(-GRAPH_DB10, GRAPH_DB10) * (ph / 2) / GRAPH_DB10;
     let x_of = |permille: i32| plot.x0 + permille * (pw - 1) / 1000;
     let mut label_dsc = cx.text_dsc(Part::Main);
-    label_dsc.font = &fonts::MONTSERRAT_10;
+    label_dsc.font = theme::OVERLINE;
     label_dsc.color = palette::FAINT;
 
     // Panel and grid.
-    crate::paint::rrect(cx.painter(), a, 12, palette::SURFACE, Opa::COVER);
+    crate::paint::rrect(cx.painter(), a, px(12), palette::SURFACE, Opa::COVER);
     for (db10, text) in [(120, "+12"), (60, "+6"), (0, "0"), (-60, "-6"), (-120, "-12")] {
         let y = y_of(db10);
         let opa = if db10 == 0 { Opa::P50 } else { Opa::P20 };
         cx.painter()
-            .fill(Rect::from_xywh(plot.x0, y, pw, 1), palette::FAINT, opa);
+            .fill(Rect::from_xywh(plot.x0, y, pw, px(1)), palette::FAINT, opa);
         label_dsc.align = TextAlign::Right;
-        cx.draw_text(Rect::new(a.x0, y - 6, plot.x0 - 8, y + 6), text, &label_dsc);
+        let label = Rect::new(a.x0, y - px(6), plot.x0 - px(8), y + px(6));
+        cx.draw_text(label, text, &label_dsc);
     }
     label_dsc.align = TextAlign::Center;
     for (pos, text) in HZ_TICKS {
         let x = x_of(pos);
         cx.painter()
-            .fill(Rect::from_xywh(x, plot.y0, 1, ph), palette::FAINT, Opa::P20);
-        cx.draw_text(Rect::new(x - 20, plot.y1 + 6, x + 20, a.y1), text, &label_dsc);
+            .fill(Rect::from_xywh(x, plot.y0, px(1), ph), palette::FAINT, Opa::P20);
+        let label = Rect::new(x - px(20), plot.y1 + px(6), x + px(20), a.y1);
+        cx.draw_text(label, text, &label_dsc);
     }
 
     // The curve's points: equal x steps, because the curve is sampled at log-spaced
@@ -202,6 +205,7 @@ fn paint_response(r: Response, cx: &mut DrawCx<'_, '_>) {
     } else {
         (palette::FAINT, palette::FAINT, palette::FAINT)
     };
+    let (stroke_w, handle_r, handle_w) = (px(3), px(5), px(2));
     // The area between the curve and 0 dB, one column at a time.
     let p = cx.painter();
     for w in pts.windows(2) {
@@ -220,7 +224,7 @@ fn paint_response(r: Response, cx: &mut DrawCx<'_, '_>) {
         &twine::render::LineDsc {
             color: stroke,
             opa: Opa::COVER,
-            width: 3,
+            width: stroke_w,
             round_start: true,
             round_end: true,
             ..twine::render::LineDsc::default()
@@ -229,7 +233,7 @@ fn paint_response(r: Response, cx: &mut DrawCx<'_, '_>) {
     // A handle per band at its slider's gain.
     for (i, &x) in BAND_X.iter().enumerate() {
         let c = Point::new(x_of(x), y_of(i32::from(r.gains[i])));
-        circle(p, c, 5, palette::SURFACE, Opa::COVER);
-        ring(p, c, 5, 2, stroke, Opa::COVER);
+        circle(p, c, handle_r, palette::SURFACE, Opa::COVER);
+        ring(p, c, handle_r, handle_w, stroke, Opa::COVER);
     }
 }

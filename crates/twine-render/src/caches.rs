@@ -6,6 +6,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::any::Any;
 
+use twine_core::DisplayScale;
+
 use crate::circle::CircleCache;
 use crate::gradient::{Gradient, GradientCache};
 use crate::shadow::ShadowCache;
@@ -191,6 +193,33 @@ impl RenderCaches {
             #[cfg(feature = "display-integrity")]
             fresh: false,
         }
+    }
+
+    /// Grows the caches whose need grows with the square of the drawing size (the blurred
+    /// shadow corners) for a display of `scale`, so shadows keep their full blur on a hi-DPI
+    /// display (a 2× display needs 4× the corner memory). Never shrinks; a 1× scale changes
+    /// nothing. Allocates: the engine calls it when a scaled display is added or changes its
+    /// scale (feature `display-scale`), never while drawing.
+    ///
+    /// ```
+    /// use twine_core::DisplayScale;
+    /// use twine_render::{RenderCaches, RenderConfig};
+    ///
+    /// let mut caches = RenderCaches::new(&RenderConfig::default());
+    /// let before = caches.cache_bytes();
+    /// caches.reserve_for_scale(DisplayScale::ONE);
+    /// assert_eq!(caches.cache_bytes(), before);
+    /// caches.reserve_for_scale(DisplayScale::X2);
+    /// assert!(caches.cache_bytes() > before);
+    /// ```
+    pub fn reserve_for_scale(&mut self, scale: DisplayScale) {
+        if scale.is_one() {
+            return;
+        }
+        let s = u64::from(scale.raw_256());
+        // ⌈scale²⌉: `s ≤ 2^11`, so `s² < 2^22`.
+        let factor = s.saturating_mul(s).saturating_add(65_535) >> 16;
+        self.shadow.reserve_factor(usize::try_from(factor).unwrap_or(1));
     }
 
     /// The configuration.

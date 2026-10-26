@@ -23,7 +23,7 @@ use twine::prelude::*;
 
 use crate::art::{Cover, cover};
 use crate::catalog::catalog;
-use crate::theme::{BODY, DISPLAY, FAINT, LINE, PRESSED, RAISED, S2, S3, S5};
+use crate::theme::{BODY, DISPLAY, FAINT, LINE, MICRO, PRESSED, RAISED, S2, S3, S5};
 use crate::ui::{App, Glyph, Icon, caption, icon, icon_button, overline, text};
 use crate::util::{clock, summary};
 use crate::viz::{icon_bars, playing_icon};
@@ -216,7 +216,7 @@ fn sort_header(app: App, sort: Signal<(Column, bool)>, col: Column, name: &'stat
     let row_view = row((
         overline(name),
         label(text!("{}", arrow()))
-            .font(&fonts::MONTSERRAT_8)
+            .font(MICRO)
             .text_color(design::PRIMARY),
     ))
     .width(width)

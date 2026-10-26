@@ -8,7 +8,7 @@ use std::time::Duration as StdDuration;
 
 use std::time::Instant as StdInstant;
 
-use twine_core::{ColorFormat, Duration, Instant};
+use twine_core::{ColorFormat, DisplayScale, Duration, Instant};
 use twine_engine::{BufferMode, BufferSpec, DisplayId, Engine, EngineConfig, InputId, Wake};
 use twine_hal::{Clock, DisplayDriver, DrawBufferMem};
 
@@ -735,6 +735,51 @@ impl SimApp {
         }
     }
 
+    /// Lays the panel out and draws it at `scale` from the next frame on: the panel keeps its
+    /// logical size ([`SimConfig::width`] × [`height`](SimConfig::height)) and gets `width ×
+    /// scale` device pixels (`Engine::set_display_scale`). The window does this itself for
+    /// [`SimScale::Auto`](crate::SimScale::Auto) and fixed scales; call it to switch scales from a
+    /// test or a hotkey. Only engine and declarative apps with a partial-buffer panel can change
+    /// their scale; for the others (framebuffer panels, multi-panel and framebuffer programs) it
+    /// logs a warning and returns `false`.
+    ///
+    /// ```
+    /// use twine_core::DisplayScale;
+    /// use twine_sim::{SimApp, SimConfig};
+    ///
+    /// let mut app = SimApp::engine(SimConfig::new(64, 32), |_| {}).unwrap();
+    /// assert!(app.set_display_scale(DisplayScale::X2));
+    /// app.engine_mut().unwrap().step(twine_core::Instant::from_millis(0));
+    /// assert_eq!(app.display_scale(), DisplayScale::X2);
+    /// ```
+    pub fn set_display_scale(&mut self, scale: DisplayScale) -> bool {
+        match &mut self.program {
+            Program::Engine(p) if !p.framebuffer => match p.engine.set_display_scale(p.display, scale) {
+                Ok(()) => true,
+                Err(e) => {
+                    log::warn!(target: "twine::sim", "display scale {scale}: {e}");
+                    false
+                }
+            },
+            _ => {
+                log::warn!(
+                    target: "twine::sim",
+                    "display scale {scale}: only single-panel apps with partial buffers can be scaled; staying at 1×"
+                );
+                false
+            }
+        }
+    }
+
+    /// The display scale the panel is laid out at (1× for programs that cannot be scaled).
+    #[must_use]
+    pub fn display_scale(&self) -> DisplayScale {
+        match &self.program {
+            Program::Engine(p) => p.engine.display_scale(p.display),
+            Program::Framebuffer { .. } | Program::Panels(_) => DisplayScale::ONE,
+        }
+    }
+
     /// Runs `f` instead of `Engine::step` for engine apps (e.g. the declarative `Ui` update
     /// cycle); the simulator keeps notifying input changes and waiting for the returned
     /// [`Wake`].
@@ -853,6 +898,12 @@ impl SimApp {
     /// [`SimError::Script`] when the script does not parse.
     pub fn run_headless(mut self) -> Result<HeadlessReport, SimError> {
         let h = self.cfg.headless.clone().unwrap_or_default();
+        // A fixed scale renders headless too; `Auto` has no monitor: 1×.
+        if let crate::SimScale::Fixed(s) = self.cfg.display_scale {
+            if !s.is_one() {
+                self.set_display_scale(s);
+            }
+        }
         if !matches!(self.clock.kind, ClockKind::Manual(_)) {
             self.clock = SimClock::manual();
         }
@@ -936,9 +987,13 @@ impl SimApp {
     }
 
     fn apply_input(&mut self, action: &ScriptAction) {
+        // Script coordinates are logical pixels: the same script drives the app at any
+        // display scale.
+        let s = self.display_scale();
+        let device = |p: &twine_core::Point| twine_core::Point::new(s.to_device(p.x), s.to_device(p.y));
         let ev = match action {
-            ScriptAction::Press(p) => InputEvent::Pointer(PointerEvent::Press(*p)),
-            ScriptAction::Move(p) => InputEvent::Pointer(PointerEvent::Move(*p)),
+            ScriptAction::Press(p) => InputEvent::Pointer(PointerEvent::Press(device(p))),
+            ScriptAction::Move(p) => InputEvent::Pointer(PointerEvent::Move(device(p))),
             ScriptAction::Release => InputEvent::Pointer(PointerEvent::Release),
             ScriptAction::Key(k, pressed) => InputEvent::Key(*k, *pressed),
             ScriptAction::Wheel(d) => InputEvent::Wheel(*d),

@@ -5,7 +5,7 @@ use alloc::boxed::Box;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use twine_core::Color;
-use twine_core::{Angle, Point, Rect, Scale, Size};
+use twine_core::{Angle, DisplayScale, Point, Rect, Scale, Size};
 use twine_engine::{
     DrawCx, Engine, EngineError, Event, EventCode, EventCx, EventResult, MeasureCx, NodeId, OBJ_FLAGS,
     ObjFlags, Widget, WidgetClass, WidgetCx,
@@ -82,7 +82,11 @@ impl ImageAlign {
 /// encoded bytes (QOI, PNG, …) decoded through the engine's decoders and cache, a file read
 /// through [`Engine::set_file_source`], or a symbol drawn as text.
 ///
-/// Its content size is the source's size (untransformed). Rotation and scale happen around
+/// Its content size is the source's size (untransformed) in logical pixels: on a scaled
+/// (hi-DPI) display the image is drawn zoomed by the display scale, or — for an
+/// [`ImageSource::Scaled`] image — from the rendering made for that scale, so it keeps its size
+/// and stays sharp (`ImageAlign::Tile` repeats the source's own pixels, unzoomed). Rotation and
+/// scale happen around
 /// the pivot (default: the image center) with optional anti-aliasing; the widget's extra draw
 /// size covers the transformed bounds. `ImageRecolor` / `ImageRecolorOpacity` recolor the pixels
 /// and `ImageOpacity` fades them (styles of `Part::Main`). The theme gives images no styles
@@ -105,9 +109,17 @@ impl ImageAlign {
 #[derive(Debug)]
 pub struct Image {
     src: Option<ImageSource>,
+    /// The rendering of a [`ImageSource::Scaled`] source drawn on this display (`None`: `src`).
+    rendering: Option<ImageSource>,
+    /// The header of the drawn source.
     header: Option<ImageHeader>,
-    /// Source size (the content size).
+    /// The content size in device pixels: the drawn source's size × `zoom`.
     size: Size,
+    /// Device pixels per pixel of the drawn source: the display scale over the scale the
+    /// source was made for (1 on 1× displays and for symbols, which follow the font).
+    zoom: Scale,
+    /// The display scale the source was loaded for.
+    display_scale: DisplayScale,
     rotation: Angle,
     scale_x: Scale,
     scale_y: Scale,
@@ -139,6 +151,7 @@ static WARN_DRAW: AtomicBool = AtomicBool::new(false);
 pub(crate) fn same_source(a: &ImageSource, b: &ImageSource) -> bool {
     match (a, b) {
         (ImageSource::Static(x), ImageSource::Static(y)) => core::ptr::eq(*x, *y),
+        (ImageSource::Scaled(x), ImageSource::Scaled(y)) => core::ptr::eq(*x, *y),
         (ImageSource::Encoded(x), ImageSource::Encoded(y)) | (ImageSource::Svg(x), ImageSource::Svg(y)) => {
             core::ptr::eq(*x, *y)
         }
@@ -203,8 +216,11 @@ impl Image {
     pub const fn new() -> Self {
         Self {
             src: None,
+            rendering: None,
             header: None,
             size: Size::ZERO,
+            zoom: Scale::ONE,
+            display_scale: DisplayScale::ONE,
             rotation: Angle::deci_deg(0),
             scale_x: Scale::ONE,
             scale_y: Scale::ONE,
@@ -225,13 +241,15 @@ impl Image {
         self.src.as_ref()
     }
 
-    /// The source's header (`None` without a source, for symbols and unreadable sources).
+    /// The header of the drawn source (for an [`ImageSource::Scaled`] image, of the rendering
+    /// picked for the display; `None` without a source, for symbols and unreadable sources).
     #[must_use]
     pub fn header(&self) -> Option<ImageHeader> {
         self.header
     }
 
-    /// The source's size (0×0 without a readable source).
+    /// The image's untransformed size on the display in device pixels: the source's size,
+    /// zoomed by the display scale on a scaled display (0×0 without a readable source).
     #[must_use]
     pub fn src_size(&self) -> Size {
         self.size
@@ -258,7 +276,11 @@ impl Image {
     /// The pivot relative to the image's top-left corner.
     #[must_use]
     pub fn pivot(&self) -> Point {
-        self.pivot.unwrap_or(Point::new(self.size.w / 2, self.size.h / 2))
+        let s = self.display_scale;
+        self.pivot
+            .map_or(Point::new(self.size.w / 2, self.size.h / 2), |p| {
+                Point::new(s.to_device(p.x), s.to_device(p.y))
+            })
     }
 
     /// Whether transformed drawing is anti-aliased.
@@ -389,6 +411,38 @@ impl Image {
         }
     }
 
+    /// The pixel size of the drawn source (the content size before the display zoom).
+    fn source_px(&self) -> Size {
+        self.header
+            .map_or(self.size, |h| Size::new(i32::from(h.w), i32::from(h.h)))
+    }
+
+    /// `area` (the image's device-size rectangle) and `dsc` for drawing the source's own pixels
+    /// zoomed to that rectangle: the source-size rectangle and the zoom folded into the scale,
+    /// with the pivot and origin moved so the result covers exactly what the device-size image
+    /// transformed around `dsc.pivot` would (`P + T·(z·p − P)` = `P/z + T·z·(p − P/z)` shifted
+    /// by `P − P/z`).
+    fn unzoomed<'d>(
+        &self,
+        area: Rect,
+        mut dsc: twine_render::ImageDsc<'d>,
+    ) -> (Rect, twine_render::ImageDsc<'d>) {
+        let z = self.zoom;
+        let p = dsc.pivot;
+        let pz = Point::new(z.inverse_apply(p.x), z.inverse_apply(p.y));
+        let px = self.source_px();
+        let area = Rect::from_xywh(
+            area.x0.saturating_add(p.x).saturating_sub(pz.x),
+            area.y0.saturating_add(p.y).saturating_sub(pz.y),
+            px.w,
+            px.h,
+        );
+        dsc.pivot = pz;
+        dsc.scale_x = mul_scale(dsc.scale_x, z);
+        dsc.scale_y = mul_scale(dsc.scale_y, z);
+        (area, dsc)
+    }
+
     /// Changes a transform parameter with `f`: invalidates the old transformed area,
     /// updates the extra draw size, invalidates the new area (LVGL `lv_image_set_rotation`).
     fn update_transform(&mut self, cx: &mut WidgetCx<'_>, f: impl FnOnce(&mut Self)) {
@@ -412,9 +466,20 @@ impl Image {
         self.load(cx, src);
     }
 
-    /// Reads the header of `src` and stores it (also used to re-measure symbols).
+    /// Reads the header of `src` and stores it (also used to re-measure symbols and to pick
+    /// the rendering again after a display-scale change).
     fn load(&mut self, cx: &mut WidgetCx<'_>, src: ImageSource) {
-        let (header, size) = match &src {
+        let scale = cx.scale();
+        let (shown, made_for) = src.for_scale(scale);
+        self.display_scale = scale;
+        self.zoom = if matches!(shown, ImageSource::Symbol(_)) {
+            Scale::ONE // drawn with the node's font, which follows the scale itself
+        } else {
+            zoom(scale, made_for)
+        };
+        self.rendering = matches!(src, ImageSource::Scaled(_)).then(|| shown.clone());
+        let z = self.zoom;
+        let (header, size) = match &shown {
             ImageSource::Symbol(s) => {
                 let d = cx.text_dsc(Part::Main);
                 let mut l = TextLayout::new(s, d.font);
@@ -423,7 +488,10 @@ impl Image {
                 (None, l.measure())
             }
             other => match cx.engine_mut().image_header(other) {
-                Ok(h) => (Some(h), Size::new(i32::from(h.w), i32::from(h.h))),
+                Ok(h) => (
+                    Some(h),
+                    Size::new(z.apply(i32::from(h.w)), z.apply(i32::from(h.h))),
+                ),
                 Err(e) if matches!(other, ImageSource::File(_) | ImageSource::Svg(_)) => {
                     // LVGL draws a placeholder for files it cannot open; so do we (also for
                     // SVG without the `svg` feature or with a malformed document).
@@ -433,7 +501,7 @@ impl Image {
                     self.src = Some(src);
                     self.header = None;
                     self.missing = true;
-                    let s = MISSING_PLACEHOLDER_SIZE;
+                    let s = scale.to_device(MISSING_PLACEHOLDER_SIZE);
                     self.size_changed(cx, Size::new(s, s));
                     return;
                 }
@@ -719,6 +787,11 @@ impl Widget for Image {
                 if let Some(ImageSource::Symbol(s)) = self.src {
                     // The font may have changed (LVGL sets the symbol source again).
                     self.load(&mut wcx, ImageSource::Symbol(s));
+                } else if wcx.scale() != self.display_scale {
+                    // The display scale changed: another rendering, another zoom.
+                    if let Some(src) = self.src.clone() {
+                        self.load(&mut wcx, src);
+                    }
                 } else {
                     let ext = self.ext_for(wcx.coords());
                     wcx.refresh_ext_draw_with(ext);
@@ -741,7 +814,7 @@ impl Widget for Image {
 
     fn draw(&self, cx: &mut DrawCx<'_, '_>) {
         cx.draw_base(Part::Main);
-        let Some(src) = &self.src else {
+        let Some(src) = self.rendering.as_ref().or(self.src.as_ref()) else {
             return;
         };
         if self.size.w == 0 || self.size.h == 0 {
@@ -812,8 +885,10 @@ impl Widget for Image {
                     // SAFE-ARITH: `|tiles · len| ≤ |d| + |len| < 2^34`.
                     util::sat_i32(o.wrapping_add(tiles.wrapping_mul(l)))
                 };
-                let sx = grid(x0, clip.x0, size.w);
-                let sy = grid(y0, clip.y0, size.h);
+                // Tiles repeat the drawn source's pixels (not zoomed).
+                let tile = self.source_px();
+                let sx = grid(x0, clip.x0, tile.w);
+                let sy = grid(y0, clip.y0, tile.h);
                 dsc.tile = true;
                 (Rect::new(sx, sy, clip.x1, clip.y1), clip)
             }
@@ -833,6 +908,11 @@ impl Widget for Image {
             self.draw_svg(cx, bytes, area, clip, &dsc);
             return;
         }
+        let (area, dsc) = if self.zoom == Scale::ONE || dsc.tile {
+            (area, dsc)
+        } else {
+            self.unzoomed(area, dsc)
+        };
         let r = cx.with_clip(clip, |cx| {
             cx.with_images(|painter, icx| with_pixels(src, icx, |px| painter.image(area, px, &dsc)))
         });
@@ -856,6 +936,26 @@ impl Widget for Image {
             self.set_scale(cx, s);
         }
     }
+}
+
+/// Device pixels per source pixel for a source made for `made_for` on a display of `scale`.
+fn zoom(scale: DisplayScale, made_for: DisplayScale) -> Scale {
+    // `raw ≤ 2^11` each: the quotient is at most 2^12 (16×); `made_for ≥ ½×` (never zero).
+    // `made_for ≥ ½×` (never zero): the fallback is never taken.
+    let raw = (u32::from(scale.raw_256()) << 8)
+        .checked_div(u32::from(made_for.raw_256()))
+        .unwrap_or(256);
+    Scale::from_raw_256(u16::try_from(raw).unwrap_or(u16::MAX))
+}
+
+/// `a × b` (256 = 1×), rounded, at least 1/256, saturating.
+fn mul_scale(a: Scale, b: Scale) -> Scale {
+    // SAFE-ARITH: two `u16`s: the product is below 2^32.
+    let raw = u32::from(a.raw_256())
+        .wrapping_mul(u32::from(b.raw_256()))
+        .wrapping_add(128)
+        >> 8;
+    Scale::from_raw_256(u16::try_from(raw.max(1)).unwrap_or(u16::MAX))
 }
 
 /// Renders `doc` at `w` × `h` into `out` as transparent-background `Argb8888` pixels, with a

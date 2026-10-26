@@ -117,7 +117,7 @@ fn main() {
     twine_sim::run(
         SimConfig::new(320, 240)
             .title("navigation")
-            .scale(2)
+            .zoom(2)
             .theme(&lvgl::THEME),
         app,
     );

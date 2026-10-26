@@ -33,13 +33,17 @@ an ESP32-S3 driving a QSPI AMOLED and in a window on Linux, macOS or Windows.
   decoders, color formats, fonts, vector graphics and SVG, run-time TrueType, the file system,
   themes and drivers are cargo features of `twine`, and Lottie is a crate of its own
   (`twine-lottie`): what you don't enable isn't compiled.
+- **From a watch panel to a Retina desktop.** Sizes are logical pixels (or `Dp` for panels of
+  different density); on a hi-DPI screen the same UI renders sharp at the display scale —
+  2×, 1.25×, 1.5× — with fonts and images that follow the scale, and follows a window across
+  monitors. Desktop-only (`display-scale`): firmware links none of it.
 - **No OS, executor or chip assumed.** Run it bare metal (`twine::run::blocking`), on
   [embassy](https://embassy.dev) (`twine::embassy::run`), on an RTOS task, or on a desktop
   host. Other tasks and interrupts talk to the UI through interrupt-safe `Channel`s,
   `Latest` cells and `Outbox`es.
-- **Ready for certification.** An opt-in safety profile with bounded memory and time, no
-  panics in library code, faults instead of crashes, display-integrity checks, partitioned
-  runtimes and the evidence an assessor asks for ([details below](#safety-profile)).
+- **Certification (under development).** An opt-in safety profile with bounded memory and
+  time, no panics in library code, faults instead of crashes, display-integrity checks,
+  partitioned runtimes and the evidence an assessor asks for ([details below](#safety-profile)).
 - **Testable.** `TestUi` drives an app headless with clicks, keys and time; golden-image tests
   check every pixel; the simulator replays scripts in CI.
 
@@ -86,7 +90,7 @@ fn counter(cx: Scope) -> impl View {
 }
 
 fn main() {
-    let window = twine_sim::SimConfig::new(320, 240).title("Counter").scale(2);
+    let window = twine_sim::SimConfig::new(320, 240).title("Counter").zoom(2);
     twine_sim::run(window, counter);
 }
 ```
@@ -208,6 +212,7 @@ With embassy, `twine::embassy::run(ui).await` replaces the blocking loop.
 | **Animation** | tweens, timelines, easing curves (including overshoot and bounce), style transitions, screen-load animations, a global motion preference (reduced motion) |
 | **Text** | Montserrat at 8–48 px, DejaVu, Source Han Sans (CJK), Font Awesome symbols — hinted at build time (crisp one-pixel stems) with text gamma by polarity —, your own fonts generated at build time (`twine-build`, `include_font!`) and subset to the characters your translations and strings use, font fallback, bidirectional text, Arabic and Persian shaping, compile-time translations (Fluent / `.po` / TOML compiled by `twine-build`; `tr!` with compile-time checked arguments, CLDR plurals, per-language direction and font), selection and editing |
 | **Images & graphics** | QOI, PNG, JPEG, GIF, BMP and LZ4 decoders, rotation, scaling and recoloring; gradients, shadows, masks, rounded corners; vector paths, strokes, dashes and SVG icons |
+| **Units & hi-DPI** | logical pixels, density-independent `Dp` and device pixels (`8`, `8.dp()`, `1.dev()`); a display scale (2×, 1.25×, 1.5× …) applied once when styles resolve, changeable at run time; fonts that follow the scale (`scaled_font!`: bitmap renderings or a TrueType face) and scaled images ([guide](crates/twine/src/guide/units.md)) |
 | **Displays & input** | RGB565, RGB888, XRGB8888, ARGB8888, L8 and 1-bit formats; hardware or software rotation; partial, double-buffered, full-frame and direct buffer modes; pointer, keypad, encoder and button inputs with focus groups and gestures |
 | **Drivers** | ILI9341, ILI9342, ILI9488, ST7735, ST7789, ST7796, GC9A01, SH8601, CO5300, RM67162, JD9853, SSD1306 and SH1106 panels; XPT2046, FT6x36, GT911, CST816S, AXS5106L and STMPE811 touch; SPI, SPI+DMA, QSPI, I80 and I2C buses; DMA2D on STM32; an `embedded-graphics` adapter |
 | **Data flow** | signals, memos, effects, scopes; `Channel`, `Latest` and `Outbox` between the UI and interrupts, tasks or threads; typed navigation with leave guards; modals; context for app-wide stores ([guide](crates/twine/src/guide/app_state.md)) |
@@ -256,14 +261,19 @@ fn app(cx: Scope) -> impl View {
 }
 
 fn main() {
-    let window = SimConfig::new(960, 600).title("Twine Player").format(ColorFormat::Xrgb8888);
+    let window = SimConfig::new(960, 600) // logical pixels
+        .title("Twine Player")
+        .display_scale(SimScale::Auto) // sharp on Retina, 1.25×, 1.5× …
+        .format(ColorFormat::Xrgb8888);
     twine_sim::run(window.theme(&theme::THEME), app);
 }
 ```
 
-The window has a fixed logical size with integer scaling (`.scale(2)`): Twine draws its own
-widgets pixel-exactly, the same way it does on a panel — there are no native controls,
-resizable layouts or system clipboard yet. For kiosks and appliances without a window system,
+The window has a fixed logical size and renders at the monitor's display scale: text comes from
+the TrueType face at `size × scale` (`scaled_font!`), so it is as sharp as a native app's, and
+moving the window to another monitor re-renders it at that monitor's scale. Twine draws its own
+widgets, the same way it does on a panel — there are no native controls, resizable layouts or
+system clipboard yet. For kiosks and appliances without a window system,
 the [`linux_fbdev`](crates/twine/examples/linux_fbdev.rs) example drives `/dev/fb0` and an
 `evdev` touchscreen directly.
 
@@ -306,6 +316,10 @@ shared by the simulator, the firmware and the tests.
   view, animations within the motion preference, and tests — the `gauge` example. Its last
   section covers **components** (`#[component]`): a function composing views, used like a
   built-in widget (`meter(rpm).range(0..=8000).padding(4)`).
+- **Units and display scale** (`twine::guide::units`,
+  [source](crates/twine/src/guide/units.md)): logical pixels, `Dp` and device pixels; how a
+  display's scale turns them into pixels; custom drawing, fonts and images that stay sharp on
+  hi-DPI screens; the simulator's `SimScale` — the `desktop` example.
 - **Application state** (`twine::guide::app_state`,
   [source](crates/twine/src/guide/app_state.md)): the store pattern for large applications —
   a `Copy` struct of signals and memos with action methods, provided as context
@@ -321,7 +335,7 @@ mechanisms (faults, limits, hooks, evidence), the application owns the policy.
 - **`twine/safety`** refuses the parts unsuited to certifiable products (floating point,
   run-time files and fonts, the performance overlay) at compile time and denies panicking
   code in the library: no unchecked indexing, no unchecked overflow, no `unwrap`. Every
-  remaining panic site is listed in [`docs/safety/panics.md`](docs/safety/panics.md).
+  remaining panic site is justified in the code.
 - **Bounded memory and time.** Preallocated `Limits` bound every growing structure;
   `Ui::seal()` turns any later allocation into a fault; a step budget bounds each update and
   reports overruns; arena generations widen to 48 bits so no handle is ever reused within a
@@ -334,9 +348,9 @@ mechanisms (faults, limits, hooks, evidence), the application owns the policy.
   image — e.g. a safety-critical display next to a non-critical one — each with its own
   runtime, limits, faults, seal, step budget and heartbeat, so a fault in one cannot change
   the other (`cargo xtask sim partitions`). Zero cost without the feature.
-- **Evidence.** `AppConfig::audit_report` dumps the configuration; requirements, a
-  traceability matrix, coverage (MC/DC) and the safety manual live in
-  [`docs/safety/`](docs/safety/profile.md).
+- **Evidence.** `AppConfig::audit_report` dumps the configuration; a requirements
+  traceability matrix (`cargo xtask traceability`) and coverage including MC/DC
+  (`cargo xtask coverage --mcdc`) support an assessment.
 
 ## Crate map
 
@@ -406,10 +420,16 @@ the debug hotkeys: refresh areas (F2), layout bounds (F3), the performance overl
 motion, pause and single step (F5–F7), a tree dump (F8), screenshots (F9), frame recording
 (F10) and the next theme mode (F12).
 
+The window is sized in logical units, so it has its intended size on every monitor; `.zoom(n)`
+magnifies a small panel. Panels are emulated at 1×; a desktop application asks for the
+monitor's scale with `.display_scale(SimScale::Auto)` and renders sharp on Retina and other
+hi-DPI screens, following the window across monitors (the `desktop` example does).
+
 The simulator also runs headless with `.twinescript` scripts (taps, drags, keys, text,
-screenshots) for CI smoke runs and snapshot tests, with full control of time.
-`TWINE_SIM_SCALE`, `TWINE_SIM_FORMAT`, `TWINE_SIM_BUS_HZ`, `TWINE_SIM_ROTATION` and
-`TWINE_SIM_BUFFERS` override the configuration without recompiling.
+screenshots; coordinates in logical pixels) for CI smoke runs and snapshot tests, with full
+control of time. `TWINE_SIM_ZOOM`, `TWINE_SIM_DISPLAY_SCALE` (`auto` or a percentage),
+`TWINE_SIM_FORMAT`, `TWINE_SIM_BUS_HZ`, `TWINE_SIM_ROTATION` and `TWINE_SIM_BUFFERS` override
+the configuration without recompiling.
 
 For [embedded-graphics] projects, `cargo xtask sim eg_simulator` runs the counter demo inside
 `embedded-graphics-simulator` through the `twine-embedded-graphics` adapter. It needs SDL2

@@ -29,6 +29,11 @@ safety = [
 ## Display-integrity mechanisms: frame observers, region re-render / read-back /
 ## checks, `ObjFlags::SAFETY_CRITICAL`, the validity marks and the fail-safe screen (`docs/safety/profile.md` § 11); implied by `safety`. Off: not linked.
 display-integrity = ["twine-render/display-integrity", "twine-text/display-integrity"]
+## Display scale (hi-DPI desktops): logical lengths resolve to `length × DisplayInfo::scale`
+## device pixels, input thresholds scale with the display, and `Engine::set_display_scale`
+## changes a display's scale at run time. Off (every embedded build): displays are laid out at 1×
+## and none of it is linked.
+display-scale = ["twine-style/display-scale"]
 ## Partitioned runtimes (ADR-001): `Engine::set_partition` names one of 2 partitions instead
 ## of 1 (the engine's growth is noted in that partition's seal domain). Not implied by `safety`.
 partitions = ["twine-core/partitions", "twine-anim/partitions"]

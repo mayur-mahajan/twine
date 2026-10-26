@@ -124,7 +124,7 @@ macro_rules! __prop_table {
                 /// Moves the object after layout; percent of its height (`LV_STYLE_TRANSLATE_Y`).
                 TranslateY(translate_y): len [LengthValue] [LAYOUT PARENT_LAYOUT] PX0 ["LV_STYLE_TRANSLATE_Y"];
                 /// Moves radial items (e.g. scale labels) outward (`LV_STYLE_TRANSLATE_RADIAL`).
-                TranslateRadial(translate_radial): val [i32] [] INT0 ["LV_STYLE_TRANSLATE_RADIAL"];
+                TranslateRadial(translate_radial): len [LengthValue] [] PX0 ["LV_STYLE_TRANSLATE_RADIAL"];
                 /// Horizontal zoom (`LV_STYLE_TRANSFORM_SCALE_X`).
                 TransformScaleX(transform_scale_x): val [Scale] [EXT_DRAW LAYER TRANSFORM] SCALE_ONE ["LV_STYLE_TRANSFORM_SCALE_X"];
                 /// Vertical zoom (`LV_STYLE_TRANSFORM_SCALE_Y`).
@@ -155,7 +155,7 @@ macro_rules! __prop_table {
                 /// Gap between columns of a flex or grid container (`LV_STYLE_PAD_COLUMN`).
                 ColumnGap(column_gap): len [LengthValue] [EXT_DRAW LAYOUT] PX0 ["pad_column" "LV_STYLE_PAD_COLUMN"];
                 /// Radial padding of radial items (`LV_STYLE_PAD_RADIAL`).
-                PaddingRadial(padding_radial): val [i32] [] INT0 ["pad_radial" "LV_STYLE_PAD_RADIAL"];
+                PaddingRadial(padding_radial): len [LengthValue] [] PX0 ["pad_radial" "LV_STYLE_PAD_RADIAL"];
             }
             /// Margins.
             MARGIN {
@@ -242,11 +242,11 @@ macro_rules! __prop_table {
             /// Drop shadow (shadow of the drawn content).
             DROP_SHADOW {
                 /// Drop shadow blur radius (`LV_STYLE_DROP_SHADOW_RADIUS`).
-                DropShadowRadius(drop_shadow_radius): val [i32] [EXT_DRAW] INT0 ["LV_STYLE_DROP_SHADOW_RADIUS"];
+                DropShadowRadius(drop_shadow_radius): len [LengthValue] [EXT_DRAW] PX0 ["LV_STYLE_DROP_SHADOW_RADIUS"];
                 /// Drop shadow horizontal offset (`LV_STYLE_DROP_SHADOW_OFFSET_X`).
-                DropShadowOffsetX(drop_shadow_offset_x): val [i32] [EXT_DRAW] INT0 ["LV_STYLE_DROP_SHADOW_OFFSET_X"];
+                DropShadowOffsetX(drop_shadow_offset_x): len [LengthValue] [EXT_DRAW] PX0 ["LV_STYLE_DROP_SHADOW_OFFSET_X"];
                 /// Drop shadow vertical offset (`LV_STYLE_DROP_SHADOW_OFFSET_Y`).
-                DropShadowOffsetY(drop_shadow_offset_y): val [i32] [EXT_DRAW] INT0 ["LV_STYLE_DROP_SHADOW_OFFSET_Y"];
+                DropShadowOffsetY(drop_shadow_offset_y): len [LengthValue] [EXT_DRAW] PX0 ["LV_STYLE_DROP_SHADOW_OFFSET_Y"];
                 /// Drop shadow color (`LV_STYLE_DROP_SHADOW_COLOR`).
                 DropShadowColor(drop_shadow_color): elem [ColorValue] [] BLACK ["LV_STYLE_DROP_SHADOW_COLOR"];
                 /// Drop shadow opacity (`LV_STYLE_DROP_SHADOW_OPA`).
@@ -257,7 +257,7 @@ macro_rules! __prop_table {
             /// Blur.
             BLUR {
                 /// Blur radius of the part (`LV_STYLE_BLUR_RADIUS`).
-                BlurRadius(blur_radius): val [i32] [] INT0 ["LV_STYLE_BLUR_RADIUS"];
+                BlurRadius(blur_radius): len [LengthValue] [] PX0 ["LV_STYLE_BLUR_RADIUS"];
                 /// Blur what is behind the part instead of the part itself (`LV_STYLE_BLUR_BACKDROP`).
                 BlurBackdrop(blur_backdrop): val [bool] [] FALSE ["LV_STYLE_BLUR_BACKDROP"];
                 /// Blur quality (`LV_STYLE_BLUR_QUALITY`).
@@ -279,9 +279,9 @@ macro_rules! __prop_table {
                 /// Line width (`LV_STYLE_LINE_WIDTH`).
                 LineWidth(line_width): len [LengthValue] [EXT_DRAW] PX0 ["LV_STYLE_LINE_WIDTH"];
                 /// Dash length (`LV_STYLE_LINE_DASH_WIDTH`).
-                LineDashWidth(line_dash_width): val [i32] [] INT0 ["LV_STYLE_LINE_DASH_WIDTH"];
+                LineDashWidth(line_dash_width): len [LengthValue] [] PX0 ["LV_STYLE_LINE_DASH_WIDTH"];
                 /// Gap between dashes (`LV_STYLE_LINE_DASH_GAP`).
-                LineDashGap(line_dash_gap): val [i32] [] INT0 ["LV_STYLE_LINE_DASH_GAP"];
+                LineDashGap(line_dash_gap): len [LengthValue] [] PX0 ["LV_STYLE_LINE_DASH_GAP"];
                 /// Rounded line ends (`LV_STYLE_LINE_ROUNDED`).
                 LineRounded(line_rounded): val [bool] [] FALSE ["LV_STYLE_LINE_ROUNDED"];
                 /// Line color (`LV_STYLE_LINE_COLOR`).
@@ -321,7 +321,7 @@ macro_rules! __prop_table {
                 /// Text outline color (`LV_STYLE_TEXT_OUTLINE_STROKE_COLOR`).
                 TextOutlineColor(text_outline_color): elem [ColorValue] [] BLACK ["text_outline_stroke_color" "LV_STYLE_TEXT_OUTLINE_STROKE_COLOR"];
                 /// Text outline width (`LV_STYLE_TEXT_OUTLINE_STROKE_WIDTH`).
-                TextOutlineWidth(text_outline_width): val [i32] [] INT0 ["text_outline_stroke_width" "LV_STYLE_TEXT_OUTLINE_STROKE_WIDTH"];
+                TextOutlineWidth(text_outline_width): len [LengthValue] [] PX0 ["text_outline_stroke_width" "LV_STYLE_TEXT_OUTLINE_STROKE_WIDTH"];
                 /// Text outline opacity (`LV_STYLE_TEXT_OUTLINE_STROKE_OPA`).
                 TextOutlineOpacity(text_outline_opacity): elem [OpacityValue] [] TRANSP ["text_outline_stroke_opa" "LV_STYLE_TEXT_OUTLINE_STROKE_OPA"];
                 /// Trims the space above/below text by font metrics, inherited (`LV_STYLE_TEXT_LEADING_TRIM`).
@@ -358,9 +358,9 @@ macro_rules! __prop_table {
             /// Everything else: generic length, radial offset, animation and transition, blend mode, layout kind, base direction, bitmap mask, rotary sensitivity.
             MISC {
                 /// Generic length, e.g. of scale ticks (`LV_STYLE_LENGTH`).
-                Length(length): val [i32] [EXT_DRAW] INT0 ["LV_STYLE_LENGTH"];
+                Length(length): len [LengthValue] [EXT_DRAW] PX0 ["LV_STYLE_LENGTH"];
                 /// Offset of radial items (`LV_STYLE_RADIAL_OFFSET`).
-                RadialOffset(radial_offset): val [i32] [] INT0 ["LV_STYLE_RADIAL_OFFSET"];
+                RadialOffset(radial_offset): len [LengthValue] [] PX0 ["LV_STYLE_RADIAL_OFFSET"];
                 /// Animation timing used by some widgets (`LV_STYLE_ANIM`).
                 Anim(anim): elem [MotionValue] [] NONE ["LV_STYLE_ANIM"];
                 /// Animation duration used by some widgets (`LV_STYLE_ANIM_DURATION`).

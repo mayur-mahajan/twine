@@ -437,7 +437,7 @@ impl Gallery {
 }
 
 fn main() {
-    let cfg = SimConfig::new(W as u16, H as u16).title("text_gallery").scale(2);
+    let cfg = SimConfig::new(W as u16, H as u16).title("text_gallery").zoom(2);
     let mut g = Gallery {
         page: 0,
         since: 0,

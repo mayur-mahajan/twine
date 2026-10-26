@@ -72,7 +72,7 @@ twine-fs = { path = "../twine-fs" }
 twine-image = { path = "../twine-image", features = ["img-qoi"] }
 twine-testing = { path = "../twine-testing", default-features = false, features = ["engine", "debug-checks"] }
 twine-theme = { path = "../twine-theme", features = ["mono", "simple"] }
-twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-20", "dejavu-16-persian-hebrew"] }
+twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-20", "montserrat-28", "dejavu-16-persian-hebrew"] }
 twine-hal = { path = "../twine-hal" }
 proptest = "1"
 log = "0.4"

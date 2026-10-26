@@ -21,7 +21,7 @@ fn main() {
     twine_sim::run(
         SimConfig::new(320, 240)
             .title("Spinner")
-            .scale(3)
+            .zoom(3)
             .buffers(BufferMode::alloc(BufferSpec::PartialDouble { rows: 40 }))
             .theme(&lvgl::THEME)
             // The performance overlay's font.

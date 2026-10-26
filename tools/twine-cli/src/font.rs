@@ -27,7 +27,7 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 
 use twine_build::chars::ranges;
-use twine_build::font::{BitmapFormat, Bpp, Font, Gamma, Hinting, Subpx, describe};
+use twine_build::font::{BitmapFormat, Bpp, DisplayScale, Font, Gamma, Hinting, Subpx, describe};
 
 /// Result type of the command (errors are human-readable messages).
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -175,6 +175,26 @@ pub fn parse_gamma(s: &str) -> std::result::Result<Gamma, String> {
     s.parse()
 }
 
+/// Parses `--scale`: a display scale in percent (`50..=800`).
+///
+/// # Errors
+/// Anything else.
+///
+/// ```
+/// use twine_build::font::DisplayScale;
+/// assert_eq!(twine_cli::font::parse_scale("200"), Ok(DisplayScale::X2));
+/// assert!(twine_cli::font::parse_scale("2x").is_err());
+/// assert!(twine_cli::font::parse_scale("900").is_err());
+/// ```
+pub fn parse_scale(s: &str) -> std::result::Result<DisplayScale, String> {
+    match s.parse::<u16>() {
+        Ok(p) if (50..=800).contains(&p) => Ok(DisplayScale::pct(p)),
+        _ => Err(format!(
+            "`{s}` is not a scale in percent (50..=800, e.g. 200 for 2×)"
+        )),
+    }
+}
+
 /// Command-line arguments of `twine font`.
 #[derive(Clone, Debug, clap::Args)]
 #[command(about = "Generate a Rust bitmap font from a TTF file")]
@@ -226,6 +246,11 @@ pub struct FontArgs {
     /// mapping) or `<dark-on-light>,<light-on-dark>` strengths such as `1.3,2.0`.
     #[arg(long, default_value = "default", value_parser = parse_gamma)]
     pub gamma: Gamma,
+    /// Also generate the font for a display scale, in percent (repeatable; `200` for 2×,
+    /// `150` for 1.5×): the static becomes a `ScaledFont` over the 1× font and its variants,
+    /// for hi-DPI desktop displays.
+    #[arg(long = "scale", value_parser = parse_scale)]
+    pub scales: Vec<DisplayScale>,
     /// Name of the generated static (e.g. `MONTSERRAT_14`).
     #[arg(long, required_unless_present = "dump")]
     pub name: Option<String>,
@@ -263,7 +288,8 @@ pub fn font_from_args(a: &FontArgs) -> Result<Font> {
             (true, true) => BitmapFormat::CompressedNoPrefilter,
         })
         .name(a.name.as_deref().ok_or("--name is required")?)
-        .crate_path(&a.crate_path);
+        .crate_path(&a.crate_path)
+        .scales(&a.scales);
     for r in &a.ranges {
         f = f.chars_from(r.0.as_slice());
     }

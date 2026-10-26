@@ -4,7 +4,7 @@
 use alloc::rc::Rc;
 use alloc::vec::Vec;
 
-use twine_core::{Color, Insets, Opa};
+use twine_core::{Color, DisplayScale, Insets, Opa};
 use twine_style::design::ElementRef;
 use twine_style::{
     EntryKind, Length, Part, PropId, Selector, State, StyleBuf, StyleDefaults, StyleEntry, StyleProp,
@@ -129,8 +129,9 @@ impl StyleList {
 
 /// The engine's widget tree as the style resolver sees it (so `twine_style::resolve(&engine,
 /// ..)` resolves exactly like [`Engine::style_prop`]). Density-independent lengths resolve with
-/// the DPI of the node's display ([`Engine::node_dpi`]), design elements with its theme's
-/// element table ([`Engine::design_table`]).
+/// the DPI of the node's display ([`Engine::node_dpi`]), logical lengths with its scale
+/// ([`Engine::node_scale`], feature `display-scale`), design elements with its theme's element
+/// table ([`Engine::design_table`]).
 impl StyleSource for Engine {
     type Id = NodeId;
 
@@ -152,6 +153,10 @@ impl StyleSource for Engine {
 
     fn dpi(&self, id: NodeId) -> u16 {
         self.node_dpi(id)
+    }
+
+    fn scale(&self, id: NodeId) -> DisplayScale {
+        self.node_scale(id)
     }
 
     /// The design element table of the node's display (its theme's table for the current
@@ -184,7 +189,7 @@ enum StateCmp {
 pub(crate) fn length_px(v: StyleValue, basis: i32) -> i32 {
     match v.as_length() {
         // The resolver converted `Dp`; a raw one counts at the reference DPI.
-        Some(Length::Px(p) | Length::Dp(p)) => p,
+        Some(Length::Px(p) | Length::Dp(p) | Length::Dev(p)) => p,
         // SAFE-ARITH: the product of two 32-bit values fits in `i64`; the result saturates.
         Some(Length::Pct(p)) => (i64::from(basis).wrapping_mul(i64::from(p)) / 100)
             .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
@@ -428,6 +433,78 @@ impl Engine {
             .or(self.default_display)
             .and_then(|d| self.displays.get(d.index()))
             .map_or(twine_style::DEFAULT_DPI, |d| d.info.dpi)
+    }
+
+    /// The display scale that logical lengths of `id` resolve with: the scale of the display
+    /// showing `id` ([`Engine::display_scale`]), else of the default display, else 1×. Always
+    /// 1× (a constant) without the `display-scale` feature.
+    ///
+    /// ```
+    /// use twine_core::{ColorFormat, DisplayScale};
+    /// use twine_engine::{Engine, EngineConfig};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let info = DisplayInfo::new(64, 32, ColorFormat::Rgb565).with_scale(DisplayScale::X2);
+    /// let d = e.add_chunked_display(info, 64 * 2 * 8, None).unwrap();
+    /// let screen = e.active_screen(d).unwrap();
+    /// assert_eq!(e.node_scale(screen), e.display_scale(d));
+    /// ```
+    #[must_use]
+    #[inline]
+    pub fn node_scale(&self, id: NodeId) -> DisplayScale {
+        #[cfg(feature = "display-scale")]
+        {
+            if let [d] = self.displays.as_slice() {
+                return d.info.scale;
+            }
+            self.display_of(id)
+                .or(self.default_display)
+                .and_then(|d| self.displays.get(d.index()))
+                .map_or(DisplayScale::ONE, |d| d.info.scale)
+        }
+        #[cfg(not(feature = "display-scale"))]
+        {
+            let _ = id;
+            DisplayScale::ONE
+        }
+    }
+
+    /// `logical` pixels in device pixels for the display of `id` (`logical × ` [`node_scale`](
+    /// Self::node_scale), rounded; unchanged at 1×). For widget code that turns a logical size
+    /// into geometry directly (hit-test margins, minimum sizes) instead of through a style.
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_engine::{Engine, EngineConfig};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let d = e.add_chunked_display(DisplayInfo::new(64, 32, ColorFormat::Rgb565), 64 * 2 * 8, None).unwrap();
+    /// assert_eq!(e.node_to_device(e.active_screen(d).unwrap(), 8), 8); // a 1× display
+    /// ```
+    #[must_use]
+    #[inline]
+    pub fn node_to_device(&self, id: NodeId, logical: i32) -> i32 {
+        self.node_scale(id).to_device(logical)
+    }
+
+    /// `dp` density-independent pixels in device pixels for the display of `id`: [`dpx`](
+    /// twine_style::dpx) with its DPI, then its scale (LVGL `lv_dpx`, scale-aware).
+    ///
+    /// ```
+    /// use twine_core::ColorFormat;
+    /// use twine_engine::{Engine, EngineConfig};
+    /// use twine_hal::DisplayInfo;
+    ///
+    /// let mut e = Engine::new(EngineConfig::default()).unwrap();
+    /// let info = DisplayInfo::new(64, 32, ColorFormat::Rgb565).with_dpi(320);
+    /// let d = e.add_chunked_display(info, 64 * 2 * 8, None).unwrap();
+    /// assert_eq!(e.node_dpx(e.active_screen(d).unwrap(), 10), 20);
+    /// ```
+    #[must_use]
+    pub fn node_dpx(&self, id: NodeId, dp: i32) -> i32 {
+        self.node_to_device(id, twine_style::dpx(dp, self.node_dpi(id)))
     }
 
     /// An integer property in pixels (`Int`, pixel lengths and `Dp` lengths; other kinds give

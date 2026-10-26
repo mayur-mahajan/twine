@@ -197,7 +197,7 @@ fn main() {
         .app_config(config(budget, Limits::DEFAULT.max_pending_effects(64)))
         .on_frame(move |cx| media_frame(cx, &controls, &mut armed));
     run_panels(
-        SimConfig::new(2 * W, H).title("Partitions").scale(3),
+        SimConfig::new(2 * W, H).title("Partitions").zoom(3),
         vec![critical_panel, media_panel],
     );
 }

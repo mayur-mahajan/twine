@@ -42,7 +42,7 @@ pub fn cover<M>(c: impl IntoProp<Cover, M>) -> WidgetView<Canvas<Cover>> {
     canvas(c, paint)
 }
 
-/// The corner radius for a cover of side `s`.
+/// The corner radius for a cover of side `s` (logical pixels).
 fn radius(s: i32) -> i32 {
     match s {
         0..64 => 4,
@@ -54,16 +54,17 @@ fn radius(s: i32) -> i32 {
 fn paint(c: Cover, cx: &mut DrawCx<'_, '_>) {
     let full = cx.coords();
     let s = full.width().min(full.height());
-    if s < 4 {
+    if s < cx.to_device(4) {
         return;
     }
-    let a = Rect::from_xywh(full.x0, full.y0, s, s);
-    let p = cx.painter();
+    // The artwork is proportional to the side; only the corner steps are fixed sizes.
     let corner = if matches!(c, Cover::Portrait(_)) {
         s / 2
     } else {
-        radius(s)
+        cx.to_device(radius(cx.scale().to_logical(s)))
     };
+    let a = Rect::from_xywh(full.x0, full.y0, s, s);
+    let p = cx.painter();
     let mask = p.push_mask(Mask::Radius {
         area: a,
         radius: corner,

@@ -67,7 +67,7 @@ use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 use twine_text::encode::{CmapData, FontData, KernData, encode_glyph};
-pub use twine_text::{BitmapFormat, Bpp, Subpx};
+pub use twine_text::{BitmapFormat, Bpp, DisplayScale, Subpx};
 use twine_text::{CmapKind, GlyphDsc};
 
 use crate::chars::{CharSource, ranges, rust_source_chars};
@@ -326,6 +326,7 @@ pub struct Font {
     name: Option<String>,
     visibility: String,
     crate_path: String,
+    scales: Vec<DisplayScale>,
 }
 
 impl Font {
@@ -360,6 +361,7 @@ impl Font {
             name: None,
             visibility: "pub".into(),
             crate_path: "twine::text".into(),
+            scales: Vec::new(),
         }
     }
 
@@ -506,6 +508,26 @@ impl Font {
         self
     }
 
+    /// Also generates the font for each display scale of `scales` (the same face and options
+    /// at `size × scale` px, rounded), for hi-DPI desktop displays: the generated static is then
+    /// a [`ScaledFont`](twine_text::ScaledFont) over the 1× font and its variants (`<NAME>_1X`,
+    /// `<NAME>_2X`, `<NAME>_1_5X`, … private statics), and the style resolver draws the variant
+    /// nearest to each display's scale. 1× in `scales` is ignored; an empty list (the default)
+    /// generates a plain font. Every variant is linked with the font, so list only the scales
+    /// the application's displays have.
+    ///
+    /// ```
+    /// use twine_build::font::{DisplayScale, Font};
+    /// let f = Font::from_ttf("a.ttf").size(14).scales(&[DisplayScale::X2]).name("BODY");
+    /// assert_eq!(f.command_line(), "twine font --ttf a.ttf --size 14 --bpp 4 --name BODY --crate-path twine::text --scale 200");
+    /// ```
+    pub fn scales(mut self, scales: &[DisplayScale]) -> Font {
+        self.scales = scales.iter().copied().filter(|s| !s.is_one()).collect();
+        self.scales.sort_unstable();
+        self.scales.dedup();
+        self
+    }
+
     /// The characters added with [`chars_from`](Font::chars_from) so far (files and Rust
     /// sources are read by [`build`](Font::build)).
     #[must_use]
@@ -588,6 +610,9 @@ impl Font {
         if self.crate_path != CLI_CRATE_PATH {
             let _ = write!(s, " --crate-path {}", self.crate_path);
         }
+        for sc in &self.scales {
+            let _ = write!(s, " --scale {}", scale_pct(*sc));
+        }
         s
     }
 
@@ -599,6 +624,73 @@ impl Font {
     /// more than 65 534 glyphs, a glyph too large for the bitmap format), an unreadable or
     /// unparsable input file, or a font the auto-hinter cannot hint.
     pub fn build(&self) -> Result<GeneratedFont, AssetError> {
+        if self.scales.is_empty() {
+            return self.build_one();
+        }
+        let name = self.static_name();
+        if !is_ident(&name) {
+            return Err(format!("name `{name}` is not a Rust identifier").into());
+        }
+        if !is_visibility(&self.visibility) {
+            return Err(format!("`{}` is not a visibility", self.visibility).into());
+        }
+        let part = |size: u16, suffix: &str| Font {
+            size,
+            name: Some(format!("{name}_{suffix}")),
+            visibility: String::new(),
+            scales: Vec::new(),
+            ..self.clone()
+        };
+        let mut out = part(self.size, "1X").build_one()?;
+        let c = &self.crate_path;
+        let mut table = Vec::new();
+        for &sc in &self.scales {
+            let size = sc.to_device(i32::from(self.size));
+            let size = u16::try_from(size)
+                .ok()
+                .filter(|s| (1..=255).contains(s))
+                .ok_or_else(|| format!("size {} px at {sc} is outside 1..=255 px", self.size))?;
+            let suffix = scale_suffix(sc);
+            let g = part(size, &suffix).build_one()?;
+            out.source.push('\n');
+            out.source.push_str(&g.source);
+            out.flash_bytes += g.flash_bytes;
+            for w in g.warnings {
+                if !out.warnings.contains(&w) {
+                    out.warnings.push(w);
+                }
+            }
+            for i in g.inputs {
+                if !out.inputs.contains(&i) {
+                    out.inputs.push(i);
+                }
+            }
+            table.push(format!(
+                "({c}::DisplayScale::from_raw_256({}), &{name}_{suffix})",
+                sc.raw_256()
+            ));
+        }
+        let vis = if self.visibility.is_empty() {
+            String::new()
+        } else {
+            format!("{} ", self.visibility)
+        };
+        let scales: Vec<String> = self.scales.iter().map(ToString::to_string).collect();
+        let _ = write!(
+            out.source,
+            "\n/// {} at {} px for display scales 1×, {} (a `ScaledFont`).\n{vis}static {name}: {c}::Font = {{\n    static SET: {c}::ScaledFont = {c}::ScaledFont::new(&{name}_1X, &[{}]);\n    SET.font()\n}};\n",
+            file_name(&self.ttf),
+            self.size,
+            scales.join(", "),
+            table.join(", ")
+        );
+        out.flash_bytes +=
+            core::mem::size_of::<twine_text::ScaledFont>() + core::mem::size_of::<twine_text::Font>();
+        Ok(out)
+    }
+
+    /// [`build`](Self::build) of one plain font (no scale variants).
+    fn build_one(&self) -> Result<GeneratedFont, AssetError> {
         let name = self.static_name();
         if self.size == 0 || self.size > 255 {
             return Err(format!("size must be 1..=255 px (got {})", self.size).into());
@@ -925,6 +1017,16 @@ fn load_font(path: &Path, size: u16) -> Result<(Vec<u8>, fontdue::Font), AssetEr
     )
     .map_err(|e| AssetError::file(path, format!("cannot parse: {e}")))?;
     Ok((bytes, font))
+}
+
+/// `scale` in percent (`--scale` of `twine font`): `200` for 2×, `150` for 1.5×.
+fn scale_pct(scale: DisplayScale) -> u32 {
+    (u32::from(scale.raw_256()) * 100 + 128) / 256
+}
+
+/// The static-name suffix of a scale variant: `2X`, `1_5X`, `1_25X`.
+fn scale_suffix(scale: DisplayScale) -> String {
+    scale.to_string().trim_end_matches('×').replace('.', "_") + "X"
 }
 
 fn file_name(p: &Path) -> String {

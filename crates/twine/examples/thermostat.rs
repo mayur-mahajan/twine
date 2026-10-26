@@ -55,7 +55,7 @@ fn main() {
     };
     let cfg = SimConfig::new(320, 240)
         .title("Thermostat")
-        .scale(2)
+        .zoom(2)
         .app_config(twine_demos::config());
     twine_sim::run(cfg, move |cx| app(cx, ports));
 }

@@ -38,7 +38,7 @@
 //! use twine_core::ColorFormat;
 //! use twine_sim::{SimConfig, show_framebuffer};
 //!
-//! show_framebuffer(SimConfig::new(320, 240).scale(2), |fb, format, frame| {
+//! show_framebuffer(SimConfig::new(320, 240).zoom(2), |fb, format, frame| {
 //!     assert_eq!(format, ColorFormat::Rgb565);
 //!     fb.fill((frame % 256) as u8);
 //! });
@@ -60,7 +60,7 @@ mod title;
 mod window;
 
 pub use app::{HEADLESS_FRAME, HeadlessReport, SimApp, SimClock, SimError, SimFrame, StepFn, TeardownFn};
-pub use config::{Headless, RawKeyHook, SimConfig, SimInputs};
+pub use config::{Headless, RawKeyHook, SimConfig, SimInputs, SimScale};
 pub use display::{FlushStat, SimDisplay, SimDisplayError};
 pub use fb_display::SimFramebufferDisplay;
 pub use hotkeys::Hotkey;
@@ -279,7 +279,7 @@ fn build_ui_app<V: twine_view::View>(
 /// let critical = SimPanel::new(160, 120, Runtime::take().unwrap(), |_| label("88 km/h"));
 /// let p1 = Partition::new(1).expect("feature `partitions`");
 /// let media = SimPanel::new(160, 120, Runtime::take_partition(p1).unwrap(), |_| label("track 7"));
-/// run_panels(SimConfig::new(0, 0).title("Partitions").scale(2), vec![critical, media]);
+/// run_panels(SimConfig::new(0, 0).title("Partitions").zoom(2), vec![critical, media]);
 /// ```
 pub fn run_panels(cfg: SimConfig, panels: Vec<SimPanel>) -> ! {
     init_logging();

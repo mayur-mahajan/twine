@@ -19,7 +19,7 @@ All 129 properties of `twine-style` (LVGL v9.6 `lv_style_prop_t`), in id order. 
 | 11 | `TransformHeight` | `transform_height` | `LengthValue` | `0px` | EXT_DRAW, TRANSFORM | `TRANSFORM` | 0 | `LV_STYLE_TRANSFORM_HEIGHT` |
 | 12 | `TranslateX` | `translate_x` | `LengthValue` | `0px` | LAYOUT, PARENT_LAYOUT | `TRANSFORM` | 0 | `LV_STYLE_TRANSLATE_X` |
 | 13 | `TranslateY` | `translate_y` | `LengthValue` | `0px` | LAYOUT, PARENT_LAYOUT | `TRANSFORM` | 0 | `LV_STYLE_TRANSLATE_Y` |
-| 14 | `TranslateRadial` | `translate_radial` | `i32` | `0` | — | `TRANSFORM` | 0 | `LV_STYLE_TRANSLATE_RADIAL` |
+| 14 | `TranslateRadial` | `translate_radial` | `LengthValue` | `0px` | — | `TRANSFORM` | 0 | `LV_STYLE_TRANSLATE_RADIAL` |
 | 15 | `TransformScaleX` | `transform_scale_x` | `Scale` | `Scale::ONE` | EXT_DRAW, LAYER, TRANSFORM | `TRANSFORM` | 0 | `LV_STYLE_TRANSFORM_SCALE_X` |
 | 16 | `TransformScaleY` | `transform_scale_y` | `Scale` | `Scale::ONE` | EXT_DRAW, LAYER, TRANSFORM | `TRANSFORM` | 1 | `LV_STYLE_TRANSFORM_SCALE_Y` |
 | 17 | `TransformRotation` | `transform_rotation` | `Angle` | `0.0°` | EXT_DRAW, LAYER, TRANSFORM | `TRANSFORM` | 1 | `LV_STYLE_TRANSFORM_ROTATION` |
@@ -33,7 +33,7 @@ All 129 properties of `twine-style` (LVGL v9.6 `lv_style_prop_t`), in id order. 
 | 25 | `PaddingRight` | `padding_right` | `LengthValue` | `0px` | EXT_DRAW, LAYOUT | `PADDING` | 1 | `pad_right`, `LV_STYLE_PAD_RIGHT` |
 | 26 | `RowGap` | `row_gap` | `LengthValue` | `0px` | EXT_DRAW, LAYOUT | `PADDING` | 1 | `pad_row`, `LV_STYLE_PAD_ROW` |
 | 27 | `ColumnGap` | `column_gap` | `LengthValue` | `0px` | EXT_DRAW, LAYOUT | `PADDING` | 1 | `pad_column`, `LV_STYLE_PAD_COLUMN` |
-| 28 | `PaddingRadial` | `padding_radial` | `i32` | `0` | — | `PADDING` | 1 | `pad_radial`, `LV_STYLE_PAD_RADIAL` |
+| 28 | `PaddingRadial` | `padding_radial` | `LengthValue` | `0px` | — | `PADDING` | 1 | `pad_radial`, `LV_STYLE_PAD_RADIAL` |
 | 29 | `MarginTop` | `margin_top` | `LengthValue` | `0px` | EXT_DRAW, LAYOUT | `MARGIN` | 1 | `LV_STYLE_MARGIN_TOP` |
 | 30 | `MarginBottom` | `margin_bottom` | `LengthValue` | `0px` | EXT_DRAW, LAYOUT | `MARGIN` | 1 | `LV_STYLE_MARGIN_BOTTOM` |
 | 31 | `MarginLeft` | `margin_left` | `LengthValue` | `0px` | EXT_DRAW, LAYOUT | `MARGIN` | 1 | `LV_STYLE_MARGIN_LEFT` |
@@ -67,13 +67,13 @@ All 129 properties of `twine-style` (LVGL v9.6 `lv_style_prop_t`), in id order. 
 | 59 | `ShadowSpread` | `shadow_spread` | `LengthValue` | `0px` | EXT_DRAW | `SHADOW` | 3 | `LV_STYLE_SHADOW_SPREAD` |
 | 60 | `ShadowColor` | `shadow_color` | `ColorValue` | `#000000` | — | `SHADOW` | 3 | `LV_STYLE_SHADOW_COLOR` |
 | 61 | `ShadowOpacity` | `shadow_opacity` | `OpacityValue` | `Opa::COVER` | EXT_DRAW | `SHADOW` | 3 | `shadow_opa`, `LV_STYLE_SHADOW_OPA` |
-| 62 | `DropShadowRadius` | `drop_shadow_radius` | `i32` | `0` | EXT_DRAW | `DROP_SHADOW` | 3 | `LV_STYLE_DROP_SHADOW_RADIUS` |
-| 63 | `DropShadowOffsetX` | `drop_shadow_offset_x` | `i32` | `0` | EXT_DRAW | `DROP_SHADOW` | 3 | `LV_STYLE_DROP_SHADOW_OFFSET_X` |
-| 64 | `DropShadowOffsetY` | `drop_shadow_offset_y` | `i32` | `0` | EXT_DRAW | `DROP_SHADOW` | 4 | `LV_STYLE_DROP_SHADOW_OFFSET_Y` |
+| 62 | `DropShadowRadius` | `drop_shadow_radius` | `LengthValue` | `0px` | EXT_DRAW | `DROP_SHADOW` | 3 | `LV_STYLE_DROP_SHADOW_RADIUS` |
+| 63 | `DropShadowOffsetX` | `drop_shadow_offset_x` | `LengthValue` | `0px` | EXT_DRAW | `DROP_SHADOW` | 3 | `LV_STYLE_DROP_SHADOW_OFFSET_X` |
+| 64 | `DropShadowOffsetY` | `drop_shadow_offset_y` | `LengthValue` | `0px` | EXT_DRAW | `DROP_SHADOW` | 4 | `LV_STYLE_DROP_SHADOW_OFFSET_Y` |
 | 65 | `DropShadowColor` | `drop_shadow_color` | `ColorValue` | `#000000` | — | `DROP_SHADOW` | 4 | `LV_STYLE_DROP_SHADOW_COLOR` |
 | 66 | `DropShadowOpacity` | `drop_shadow_opacity` | `OpacityValue` | `Opa::TRANSP` | EXT_DRAW | `DROP_SHADOW` | 4 | `drop_shadow_opa`, `LV_STYLE_DROP_SHADOW_OPA` |
 | 67 | `DropShadowQuality` | `drop_shadow_quality` | `BlurQuality` | `Precision` | — | `DROP_SHADOW` | 4 | `LV_STYLE_DROP_SHADOW_QUALITY` |
-| 68 | `BlurRadius` | `blur_radius` | `i32` | `0` | — | `BLUR` | 4 | `LV_STYLE_BLUR_RADIUS` |
+| 68 | `BlurRadius` | `blur_radius` | `LengthValue` | `0px` | — | `BLUR` | 4 | `LV_STYLE_BLUR_RADIUS` |
 | 69 | `BlurBackdrop` | `blur_backdrop` | `bool` | `false` | — | `BLUR` | 4 | `LV_STYLE_BLUR_BACKDROP` |
 | 70 | `BlurQuality` | `blur_quality` | `BlurQuality` | `Auto` | — | `BLUR` | 4 | `LV_STYLE_BLUR_QUALITY` |
 | 71 | `ImageOpacity` | `image_opacity` | `OpacityValue` | `Opa::COVER` | — | `IMAGE` | 4 | `image_opa`, `LV_STYLE_IMAGE_OPA` |
@@ -81,8 +81,8 @@ All 129 properties of `twine-style` (LVGL v9.6 `lv_style_prop_t`), in id order. 
 | 73 | `ImageRecolorOpacity` | `image_recolor_opacity` | `OpacityValue` | `Opa::TRANSP` | — | `IMAGE` | 4 | `image_recolor_opa`, `LV_STYLE_IMAGE_RECOLOR_OPA` |
 | 74 | `ImageColorKey` | `image_color_key` | `&'static ImageColorkey` | none | — | `IMAGE` | 4 | `image_colorkey`, `LV_STYLE_IMAGE_COLORKEY` |
 | 75 | `LineWidth` | `line_width` | `LengthValue` | `0px` | EXT_DRAW | `LINE` | 4 | `LV_STYLE_LINE_WIDTH` |
-| 76 | `LineDashWidth` | `line_dash_width` | `i32` | `0` | — | `LINE` | 4 | `LV_STYLE_LINE_DASH_WIDTH` |
-| 77 | `LineDashGap` | `line_dash_gap` | `i32` | `0` | — | `LINE` | 4 | `LV_STYLE_LINE_DASH_GAP` |
+| 76 | `LineDashWidth` | `line_dash_width` | `LengthValue` | `0px` | — | `LINE` | 4 | `LV_STYLE_LINE_DASH_WIDTH` |
+| 77 | `LineDashGap` | `line_dash_gap` | `LengthValue` | `0px` | — | `LINE` | 4 | `LV_STYLE_LINE_DASH_GAP` |
 | 78 | `LineRounded` | `line_rounded` | `bool` | `false` | — | `LINE` | 4 | `LV_STYLE_LINE_ROUNDED` |
 | 79 | `LineColor` | `line_color` | `ColorValue` | `#000000` | — | `LINE` | 4 | `LV_STYLE_LINE_COLOR` |
 | 80 | `LineOpacity` | `line_opacity` | `OpacityValue` | `Opa::COVER` | — | `LINE` | 5 | `line_opa`, `LV_STYLE_LINE_OPA` |
@@ -99,7 +99,7 @@ All 129 properties of `twine-style` (LVGL v9.6 `lv_style_prop_t`), in id order. 
 | 91 | `TextDecoration` | `text_decoration` | `TextDecor` | none (`TextDecor::empty()`) | INHERITABLE | `TEXT` | 5 | `text_decor`, `LV_STYLE_TEXT_DECOR` |
 | 92 | `TextAlign` | `text_align` | `TextAlign` | `Auto` | INHERITABLE, LAYOUT | `TEXT` | 5 | `LV_STYLE_TEXT_ALIGN` |
 | 93 | `TextOutlineColor` | `text_outline_color` | `ColorValue` | `#000000` | — | `TEXT` | 5 | `text_outline_stroke_color`, `LV_STYLE_TEXT_OUTLINE_STROKE_COLOR` |
-| 94 | `TextOutlineWidth` | `text_outline_width` | `i32` | `0` | — | `TEXT` | 5 | `text_outline_stroke_width`, `LV_STYLE_TEXT_OUTLINE_STROKE_WIDTH` |
+| 94 | `TextOutlineWidth` | `text_outline_width` | `LengthValue` | `0px` | — | `TEXT` | 5 | `text_outline_stroke_width`, `LV_STYLE_TEXT_OUTLINE_STROKE_WIDTH` |
 | 95 | `TextOutlineOpacity` | `text_outline_opacity` | `OpacityValue` | `Opa::TRANSP` | — | `TEXT` | 5 | `text_outline_stroke_opa`, `LV_STYLE_TEXT_OUTLINE_STROKE_OPA` |
 | 96 | `TextLeadingTrim` | `text_leading_trim` | `TextLeadingTrim` | `None` | INHERITABLE, LAYOUT | `TEXT` | 6 | `LV_STYLE_TEXT_LEADING_TRIM` |
 | 97 | `Radius` | `radius` | `RadiusValue` | `Radius::Px(0)` | — | `RADIUS` | 6 | `LV_STYLE_RADIUS` |
@@ -110,8 +110,8 @@ All 129 properties of `twine-style` (LVGL v9.6 `lv_style_prop_t`), in id order. 
 | 102 | `RecolorOpacity` | `recolor_opacity` | `OpacityValue` | `Opa::TRANSP` | — | `RECOLOR` | 6 | `recolor_opa`, `LV_STYLE_RECOLOR_OPA` |
 | 103 | `ColorFilter` | `color_filter` | `&'static ColorFilter` | none | INHERITABLE | `RECOLOR` | 6 | `color_filter_dsc`, `LV_STYLE_COLOR_FILTER_DSC` |
 | 104 | `ColorFilterOpacity` | `color_filter_opacity` | `OpacityValue` | `Opa::TRANSP` | INHERITABLE | `RECOLOR` | 6 | `color_filter_opa`, `LV_STYLE_COLOR_FILTER_OPA` |
-| 105 | `Length` | `length` | `i32` | `0` | EXT_DRAW | `MISC` | 6 | `LV_STYLE_LENGTH` |
-| 106 | `RadialOffset` | `radial_offset` | `i32` | `0` | — | `MISC` | 6 | `LV_STYLE_RADIAL_OFFSET` |
+| 105 | `Length` | `length` | `LengthValue` | `0px` | EXT_DRAW | `MISC` | 6 | `LV_STYLE_LENGTH` |
+| 106 | `RadialOffset` | `radial_offset` | `LengthValue` | `0px` | — | `MISC` | 6 | `LV_STYLE_RADIAL_OFFSET` |
 | 107 | `Anim` | `anim` | `MotionValue` | none | — | `MISC` | 6 | `LV_STYLE_ANIM` |
 | 108 | `AnimDuration` | `anim_duration` | `DurationMs` | `Duration::ms(0)` | — | `MISC` | 6 | `LV_STYLE_ANIM_DURATION` |
 | 109 | `Transition` | `transition` | `TransitionRef` | none | — | `MISC` | 6 | `LV_STYLE_TRANSITION` |

@@ -35,6 +35,7 @@ impl SourceKey {
     pub fn of_source(src: &ImageSource) -> Option<Self> {
         match src {
             ImageSource::Static(img) => Some(Self::of_ptr(*img)),
+            ImageSource::Scaled(s) => Some(Self::of_ptr(s.base())),
             ImageSource::Encoded(b) | ImageSource::Svg(b) => Some(Self::of_ptr(*b)),
             ImageSource::File(p) => Some(SourceKey::File(p.clone())),
             ImageSource::Symbol(_) => None,

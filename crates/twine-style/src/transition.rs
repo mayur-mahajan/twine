@@ -428,6 +428,8 @@ pub fn interpolate(prop: PropId, from: &StyleValue, to: &StyleValue, t: u8) -> S
             ))
         }
         (V::Length(Length::Px(a)), V::Length(Length::Px(b))) => V::Length(Length::Px(lerp(a, b, t))),
+        // Resolved lengths of a scaled display are device pixels and stay device pixels.
+        (V::Length(Length::Dev(a)), V::Length(Length::Dev(b))) => V::Length(Length::Dev(lerp(a, b, t))),
         (V::Length(Length::Pct(a)), V::Length(Length::Pct(b))) => {
             V::Length(Length::Pct(lerp(i32::from(a), i32::from(b), t) as i16))
         }
@@ -549,6 +551,15 @@ mod tests {
         assert_eq!(
             interpolate(PropId::Width, &px, &StyleValue::Length(Length::Px(30)), 128),
             StyleValue::Length(Length::Px(20))
+        );
+        assert_eq!(
+            interpolate(
+                PropId::Width,
+                &StyleValue::Length(Length::Dev(20)),
+                &StyleValue::Length(Length::Dev(60)),
+                128
+            ),
+            StyleValue::Length(Length::Dev(40))
         );
         assert_eq!(
             interpolate(PropId::Width, &pct, &StyleValue::Length(Length::Pct(100)), 128),

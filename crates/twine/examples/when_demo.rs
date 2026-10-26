@@ -29,10 +29,7 @@ fn app(cx: Scope) -> impl View {
 
 fn main() {
     twine_sim::run(
-        SimConfig::new(320, 240)
-            .title("when")
-            .scale(2)
-            .theme(&lvgl::THEME),
+        SimConfig::new(320, 240).title("when").zoom(2).theme(&lvgl::THEME),
         app,
     );
 }

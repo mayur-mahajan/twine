@@ -36,7 +36,7 @@ fn bounce(frame: u32, max: u32) -> u32 {
 fn main() {
     let cfg = SimConfig::new(W as u16, H as u16)
         .title("twine test pattern")
-        .scale(2);
+        .zoom(2);
     show_framebuffer(cfg, |fb, format, frame| {
         let mut f = Frame::new(fb, format, W);
         let bar_w = W / BARS.len() as u32;

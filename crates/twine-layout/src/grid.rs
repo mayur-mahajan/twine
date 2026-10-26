@@ -21,7 +21,7 @@
 //! - Right-to-left containers mirror the columns (column 0 on the right).
 
 use twine_core::log::warn;
-use twine_core::{Rect, Size};
+use twine_core::{DisplayScale, Rect, Size};
 use twine_style::{GridAlign, GridTrack, PropId};
 
 use crate::layout::{Item, LayoutScratch};
@@ -66,11 +66,18 @@ fn track_at(v: &[i32], i: usize) -> i32 {
     v.get(i).copied().unwrap_or(0)
 }
 
+/// A track template with the display scale its fixed (`Px`, logical) tracks are scaled by.
+#[derive(Clone, Copy)]
+struct Template<'a> {
+    tracks: &'a [GridTrack],
+    scale: DisplayScale,
+}
+
 /// Track sizes of one axis (LVGL `calc_cols`/`calc_rows`) into `out`. `auto`: the container
 /// is content-sized on this axis (`Fr` behaves as `Content`, percentage items excluded).
 fn track_sizes<I>(
     items: &[Item<I>],
-    templ: &[GridTrack],
+    templ: Template<'_>,
     axis: Axis,
     avail: i32,
     gap: i32,
@@ -80,9 +87,12 @@ fn track_sizes<I>(
     // Sizes saturate (style values are any `i32`).
     let mut fr_total: i64 = 0;
     let mut fixed = 0i32;
+    let (scale, templ) = (templ.scale, templ.tracks);
     for (i, (track, o)) in templ.iter().zip(out.iter_mut()).enumerate() {
         match *track {
             GridTrack::Px(n) => {
+                // Logical pixels: the only length the layout scales itself.
+                let n = scale.to_device(n);
                 *o = n;
                 fixed = fixed.saturating_add(n);
             }
@@ -235,7 +245,11 @@ pub(crate) fn extent<T: LayoutTree + ?Sized>(
     // the old length of `ints`; the fallbacks are never taken.
     let items = s.items.get(frame..end).unwrap_or_default();
     let sizes = s.ints.get_mut(base..).unwrap_or_default();
-    track_sizes(items, templ, axis, 0, gap, true, sizes);
+    let template = Template {
+        tracks: templ,
+        scale: t.scale(id),
+    };
+    track_sizes(items, template, axis, 0, gap, true, sizes);
     let total = sizes
         .iter()
         .fold(0i32, |acc, s| acc.saturating_add(*s))
@@ -344,8 +358,10 @@ pub(crate) fn arrange<T: LayoutTree + ?Sized>(
         let (cx, rest) = rest.split_at_mut_checked(nc).unwrap_or_default();
         let (rh, ry) = rest.split_at_mut_checked(nr).unwrap_or_default();
         let items = s.items.get(frame..end).unwrap_or_default();
-        track_sizes(items, cols, Axis::X, csize.w, col_gap, sized_x, cw);
-        track_sizes(items, rows, Axis::Y, csize.h, row_gap, sized_y, rh);
+        let scale = t.scale(id);
+        let (cols_t, rows_t) = (Template { tracks: cols, scale }, Template { tracks: rows, scale });
+        track_sizes(items, cols_t, Axis::X, csize.w, col_gap, sized_x, cw);
+        track_sizes(items, rows_t, Axis::Y, csize.h, row_gap, sized_y, rh);
         let col_align = style_enum::<T, GridAlign>(&*t, id, PropId::GridColumnAlign);
         let row_align = style_enum::<T, GridAlign>(&*t, id, PropId::GridRowAlign);
         grid_align(csize.w, sized_x, col_align, col_gap, cw, cx, rtl);

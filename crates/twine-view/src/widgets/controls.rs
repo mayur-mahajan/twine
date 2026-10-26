@@ -543,9 +543,13 @@ impl WidgetView<Line> {
         self.style_prop(on, StyleProp::LineRounded)
     }
 
-    /// A dashed line: `w` px dashes with `gap` px gaps.
+    /// A dashed line: `w` dashes with `gap` gaps (lengths: logical pixels for bare integers).
     #[must_use]
-    pub fn dash<M1, M2>(self, w: impl IntoProp<i32, M1>, gap: impl IntoProp<i32, M2>) -> Self {
+    pub fn dash<M1, M2>(
+        self,
+        w: impl IntoProp<twine_style::design::LengthValue, M1>,
+        gap: impl IntoProp<twine_style::design::LengthValue, M2>,
+    ) -> Self {
         self.style_prop(w, StyleProp::LineDashWidth)
             .style_prop(gap, StyleProp::LineDashGap)
     }

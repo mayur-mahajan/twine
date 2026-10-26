@@ -97,6 +97,14 @@ pub fn with_pixels<R>(
     cx: &mut ImageContext<'_>,
     f: impl FnOnce(&ImagePixels<'_>) -> R,
 ) -> Result<R, Error> {
+    // Everything but the image widget draws the 1× image of a scaled source.
+    let base;
+    let src = if let ImageSource::Scaled(s) = src {
+        base = ImageSource::Static(s.base());
+        &base
+    } else {
+        src
+    };
     let ImageContext {
         cache,
         header_cache,
@@ -132,6 +140,8 @@ pub fn with_pixels<R>(
         }
         ImageSource::Symbol(_) => return Err(Error::UnsupportedSource("symbol")),
         ImageSource::Svg(_) => return Err(Error::UnsupportedSource("svg")),
+        // Mapped to its 1× image above.
+        ImageSource::Scaled(_) => return Err(Error::UnsupportedSource("scaled")),
     };
     let px = cached.pixels().ok_or(Error::InvalidHeader)?;
     Ok(f(&px))
@@ -163,6 +173,12 @@ fn decompress(img: &Image, out: &mut Vec<u8>) -> Result<ImageHeader, Error> {
 /// ```
 pub fn header_of(src: &ImageSource, cx: &mut ImageContext<'_>) -> Result<ImageHeader, Error> {
     let (key, bytes) = match src {
+        // The 1× image of a scaled source.
+        ImageSource::Scaled(s) => {
+            let mut h = s.base().header;
+            h.flags.remove(ImageFlags::COMPRESSED);
+            return Ok(h);
+        }
         ImageSource::Static(img) => {
             let mut h = img.header;
             h.flags.remove(ImageFlags::COMPRESSED);

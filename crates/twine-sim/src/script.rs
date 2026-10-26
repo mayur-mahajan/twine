@@ -1,7 +1,9 @@
 //! `.twinescript`: scripted input for headless runs.
 //!
 //! One command per line; `#` starts a comment (outside quotes); blank lines are ignored;
-//! integers are decimal (coordinates and wheel steps may be negative).
+//! integers are decimal (coordinates and wheel steps may be negative). Coordinates are logical
+//! pixels of the panel: on a scaled display ([`SimConfig::display_scale`](crate::SimConfig::display_scale))
+//! they are multiplied by the scale, so one script drives the app at every scale.
 //!
 //! | Command | Effect |
 //! |---------|--------|

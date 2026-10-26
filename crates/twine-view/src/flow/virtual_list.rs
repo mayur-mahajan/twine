@@ -260,19 +260,21 @@ fn y_of(i: usize, row_height: NonZeroI32) -> i32 {
 }
 
 impl<T: Clone + PartialEq + 'static, K: PartialEq + 'static> List<T, K> {
-    /// The visible item range `first..last` for `count` items.
+    /// The visible item range `first..last` for `count` items. The row height is in logical
+    /// pixels, the engine's geometry in device pixels: both are compared in logical pixels.
     fn visible(&self, e: &Engine, node: NodeId, count: usize) -> (usize, usize) {
-        let area = e.content_area(node);
-        let scroll_y = e.scroll_offset(node).y.max(0);
+        let s = e.node_scale(node);
+        let height = s.to_logical(e.content_area(node).height());
+        let scroll_y = s.to_logical(e.scroll_offset(node).y.max(0));
         let rh = self.row_height;
-        if count == 0 || area.height() <= 0 {
+        if count == 0 || height <= 0 {
             return (0, 0);
         }
         // Rows from a y offset `≥ 0`: an unsigned division by a `NonZeroU32` (cannot panic).
         let rh_u: NonZeroU32 = rh.unsigned_abs();
         let row_at = |y: i32| usize::try_from(y.max(0).unsigned_abs() / rh_u).unwrap_or(0);
         let first = row_at(scroll_y);
-        let last = row_at(scroll_y.saturating_add(area.height())).saturating_add(1);
+        let last = row_at(scroll_y.saturating_add(height)).saturating_add(1);
         (first.min(count), last.min(count))
     }
 

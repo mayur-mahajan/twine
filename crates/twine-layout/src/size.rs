@@ -184,7 +184,7 @@ pub(crate) fn resolve_node<T: LayoutTree + ?Sized>(
             let (msum, styles) = (za.margin, za.styles);
             let fixed = |l: Length| match l {
                 Length::Content => None,
-                Length::Px(v) | Length::Dp(v) => Some(v),
+                Length::Px(v) | Length::Dp(v) | Length::Dev(v) => Some(v),
                 l @ Length::Pct(_) => Some(l.resolve(pc, 0).saturating_sub(msum)),
             };
             let mut content: Option<i32> = None;

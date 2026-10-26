@@ -339,6 +339,18 @@ fn test_features() -> Result<Outcome, Box<dyn std::error::Error>> {
     ] {
         run_cmd(cargo_ci().args(["test", "-p", pkg, "--features", "display-integrity"]))?;
     }
+    // Display scale (R7.S04d–f): `twine-sim` (desktop only) turns it on, so the workspace run
+    // above builds these crates with it; their embedded path — no scale stage, a scaled
+    // display laid out at 1× with a warning — is tested here, package by package, without it.
+    for pkg in [
+        "twine-style",
+        "twine-layout",
+        "twine-engine",
+        "twine-widgets",
+        "twine-view",
+    ] {
+        run_cmd(cargo_ci().args(["test", "-p", pkg]))?;
+    }
     // Partitioned runtimes (R5.S07, ADR-001, SAF-034): opt-in and not in `full`, so the runs
     // above build without them. The runtime's slots, claims, ownership and seal domains (with
     // the host-only cross-partition check of `debug-checks`), the core's partition table, and

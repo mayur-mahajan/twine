@@ -100,9 +100,14 @@ impl LayoutTree for EngineLayout<'_> {
             } else {
                 c.height()
             };
-            return StyleValue::Length(Length::Px(v));
+            // Device pixels: the display's size is final at every scale.
+            return StyleValue::Length(Length::Dev(v));
         }
         self.engine.style_prop(id, Part::Main, prop)
+    }
+
+    fn scale(&self, id: NodeId) -> twine_core::DisplayScale {
+        self.engine.node_scale(id)
     }
 
     fn content_size(&self, id: NodeId) -> Size {

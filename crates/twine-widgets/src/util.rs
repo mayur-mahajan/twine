@@ -17,18 +17,16 @@ pub(crate) fn display_dpi(e: &Engine, id: NodeId) -> u16 {
         .map_or(DPI_DEF as u16, |i| i.dpi)
 }
 
-/// LVGL `LV_DPX_CALC(dpi, px)` / `lv_dpx`: `px` at 160 DPI scaled to the node's display
-/// (saturated to `i32`; exact for every `px` whose scaled value fits).
+/// LVGL `LV_DPX_CALC(dpi, px)` / `lv_dpx`: `px` at 160 DPI scaled to the node's display, in
+/// device pixels (its DPI, then its display scale; saturated to `i32`). For geometry a widget
+/// computes itself (hit-test margins, tolerances); sizes set through styles use `Length::Dp`.
 pub(crate) fn dpx(e: &Engine, id: NodeId, px: i32) -> i32 {
-    let dpi = i64::from(display_dpi(e, id));
-    // SAFE-ARITH: `dpi < 2^16` and `|px| ≤ 2^31`, so `dpi · |px| + 80 < 2^48`.
-    let scaled = |p: u32| (dpi.wrapping_mul(i64::from(p)).wrapping_add(80) / 160).max(1);
-    match px {
-        0 => 0,
-        p if p > 0 => sat_i32(scaled(p.unsigned_abs())),
-        // SAFE-ARITH: `scaled(..) ≤ 2^48`, its negation fits `i64`.
-        p => sat_i32(scaled(p.unsigned_abs()).wrapping_neg()),
-    }
+    e.node_dpx(id, px)
+}
+
+/// `logical` pixels in device pixels for the node's display (see `Engine::node_to_device`).
+pub(crate) fn device_px(e: &Engine, id: NodeId, logical: i32) -> i32 {
+    e.node_to_device(id, logical)
 }
 
 /// `v` saturated to `i32`.

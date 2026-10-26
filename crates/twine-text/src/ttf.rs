@@ -12,6 +12,9 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::cell::RefCell;
+
+use twine_core::DisplayScale;
 
 use crate::cache::GlyphCache;
 use crate::font::{Font, GlyphInfo, GlyphProvider, Subpx, provider_key};
@@ -362,6 +365,53 @@ impl TtfFont {
         Ok(Self::install(slot, None))
     }
 
+    /// A `'static` font of `px` pixels at 1× that follows the display scale (a
+    /// [`TtfScaledFont`] over the face at `px`): on a display of
+    /// scale `s` the style resolver draws it with the same face rasterized at `px × s` pixels
+    /// (feature `display-scale` of `twine-style`), so text keeps its size and stays sharp at
+    /// every scale, fractional ones included. `data` stays borrowed (`include_bytes!` or a
+    /// leaked file) because each new scale parses it again; the font of a scale is created the
+    /// first time it is drawn there and kept (at most [`TTF_MAX_SCALES`] scales; a further one
+    /// uses the nearest kept scale and logs a warning). Leaks like [`new`](Self::new): call it
+    /// once per font and size at startup.
+    ///
+    /// ```
+    /// use twine_core::DisplayScale;
+    /// use twine_text::TtfFont;
+    ///
+    /// let ttf: &'static [u8] = include_bytes!("../../../assets/fonts/Montserrat-Medium.ttf");
+    /// let body = TtfFont::scalable(ttf, 14).unwrap();
+    /// let at_2x = body.for_scale(DisplayScale::X2);
+    /// assert_eq!(at_2x.line_height, TtfFont::new(ttf, 28).unwrap().line_height);
+    /// assert!(core::ptr::eq(body.for_scale(DisplayScale::X2), at_2x)); // kept
+    /// assert_eq!(body.for_scale(DisplayScale::ONE).line_height, body.line_height); // the 14 px face
+    /// ```
+    ///
+    /// # Errors
+    /// As [`TtfFont::new`].
+    pub fn scalable(data: &'static [u8], px: u16) -> Result<&'static Font, TtfError> {
+        Self::scalable_with_fallback(data, px, None)
+    }
+
+    /// Like [`scalable`](Self::scalable), with a fallback font for characters the TTF lacks
+    /// (itself scaled with [`Font::for_scale`] for each scale).
+    ///
+    /// # Errors
+    /// As [`TtfFont::new`].
+    pub fn scalable_with_fallback(
+        data: &'static [u8],
+        px: u16,
+        fallback: Option<&'static Font>,
+    ) -> Result<&'static Font, TtfError> {
+        let base = Self::new_with_fallback(data, px, fallback)?;
+        let mut scaled = TtfScaledFont::new(base, data, px);
+        if let Some(f) = fallback {
+            scaled = scaled.fallback(f);
+        }
+        let scaled: &'static TtfScaledFont = Box::leak(Box::new(scaled));
+        Ok(Box::leak(Box::new(scaled.font())))
+    }
+
     /// Reads the font file `path` (e.g. `"A:/fonts/heading.ttf"`) from `files` and returns a
     /// leaked font of `px` pixels (the file data is freed after parsing).
     ///
@@ -371,5 +421,177 @@ impl TtfFont {
         let mut data = Vec::new();
         files.read_all(path, &mut data)?;
         Self::new(&data, px)
+    }
+}
+
+/// Most display scales a scalable TrueType font ([`TtfFont::scalable`]) keeps a rasterized font
+/// for. Desktops have one or two (a laptop panel and an external monitor).
+pub const TTF_MAX_SCALES: usize = 4;
+
+/// A font that follows the display scale through a TrueType face: `base` (any font, typically
+/// the bitmap rendering of the same face, so 1× looks exactly as without scaling) on 1×
+/// displays, and the face rasterized at `px × scale` on any other scale — Retina, 1.25×, 1.5× —
+/// made the first time it is drawn there and kept (at most [`TTF_MAX_SCALES`] scales; a further
+/// one uses the nearest kept scale and logs a warning). `const`: it goes into `static` themes
+/// and type scales like any font. Feature `ttf` (rasterization uses `f32`; desktop targets).
+///
+/// Characters the face lacks come from the [`fallback`](Self::fallback) font, itself scaled
+/// with [`Font::for_scale`] (e.g. a `TtfScaledFont` of the symbol font).
+///
+/// ```
+/// use twine_assets::fonts::MONTSERRAT_14;
+/// use twine_core::DisplayScale;
+/// use twine_text::{Font, TtfScaledFont};
+///
+/// static MONTSERRAT: &[u8] = include_bytes!("../../../assets/fonts/Montserrat-Medium.ttf");
+/// /// Body text: the generated bitmap at 1×, Montserrat rasterized at any other scale.
+/// static BODY: Font = {
+///     static S: TtfScaledFont = TtfScaledFont::new(&MONTSERRAT_14, MONTSERRAT, 14);
+///     S.font()
+/// };
+///
+/// assert!(core::ptr::eq(BODY.for_scale(DisplayScale::ONE), &MONTSERRAT_14));
+/// let retina = BODY.for_scale(DisplayScale::X2); // Montserrat at 28 px
+/// assert!(retina.line_height > 2 * MONTSERRAT_14.line_height - 3);
+/// assert!(core::ptr::eq(BODY.for_scale(DisplayScale::X2), retina)); // kept
+/// ```
+pub struct TtfScaledFont {
+    base: &'static Font,
+    data: &'static [u8],
+    px: u16,
+    fallback: Option<&'static Font>,
+    variants: critical_section::Mutex<RefCell<Vec<(DisplayScale, &'static Font)>>>,
+}
+
+impl core::fmt::Debug for TtfScaledFont {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TtfScaledFont")
+            .field("base", self.base)
+            .field("px", &self.px)
+            .finish_non_exhaustive()
+    }
+}
+
+impl TtfScaledFont {
+    /// `base` at 1×, and the TrueType/OpenType font `data` rasterized at `px × scale` pixels on
+    /// other scales (`px`: the base font's size). `data` is parsed when a scale is first drawn;
+    /// invalid data is logged then and the base font is drawn instead.
+    #[must_use]
+    pub const fn new(base: &'static Font, data: &'static [u8], px: u16) -> Self {
+        Self {
+            base,
+            data,
+            px,
+            fallback: None,
+            variants: critical_section::Mutex::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    /// Characters the face lacks come from `font` (scaled with [`Font::for_scale`]).
+    #[must_use]
+    pub const fn fallback(mut self, font: &'static Font) -> Self {
+        self.fallback = Some(font);
+        self
+    }
+
+    /// The font to put in styles: the base font's metrics over this scaled font (see the type
+    /// documentation for the `static` pattern).
+    #[must_use]
+    pub const fn font(&'static self) -> Font {
+        Font {
+            line_height: self.base.line_height,
+            base_line: self.base.base_line,
+            underline_position: self.base.underline_position,
+            underline_thickness: self.base.underline_thickness,
+            provider: self,
+            fallback: self.base.fallback,
+            subpx: self.base.subpx,
+        }
+    }
+
+    /// The kept font of `scale`, else (with `nearest`) the kept font whose scale is nearest.
+    fn kept(&self, scale: DisplayScale, nearest: bool) -> Option<&'static Font> {
+        critical_section::with(|cs| {
+            let v = self.variants.borrow_ref(cs);
+            if let Some(&(_, f)) = v.iter().find(|(s, _)| *s == scale) {
+                return Some(f);
+            }
+            if !nearest {
+                return None;
+            }
+            v.iter()
+                .min_by_key(|(s, _)| s.raw_256().abs_diff(scale.raw_256()))
+                .map(|&(_, f)| f)
+        })
+    }
+}
+
+/// Glyphs come from the base font: drawn as is (a 1× display, or a build without display
+/// scaling) a `TtfScaledFont` looks exactly like its base.
+impl GlyphProvider for TtfScaledFont {
+    fn glyph_info(&self, cp: char, next: Option<char>) -> Option<GlyphInfo> {
+        self.base.provider.glyph_info(cp, next)
+    }
+
+    fn render_a8(&self, info: &GlyphInfo, map: CoverageMap, out: &mut [u8], cache: &mut GlyphCache) -> bool {
+        self.base.provider.render_a8(info, map, out, cache)
+    }
+
+    fn render_rows(
+        &self,
+        info: &GlyphInfo,
+        map: CoverageMap,
+        cache: &mut GlyphCache,
+        sink: &mut dyn FnMut(usize, &[u8]),
+    ) -> bool {
+        self.base.provider.render_rows(info, map, cache, sink)
+    }
+
+    fn glyph_image(
+        &self,
+        cp: char,
+        next: Option<char>,
+    ) -> Option<&'static twine_render::ImagePixels<'static>> {
+        self.base.provider.glyph_image(cp, next)
+    }
+
+    /// The base at 1×; otherwise the face at `px × scale`, made outside the lock on first use
+    /// (a size above [`TTF_MAX_PX`] or invalid data is logged and the base is drawn).
+    fn font_for_scale(&self, scale: DisplayScale) -> Option<&'static Font> {
+        if scale.is_one() {
+            return Some(self.base);
+        }
+        if let Some(f) = self.kept(scale, false) {
+            return Some(f);
+        }
+        let full = critical_section::with(|cs| self.variants.borrow_ref(cs).len() >= TTF_MAX_SCALES);
+        if full {
+            twine_core::warn!(
+                target: "twine::text",
+                "scaled ttf font: more than {} display scales; {} uses the nearest kept one",
+                TTF_MAX_SCALES,
+                scale
+            );
+            return self.kept(scale, true);
+        }
+        let px = u16::try_from(scale.to_device(i32::from(self.px))).unwrap_or(u16::MAX);
+        let fallback = self.fallback.map(|f| f.for_scale(scale));
+        let font = match TtfFont::new_with_fallback(self.data, px, fallback) {
+            Ok(f) => f,
+            Err(e) => {
+                twine_core::warn!(target: "twine::text", "scaled ttf font at {}: {}", scale, e);
+                return Some(self.base);
+            }
+        };
+        twine_core::debug!(target: "twine::text", "scaled ttf font: {} px for {}", px, scale);
+        Some(critical_section::with(|cs| {
+            let mut v = self.variants.borrow_ref_mut(cs);
+            // Another caller may have made it meanwhile: keep the first.
+            if let Some(&(_, f)) = v.iter().find(|(s, _)| *s == scale) {
+                return f;
+            }
+            v.push((scale, font));
+            font
+        }))
     }
 }

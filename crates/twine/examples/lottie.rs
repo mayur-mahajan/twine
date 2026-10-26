@@ -8,7 +8,7 @@ fn main() {
     twine_sim::run(
         SimConfig::new(480, 320)
             .title("lottie")
-            .scale(2)
+            .zoom(2)
             // The configuration the firmware ships (theme, engine, motion).
             .app_config(twine_demos::config()),
         twine_demos::lottie::app,

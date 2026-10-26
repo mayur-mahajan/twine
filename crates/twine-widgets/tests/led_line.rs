@@ -252,8 +252,8 @@ fn snapshot_line() {
         let (mut h, l) = line_scene(m);
         let e = h.engine_mut();
         e.set_local_prop(l, Selector::MAIN, StyleProp::LineWidth(Length::Px(3).into()));
-        e.set_local_prop(l, Selector::MAIN, StyleProp::LineDashWidth(6));
-        e.set_local_prop(l, Selector::MAIN, StyleProp::LineDashGap(4));
+        e.set_local_prop(l, Selector::MAIN, StyleProp::LineDashWidth(6.into()));
+        e.set_local_prop(l, Selector::MAIN, StyleProp::LineDashGap(4.into()));
         h.run_until_idle();
         h.assert_snapshot(&format!("line_polyline_dashed_{}", m.suffix()));
         let (mut h, l) = line_scene(m);

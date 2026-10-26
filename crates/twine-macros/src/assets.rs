@@ -8,7 +8,7 @@ use quote::{ToTokens, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{Attribute, Expr, ExprLit, ExprRange, Ident, Lit, LitStr, RangeLimits, Token, Visibility};
-use twine_build::font::{BitmapFormat, Bpp, Font, Gamma, Hinting, Subpx};
+use twine_build::font::{BitmapFormat, Bpp, DisplayScale, Font, Gamma, Hinting, Subpx};
 use twine_build::image::{Color, Compression, FORMAT_NAMES, Image};
 
 /// `#[attrs] vis static NAME = "path", key = value, …`
@@ -282,12 +282,29 @@ pub(crate) fn include_font(input: &AssetInput) -> syn::Result<TokenStream2> {
                 _ => return err(value.span(), "expected `None`, `Light` or `Full`"),
             }),
             "gamma" => font.gamma(gamma(value)?),
+            "scales" => {
+                let Expr::Array(a) = value else {
+                    return err(
+                        value.span(),
+                        "expected an array of scales in percent, e.g. `[200]`",
+                    );
+                };
+                let mut scales = Vec::new();
+                for e in &a.elems {
+                    let p: u16 = int(e)?;
+                    if !(50..=800).contains(&p) {
+                        return err(e.span(), format!("a scale is 50..=800 percent (got {p})"));
+                    }
+                    scales.push(DisplayScale::pct(p));
+                }
+                font.scales(&scales)
+            }
             other => {
                 return err(
                     key.span(),
                     format!(
                         "unknown option `{other}` (expected size, bpp, chars, chars_file, chars_from_rust, \
-                         symbol_fonts, format, kerning, subpx, hinting or gamma)"
+                         symbol_fonts, format, kerning, subpx, hinting, gamma or scales)"
                     ),
                 );
             }

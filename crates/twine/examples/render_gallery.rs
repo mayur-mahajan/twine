@@ -99,7 +99,7 @@ impl Gallery {
 fn main() {
     let cfg = SimConfig::new(W as u16, H as u16)
         .title("twine render gallery")
-        .scale(2);
+        .zoom(2);
     let mut g = Gallery {
         page: 0,
         rotated: false,

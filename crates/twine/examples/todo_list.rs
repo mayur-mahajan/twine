@@ -31,7 +31,7 @@ fn main() {
     twine_sim::run(
         SimConfig::new(320, 240)
             .title("todo list")
-            .scale(2)
+            .zoom(2)
             .theme(&lvgl::THEME),
         move |cx| app(cx, ports),
     );

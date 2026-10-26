@@ -164,7 +164,10 @@ pub trait ThemeHook {
     ///
     /// Parameters: `dpi` is the display's [`DisplayInfo::dpi`](twine_hal::DisplayInfo::dpi)
     /// (dots per inch; [`DEFAULT_DPI`](twine_style::DEFAULT_DPI) unless the driver says
-    /// otherwise), `resolution` the display's logical size in pixels when it is created.
+    /// otherwise), `resolution` the display's rotated size in **logical** pixels when it is
+    /// created (its device size divided by [`DisplayInfo::scale`](twine_hal::DisplayInfo::scale)):
+    /// a table never depends on the display scale, since the resolver converts its `Px` and
+    /// `Dp` values to device pixels itself.
     /// Allocates what the returned table holds (its application and private slots); never
     /// called while drawing.
     ///
@@ -483,7 +486,8 @@ impl<'a> ThemeCx<'a> {
         self.dpi
     }
 
-    /// The display's logical resolution.
+    /// The display's rotated resolution in logical pixels (the device size divided by the
+    /// display scale; equal to it at 1×).
     #[must_use]
     pub fn resolution(&self) -> Size {
         self.resolution
@@ -1135,10 +1139,7 @@ impl Engine {
             mode = first;
             design = t.design(mode);
         }
-        let area = disp.area();
-        disp.metrics = t
-            .metrics(disp.info.dpi, Size::new(area.width(), area.height()))
-            .map(Box::new);
+        disp.metrics = t.metrics(disp.info.dpi, disp.logical_size()).map(Box::new);
         // One indexed array to look up: the mode's table over the metrics, with room for every
         // listed mode, so a mode switch refills it without allocating.
         let mut flat = FlatElements::new();
@@ -1164,7 +1165,7 @@ impl Engine {
     /// changed: all caches at once (inherited values too), then per node what
     /// `refresh_style` does, without per-node invalidation (the display is invalidated once),
     /// then one `StyleChanged` event per node. Allocates nothing.
-    fn restyle_display(&mut self, d: usize) {
+    pub(crate) fn restyle_display(&mut self, d: usize) {
         self.tree.epoch = self.tree.epoch.wrapping_add(1);
         let mut walk = ThemedWalk::new(d);
         while let Some(n) = walk.next(self) {
@@ -1200,18 +1201,11 @@ impl Engine {
         let Some(theme) = disp.theme else {
             return;
         };
-        let (display, dpi) = (disp.id, disp.info.dpi);
-        let area = disp.area();
+        let (display, dpi, size) = (disp.id, disp.info.dpi, disp.logical_size());
         let Some(class) = self.tree.theme_class(id) else {
             return;
         };
-        let mut cx = ThemeCx::new(
-            &mut self.tree,
-            id,
-            display,
-            dpi,
-            Size::new(area.width(), area.height()),
-        );
+        let mut cx = ThemeCx::new(&mut self.tree, id, display, dpi, size);
         theme.apply(&mut cx, class);
         twine_core::trace!(
             target: "twine::style",

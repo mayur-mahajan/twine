@@ -49,10 +49,11 @@ pub struct Plan {
     pub checklist: Vec<(String, bool)>,
 }
 
-/// Whether `s` is a step id `Rn.Smm` (one phase digit, two step digits).
+/// Whether `s` is a step id `Rn.Smm` (one phase digit, two step digits), or `Rn.Smmx` (a
+/// lowercase letter: a step inserted after `Rn.Smm` without renumbering the later steps).
 fn is_step_id(s: &str) -> bool {
     let b = s.as_bytes();
-    b.len() == 6
+    (b.len() == 6 || (b.len() == 7 && b[6].is_ascii_lowercase()))
         && b[0] == b'R'
         && b[1].is_ascii_digit()
         && b[2] == b'.'
@@ -121,7 +122,12 @@ pub fn parse(text: &str) -> Plan {
                     }
                 };
                 let tail = after[3..].trim_start();
-                let id: String = tail.chars().take(6).collect();
+                // `Rn.Smm`, or `Rn.Smmx` for a step inserted after `Rn.Smm`.
+                let id: String = tail
+                    .chars()
+                    .take(7)
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '.')
+                    .collect();
                 if is_step_id(&id) {
                     plan.checklist.push((id, ticked));
                 }
@@ -280,6 +286,25 @@ text
             ]
         );
         assert_eq!(check(&p), Vec::<String>::new());
+    }
+
+    #[test]
+    fn inserted_steps_with_a_letter_suffix_are_steps() {
+        let text = SAMPLE
+            .replace(
+                "### R0.S02 — Flush retry",
+                "### R0.S02 — Flush retry\n### R0.S02b — Inserted",
+            )
+            .replace("[ ] R0.S02\n", "[ ] R0.S02 · [ ] R0.S02b\n");
+        let p = parse(&text);
+        assert_eq!(p.phases[0].steps[2].id, "R0.S02b");
+        assert!(
+            p.checklist.contains(&("R0.S02b".into(), false)),
+            "{:?}",
+            p.checklist
+        );
+        assert_eq!(check(&p), Vec::<String>::new());
+        assert!(!is_step_id("R0.S02B") && !is_step_id("R0.S02bc"));
     }
 
     #[test]
