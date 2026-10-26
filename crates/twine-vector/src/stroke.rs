@@ -15,10 +15,10 @@
 
 use alloc::vec::Vec;
 
-use twine_core::{Fx, Transform};
+use twine_core::{Fx, Rect, Transform};
 
 use crate::flatten::{Line, Polyline, Polylines};
-use crate::geom::{FxPoint, fxp, hypot, muldiv};
+use crate::geom::{FxPoint, FxRect, fxp, hypot, muldiv};
 
 /// Shape of the outer corner where two stroked segments meet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -270,10 +270,10 @@ impl Stroker<'_> {
         o.to(add(p, nb));
     }
 
-    /// Cap at `p`: the outline is at `p + n` and continues at `p − n`; the cap extends in the
-    /// direction `(n.y, −n.x)`.
-    fn cap(&self, o: &mut Outline<'_>, p: V, n: V) {
-        match self.s.cap {
+    /// Cap `cap` at `p`: the outline is at `p + n` and continues at `p − n`; the cap extends
+    /// in the direction `(n.y, −n.x)`.
+    fn cap(&self, o: &mut Outline<'_>, p: V, n: V, cap: LineCap) {
+        match cap {
             LineCap::Butt => {}
             LineCap::Square => {
                 let d = (n.1, n.0.saturating_neg());
@@ -340,20 +340,200 @@ impl Stroker<'_> {
             }
             o.close();
         } else {
-            let (last, before) = (n.wrapping_sub(1), n.wrapping_sub(2));
-            o.start(add(raw(0), nrm(0)));
-            for i in 1..last {
-                self.join(o, raw(i), nrm(i.wrapping_sub(1)), nrm(i));
-            }
-            o.to(add(raw(last), nrm(before)));
-            self.cap(o, raw(last), nrm(before));
-            for i in (1..last).rev() {
-                self.join(o, raw(i), neg(nrm(i)), neg(nrm(i.wrapping_sub(1))));
-            }
-            o.to(add(raw(0), neg(nrm(0))));
-            self.cap(o, raw(0), neg(nrm(0)));
-            o.close();
+            self.open(o, at, n, (self.s.cap, self.s.cap));
         }
+    }
+
+    /// The open polyline of the `n ≥ 2` points `at(0..n)` as one closed outline: the left side
+    /// forward, the end cap `caps.1`, the right side backward, the start cap `caps.0`.
+    fn open(&self, o: &mut Outline<'_>, at: impl Fn(usize) -> FxPoint, n: usize, caps: (LineCap, LineCap)) {
+        // SAFE-ARITH (the index arithmetic): `n ≥ 2` and every index is below `n`.
+        let raw = |i: usize| at(i).raw();
+        let nrm = |i: usize| self.normal(at(i), at(i.wrapping_add(1)));
+        let (last, before) = (n.wrapping_sub(1), n.wrapping_sub(2));
+        o.start(add(raw(0), nrm(0)));
+        for i in 1..last {
+            self.join(o, raw(i), nrm(i.wrapping_sub(1)), nrm(i));
+        }
+        o.to(add(raw(last), nrm(before)));
+        self.cap(o, raw(last), nrm(before), caps.1);
+        for i in (1..last).rev() {
+            self.join(o, raw(i), neg(nrm(i)), neg(nrm(i.wrapping_sub(1))));
+        }
+        o.to(add(raw(0), neg(nrm(0))));
+        self.cap(o, raw(0), neg(nrm(0)), caps.0);
+        o.close();
+    }
+
+    /// [`polyline`](Self::polyline) restricted to the segments that can reach `reach`: each
+    /// maximal run of them is stroked as an open polyline, with the stroke's caps at the
+    /// polyline's own ends and butt ends where a segment was left out (see [`Reach`]).
+    /// `coarse(i)` is a cheaper first test of segment `i` (its chunk reaches the region): a
+    /// segment it rejects is left out without being tested itself.
+    fn polyline_within(
+        &self,
+        o: &mut Outline<'_>,
+        pl: Polyline<'_>,
+        reach: &Reach<'_>,
+        coarse: impl Fn(usize) -> bool,
+    ) {
+        let pts = pl.points;
+        let n = pts.len();
+        // Point `i` modulo `n`; `n ≥ 1` past the check below, so the `get` never falls back.
+        let at = |i: usize| -> FxPoint {
+            pts.get(i.checked_rem(n).unwrap_or(0))
+                .copied()
+                .unwrap_or_default()
+        };
+        // SAFE-ARITH (the index arithmetic below): indices are below `2n`.
+        let hits = |i: usize| coarse(i) && reach.hits(at(i), at(i.wrapping_add(1)));
+        if n == 0 {
+            return;
+        }
+        if n == 1 {
+            if hits(0) {
+                self.polyline(o, pl);
+            }
+            return;
+        }
+        let segs = if pl.closed { n } else { n.wrapping_sub(1) };
+        let mut any = false;
+        let mut cut = None;
+        for i in 0..segs {
+            if hits(i) {
+                any = true;
+            } else if cut.is_none() {
+                cut = Some(i);
+            }
+        }
+        let Some(cut) = cut else {
+            // Every segment reaches the region: the whole polyline, as without `reach`.
+            self.polyline(o, pl);
+            return;
+        };
+        if !any {
+            return;
+        }
+        // A closed polyline is walked from just after a left-out segment, so no run wraps
+        // around; an open one from its first segment.
+        let start = if pl.closed { cut.wrapping_add(1) } else { 0 };
+        let mut run: Option<usize> = None;
+        for j in 0..=segs {
+            let i = start.wrapping_add(j);
+            if j < segs && hits(i) {
+                run.get_or_insert(i);
+                continue;
+            }
+            if let Some(first) = run.take() {
+                // Segments `first..i`: points `first..=i`.
+                let caps = (
+                    if !pl.closed && first == 0 {
+                        self.s.cap
+                    } else {
+                        LineCap::Butt
+                    },
+                    if !pl.closed && i == segs {
+                        self.s.cap
+                    } else {
+                        LineCap::Butt
+                    },
+                );
+                self.open(
+                    o,
+                    |k| at(first.wrapping_add(k)),
+                    i.wrapping_sub(first).wrapping_add(1),
+                    caps,
+                );
+            }
+        }
+    }
+}
+
+/// The device-space region in which a stroke can change pixels: the clip grown by the
+/// stroke's reach — half the width times the largest offset factor of its joins and caps
+/// (miter limit, `√2` of square caps, else 1), times the transform's largest stretch — plus a
+/// margin for rounding.
+///
+/// Leaving out the segments whose reach misses the region changes no pixel in the clip:
+/// the outline differs from the full one by a closed curve (the left-out segments' sides,
+/// joins and caps, and the butt ends that replace their joins) that lies within the reach of
+/// the left-out segments. Shrinking the width to zero moves that curve only within this reach
+/// and turns it into the segments walked forward and back, so its winding number is zero at
+/// every point of the clip; the rasterizer accumulates each cell from the winding numbers
+/// (exact signed areas), so every covered cell gets the same coverage, and cells it no longer
+/// visits had none.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Reach<'t> {
+    t: &'t Transform,
+    x0: i64,
+    y0: i64,
+    x1: i64,
+    y1: i64,
+}
+
+/// Rounding margin of [`Reach`]: 2 px (16.16), well above the outline's rounding (a few raw
+/// units per point).
+const REACH_MARGIN: i64 = 2 << 16;
+
+impl<'t> Reach<'t> {
+    /// The region of `clip` for strokes `s` (half width `hw`, 16.16 path units) drawn with
+    /// `t`; `None` when it does not fit the coordinate range (nothing is left out then).
+    fn new(s: &Stroke, hw: i64, t: &'t Transform, clip: Rect) -> Option<Self> {
+        let factor = match s.join {
+            LineJoin::Miter => i64::from(s.miter_limit.raw()).max(1 << 16),
+            LineJoin::Round | LineJoin::Bevel => 1 << 16,
+        };
+        let factor = if s.cap == LineCap::Square {
+            factor.max(3 << 15)
+        } else {
+            factor
+        };
+        // The largest stretch of `t` is at most the Frobenius norm of its linear part.
+        let stretch = hypot(
+            hypot(i64::from(t.a.raw()), i64::from(t.b.raw())),
+            hypot(i64::from(t.c.raw()), i64::from(t.d.raw())),
+        );
+        // SAFE-ARITH: `hw`, `factor` and `stretch` are below 2^33 each; the product is formed
+        // in `i128` and must fit 2^40 (16.16 → 2^24 px) to be used.
+        let r = i128::from(hw)
+            .wrapping_mul(i128::from(factor))
+            .wrapping_mul(i128::from(stretch))
+            >> 32;
+        let r = i64::try_from(r)
+            .ok()
+            .filter(|&r| r < 1 << 40)?
+            .wrapping_add(REACH_MARGIN);
+        // SAFE-ARITH: `i32` edges times 2^16 and `r < 2^41`.
+        let edge = |v: i32| i64::from(v).wrapping_mul(1 << 16);
+        Some(Self {
+            t,
+            x0: edge(clip.x0).wrapping_sub(r),
+            y0: edge(clip.y0).wrapping_sub(r),
+            x1: edge(clip.x1).wrapping_add(r),
+            y1: edge(clip.y1).wrapping_add(r),
+        })
+    }
+
+    /// Whether anything inside `r` (path space) can reach the clip: the device bounds of its
+    /// corners, grown by 1 px for their rounding, meet the region.
+    fn hits_rect(&self, r: &FxRect) -> bool {
+        let d = r.transformed_bounds(self.t);
+        let (x0, y0) = (i64::from(d.x0.raw()), i64::from(d.y0.raw()));
+        let (x1, y1) = (i64::from(d.x1.raw()), i64::from(d.y1.raw()));
+        // SAFE-ARITH: `i32` raw values plus or minus 2^16.
+        let m = 1 << 16;
+        x1.wrapping_add(m) >= self.x0
+            && x0.wrapping_sub(m) <= self.x1
+            && y1.wrapping_add(m) >= self.y0
+            && y0.wrapping_sub(m) <= self.y1
+    }
+
+    /// Whether the segment `a → b` (path space) can reach the clip: its device bounding box
+    /// meets the region.
+    fn hits(&self, a: FxPoint, b: FxPoint) -> bool {
+        let (ax, ay) = a.transformed(self.t).raw();
+        let (bx, by) = b.transformed(self.t).raw();
+        ax.max(bx) >= self.x0 && ax.min(bx) <= self.x1 && ay.max(by) >= self.y0 && ay.min(by) <= self.y1
     }
 }
 
@@ -466,14 +646,150 @@ fn dash_polylines(input: &Polylines, dash: &Dash, out: &mut Polylines) {
     }
 }
 
+/// The polylines a stroke draws: `polys` itself, or its dash pieces (written to `dashed`)
+/// when the stroke has a valid dash pattern.
+pub(crate) fn dash_source<'a>(polys: &'a Polylines, s: &Stroke, dashed: &'a mut Polylines) -> &'a Polylines {
+    match &s.dash {
+        Some(d) if d.is_valid() => {
+            dashed.clear();
+            dash_polylines(polys, d, dashed);
+            dashed
+        }
+        _ => polys,
+    }
+}
+
 /// Strokes `polys` (path space) into closed device-space outlines appended to `out`.
-/// `dashed` is scratch for the dash pieces; `tol` is the arc tolerance in path units.
+/// `dashed` is scratch for the dash pieces; `tol` is the arc tolerance in path units. With a
+/// `clip` (device pixels) the segments that cannot change a pixel in it are left out (see
+/// [`Reach`]): the cost follows the geometry near the clip, not the whole path.
 pub(crate) fn stroke_polylines(
     polys: &Polylines,
     s: &Stroke,
     tol: Fx,
     t: &Transform,
+    clip: Option<Rect>,
     dashed: &mut Polylines,
+    out: &mut Vec<Line>,
+) {
+    if s.width.raw() <= 0 {
+        return;
+    }
+    let src = dash_source(polys, s, dashed);
+    stroke_source(src, None, s, tol, t, clip, out);
+}
+
+/// Most segments of one [`Chunk`].
+const CHUNK_SEGS: usize = 32;
+
+/// A piece of a stroke's polylines with its path-space bounds, the unit of the coarse
+/// culling of prepared strokes: either up to [`CHUNK_SEGS`] consecutive segments of one long
+/// polyline, or whole short polylines (dash pieces, small sub-paths) together.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Chunk {
+    /// Polylines `first..end`.
+    first: u32,
+    end: u32,
+    /// Segments `seg..seg_end` of polyline `first`, or `WHOLE` for whole polylines.
+    seg: u32,
+    seg_end: u32,
+    /// Bounds of the chunk's points (path space).
+    bounds: FxRect,
+}
+
+/// [`Chunk::seg_end`] of chunks of whole polylines.
+const WHOLE: u32 = u32::MAX;
+
+/// Builds the chunk index of `polys` into `out` with fallible growth. Returns `false` (`out`
+/// left empty) when the memory cannot be reserved.
+pub(crate) fn build_chunks(polys: &Polylines, out: &mut Vec<Chunk>) -> bool {
+    out.clear();
+    // At most one chunk per polyline plus one per `CHUNK_SEGS` segments.
+    let bound = polys.iter().fold(0usize, |n, pl| {
+        n.saturating_add(pl.points.len() / CHUNK_SEGS).saturating_add(1)
+    });
+    if out.try_reserve(bound).is_err() {
+        return false;
+    }
+    let bounds_of = |pts: &mut dyn Iterator<Item = FxPoint>| {
+        pts.fold(None, |r: Option<FxRect>, p| {
+            Some(r.map_or(FxRect::from_points(p, p), |r| r.include(p)))
+        })
+    };
+    // The open group of whole polylines: first polyline, bounds, segments.
+    let mut group: Option<(u32, FxRect, usize)> = None;
+    let flush = |group: &mut Option<(u32, FxRect, usize)>, end: u32, out: &mut Vec<Chunk>| {
+        if let Some((first, bounds, _)) = group.take() {
+            out.push(Chunk {
+                first,
+                end,
+                seg: 0,
+                seg_end: WHOLE,
+                bounds,
+            });
+        }
+    };
+    // Polyline indices fit `u32` (`Polylines` stores them so).
+    for (k, pl) in polys.iter().enumerate() {
+        let k = k as u32;
+        let n = pl.points.len();
+        let segs = if pl.closed { n } else { n.saturating_sub(1) };
+        // Point `i` modulo `n` (`n ≥ 1` wherever it is called).
+        let at = |i: usize| {
+            pl.points
+                .get(i.checked_rem(n).unwrap_or(0))
+                .copied()
+                .unwrap_or_default()
+        };
+        if segs > CHUNK_SEGS {
+            flush(&mut group, k, out);
+            let mut s0 = 0;
+            while s0 < segs {
+                let s1 = s0.saturating_add(CHUNK_SEGS).min(segs);
+                // Segments `s0..s1` use points `s0..=s1`.
+                if let Some(bounds) = bounds_of(&mut (s0..=s1).map(at)) {
+                    out.push(Chunk {
+                        first: k,
+                        end: k.saturating_add(1),
+                        seg: s0 as u32,
+                        seg_end: s1 as u32,
+                        bounds,
+                    });
+                }
+                s0 = s1;
+            }
+            continue;
+        }
+        let Some(b) = bounds_of(&mut pl.points.iter().copied()) else {
+            continue;
+        };
+        let size = segs.max(1);
+        if group
+            .as_ref()
+            .is_some_and(|g| g.2.saturating_add(size) > CHUNK_SEGS)
+        {
+            flush(&mut group, k, out);
+        }
+        group = Some(match group {
+            Some((first, gb, gs)) => (first, gb.union(&b), gs.saturating_add(size)),
+            None => (k, b, size),
+        });
+    }
+    flush(&mut group, polys.len() as u32, out);
+    true
+}
+
+/// Strokes the polylines `src` (already dashed) into closed device-space outlines appended to
+/// `out`, like [`stroke_polylines`]. With an `index` (the chunks of `src` and scratch for their
+/// hit flags) whole chunks out of reach of the `clip` are skipped without testing their
+/// segments.
+pub(crate) fn stroke_source(
+    src: &Polylines,
+    index: Option<(&[Chunk], &mut Vec<bool>)>,
+    s: &Stroke,
+    tol: Fx,
+    t: &Transform,
+    clip: Option<Rect>,
     out: &mut Vec<Line>,
 ) {
     if s.width.raw() <= 0 {
@@ -484,24 +800,62 @@ pub(crate) fn stroke_polylines(
         hw: (i64::from(s.width.raw()) / 2).max(1),
         tol: i64::from(tol.raw().max(1)),
     };
+    let reach = clip.and_then(|c| Reach::new(s, st.hw, t, c));
     let mut o = Outline {
         t,
         out,
         first: FxPoint::ZERO,
         last: FxPoint::ZERO,
     };
-    let src = match &s.dash {
-        Some(d) if d.is_valid() => {
-            dashed.clear();
-            dash_polylines(polys, d, dashed);
-            &*dashed
+    let Some(reach) = reach else {
+        for pl in src.iter() {
+            if !pl.points.is_empty() {
+                st.polyline(&mut o, pl);
+            }
         }
-        _ => polys,
+        return;
     };
-    for pl in src.iter() {
-        if !pl.points.is_empty() {
-            st.polyline(&mut o, pl);
+    let Some((chunks, hit)) = index else {
+        for pl in src.iter() {
+            st.polyline_within(&mut o, pl, &reach, |_| true);
         }
+        return;
+    };
+    hit.clear();
+    hit.extend(chunks.iter().map(|c| reach.hits_rect(&c.bounds)));
+    let hit: &[bool] = hit;
+    let mut ci = 0;
+    while let Some(c) = chunks.get(ci) {
+        if c.seg_end == WHOLE {
+            if hit.get(ci).copied().unwrap_or(true) {
+                for k in c.first..c.end {
+                    if let Some(pl) = src.get(k as usize) {
+                        st.polyline_within(&mut o, pl, &reach, |_| true);
+                    }
+                }
+            }
+            // SAFE-ARITH: `ci < chunks.len()`.
+            ci = ci.wrapping_add(1);
+            continue;
+        }
+        // The chunks `ci..cj` of one long polyline (consecutive, `CHUNK_SEGS` segments each).
+        let mut cj = ci;
+        while chunks
+            .get(cj)
+            .is_some_and(|d| d.first == c.first && d.seg_end != WHOLE)
+        {
+            // SAFE-ARITH: `cj < chunks.len()`.
+            cj = cj.wrapping_add(1);
+        }
+        let flags = hit.get(ci..cj).unwrap_or_default();
+        if flags.iter().any(|&h| h)
+            && let Some(pl) = src.get(c.first as usize)
+        {
+            st.polyline_within(&mut o, pl, &reach, |i| {
+                flags.get(i / CHUNK_SEGS).copied().unwrap_or(true)
+            });
+        }
+        ci = cj;
     }
 }
 
@@ -512,12 +866,84 @@ mod tests {
     use crate::path::Path;
 
     fn outline(path: &Path, s: &Stroke) -> Vec<Line> {
+        outline_in(path, s, None)
+    }
+
+    fn outline_in(path: &Path, s: &Stroke, clip: Option<Rect>) -> Vec<Line> {
         let mut pl = Polylines::new();
         flatten_for_stroke(path, &Transform::IDENTITY, DEFAULT_TOLERANCE, &mut pl);
         let mut d = Polylines::new();
         let mut out = Vec::new();
-        stroke_polylines(&pl, s, DEFAULT_TOLERANCE, &Transform::IDENTITY, &mut d, &mut out);
+        stroke_polylines(
+            &pl,
+            s,
+            DEFAULT_TOLERANCE,
+            &Transform::IDENTITY,
+            clip,
+            &mut d,
+            &mut out,
+        );
         out
+    }
+
+    #[test]
+    fn chunks_split_long_polylines_and_group_short_ones() {
+        let mut pl = Polylines::new();
+        // A 100-segment polyline: chunks of 32, 32, 32 and 4 segments.
+        pl.begin(FxPoint::from_int(0, 0));
+        for i in 1..=100 {
+            pl.push(FxPoint::from_int(i, i % 3));
+        }
+        pl.end(false);
+        // 40 one-segment pieces (dashes): grouped 32 + 8.
+        for i in 0..40 {
+            pl.begin(FxPoint::from_int(i * 4, 50));
+            pl.push(FxPoint::from_int(i * 4 + 2, 50));
+            pl.end(false);
+        }
+        let mut c = Vec::new();
+        assert!(build_chunks(&pl, &mut c));
+        let shape: Vec<_> = c.iter().map(|c| (c.first, c.end, c.seg, c.seg_end)).collect();
+        assert_eq!(
+            shape,
+            [
+                (0, 1, 0, 32),
+                (0, 1, 32, 64),
+                (0, 1, 64, 96),
+                (0, 1, 96, 100),
+                (1, 33, 0, WHOLE),
+                (33, 41, 0, WHOLE),
+            ]
+        );
+        // Bounds cover each chunk's points: segments 32..64 use points 32..=64.
+        assert_eq!(c[1].bounds.x0, Fx::from_int(32));
+        assert_eq!(c[1].bounds.x1, Fx::from_int(64));
+    }
+
+    #[test]
+    fn clip_leaves_out_the_segments_out_of_reach() {
+        // A 10-segment staircase; a 4 px clip around the third step.
+        let mut p = Path::new();
+        p.move_to(FxPoint::from_int(0, 0));
+        for i in 1..=10 {
+            p.line_to(FxPoint::from_int(20 * i, 20 * (i % 2)));
+        }
+        let s = Stroke {
+            width: Fx::from_int(2),
+            ..Stroke::default()
+        };
+        let all = outline(&p, &s);
+        let near = outline_in(&p, &s, Some(Rect::new(48, 8, 52, 12)));
+        assert!(
+            !near.is_empty() && near.len() * 3 < all.len(),
+            "{} of {}",
+            near.len(),
+            all.len()
+        );
+        // A clip around everything leaves nothing out: the same outline.
+        assert_eq!(outline_in(&p, &s, Some(Rect::new(-50, -50, 300, 100))), all);
+        // A clip out of reach: nothing.
+        assert_eq!(outline_in(&p, &s, Some(Rect::new(0, 60, 200, 80))), []);
     }
 
     /// Signed area (2×, in px²) of the closed outlines.

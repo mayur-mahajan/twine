@@ -596,6 +596,30 @@ impl DrawBufferUsage {
 const LEAK_PAD: usize = 3;
 
 impl Display {
+    /// The shown roots in drawing order: the bottom layer, the screens (during a screen load
+    /// animation the previous screen below the active one, or above it for "out" animations),
+    /// the top layer, the system layer.
+    pub(crate) fn draw_order(&self) -> heapless::Vec<NodeId, 5> {
+        let mut roots: heapless::Vec<NodeId, 5> = heapless::Vec::new();
+        let _ = roots.push(self.bottom_layer);
+        match self.prev_screen {
+            Some(prev) if self.draw_prev_over_act => {
+                let _ = roots.push(self.active_screen);
+                let _ = roots.push(prev);
+            }
+            Some(prev) => {
+                let _ = roots.push(prev);
+                let _ = roots.push(self.active_screen);
+            }
+            None => {
+                let _ = roots.push(self.active_screen);
+            }
+        }
+        let _ = roots.push(self.top_layer);
+        let _ = roots.push(self.sys_layer);
+        roots
+    }
+
     /// Whether `root` is currently shown (a layer, the active or the previous screen).
     pub(crate) fn shows_root(&self, root: NodeId) -> bool {
         root == self.active_screen

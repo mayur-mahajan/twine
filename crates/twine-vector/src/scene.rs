@@ -2,11 +2,12 @@
 //! `lv_vector_dsc` + `lv_draw_vector`).
 
 use alloc::vec::Vec;
+use core::cell::RefCell;
 
 use twine_core::{Rect, Transform};
 use twine_render::Painter;
 
-use crate::draw::{DrawParams, PainterVectorExt, VectorDsc, union_rect};
+use crate::draw::{DrawParams, PainterVectorExt, Prepared, VectorDsc, draw_prepared, union_rect};
 use crate::path::Path;
 
 // NOTE(P20.S09): the `Canvas` widget's `with_painter` draws scenes and single paths into its
@@ -16,6 +17,15 @@ use crate::path::Path;
 ///
 /// [`clear`](Self::clear) keeps the item storage, and [`path_mut`](Self::path_mut) gives a
 /// path back for rebuilding, so a scene rebuilt every frame reuses its allocations.
+///
+/// Each item keeps its geometry prepared for drawing — the flattened fill and the flattened,
+/// dashed stroke with a spatial index — from one draw to the next, so a scene drawn in many
+/// clips (every dirty area of a frame, every frame it stays unchanged) does that path work
+/// once, and a stroke only visits the segments near each clip. The pixels are the same as
+/// drawing each path with [`PainterVectorExt::vector`]. An item's prepared geometry is
+/// rebuilt when the item changes ([`add`](Self::add), [`path_mut`](Self::path_mut)) or is
+/// drawn at another scale (strokes) or transform (fills); its memory is
+/// [`prepared_bytes`](Self::prepared_bytes), kept for reuse like the items' own.
 ///
 /// ```
 /// use twine_core::{Color, Fx};
@@ -30,16 +40,26 @@ use crate::path::Path;
 /// ```
 #[derive(Clone, Debug, Default)]
 pub struct VectorScene {
-    items: Vec<(Path, VectorDsc)>,
+    items: Vec<Item>,
     /// Number of live items (`items[len..]` are spare paths kept for reuse; `len ≤
     /// items.len()`).
     len: usize,
 }
 
+/// A scene item: the path, its descriptor and its prepared geometry (filled in by drawing,
+/// hence the cell: [`VectorScene::draw`] takes `&self`).
+#[derive(Clone, Debug, Default)]
+struct Item {
+    path: Path,
+    dsc: VectorDsc,
+    prep: RefCell<Prepared>,
+}
+
 impl PartialEq for VectorScene {
-    /// Scenes are equal when their live items are equal (spare storage is ignored).
+    /// Scenes are equal when their live items' paths and descriptors are equal (spare storage
+    /// and prepared geometry are ignored).
     fn eq(&self, o: &Self) -> bool {
-        self.live() == o.live()
+        self.len == o.len && self.items().eq(o.items())
     }
 }
 
@@ -56,7 +76,7 @@ impl VectorScene {
     }
 
     /// The live items (`len ≤ items.len()`, so all of them).
-    fn live(&self) -> &[(Path, VectorDsc)] {
+    fn live(&self) -> &[Item] {
         // SAFE-INDEX: `len ≤ items.len()` (every method keeps it); the fallback is never
         // taken.
         self.items.get(..self.len).unwrap_or(&self.items)
@@ -65,8 +85,16 @@ impl VectorScene {
     /// Appends `path` drawn with `dsc`.
     pub fn add(&mut self, path: Path, dsc: VectorDsc) {
         match self.items.get_mut(self.len) {
-            Some(slot) => *slot = (path, dsc),
-            None => self.items.push((path, dsc)),
+            Some(slot) => {
+                slot.path = path;
+                slot.dsc = dsc;
+                slot.prep.get_mut().invalidate();
+            }
+            None => self.items.push(Item {
+                path,
+                dsc,
+                prep: RefCell::default(),
+            }),
         }
         // SAFE-ARITH: `len < items.len() ≤ isize::MAX` after the line above.
         self.len = self.len.wrapping_add(1);
@@ -97,15 +125,16 @@ impl VectorScene {
     pub fn path_mut(&mut self) -> Option<(&mut Path, &mut VectorDsc)> {
         if self.len == self.items.len() {
             self.items.try_reserve(1).ok()?;
-            self.items.push((Path::new(), VectorDsc::default()));
+            self.items.push(Item::default());
         }
         let i = self.len;
-        let (p, d) = self.items.get_mut(i)?;
+        let item = self.items.get_mut(i)?;
         // SAFE-ARITH: item `i` exists, so `len < items.len() ≤ isize::MAX`.
         self.len = i.wrapping_add(1);
-        p.clear();
-        *d = VectorDsc::default();
-        Some((p, d))
+        item.path.clear();
+        item.dsc = VectorDsc::default();
+        item.prep.get_mut().invalidate();
+        Some((&mut item.path, &mut item.dsc))
     }
 
     /// Removes every item (the storage is kept for reuse).
@@ -127,7 +156,33 @@ impl VectorScene {
 
     /// The items.
     pub fn items(&self) -> impl Iterator<Item = (&Path, &VectorDsc)> + '_ {
-        self.live().iter().map(|(p, d)| (p, d))
+        self.live().iter().map(|i| (&i.path, &i.dsc))
+    }
+
+    /// Bytes the items keep for their prepared geometry (see the type's documentation),
+    /// spare items included.
+    ///
+    /// ```
+    /// use twine_core::{Color, ColorFormat, Fx, Rect, Transform};
+    /// use twine_render::{DrawBuf, Painter, RenderCaches};
+    /// use twine_vector::{FxPoint, Path, VectorDsc, VectorScene};
+    ///
+    /// let mut scene = VectorScene::new();
+    /// let mut p = Path::new();
+    /// p.circle(FxPoint::from_int(10, 10), Fx::from_int(8));
+    /// scene.add(p, VectorDsc::fill(Color::WHITE));
+    /// assert_eq!(scene.prepared_bytes(), 0); // prepared on the first draw
+    /// let mut caches = RenderCaches::default();
+    /// let mut px = vec![0u8; 20 * 20];
+    /// let buf = DrawBuf::new_packed(&mut px, ColorFormat::L8, Rect::from_xywh(0, 0, 20, 20)).unwrap();
+    /// scene.draw(&mut Painter::new(buf, &mut caches), &Transform::IDENTITY);
+    /// assert!(scene.prepared_bytes() > 0);
+    /// ```
+    #[must_use]
+    pub fn prepared_bytes(&self) -> usize {
+        self.items.iter().fold(0usize, |n, i| {
+            n.saturating_add(i.prep.try_borrow().map_or(0, |p| p.bytes_reserved()))
+        })
     }
 
     /// Screen bounds of all items (`None` when nothing is drawn).
@@ -154,15 +209,20 @@ impl VectorScene {
 
     /// Draws every item, with `t` applied after each item's own transform. Items outside the
     /// painter's clip are skipped cheaply; nothing is allocated once the painter's
-    /// [`VectorCaches`](crate::VectorCaches) have grown.
+    /// [`VectorCaches`](crate::VectorCaches) and the items' prepared geometry have grown.
     pub fn draw(&self, p: &mut Painter<'_>, t: &Transform) {
         self.draw_with(p, &DrawParams::transform(*t));
     }
 
     /// Draws every item with scene-wide `params` (transform, opacity, recolor).
     pub fn draw_with(&self, p: &mut Painter<'_>, params: &DrawParams) {
-        for (path, dsc) in self.items() {
-            p.vector_params(path, dsc, params);
+        for i in self.live() {
+            // The cell is only borrowed here, never across a draw: the fallback (drawing
+            // without the prepared geometry) is never taken.
+            match i.prep.try_borrow_mut() {
+                Ok(mut prep) => draw_prepared(p, &i.path, &i.dsc, params, &mut prep),
+                Err(_) => p.vector_params(&i.path, &i.dsc, params),
+            }
         }
     }
 }

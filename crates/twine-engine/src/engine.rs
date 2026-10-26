@@ -51,6 +51,14 @@ pub struct Engine {
     pub(crate) res: Option<RenderRes>,
     /// Nodes drawn in the current frame.
     pub(crate) nodes_drawn: Cell<u32>,
+    /// The layer cache (`EngineConfig::layer_cache_bytes`).
+    pub(crate) layer_cache: crate::layer_cache::LayerCache,
+    /// Expensive nodes drawn in the current frame (for the layer cache).
+    pub(crate) cache_seen: core::cell::RefCell<heapless::Vec<NodeId, { crate::layer_cache::MAX_ENTRIES }>>,
+    /// While pixels for the layer cache are drawn: the node after which drawing stops.
+    pub(crate) stop_after: Cell<Option<NodeId>>,
+    /// Drawing reached `stop_after`: nothing more is drawn.
+    pub(crate) stopped: Cell<bool>,
     pub(crate) bounds_overlay: bool,
     pub(crate) perf: PerfMonitor,
     last_perf_log: Option<Instant>,
@@ -216,6 +224,10 @@ impl Engine {
             theme_font: None,
             res: Some(res),
             nodes_drawn: Cell::new(0),
+            layer_cache: crate::layer_cache::LayerCache::default(),
+            cache_seen: core::cell::RefCell::default(),
+            stop_after: Cell::new(None),
+            stopped: Cell::new(false),
             bounds_overlay: false,
             perf: PerfMonitor::default(),
             last_perf_log: None,
@@ -593,7 +605,9 @@ impl Engine {
     /// Bookkeeping after a refresh: closes the performance window, logs the periodic
     /// `twine::perf` line and updates the performance overlay.
     pub(crate) fn after_refresh(&mut self, now: Instant, rendered: bool) {
-        let _ = rendered;
+        if rendered {
+            self.layer_cache_frame();
+        }
         if self.perf.window_done(now) {
             #[cfg(feature = "perf-monitor")]
             self.update_perf_overlays();
@@ -616,6 +630,7 @@ impl Engine {
                     s.mem_used,
                     s.mem_peak
                 );
+                self.layer_cache_log();
             }
             self.last_perf_log = Some(now);
         }

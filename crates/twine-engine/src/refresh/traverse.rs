@@ -59,7 +59,7 @@ fn clips_children(flags: ObjFlags) -> bool {
 /// Whether `id` clips its children to its rounded corners (`ClipCorner` with a radius). Out of
 /// line: the style resolution's frame stays off the recursive draw path.
 #[inline(never)]
-fn clips_corners(engine: &Engine, id: NodeId) -> bool {
+pub(crate) fn clips_corners(engine: &Engine, id: NodeId) -> bool {
     engine.cached_main(id).radius > 0
         && engine
             .style_prop(id, Part::Main, PropId::ClipCorner)
@@ -102,23 +102,7 @@ pub(crate) fn draw_area(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, 
     let Some(disp) = engine.displays.get(d) else {
         return;
     };
-    let mut roots: heapless::Vec<NodeId, 5> = heapless::Vec::new();
-    let _ = roots.push(disp.bottom_layer);
-    match disp.prev_screen {
-        Some(prev) if disp.draw_prev_over_act => {
-            let _ = roots.push(disp.active_screen);
-            let _ = roots.push(prev);
-        }
-        Some(prev) => {
-            let _ = roots.push(prev);
-            let _ = roots.push(disp.active_screen);
-        }
-        None => {
-            let _ = roots.push(disp.active_screen);
-        }
-    }
-    let _ = roots.push(disp.top_layer);
-    let _ = roots.push(disp.sys_layer);
+    let roots = disp.draw_order();
     // Topmost cover: from the system layer down to the lowest screen.
     let start = roots
         .iter()
@@ -139,7 +123,8 @@ pub(crate) fn draw_area(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, 
             draw_node(engine, p, aux, r, area, Opa::COVER);
         }
     }
-    if engine.bounds_overlay {
+    // Pixels drawn for the layer cache stop at their node: no overlay.
+    if engine.bounds_overlay && engine.stop_after.get().is_none() {
         for &r in &roots {
             draw_bounds(engine, p, r);
         }
@@ -154,8 +139,17 @@ fn draw_from(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, start: Node
     if let Some(clip) = clip {
         draw_node(engine, p, aux, start, clip, opa_chain(engine, parent));
     }
+    draw_after_branch(engine, p, aux, start, area);
+}
+
+/// What [`draw_from`] draws after `start`: for each ancestor, the siblings after the branch and
+/// the ancestor's post drawing (stops when drawing reached `Engine::stop_after`).
+fn draw_after_branch(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, start: NodeId, area: Rect) {
     let mut cur = start;
     while let Some(par) = engine.tree.parent(cur) {
+        if engine.stopped.get() {
+            return;
+        }
         let par_opa = opa_chain(engine, Some(par));
         if let Some(clip) = children_clip(engine, par, area) {
             let mut sib = engine.tree.node(cur).and_then(crate::Node::next_sibling);
@@ -164,6 +158,9 @@ fn draw_from(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, start: Node
                 sib = engine.tree.node(s).and_then(crate::Node::next_sibling);
             }
         }
+        if engine.stopped.get() {
+            return;
+        }
         let own_clip = match engine.tree.parent(par) {
             Some(gp) => children_clip(engine, gp, area),
             None => Some(area),
@@ -171,7 +168,42 @@ fn draw_from(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, start: Node
         if let Some(c) = own_clip {
             p.with_clip(c, |p| draw_post(engine, p, aux, par, par_opa));
         }
+        // Drawing started inside the node the layer cache stops after: it ends with it.
+        if engine.stop_after.get() == Some(par) {
+            engine.stopped.set(true);
+            return;
+        }
         cur = par;
+    }
+}
+
+/// Draws `area` of display `d` from the layer cache's pixels of `cached` (already in the
+/// buffer): everything drawn after `cached` — the siblings after each branch and the post
+/// drawing of its ancestors, then the roots above its root — as [`draw_area`] would after
+/// drawing `cached`. The painter's clip must be `area`.
+pub(crate) fn draw_after(
+    engine: &Engine,
+    p: &mut Painter<'_>,
+    aux: &mut AuxRes,
+    d: usize,
+    area: Rect,
+    cached: NodeId,
+) {
+    let Some(disp) = engine.displays.get(d) else {
+        return;
+    };
+    let roots = disp.draw_order();
+    draw_after_branch(engine, p, aux, cached, area);
+    let root = engine.tree.ancestors(cached).last().unwrap_or(cached);
+    if let Some(i) = roots.iter().position(|&r| r == root) {
+        for &r in roots.iter().skip(i).skip(1) {
+            draw_node(engine, p, aux, r, area, Opa::COVER);
+        }
+    }
+    if engine.bounds_overlay {
+        for &r in &roots {
+            draw_bounds(engine, p, r);
+        }
     }
 }
 
@@ -190,6 +222,9 @@ pub(crate) fn draw_node(
     clip: Rect,
     parent_opa: Opa,
 ) {
+    if engine.stopped.get() {
+        return;
+    }
     let Some(n) = engine.tree.node(id) else {
         return;
     };
@@ -202,6 +237,9 @@ pub(crate) fn draw_node(
         return;
     }
     draw_shown(engine, p, aux, id, clip, parent_opa);
+    if engine.stop_after.get() == Some(id) {
+        engine.stopped.set(true);
+    }
 }
 
 /// The body of [`draw_node`] for a node that is shown (inlined: one frame per level).
@@ -420,6 +458,9 @@ fn draw_content(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, id: Node
     }
     draw_own(engine, p, aux, id, clip, opa);
     draw_children(engine, p, aux, id, clip, opa);
+    if engine.stopped.get() {
+        return;
+    }
     draw_post_clipped(engine, p, aux, id, clip, opa);
 }
 
@@ -430,6 +471,9 @@ fn draw_own(engine: &Engine, p: &mut Painter<'_>, aux: &mut AuxRes, id: NodeId, 
     let Some(n) = engine.tree.node(id) else {
         return;
     };
+    if crate::layer_cache::watched(n.widget().draw_cost()) {
+        engine.layer_cache_seen(id);
+    }
     p.with_clip(clip, |p| {
         let mut cx = DrawCx::new(p, engine, aux, id, opa);
         n.widget().draw(&mut cx);

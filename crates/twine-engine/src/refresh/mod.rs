@@ -9,6 +9,7 @@ mod partial;
 mod rotate;
 mod timeout;
 pub(crate) mod traverse;
+pub(crate) use traverse::{clips_corners, find_top_cover};
 
 use alloc::boxed::Box;
 
@@ -231,14 +232,14 @@ impl Refresher {
         Ok(Self::new(info, strategy, align))
     }
 
-    /// Adds a dirty area; more than `max` areas collapse into their bounding box.
+    /// Adds a dirty area to a set of at most `max` (`EngineConfig::max_dirty_areas`, which
+    /// the application may change at run time): when full, the two areas whose union adds the
+    /// least area are joined (`RectSet::add`).
     pub(crate) fn add_dirty(&mut self, area: Rect, max: usize) {
-        self.dirty.add(area);
-        if self.dirty.len() > max {
-            let bbox = self.dirty.bounding_box();
-            self.dirty.clear();
-            self.dirty.add(bbox);
+        if self.dirty.limit() != max {
+            self.dirty.set_limit(max);
         }
+        self.dirty.add(area);
     }
 
     /// Framebuffer `index` (framebuffer strategies).
@@ -295,6 +296,80 @@ pub(crate) fn render_into(
             p.fill(clip, debug_color(frame), Opa::P30);
         }
     });
+}
+
+impl Engine {
+    /// Draws `clip` from the layer cache when an entry's pixels can stand in for it (drawing
+    /// them first when they are due): copies them, then draws what comes after the node.
+    /// Returns `false` when the cache does not apply (the caller draws normally).
+    #[allow(clippy::too_many_arguments)]
+    fn render_cached(
+        &mut self,
+        res: &mut crate::engine::RenderRes,
+        d: usize,
+        buf: &mut [u8],
+        format: ColorFormat,
+        stride: usize,
+        buf_area: Rect,
+        clip: Rect,
+        frame: u32,
+    ) -> bool {
+        let Some(i) = self.layer_cache_pick(d, clip, format) else {
+            return false;
+        };
+        if !self.layer_cache_ready(i, res, frame) {
+            return false;
+        }
+        let Some(node) = self.layer_cache_copy(i, buf, stride, buf_area, clip) else {
+            return false;
+        };
+        let crate::engine::RenderRes { caches, aux, accel } = res;
+        let Ok(db) = DrawBuf::new(buf, format, stride, buf_area) else {
+            return false;
+        };
+        let mut p = Painter::new(db, caches);
+        if let Some(a) = accel.0.as_deref_mut() {
+            p = p.with_accel(a);
+        }
+        let engine = &*self;
+        p.with_clip(clip, |p| {
+            traverse::draw_after(engine, p, aux, d, clip, node);
+            if engine.config.debug_refresh {
+                p.fill(clip, debug_color(frame), Opa::P30);
+            }
+        });
+        true
+    }
+}
+
+/// Draws the layer cache's pixels of `node`: `rect` of display `d` into `buf` (rows `stride`
+/// bytes apart), stopping right after `node` (nothing drawn after it, no debug tint or
+/// overlay). Returns whether drawing reached `node` (the pixels are usable).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_until(
+    engine: &Engine,
+    res: &mut crate::engine::RenderRes,
+    d: usize,
+    buf: &mut [u8],
+    format: ColorFormat,
+    stride: usize,
+    rect: Rect,
+    node: crate::NodeId,
+    frame: u32,
+) -> bool {
+    let _ = frame;
+    let crate::engine::RenderRes { caches, aux, .. } = res;
+    let Ok(db) = DrawBuf::new(buf, format, stride, rect) else {
+        return false;
+    };
+    let mut p = Painter::new(db, caches);
+    engine.stop_after.set(Some(node));
+    engine.stopped.set(false);
+    p.with_clip(rect, |p| traverse::draw_area(engine, p, aux, d, rect));
+    let reached = engine.stopped.get();
+    engine.stop_after.set(None);
+    engine.stopped.set(false);
+    reached
 }
 
 /// The refresh-debug tint of `frame`: hue `frame × 37 mod 360` at full saturation.
@@ -1156,7 +1231,9 @@ impl Engine {
             return 0;
         };
         let t0 = self.hires_us();
-        render_into(self, &mut res, d, buf, format, stride, buf_area, clip, frame);
+        if !self.render_cached(&mut res, d, buf, format, stride, buf_area, clip, frame) {
+            render_into(self, &mut res, d, buf, format, stride, buf_area, clip, frame);
+        }
         // One virtual call per chunk; nothing else on the path where the accelerator works.
         let accel_timeouts = res.accel.0.as_deref_mut().map_or(0, DrawAccel::take_timeouts);
         if accel_timeouts > 0 {

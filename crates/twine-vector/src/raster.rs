@@ -118,20 +118,19 @@ fn to8(v: twine_core::Fx) -> i32 {
     sat(i64::from(v.raw()).wrapping_add(128) >> 8)
 }
 
-/// Rasterizes the closed polygon(s) given as `lines` into `p` with `rule`, painting with `src`.
-pub(crate) fn fill_lines(
-    p: &mut Painter<'_>,
-    r: &mut RasterScratch,
-    lines: &[Line],
-    rule: FillRule,
-    src: &SpanSource<'_>,
-    mode: BlendMode,
-) {
-    let clip = p.clip();
-    if clip.is_empty() || lines.is_empty() {
-        return;
-    }
-    r.edges.clear();
+/// The edge bounds of a polygon (24.8): `minx`, `miny`, `maxx`, `maxy`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct EdgeBounds {
+    minx: i32,
+    miny: i32,
+    maxx: i32,
+    maxy: i32,
+}
+
+/// Collects the non-horizontal edges of `lines` into `out` (cleared), sorted by their top.
+/// Returns their bounds (`None`: no edge).
+fn collect_edges(lines: &[Line], out: &mut Vec<Edge>) -> Option<EdgeBounds> {
+    out.clear();
     let (mut minx, mut miny, mut maxx, mut maxy) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
     for l in lines {
         let (ax, ay, bx, by) = (to8(l.p0.x), to8(l.p0.y), to8(l.p1.x), to8(l.p1.y));
@@ -159,11 +158,107 @@ pub(crate) fn fill_lines(
         maxx = maxx.max(ax.max(bx));
         miny = miny.min(e.y0);
         maxy = maxy.max(e.y1);
-        r.edges.push(e);
+        out.push(e);
     }
-    if r.edges.is_empty() {
+    if out.is_empty() {
+        return None;
+    }
+    out.sort_unstable_by_key(|e| e.y0);
+    Some(EdgeBounds {
+        minx,
+        miny,
+        maxx,
+        maxy,
+    })
+}
+
+/// The edges of a polygon, collected and sorted once and filled in any number of clips with
+/// [`fill`](Self::fill): the same pixels as [`fill_lines`] of the polygon's lines.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PreparedEdges {
+    edges: Vec<Edge>,
+    bounds: Option<EdgeBounds>,
+}
+
+impl PreparedEdges {
+    /// Prepares the polygon of `lines` (`scratch`: the rasterizer's scratch, whose edge list is
+    /// used to collect them). Returns `false` (and holds nothing) when the memory cannot be
+    /// reserved.
+    pub(crate) fn build(&mut self, lines: &[Line], scratch: &mut RasterScratch) -> bool {
+        self.edges.clear();
+        self.bounds = collect_edges(lines, &mut scratch.edges);
+        if self.edges.try_reserve_exact(scratch.edges.len()).is_err() {
+            self.bounds = None;
+            return false;
+        }
+        self.edges.extend_from_slice(&scratch.edges);
+        true
+    }
+
+    /// Number of edges.
+    pub(crate) fn len(&self) -> usize {
+        self.edges.len()
+    }
+
+    /// Bytes reserved.
+    pub(crate) fn bytes_reserved(&self) -> usize {
+        self.edges.capacity().saturating_mul(core::mem::size_of::<Edge>())
+    }
+
+    /// Fills the polygon into `p` (see [`fill_lines`]).
+    pub(crate) fn fill(
+        &self,
+        p: &mut Painter<'_>,
+        r: &mut RasterScratch,
+        rule: FillRule,
+        src: &SpanSource<'_>,
+        mode: BlendMode,
+    ) {
+        if let Some(b) = self.bounds {
+            fill_edges(p, r, &self.edges, b, rule, src, mode);
+        }
+    }
+}
+
+/// Rasterizes the closed polygon(s) given as `lines` into `p` with `rule`, painting with `src`.
+pub(crate) fn fill_lines(
+    p: &mut Painter<'_>,
+    r: &mut RasterScratch,
+    lines: &[Line],
+    rule: FillRule,
+    src: &SpanSource<'_>,
+    mode: BlendMode,
+) {
+    if p.clip().is_empty() || lines.is_empty() {
         return;
     }
+    let mut edges = core::mem::take(&mut r.edges);
+    if let Some(b) = collect_edges(lines, &mut edges) {
+        fill_edges(p, r, &edges, b, rule, src, mode);
+    }
+    r.edges = edges;
+}
+
+/// Rasterizes the polygon of `edges` (sorted by their top, within `b`) into `p`'s clip.
+fn fill_edges(
+    p: &mut Painter<'_>,
+    r: &mut RasterScratch,
+    edges: &[Edge],
+    b: EdgeBounds,
+    rule: FillRule,
+    src: &SpanSource<'_>,
+    mode: BlendMode,
+) {
+    let clip = p.clip();
+    if clip.is_empty() || edges.is_empty() {
+        return;
+    }
+    let EdgeBounds {
+        minx,
+        miny,
+        maxx,
+        maxy,
+    } = b;
     // `maxx`, `maxy` are within `±2^23` (24.8): the rounding sums fit.
     let row0 = clip.y0.max(miny >> 8);
     let row1 = clip.y1.min(sat(i64::from(maxy).wrapping_add(ONE - 1) >> 8));
@@ -174,7 +269,6 @@ pub(crate) fn fill_lines(
     }
     let w = crate::geom::span(xs, xe);
     r.reserve_width(w);
-    r.edges.sort_unstable_by_key(|e| e.y0);
     r.active.clear();
     // `|xs| ≤ 2^15 + 1` and `w ≤ 2^16 + 2`: products with 256 are below 2^25.
     let x_origin = i64::from(xs).wrapping_mul(ONE);
@@ -186,7 +280,7 @@ pub(crate) fn fill_lines(
         // `row0 ≤ y < row1 ≤ 2^15 + 1`.
         let ry0 = i64::from(y).wrapping_mul(ONE);
         let ry1 = ry0.wrapping_add(ONE);
-        while let Some(e) = r.edges.get(next).filter(|e| i64::from(e.y0) < ry1) {
+        while let Some(e) = edges.get(next).filter(|e| i64::from(e.y0) < ry1) {
             if i64::from(e.y1) > top {
                 // `next < edges.len() ≤ u32::MAX` for any path that fits memory… the index is
                 // kept as `u32` (half the memory); a larger index is skipped.
@@ -197,18 +291,17 @@ pub(crate) fn fill_lines(
             // `next < edges.len()` (the edge exists).
             next = next.wrapping_add(1);
         }
-        let edges = &r.edges;
         r.active
             .retain(|&i| edges.get(i as usize).is_some_and(|e| i64::from(e.y1) > ry0));
         if r.active.is_empty() {
-            if next >= r.edges.len() {
+            if next >= edges.len() {
                 break;
             }
             continue;
         }
         let span = match rule {
-            FillRule::NonZero => accumulate_row(r, ry0, x_origin, wlim, w),
-            FillRule::EvenOdd => scan_row_even_odd(r, ry0, x_origin, wlim, w),
+            FillRule::NonZero => accumulate_row(r, edges, ry0, x_origin, wlim, w),
+            FillRule::EvenOdd => scan_row_even_odd(r, edges, ry0, x_origin, wlim, w),
         };
         if let Some((a, b)) = span {
             // `a < b ≤ w`: the start column `xs + a` lies inside the clip.
@@ -222,6 +315,7 @@ pub(crate) fn fill_lines(
 /// in `r.cov`.
 fn accumulate_row(
     r: &mut RasterScratch,
+    edges: &[Edge],
     ry0: i64,
     x_origin: i64,
     wlim: i64,
@@ -232,7 +326,7 @@ fn accumulate_row(
     // `reserve_width(w)` sized the row buffers: the `?`s are never taken.
     let acc = r.acc.get_mut(..w.saturating_add(2))?;
     for &i in &r.active {
-        let Some(e) = r.edges.get(i as usize) else {
+        let Some(e) = edges.get(i as usize) else {
             continue;
         };
         let top = i64::from(e.y0).max(ry0);
@@ -363,6 +457,7 @@ fn add_segment(acc: &mut [i32], xa: i64, ya: i64, xb: i64, yb: i64, dir: i64, wl
 /// Even-odd scanline coverage of one row (4 sub-scanlines). Returns the covered range.
 fn scan_row_even_odd(
     r: &mut RasterScratch,
+    edges: &[Edge],
     ry0: i64,
     x_origin: i64,
     wlim: i64,
@@ -375,7 +470,7 @@ fn scan_row_even_odd(
         let ys = ry0.wrapping_add(32).wrapping_add(k.wrapping_mul(64));
         r.cross.clear();
         for &i in &r.active {
-            let Some(e) = r.edges.get(i as usize) else {
+            let Some(e) = edges.get(i as usize) else {
                 continue;
             };
             if ys >= i64::from(e.y0) && ys < i64::from(e.y1) {

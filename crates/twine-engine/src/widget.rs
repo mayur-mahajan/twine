@@ -30,6 +30,18 @@ impl<T: Any> AsAny for T {
     }
 }
 
+/// How costly a widget's drawing is per pixel ([`Widget::draw_cost`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum DrawCost {
+    /// About as cheap as copying the pixels (fills, borders, text, images): never cached.
+    #[default]
+    Cheap,
+    /// Computed per pixel at a cost well above a copy (vector paths, gradients): the layer
+    /// cache may keep the node's pixels while it stays unchanged.
+    Expensive,
+}
+
 /// A widget: the behaviour of one node of the tree (LVGL's object class).
 ///
 /// The node itself (coordinates, flags, state, styles) lives in the [`Tree`](crate::Tree);
@@ -103,6 +115,31 @@ pub trait Widget: AsAny {
     /// drawn. Default: [`default_covers`].
     fn covers(&self, cx: &MeasureCx<'_>, area: Rect) -> bool {
         default_covers(cx, area)
+    }
+
+    /// How costly the widget's drawing is per pixel, compared with copying pixels: the hint
+    /// the engine's layer cache uses to decide what is worth keeping as pixels
+    /// ([`EngineConfig::layer_cache_bytes`](crate::EngineConfig::layer_cache_bytes)). Default
+    /// [`DrawCost::Cheap`]; vector graphics and other per-pixel computed content say
+    /// [`DrawCost::Expensive`].
+    ///
+    /// ```
+    /// use twine_engine::{DrawCost, DrawCx, Widget, WidgetClass};
+    ///
+    /// static PLOT: WidgetClass = WidgetClass::new("plot");
+    /// struct Plot;
+    /// impl Widget for Plot {
+    ///     fn class(&self) -> &'static WidgetClass {
+    ///         &PLOT
+    ///     }
+    ///     fn draw_cost(&self) -> DrawCost {
+    ///         DrawCost::Expensive
+    ///     }
+    /// }
+    /// assert_eq!(Plot.draw_cost(), DrawCost::Expensive);
+    /// ```
+    fn draw_cost(&self) -> DrawCost {
+        DrawCost::Cheap
     }
 
     /// Text content for queries and tree dumps. Default `None`.

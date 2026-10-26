@@ -167,6 +167,7 @@ mod input;
 #[cfg(feature = "display-integrity")]
 mod integrity;
 mod invalidate;
+mod layer_cache;
 mod layout;
 mod memory;
 mod obj;
@@ -214,6 +215,7 @@ pub use input::{InputId, MAX_INPUTS};
 #[cfg(feature = "display-integrity")]
 pub use integrity::{CriticalReport, FrameChunk, FrameObserver, FrameReport, IntegrityCheck, Region};
 pub use invalidate::InvalidateReason;
+pub use layer_cache::LayerCacheStats;
 pub use layout::{LayoutStats, MAX_LAYOUT_ITERATIONS};
 pub use memory::EngineMemory;
 pub use obj::{OBJ_CLASS, OBJ_FLAGS, Obj};
@@ -234,7 +236,7 @@ pub use twine_style::{Axis, ScrollSnap, ScrollbarMode, Side, Sides};
 pub use twine_style::{State, ThemeMode};
 pub use wake::{StepBudget, Wake};
 pub use widget::{
-    AsAny, Editable, GroupDef, Lineage, MAX_CLASS_DEPTH, MeasureCx, Widget, WidgetClass, WidgetCx,
+    AsAny, DrawCost, Editable, GroupDef, Lineage, MAX_CLASS_DEPTH, MeasureCx, Widget, WidgetClass, WidgetCx,
     default_covers, default_hit_test,
 };
 

@@ -25,8 +25,8 @@ pub struct EngineConfig {
     /// Minimum time between two frames of a display (default 16 ms). Invalidations in between
     /// accumulate.
     pub refr_period: Duration,
-    /// Dirty areas kept per display before they collapse into their bounding box (1..=32,
-    /// default 32).
+    /// Dirty areas kept per display (1..=32, default 32): beyond it, the two areas whose
+    /// union adds the least area are joined.
     pub max_dirty_areas: usize,
     /// When no draw buffer is free because the driver still flushes them all (or a framebuffer
     /// swap is pending), return [`Wake::Now`](crate::Wake::Now) from `step` instead of waiting
@@ -95,6 +95,19 @@ pub struct EngineConfig {
     pub glyph_cache_bytes: usize,
     /// Decoded image cache budget in bytes (default 0: only uncompressed static images).
     pub image_cache_bytes: usize,
+    /// Budget of the layer cache, in bytes: the engine keeps the finished pixels of an
+    /// expensive node ([`DrawCost::Expensive`](crate::DrawCost::Expensive): vector graphics…)
+    /// that stays unchanged while other content around or above it is redrawn, and copies
+    /// them instead of drawing it again. Which nodes it keeps is decided automatically and the
+    /// pixels are the same as drawing them; see [`Engine::layer_cache_stats`].
+    ///
+    /// `None` (the default): automatic — a quarter of the free heap reported by
+    /// [`mem_info`](Self::mem_info), at most twice the displays' pixels; 0 without `mem_info`
+    /// and in the `safety` profile (whose budgets are fixed). `Some(bytes)`: that budget
+    /// (`Some(0)` turns the cache off).
+    ///
+    /// [`Engine::layer_cache_stats`]: crate::Engine::layer_cache_stats
+    pub layer_cache_bytes: Option<usize>,
     /// Quarter-circle coverage cache entries (default 4).
     pub circle_cache_entries: u8,
     /// Gradient color map cache entries (default 4).
@@ -211,6 +224,7 @@ impl Default for EngineConfig {
             layer_buf_bytes: 24 * 1024,
             glyph_cache_bytes: 8 * 1024,
             image_cache_bytes: 0,
+            layer_cache_bytes: None,
             circle_cache_entries: 4,
             gradient_cache_entries: 4,
             shadow_cache_entries: 1,
@@ -346,6 +360,11 @@ impl twine_core::audit::Audit for EngineConfig {
         out.entry(e, "layer_buf_bytes", V::from_usize(self.layer_buf_bytes));
         out.entry(e, "glyph_cache_bytes", V::from_usize(self.glyph_cache_bytes));
         out.entry(e, "image_cache_bytes", V::from_usize(self.image_cache_bytes));
+        out.entry(
+            e,
+            "layer_cache_bytes",
+            self.layer_cache_bytes.map_or(V::Text("auto"), V::from_usize),
+        );
         out.entry(
             e,
             "circle_cache_entries",

@@ -331,3 +331,127 @@ fn stroke_zoom_4x() {
         }
     }
 }
+
+/// A polyline of `pts` (closed or open) in a path.
+fn polyline_path(pts: &[(i32, i32)], closed: bool) -> Path {
+    let mut p = Path::new();
+    for (i, &(x, y)) in pts.iter().enumerate() {
+        let q = FxPoint::new(Fx::from_raw(x), Fx::from_raw(y));
+        if i == 0 {
+            p.move_to(q);
+        } else {
+            p.line_to(q);
+        }
+    }
+    if closed {
+        p.close();
+    }
+    p
+}
+
+/// Draws `p` with `dsc` once unclipped and once tile by tile (each draw clipped to a small
+/// rectangle, so the stroker leaves out the segments that cannot reach it): the images must be
+/// identical.
+fn assert_tiles_match(p: &Path, dsc: &VectorDsc, tile: i32) {
+    let (w, h) = (160, 120);
+    let mut full = RenderHarness::new(w as u16, h as u16, ColorFormat::Rgb565);
+    full.paint(|pa| pa.vector(p, dsc));
+    let mut tiled = RenderHarness::new(w as u16, h as u16, ColorFormat::Rgb565);
+    for y in (0..h).step_by(tile as usize) {
+        for x in (0..w).step_by(tile as usize) {
+            let r = Rect::new(x, y, (x + tile).min(w), (y + tile).min(h));
+            tiled.paint(|pa| pa.with_clip(r, |pa| pa.vector(p, dsc)));
+        }
+    }
+    assert!(
+        full.data() == tiled.data(),
+        "tiles of {tile} px differ for {dsc:?}"
+    );
+}
+
+#[test]
+fn clipped_strokes_match_unclipped_for_every_join_and_cap() {
+    // Long thin polylines whose segments mostly miss a small clip: sharp turns, a loop around
+    // the canvas' middle, self-crossings and a zero-length segment.
+    let star: Vec<(i32, i32)> = [(80, 4), (110, 110), (10, 40), (150, 40), (50, 110), (80, 4)]
+        .iter()
+        .map(|&(x, y)| (x << 16, y << 16))
+        .collect();
+    let lp: Vec<(i32, i32)> = [
+        (20, 20),
+        (140, 22),
+        (138, 100),
+        (22, 98),
+        (24, 30),
+        (24, 30),
+        (90, 60),
+    ]
+    .iter()
+    .map(|&(x, y)| (x << 16, y << 16))
+    .collect();
+    for (pts, closed) in [(&star, false), (&star, true), (&lp, false), (&lp, true)] {
+        let p = polyline_path(pts, closed);
+        for join in [LineJoin::Miter, LineJoin::Round, LineJoin::Bevel] {
+            for cap in [LineCap::Butt, LineCap::Round, LineCap::Square] {
+                for (width, limit, dash) in [(1, 4, false), (6, 4, false), (9, 10, false), (5, 4, true)] {
+                    let mut d = stroke(width, join, cap);
+                    if let Some((_, s)) = d.stroke.as_mut() {
+                        s.miter_limit = Fx::from_int(limit);
+                        if dash {
+                            s.dash = Some(Dash::new(&[Fx::from_int(7), Fx::from_int(4)], Fx::from_int(2)));
+                        }
+                    }
+                    for tile in [7, 16, 40] {
+                        assert_tiles_match(&p, &d, tile);
+                    }
+                }
+            }
+        }
+    }
+}
+
+mod tiles {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(96))]
+
+        #[test]
+        fn clipped_strokes_match_unclipped(
+            pts in proptest::collection::vec((-40i32..200, -40i32..160), 2..24),
+            closed in any::<bool>(),
+            width in 1i32..(14 << 16),
+            join in 0usize..3, cap in 0usize..3,
+            limit in 1i32..12,
+            dash in proptest::option::of((1i32..20, 1i32..20, 0i32..30)),
+            angle in -180i32..180, scale in 50i32..200,
+            tile in 3i32..48,
+        ) {
+            let pts: Vec<(i32, i32)> = pts.iter().map(|&(x, y)| (x << 16, y << 16)).collect();
+            let p = polyline_path(&pts, closed);
+            let join = [LineJoin::Miter, LineJoin::Round, LineJoin::Bevel][join];
+            let cap = [LineCap::Butt, LineCap::Round, LineCap::Square][cap];
+            let t = Transform::rotate(Angle::deg(angle))
+                .around(twine_core::Point::new(80, 60))
+                .then(Transform::scale(Fx::from_ratio(scale, 100), Fx::from_ratio(scale, 100)));
+            let dsc = VectorDsc {
+                transform: t,
+                stroke: Some((
+                    Paint::Solid(INK),
+                    Stroke {
+                        width: Fx::from_raw(width),
+                        join,
+                        cap,
+                        miter_limit: Fx::from_int(limit),
+                        dash: dash.map(|(on, off, o)| {
+                            Dash::new(&[Fx::from_int(on), Fx::from_int(off)], Fx::from_int(o))
+                        }),
+                    },
+                )),
+                ..VectorDsc::default()
+            };
+            assert_tiles_match(&p, &dsc, tile);
+        }
+    }
+}

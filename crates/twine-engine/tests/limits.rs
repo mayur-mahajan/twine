@@ -227,6 +227,7 @@ fn engine_config_audit_lists_every_field() {
         "layer_buf_bytes",
         "glyph_cache_bytes",
         "image_cache_bytes",
+        "layer_cache_bytes",
         "circle_cache_entries",
         "gradient_cache_entries",
         "shadow_cache_entries",
@@ -239,5 +240,7 @@ fn engine_config_audit_lists_every_field() {
     ] {
         assert!(text.contains(&format!("engine.{key}=")), "{key} missing:\n{text}");
     }
-    assert_eq!(text.lines().count(), 30);
+    assert_eq!(text.lines().count(), 31);
+    // The automatic layer cache budget reads as `auto`.
+    assert!(text.contains("engine.layer_cache_bytes=auto\n"), "{text}");
 }

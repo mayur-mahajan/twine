@@ -260,9 +260,11 @@ fn ext_draw_includes_shadow_and_outline() {
 }
 
 #[test]
-fn rectset_overflow_falls_back_to_bounding_box() {
+fn rectset_overflow_joins_the_cheapest_pair() {
     let mut h = harness();
     let d = h.display();
+    // 33 small areas on a grid (18 px apart in rows, 30 px between rows): one more than
+    // `max_dirty_areas`.
     for i in 0..33 {
         let x = (i % 11) * 18;
         let y = (i / 11) * 30;
@@ -270,9 +272,27 @@ fn rectset_overflow_falls_back_to_bounding_box() {
             .invalidate_area(d, Rect::from_xywh(x, y, 5, 5), InvalidateReason::Explicit);
     }
     h.advance(Duration::ms(16));
-    assert_eq!(h.last_frame().dirty_areas, 1);
-    assert_eq!(h.flushes()[0].area.x0, 0);
-    assert_eq!(h.last_frame().dirty_px, 185 * 65);
+    // Two row neighbours are joined (23 × 5, the least extra area); the rest stay as they are
+    // — not one bounding box of everything (185 × 65 = 12025 px for 825 px of change).
+    assert_eq!(h.last_frame().dirty_areas, 32);
+    assert_eq!(h.flushes()[0].area, Rect::from_xywh(0, 0, 23, 5));
+    assert_eq!(h.last_frame().dirty_px, 31 * 25 + 23 * 5);
+}
+
+#[test]
+fn max_dirty_areas_changed_at_run_time_applies() {
+    let mut h = harness();
+    let d = h.display();
+    h.engine_mut().config_mut().max_dirty_areas = 4;
+    for i in 0..10 {
+        h.engine_mut()
+            .invalidate_area(d, Rect::from_xywh(i * 20, 0, 5, 5), InvalidateReason::Explicit);
+    }
+    h.advance(Duration::ms(16));
+    assert_eq!(h.last_frame().dirty_areas, 4);
+    // Everything invalidated is redrawn: the areas cover all ten squares.
+    let covered: i32 = h.flushes().iter().map(|f| f.area.width()).sum();
+    assert!(covered >= 10 * 5, "{covered}");
 }
 
 #[test]

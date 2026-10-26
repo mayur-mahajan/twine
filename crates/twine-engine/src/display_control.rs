@@ -715,9 +715,13 @@ impl Engine {
         };
         let id = disp.id;
         disp.info = info;
+        self.layer_cache_forget_display(d);
+        let Some(disp) = self.displays.get_mut(d) else {
+            return;
+        };
         let area = info.area();
         disp.refresher.job = None;
-        disp.refresher.dirty = RectSet::new(area);
+        disp.refresher.dirty = RectSet::with_limit(area, disp.refresher.dirty.limit());
         disp.refresher.overlay_dirty = None;
         let roots = [disp.bottom_layer, disp.top_layer, disp.sys_layer];
         for r in roots {

@@ -89,3 +89,4 @@ twine-theme = { path = "../twine-theme", features = ["mono", "simple"] }
 twine-assets = { path = "../twine-assets", features = ["montserrat-14", "montserrat-20"] }
 twine-hal = { path = "../twine-hal" }
 log = "0.4"
+proptest = "1"

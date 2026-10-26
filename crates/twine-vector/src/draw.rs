@@ -11,8 +11,8 @@ use crate::flatten::{DEFAULT_TOLERANCE, Line, Polylines, flatten, flatten_for_st
 use crate::geom::{FxRect, hypot};
 use crate::paint::{Paint, Sampler, load_lut};
 use crate::path::Path;
-use crate::raster::{RasterScratch, fill_lines};
-use crate::stroke::{LineJoin, Stroke, stroke_polylines};
+use crate::raster::{PreparedEdges, RasterScratch, fill_lines};
+use crate::stroke::{Chunk, LineJoin, Stroke, build_chunks, dash_source, stroke_polylines, stroke_source};
 
 /// How a [`Path`] is drawn (LVGL `lv_vector_dsc`): transform, optional fill and stroke with
 /// their paints, opacities and the blend mode. The fill is drawn first, then the stroke.
@@ -179,6 +179,8 @@ pub struct VectorCaches {
     dashed: Polylines,
     raster: RasterScratch,
     lut: Box<[u32; 256]>,
+    /// Hit flags of a prepared stroke's chunks (one per chunk).
+    chunk_hits: Vec<bool>,
 }
 
 impl Default for VectorCaches {
@@ -197,6 +199,7 @@ impl VectorCaches {
             dashed: Polylines::new(),
             raster: RasterScratch::default(),
             lut: Box::new([0; 256]),
+            chunk_hits: Vec::new(),
         }
     }
 
@@ -218,6 +221,7 @@ impl VectorCaches {
             .capacity()
             .saturating_mul(core::mem::size_of::<Line>())
             .saturating_add(self.raster.bytes_reserved())
+            .saturating_add(self.chunk_hits.capacity())
             .saturating_add(1024)
     }
 }
@@ -267,14 +271,127 @@ impl PainterVectorExt for Painter<'_> {
     }
 
     fn vector_with(&mut self, caches: &mut VectorCaches, path: &Path, dsc: &VectorDsc) {
-        draw_vector(self, caches, path, dsc, &DrawParams::default());
+        draw_vector(self, caches, path, dsc, &DrawParams::default(), None);
     }
 
     fn vector_params(&mut self, path: &Path, dsc: &VectorDsc, params: &DrawParams) {
         let mut c = self.caches().take_extension::<VectorCaches>().unwrap_or_default();
-        draw_vector(self, &mut c, path, dsc, params);
+        draw_vector(self, &mut c, path, dsc, params, None);
         self.caches().put_extension(c);
     }
+}
+
+/// Geometry of one path prepared for drawing and kept between draws (by a
+/// [`VectorScene`](crate::VectorScene) item): the fill's flattened outline for one transform,
+/// and the stroke's flattened — and dashed — polylines for one flattening tolerance with their
+/// chunk index. Drawing from it gives the same pixels as drawing the path, without redoing the
+/// path-space work for every clip a frame is drawn in; each part is rebuilt when its key
+/// changes, and [`invalidate`](Self::invalidate)d when the item changes. The storage grows
+/// fallibly: when it cannot, the path is drawn without it.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Prepared {
+    /// The transform `fill_edges` were flattened with (`None`: not prepared).
+    fill: Option<Transform>,
+    fill_edges: PreparedEdges,
+    /// The tolerance `stroke_polys` were flattened with (`None`: not prepared).
+    stroke: Option<Fx>,
+    stroke_polys: Polylines,
+    chunks: Vec<Chunk>,
+    /// The transform `stroke_edges` (the whole stroke outline) were built with (`None`: not
+    /// prepared, or the outline is larger than [`MAX_KEPT_EDGES`]).
+    outline: Option<Transform>,
+    stroke_edges: PreparedEdges,
+}
+
+/// Most edges of a stroke outline kept prepared (8192 edges, 160 KiB): larger outlines are
+/// stroked per clip, near the clip only, from the prepared polylines.
+const MAX_KEPT_EDGES: usize = 8192;
+
+impl Prepared {
+    /// Forgets the prepared geometry (the item changed); the storage is kept for reuse.
+    pub(crate) fn invalidate(&mut self) {
+        self.fill = None;
+        self.stroke = None;
+        self.outline = None;
+    }
+
+    /// Bytes reserved by the storage.
+    pub(crate) fn bytes_reserved(&self) -> usize {
+        self.fill_edges
+            .bytes_reserved()
+            .saturating_add(self.stroke_polys.bytes_reserved())
+            .saturating_add(
+                self.chunks
+                    .capacity()
+                    .saturating_mul(core::mem::size_of::<Chunk>()),
+            )
+            .saturating_add(self.stroke_edges.bytes_reserved())
+    }
+
+    /// Prepares the fill of `path` drawn with `t` (`lines`, `raster`: scratch), unless the
+    /// memory cannot be reserved.
+    fn prepare_fill(&mut self, path: &Path, t: Transform, lines: &mut Vec<Line>, raster: &mut RasterScratch) {
+        self.fill = None;
+        lines.clear();
+        flatten(path, &t, DEFAULT_TOLERANCE, lines);
+        if self.fill_edges.build(lines, raster) {
+            self.fill = Some(t);
+        }
+    }
+
+    /// Prepares the stroke `s` of `path` at tolerance `tol` (`polys`, `dashed`: scratch).
+    /// Returns whether it is prepared.
+    fn prepare_stroke(
+        &mut self,
+        path: &Path,
+        s: &Stroke,
+        tol: Fx,
+        polys: &mut Polylines,
+        dashed: &mut Polylines,
+    ) -> bool {
+        self.stroke = None;
+        self.outline = None;
+        polys.clear();
+        flatten_for_stroke(path, &Transform::IDENTITY, tol, polys);
+        let src = dash_source(polys, s, dashed);
+        if self.stroke_polys.try_copy_from(src) && build_chunks(&self.stroke_polys, &mut self.chunks) {
+            self.stroke = Some(tol);
+        }
+        self.stroke.is_some()
+    }
+
+    /// Prepares the whole outline of the (prepared) stroke `s` drawn with `t` at tolerance
+    /// `tol` as edges (`lines`, `raster`: scratch), unless it has more than [`MAX_KEPT_EDGES`]
+    /// or the memory cannot be reserved.
+    fn prepare_outline(
+        &mut self,
+        s: &Stroke,
+        tol: Fx,
+        t: Transform,
+        lines: &mut Vec<Line>,
+        raster: &mut RasterScratch,
+    ) {
+        self.outline = None;
+        lines.clear();
+        stroke_source(&self.stroke_polys, None, s, tol, &t, None, lines);
+        if lines.len() <= MAX_KEPT_EDGES && self.stroke_edges.build(lines, raster) {
+            self.outline = Some(t);
+        }
+    }
+}
+
+/// Draws `path` with `dsc` and `params` through the painter's [`VectorCaches`], keeping and
+/// reusing its prepared geometry in `prep`.
+pub(crate) fn draw_prepared(
+    p: &mut Painter<'_>,
+    path: &Path,
+    dsc: &VectorDsc,
+    params: &DrawParams,
+    prep: &mut Prepared,
+) {
+    let mut c = p.caches().take_extension::<VectorCaches>().unwrap_or_default();
+    draw_vector(p, &mut c, path, dsc, params, Some(prep));
+    p.caches().put_extension(c);
 }
 
 fn draw_vector(
@@ -283,6 +400,7 @@ fn draw_vector(
     path: &Path,
     dsc: &VectorDsc,
     params: &DrawParams,
+    mut prep: Option<&mut Prepared>,
 ) {
     if !dsc.is_visible() || path.is_empty() || params.opa.is_transparent() {
         return;
@@ -304,13 +422,35 @@ fn draw_vector(
         dsc.stroke.is_some()
     );
     let recolored = params.recolor.map(Paint::Solid);
+    let VectorCaches {
+        lines,
+        polys,
+        dashed,
+        raster,
+        lut,
+        chunk_hits,
+    } = caches;
     if let Some((paint, rule)) = &dsc.fill {
-        caches.lines.clear();
-        flatten(path, &t, DEFAULT_TOLERANCE, &mut caches.lines);
+        let src: Geometry<'_> = if let Some(pr) = prep.as_deref_mut() {
+            if pr.fill != Some(t) {
+                pr.prepare_fill(path, t, lines, raster);
+            }
+            if pr.fill == Some(t) {
+                Geometry::Edges(&pr.fill_edges)
+            } else {
+                Geometry::Lines(lines)
+            }
+        } else {
+            lines.clear();
+            flatten(path, &t, DEFAULT_TOLERANCE, lines);
+            Geometry::Lines(lines)
+        };
         let opa = mul_opa(mul_opa(dsc.opa, dsc.fill_opa), params.opa);
         paint_lines(
             p,
-            caches,
+            raster,
+            lut,
+            src,
             recolored.as_ref().unwrap_or(paint),
             *rule,
             opa,
@@ -321,21 +461,44 @@ fn draw_vector(
     if let Some((paint, stroke)) = &dsc.stroke {
         // Stroke in path space (the width is in path units), then map the outline.
         let tol = user_tolerance(&t);
-        caches.polys.clear();
-        flatten_for_stroke(path, &Transform::IDENTITY, tol, &mut caches.polys);
-        caches.lines.clear();
-        stroke_polylines(
-            &caches.polys,
-            stroke,
-            tol,
-            &t,
-            &mut caches.dashed,
-            &mut caches.lines,
-        );
+        lines.clear();
+        let prepared = prep.and_then(|pr| {
+            let ready = pr.stroke == Some(tol) || pr.prepare_stroke(path, stroke, tol, polys, dashed);
+            ready.then_some(pr)
+        });
+        let geometry = if let Some(pr) = prepared {
+            if pr.outline != Some(t) {
+                pr.prepare_outline(stroke, tol, t, lines, raster);
+            }
+            if pr.outline == Some(t) {
+                // The whole outline, built once: only rasterized here.
+                Geometry::Edges(&pr.stroke_edges)
+            } else {
+                // Too large to keep: stroked near the clip only.
+                lines.clear();
+                stroke_source(
+                    &pr.stroke_polys,
+                    Some((&pr.chunks, chunk_hits)),
+                    stroke,
+                    tol,
+                    &t,
+                    Some(clip),
+                    lines,
+                );
+                Geometry::Lines(lines)
+            }
+        } else {
+            polys.clear();
+            flatten_for_stroke(path, &Transform::IDENTITY, tol, polys);
+            stroke_polylines(polys, stroke, tol, &t, Some(clip), dashed, lines);
+            Geometry::Lines(lines)
+        };
         let opa = mul_opa(mul_opa(dsc.opa, dsc.stroke_opa), params.opa);
         paint_lines(
             p,
-            caches,
+            raster,
+            lut,
+            geometry,
             recolored.as_ref().unwrap_or(paint),
             FillRule::NonZero,
             opa,
@@ -359,25 +522,56 @@ fn user_tolerance(t: &Transform) -> Fx {
     Fx::from_raw(tol.clamp(64, i64::from(i32::MAX)) as i32)
 }
 
-/// Rasterizes `caches.lines` with `paint`.
+/// What [`paint_lines`] rasterizes: lines (collected into edges for this draw) or edges
+/// prepared earlier.
+#[derive(Clone, Copy)]
+enum Geometry<'a> {
+    Lines(&'a [Line]),
+    Edges(&'a PreparedEdges),
+}
+
+impl Geometry<'_> {
+    fn is_empty(&self) -> bool {
+        match self {
+            Geometry::Lines(l) => l.is_empty(),
+            Geometry::Edges(e) => e.len() == 0,
+        }
+    }
+
+    fn fill(
+        &self,
+        p: &mut Painter<'_>,
+        raster: &mut RasterScratch,
+        rule: FillRule,
+        src: &SpanSource<'_>,
+        mode: BlendMode,
+    ) {
+        match self {
+            Geometry::Lines(l) => fill_lines(p, raster, l, rule, src, mode),
+            Geometry::Edges(e) => e.fill(p, raster, rule, src, mode),
+        }
+    }
+}
+
+/// Rasterizes `geometry` with `paint` (`raster`, `lut`: the caches' scratch).
+#[allow(clippy::too_many_arguments)] // the scratch is passed apart from the geometry it draws
 fn paint_lines(
     p: &mut Painter<'_>,
-    caches: &mut VectorCaches,
+    raster: &mut RasterScratch,
+    lut: &mut [u32; 256],
+    geometry: Geometry<'_>,
     paint: &Paint,
     rule: FillRule,
     opa: Opa,
     transform: &Transform,
     blend_mode: BlendMode,
 ) {
-    if opa.is_transparent() || caches.lines.is_empty() {
+    if opa.is_transparent() || geometry.is_empty() {
         return;
     }
-    let VectorCaches {
-        lines, raster, lut, ..
-    } = caches;
     match paint {
         Paint::Solid(c) => {
-            fill_lines(p, raster, lines, rule, &SpanSource::Solid(*c, opa), blend_mode);
+            geometry.fill(p, raster, rule, &SpanSource::Solid(*c, opa), blend_mode);
         }
         Paint::Linear { stops, .. } | Paint::Radial { stops, .. } => {
             let Some(s) = Sampler::new(paint, transform) else {
@@ -386,7 +580,7 @@ fn paint_lines(
             load_lut(p, stops.as_slice(), lut);
             let lut: &[u32; 256] = lut;
             let f = |y: i32, x0: i32, out: &mut [u8]| s.fill(lut, y, x0, out);
-            fill_lines(p, raster, lines, rule, &SpanSource::Pixels(&f, opa), blend_mode);
+            geometry.fill(p, raster, rule, &SpanSource::Pixels(&f, opa), blend_mode);
         }
         Paint::Image { .. } => {
             let Some(s) = Sampler::new(paint, transform) else {
@@ -394,7 +588,7 @@ fn paint_lines(
             };
             let lut: &[u32; 256] = lut;
             let f = |y: i32, x0: i32, out: &mut [u8]| s.fill(lut, y, x0, out);
-            fill_lines(p, raster, lines, rule, &SpanSource::Pixels(&f, opa), blend_mode);
+            geometry.fill(p, raster, rule, &SpanSource::Pixels(&f, opa), blend_mode);
         }
     }
 }

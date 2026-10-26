@@ -18,9 +18,10 @@ pub static VECTOR_VIEW_CLASS: WidgetClass = WidgetClass::new("vector_view").defa
 /// Draws a [`VectorScene`] in its own coordinates: scene point (0, 0) is the top-left corner
 /// of the widget; drawing is clipped to the widget.
 ///
-/// Changing the scene invalidates only the bounds of the old and the new scene, so an animated
-/// path redraws its own area and nothing else. [`swap_scene`](Self::swap_scene) exchanges the
-/// scene with a caller's buffer: a scene rebuilt every frame into the other buffer (with
+/// Changing the scene invalidates only what changed: the old and new bounds of every item
+/// that differs (compared by position in the scene), so an animated path redraws its own area
+/// and the unchanged items around it cost nothing. [`swap_scene`](Self::swap_scene) exchanges
+/// the scene with a caller's buffer: a scene rebuilt every frame into the other buffer (with
 /// [`VectorScene::path_mut`]) is shown without allocating.
 ///
 /// ```
@@ -71,7 +72,7 @@ impl VectorView {
     }
 
     /// Replaces the scene. Idempotent: an equal scene changes nothing; otherwise the old and
-    /// the new bounds are invalidated.
+    /// the new bounds of each item that differs are invalidated.
     pub fn set_scene(&mut self, cx: &mut WidgetCx<'_>, mut scene: VectorScene) {
         self.swap_scene(cx, &mut scene);
     }
@@ -88,11 +89,27 @@ impl VectorView {
         self.bounds = self.scene.bounds();
         let origin = cx.coords();
         let clip = origin;
-        for r in [old, self.bounds].into_iter().flatten() {
+        let mut damage = |r: Rect| {
             // `translate` saturates (exact for screen coordinates).
             let abs = r.translate(origin.x0, origin.y0);
             if let Some(a) = abs.intersection(&clip) {
                 cx.invalidate_area(a);
+            }
+        };
+        // A pixel outside the bounds of every item that differs is drawn by the same items,
+        // in the same order, before and after: only those bounds change.
+        let (mut was, mut is) = (scene.items(), self.scene.items());
+        loop {
+            match (was.next(), is.next()) {
+                (None, None) => break,
+                (a, b) if a == b => {}
+                (a, b) => {
+                    for (p, d) in [a, b].into_iter().flatten() {
+                        if d.is_visible() && !p.is_empty() {
+                            damage(d.bounds(p));
+                        }
+                    }
+                }
             }
         }
         let extent = |b: Option<Rect>| b.map_or(Size::ZERO, |r| Size::new(r.x1.max(0), r.y1.max(0)));
@@ -105,6 +122,11 @@ impl VectorView {
 impl Widget for VectorView {
     fn class(&self) -> &'static WidgetClass {
         &VECTOR_VIEW_CLASS
+    }
+
+    /// Vector paths are rasterized per pixel: worth keeping as pixels while unchanged.
+    fn draw_cost(&self) -> twine_engine::DrawCost {
+        twine_engine::DrawCost::Expensive
     }
 
     /// The extent of the scene from (0, 0).

@@ -699,6 +699,16 @@ impl Widget for Image {
         twine_engine::default_covers(cx, area) || self.image_covers(cx, area)
     }
 
+    /// An SVG drawn as vector paths is expensive; bitmaps (and SVGs drawn from their
+    /// rasterized copy) are not.
+    fn draw_cost(&self) -> twine_engine::DrawCost {
+        #[cfg(feature = "svg")]
+        if matches!(self.src, Some(ImageSource::Svg(_))) && !self.svg_cache {
+            return twine_engine::DrawCost::Expensive;
+        }
+        twine_engine::DrawCost::Cheap
+    }
+
     fn event(&mut self, cx: &mut EventCx<'_>, ev: &Event) -> EventResult {
         if ev.target != cx.node() {
             return EventResult::Continue;

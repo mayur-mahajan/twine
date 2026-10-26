@@ -285,9 +285,33 @@ pub(crate) const fn fxp(x: i64, y: i64) -> FxPoint {
     FxPoint::new(Fx::from_raw(sat(x)), Fx::from_raw(sat(y)))
 }
 
-/// `a · b / c` in `i128`, rounded half away from zero, saturated (`c == 0` → 0).
+/// `a · b / c`, rounded half away from zero, saturated (`c == 0` → 0). Exact: in 64-bit
+/// arithmetic when `|a|, |b| < 2^31` (the product fits; cheaper on 32-bit cores), else in
+/// `i128` — the same value either way.
 #[inline]
 pub(crate) fn muldiv(a: i64, b: i64, c: i64) -> i64 {
+    const LIM: u64 = 1 << 31;
+    if a.unsigned_abs() < LIM
+        && b.unsigned_abs() < LIM
+        && let Some(ad) = core::num::NonZeroU64::new(c.unsigned_abs())
+    {
+        // SAFE-ARITH: `|a·b| < 2^62`, and `|a·b| + |c|/2 < 2^62 + 2^63` fits a `u64`.
+        let n = a.wrapping_mul(b);
+        // DIV: `ad` is a `NonZeroU64`.
+        let q = n.unsigned_abs().wrapping_add(ad.get() / 2) / ad;
+        // `q < 2^63 / 1 + 2^62`: the negation of a `q ≤ 2^63` is in range, larger ones saturate
+        // as the `i128` path's clamp does.
+        return if (n < 0) == (c < 0) {
+            i64::try_from(q).unwrap_or(i64::MAX)
+        } else {
+            0i64.checked_sub_unsigned(q).unwrap_or(i64::MIN)
+        };
+    }
+    muldiv_wide(a, b, c)
+}
+
+/// [`muldiv`] in `i128`.
+fn muldiv_wide(a: i64, b: i64, c: i64) -> i64 {
     let Some(d) = NonZeroI128::new(i128::from(c)) else {
         return 0;
     };
@@ -322,5 +346,32 @@ mod tests {
         assert_eq!(muldiv(7, 3, 2), 11);
         assert_eq!(muldiv(-7, 3, 2), -11);
         assert_eq!(muldiv(5, 5, 0), 0);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn muldiv_fast_path_equals_wide(
+            a in -(1i64 << 31) + 1..(1i64 << 31),
+            b in -(1i64 << 31) + 1..(1i64 << 31),
+            c in proptest::prop_oneof![-1000i64..1000, proptest::num::i64::ANY],
+        ) {
+            proptest::prop_assert_eq!(muldiv(a, b, c), muldiv_wide(a, b, c));
+        }
+    }
+
+    #[test]
+    fn muldiv_fast_path_edges() {
+        let lim = (1i64 << 31) - 1;
+        for (a, b, c) in [
+            (lim, lim, 1),
+            (-lim, lim, 1),
+            (lim, -lim, -1),
+            (lim, lim, i64::MIN),
+            (0, lim, -3),
+            (-lim, -lim, 2),
+            (1, 1, i64::MAX),
+        ] {
+            assert_eq!(muldiv(a, b, c), muldiv_wide(a, b, c), "{a} {b} {c}");
+        }
     }
 }

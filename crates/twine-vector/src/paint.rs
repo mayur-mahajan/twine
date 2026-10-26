@@ -6,10 +6,12 @@
 //! Each pixel center is mapped back with the inverse transform (stepped per pixel, no matrix
 //! product per pixel). Gradient colors come from a 256-entry color map shared with
 //! `twine-render` (its gradient cache); the parameter `t` is a fixed-point dot product
-//! (linear) or the root of the two-point conical equation with an integer square root
-//! (radial, with focal point).
+//! (linear) or the root of the two-point conical equation (radial, with focal point): exact
+//! 64-bit tests tracked along the row, with an integer square root where the tracking cannot
+//! follow (`RadialTrack`).
 
 use alloc::vec::Vec;
+use core::num::{NonZeroU32, NonZeroU64};
 
 use twine_core::math::isqrt64;
 use twine_core::{Color, Fx, Transform};
@@ -204,6 +206,8 @@ pub(crate) enum Sampler {
         ey: i64,
         r: i64,
         a: i64,
+        /// The constants of the tracked evaluation (`None` when `a ≥ 0`).
+        track: Option<RadialTrack>,
         extend: GradExtend,
     },
     /// Inverse mapping into image pixels.
@@ -355,6 +359,7 @@ impl Sampler {
                     ey,
                     r,
                     a,
+                    track: RadialTrack::new(ex, ey, a),
                     extend: *extend,
                 })
             }
@@ -403,6 +408,7 @@ impl Sampler {
                 ey,
                 r,
                 a,
+                track,
                 extend,
             } => {
                 // SAFE-ARITH: doubled `i32`s; the scaled coefficients are below 2^55, so the
@@ -422,12 +428,30 @@ impl Sampler {
                 let [i0, i1, i2, i3, i4, i5] = inv;
                 let (mut u, mut v) = (row(i0, i2, i4), row(i1, i3, i5));
                 let (du, dv) = (i0, i1);
+                // The previous pixel's `t` and its change from the one before (the prediction
+                // of the tracked evaluation); `None` at the row start and after a pixel
+                // outside the tracked range.
+                let mut prev: Option<(u64, i64)> = None;
                 for px in out.chunks_exact_mut(4) {
-                    let (qx, qy) = (
-                        (u >> 8).wrapping_sub(fx).clamp(-RADIAL_LIM, RADIAL_LIM),
-                        (v >> 8).wrapping_sub(fy).clamp(-RADIAL_LIM, RADIAL_LIM),
-                    );
-                    let t = radial_t(qx, qy, ex, ey, r, a);
+                    let (qx, qy) = ((u >> 8).wrapping_sub(fx), (v >> 8).wrapping_sub(fy));
+                    let t = match track {
+                        Some(k) if k.covers(qx, qy) => {
+                            let tk = k.t(qx, qy, prev);
+                            // SAFE-ARITH: both are below 2^49 (`RadialTrack::t`).
+                            let dt = prev.map_or(0, |(p, _)| (tk as i64).wrapping_sub(p as i64));
+                            prev = Some((tk, dt));
+                            // `tk < 2^49`.
+                            Some(tk as i64)
+                        }
+                        _ => {
+                            prev = None;
+                            let (qx, qy) = (
+                                qx.clamp(-RADIAL_LIM, RADIAL_LIM),
+                                qy.clamp(-RADIAL_LIM, RADIAL_LIM),
+                            );
+                            radial_t(qx, qy, ex, ey, r, a)
+                        }
+                    };
                     let c = match t {
                         Some(t) => lut_at(lut, t, extend),
                         None => 0,
@@ -504,6 +528,148 @@ fn radial_t(qx: i64, qy: i64, ex: i64, ey: i64, r: i64, a: i64) -> Option<i64> {
     Some(t.clamp(i128::from(i64::MIN / 2), i128::from(i64::MAX / 2)) as i64)
 }
 
+/// Most steps [`RadialTrack`] moves from its prediction before it computes `t` directly.
+const TRACK_STEPS: u32 = 8;
+
+/// [`radial_t`] for one draw with a focal point inside the circle (`a < 0`), evaluated with
+/// 64-bit arithmetic and tracked from pixel to pixel: the same values, bit for bit, without
+/// the per-pixel 128-bit root and division (costly on 32-bit cores).
+///
+/// `radial_t` is `T = ⌊(⌊√D⌋ − b) · 2^16 / A⌋` with `b = q·e`, `c = q·q`, `A = −a` and
+/// `D = b² + A·c`. For `k ≥ 0`: `T ≤ k` ⇔ `(⌊√D⌋ − b) · 2^16 < (k + 1)·A` ⇔
+/// `⌊√D⌋ < M(k)` with `M(k) = b + ⌈(k + 1)·A / 2^16⌉` ⇔ `M(k) > 0 ∧ D < M(k)²` — a test with
+/// two multiplications and no root or division. `t` changes smoothly along a row, so the
+/// previous pixel's `t` plus its last change predicts the next one and a few tests find the
+/// exact value; where the prediction is off by more than [`TRACK_STEPS`] (next to the focal
+/// point) `t` is computed directly: [`isqrt64`] and one division.
+///
+/// The evaluation needs `D < 2^64`: it covers the points with `|qx|, |qy| ≤ qlim`, the others
+/// take `radial_t`. For a covered point `|b| < 2^32` and `⌊√D⌋ < 2^32` (`b² ≤ D`), so
+/// `0 ≤ ⌊√D⌋ − b < 2^33` and `T < 2^49 / A`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RadialTrack {
+    /// `A = −a`.
+    a: NonZeroU32,
+    /// The end circle's offset `e` (24.8).
+    ex: i32,
+    /// See `ex`.
+    ey: i32,
+    /// Largest `|qx|`, `|qy|` covered: `qlim² · ((|ex| + |ey|)² + 2A) < 2^64`, and `< 2^31`.
+    qlim: u64,
+    /// `⌊2^49 / A⌋ + 1`: above `T` of every covered point.
+    t_cap: u64,
+}
+
+impl RadialTrack {
+    /// The constants for the end circle offset `e` and `a = |e|² − r²` (see [`radial_t`]);
+    /// `None` when `a ≥ 0` or the values do not fit the 64-bit evaluation.
+    fn new(ex: i64, ey: i64, a: i64) -> Option<Self> {
+        if a >= 0 {
+            return None;
+        }
+        let a = NonZeroU32::new(u32::try_from(a.unsigned_abs()).ok()?)?;
+        let (ex, ey) = (i32::try_from(ex).ok()?, i32::try_from(ey).ok()?);
+        // For `|qx|, |qy| ≤ Q`: `|b| ≤ Q·(|ex| + |ey|)` and `A·c ≤ 2A·Q²`, so `D ≤ Q²·k`.
+        // SAFE-ARITH: `|ex| + |ey| < 2^32`, so `k < 2^64 + 2^33` in `u128`.
+        let el = u128::from(ex.unsigned_abs()).wrapping_add(u128::from(ey.unsigned_abs()));
+        let k = el
+            .wrapping_mul(el)
+            .wrapping_add(u128::from(a.get()).wrapping_mul(2));
+        // `k ≥ 2A ≥ 2`: the fallback is never taken; the quotient is below 2^63.
+        let qmax = u64::try_from(u128::from(u64::MAX).checked_div(k).unwrap_or(0)).ok()?;
+        Some(Self {
+            a,
+            ex,
+            ey,
+            qlim: u64::from(isqrt64(qmax)).min(i32::MAX as u64),
+            // DIV: `a` is a `NonZeroU32`.
+            t_cap: ((1u64 << 49) / NonZeroU64::from(a)).wrapping_add(1),
+        })
+    }
+
+    /// Whether `q` (24.8, relative to the focal point) is covered.
+    #[inline]
+    fn covers(&self, qx: i64, qy: i64) -> bool {
+        qx.unsigned_abs() <= self.qlim && qy.unsigned_abs() <= self.qlim
+    }
+
+    /// `radial_t` of the covered point `q`; `prev` is the previous pixel's `t` and its change
+    /// from the pixel before (the prediction).
+    #[inline]
+    fn t(&self, qx: i64, qy: i64, prev: Option<(u64, i64)>) -> u64 {
+        let (d, b) = self.disc(qx, qy);
+        prev.and_then(|(t, dt)| self.search(d, b, t.saturating_add_signed(dt).min(self.t_cap)))
+            .unwrap_or_else(|| self.direct(d, b))
+    }
+
+    /// `(D, b)` of the covered point `q`.
+    #[inline]
+    fn disc(&self, qx: i64, qy: i64) -> (u64, i64) {
+        // SAFE-ARITH (this function): `|qx|, |qy| ≤ qlim < 2^31` (`covers`), so the products
+        // of `i32`s fit, `|b| ≤ qlim·(|ex| + |ey|) < 2^32` and `b² + A·c ≤ qlim²·k < 2^64`
+        // (`new`); each square is below 2^62.
+        let (x, y) = (i64::from(qx as i32), i64::from(qy as i32));
+        let b = x
+            .wrapping_mul(i64::from(self.ex))
+            .wrapping_add(y.wrapping_mul(i64::from(self.ey)));
+        let c = (x.wrapping_mul(x) as u64).wrapping_add(y.wrapping_mul(y) as u64);
+        let bm = u64::from(b.unsigned_abs() as u32);
+        let d = bm
+            .wrapping_mul(bm)
+            .wrapping_add(u64::from(self.a.get()).wrapping_mul(c));
+        (d, b)
+    }
+
+    /// Whether `T ≤ k` (`k ≤ t_cap`).
+    #[inline]
+    fn at_most(&self, d: u64, b: i64, k: u64) -> bool {
+        // SAFE-ARITH: `(k + 1)·A ≤ (t_cap + 1)·A ≤ 2^49 + 2A < 2^51` and `|b| < 2^32`, so
+        // `M(k)` is within `±2^36`; `M(k) < 2^32` squares below 2^64.
+        let p = k.wrapping_add(1).wrapping_mul(u64::from(self.a.get()));
+        let m = b.wrapping_add((p.wrapping_add(0xFFFF) >> 16) as i64);
+        if m <= 0 {
+            return false;
+        }
+        let m = m as u64;
+        m > u64::from(u32::MAX) || d < m.wrapping_mul(m)
+    }
+
+    /// `T` found from `guess` (`≤ t_cap`) in at most [`TRACK_STEPS`] steps.
+    #[inline]
+    fn search(&self, d: u64, b: i64, guess: u64) -> Option<u64> {
+        let mut k = guess;
+        if self.at_most(d, b, k) {
+            // Up to `TRACK_STEPS` moves down, each followed by the check of the next one.
+            for _ in 0..=TRACK_STEPS {
+                // SAFE-ARITH: `k > 0` (checked first).
+                if k == 0 || !self.at_most(d, b, k.wrapping_sub(1)) {
+                    return Some(k);
+                }
+                k = k.wrapping_sub(1);
+            }
+        } else {
+            for _ in 0..TRACK_STEPS {
+                // SAFE-ARITH: `T ≤ k` fails, and `T < t_cap`: `k + 1 ≤ t_cap`.
+                k = k.wrapping_add(1);
+                if self.at_most(d, b, k) {
+                    return Some(k);
+                }
+            }
+        }
+        None
+    }
+
+    /// `T` computed directly.
+    fn direct(&self, d: u64, b: i64) -> u64 {
+        // SAFE-ARITH: `|b| ≤ ⌊√D⌋ < 2^32` (`b² ≤ D`), so `0 ≤ ⌊√D⌋ − b < 2^33` and the
+        // shifted value is below 2^49.
+        let s = i64::from(isqrt64(d));
+        let num = s.wrapping_sub(b) as u64;
+        // DIV: `a` is a `NonZeroU32`.
+        (num << 16) / NonZeroU64::from(self.a)
+    }
+}
+
 /// Bilinear blend of four packed straight-alpha texels, weights `fx`, `fy` in `0..256`.
 fn bilinear(t: [u32; 4], fx: u32, fy: u32) -> u32 {
     // SAFE-ARITH: `fx, fy < 256`: the four weights are at most 2^16 and sum to 2^16, so the
@@ -556,6 +722,141 @@ pub(crate) fn load_lut(p: &mut Painter<'_>, stops: &[GradStop], lut: &mut [u32; 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
+    use proptest::prelude::*;
+    use twine_core::Angle;
+
+    /// The radial row of `Sampler::fill` with `radial_t` at every pixel (the evaluation
+    /// `RadialTrack` must reproduce).
+    fn fill_radial_reference(s: &Sampler, lut: &[u32; 256], y: i32, x0: i32, out: &mut [u8]) {
+        let Sampler::Radial {
+            inv,
+            fx,
+            fy,
+            ex,
+            ey,
+            r,
+            a,
+            extend,
+            ..
+        } = *s
+        else {
+            panic!("radial sampler");
+        };
+        let (x2, y2) = (i128::from(x0) * 2 + 1, i128::from(y) * 2 + 1);
+        let row = |a: i64, c: i64, t: i64| -> i64 {
+            let v = (i128::from(a) * x2 + i128::from(c) * y2) / 2 + i128::from(t);
+            v.clamp(i128::from(i64::MIN / 4), i128::from(i64::MAX / 4)) as i64
+        };
+        let [i0, i1, i2, i3, i4, i5] = inv;
+        let (mut u, mut v) = (row(i0, i2, i4), row(i1, i3, i5));
+        for px in out.chunks_exact_mut(4) {
+            let qx = ((u >> 8) - fx).clamp(-RADIAL_LIM, RADIAL_LIM);
+            let qy = ((v >> 8) - fy).clamp(-RADIAL_LIM, RADIAL_LIM);
+            let c = radial_t(qx, qy, ex, ey, r, a).map_or(0, |t| lut_at(lut, t, extend));
+            px.copy_from_slice(&c.to_le_bytes());
+            u = u.saturating_add(i0);
+            v = v.saturating_add(i1);
+        }
+    }
+
+    /// Distinct entries, so equal output means equal color map indices.
+    fn index_lut() -> [u32; 256] {
+        core::array::from_fn(|i| 0xFF00_0000 | i as u32)
+    }
+
+    fn radial(c: (i32, i32), r: i32, focal: Option<(i32, i32)>, extend: GradExtend) -> Paint {
+        Paint::Radial {
+            center: FxPoint::new(Fx::from_raw(c.0), Fx::from_raw(c.1)),
+            radius: Fx::from_raw(r),
+            focal: focal.map(|f| FxPoint::new(Fx::from_raw(f.0), Fx::from_raw(f.1))),
+            stops: Stops::Owned(Vec::new()),
+            extend,
+            transform: Transform::IDENTITY,
+        }
+    }
+
+    /// Asserts that `fill` matches the reference on row `y` from `x0` (`n` pixels).
+    fn assert_row_matches(p: &Paint, t: &Transform, y: i32, x0: i32, n: usize) {
+        let s = Sampler::new(p, t).expect("invertible transform");
+        assert!(
+            matches!(s, Sampler::Radial { track: Some(_), .. }),
+            "tracked evaluation set up"
+        );
+        let lut = index_lut();
+        let (mut got, mut want) = (vec![0u8; n * 4], vec![0u8; n * 4]);
+        s.fill(&lut, y, x0, &mut got);
+        fill_radial_reference(&s, &lut, y, x0, &mut want);
+        assert_eq!(got, want, "row {y} from {x0}: {p:?} under {t:?}");
+    }
+
+    #[test]
+    fn radial_rows_match_reference_around_the_focal_point() {
+        // Rows through and next to the center (where `t` has a kink and the tracking falls
+        // back), small and large radii, focal points near the circle.
+        let ext = [GradExtend::Pad, GradExtend::Repeat, GradExtend::Reflect];
+        for (r_px, focal) in [
+            (1, None),
+            (40, None),
+            (206, None),
+            (3000, None),
+            (80, Some((50, 0))),
+        ] {
+            for e in ext {
+                let p = radial(
+                    (300 << 16, 200 << 16),
+                    r_px << 16,
+                    focal.map(|(dx, dy): (i32, i32)| ((300 + dx) << 16, (200 + dy) << 16)),
+                    e,
+                );
+                for y in [-50, 0, 150, 199, 200, 201, 260, 480] {
+                    assert_row_matches(&p, &Transform::IDENTITY, y, -40, 720);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn radial_search_finds_t_from_a_nearby_guess() {
+        // r = 206 px scaled as `Sampler::new` does (≈ 2^14 in 24.8), focal point off center.
+        let (ex, ey, r) = (3_000i64, -1_200i64, 13_184i64);
+        let a = ex * ex + ey * ey - r * r;
+        let k = RadialTrack::new(ex, ey, a).expect("a < 0");
+        for (qx, qy) in [(0, 0), (5_000, 7), (-13_000, 2_500), (20_000, -30_000), (1, -1)] {
+            let want = radial_t(qx, qy, ex, ey, r, a).expect("inside") as u64;
+            let (d, b) = k.disc(qx, qy);
+            assert_eq!(k.direct(d, b), want, "direct at ({qx}, {qy})");
+            for off in [-8i64, -3, -1, 0, 1, 3, 8] {
+                let guess = want.saturating_add_signed(off).min(k.t_cap);
+                assert_eq!(k.search(d, b, guess), Some(want), "guess {off:+} at ({qx}, {qy})");
+            }
+            assert_eq!(k.search(d, b, want + 9), None, "too far: computed directly");
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        #[test]
+        fn radial_rows_match_reference(
+            cx in -400i32..1200, cy in -400i32..1200,
+            r in 1i32..(4000 << 16),
+            focal in proptest::option::of((-1.0f64..1.0, -1.0f64..1.0)),
+            ext in 0usize..3,
+            angle in -180i32..180, sx in 1i32..400, sy in 1i32..400,
+            y in -300i32..900, x0 in -300i32..900, n in 1usize..600,
+        ) {
+            let f = focal.map(|(dx, dy)| {
+                let (rx, ry) = (f64::from(r) * dx, f64::from(r) * dy);
+                ((cx << 16).saturating_add(rx as i32), (cy << 16).saturating_add(ry as i32))
+            });
+            let extend = [GradExtend::Pad, GradExtend::Repeat, GradExtend::Reflect][ext];
+            let p = radial((cx << 16, cy << 16), r, f, extend);
+            let t = Transform::scale(Fx::from_ratio(sx, 100), Fx::from_ratio(sy, 100))
+                .then(Transform::rotate(Angle::deg(angle)));
+            assert_row_matches(&p, &t, y, x0, n);
+        }
+    }
 
     #[test]
     fn extend_indices() {

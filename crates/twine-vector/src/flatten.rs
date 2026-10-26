@@ -258,6 +258,39 @@ impl Polylines {
         })
     }
 
+    /// Polyline `i` (`None` past the end).
+    pub(crate) fn get(&self, i: usize) -> Option<Polyline<'_>> {
+        let &(a, b, closed) = self.ranges.get(i)?;
+        Some(Polyline {
+            // SAFE-INDEX: ranges describe parts of `points`; the fallback is never taken.
+            points: self.points.get(a as usize..b as usize).unwrap_or_default(),
+            closed,
+        })
+    }
+
+    /// Replaces the contents with a copy of `src`, growing the storage fallibly. Returns
+    /// `false` (and leaves `self` empty) when the memory cannot be reserved.
+    pub(crate) fn try_copy_from(&mut self, src: &Polylines) -> bool {
+        self.clear();
+        if self.points.try_reserve(src.points.len()).is_err()
+            || self.ranges.try_reserve(src.ranges.len()).is_err()
+        {
+            return false;
+        }
+        self.points.extend_from_slice(&src.points);
+        self.ranges.extend_from_slice(&src.ranges);
+        true
+    }
+
+    /// Bytes reserved by the storage.
+    pub(crate) fn bytes_reserved(&self) -> usize {
+        let range = core::mem::size_of::<(u32, u32, bool)>();
+        self.points
+            .capacity()
+            .saturating_mul(core::mem::size_of::<FxPoint>())
+            .saturating_add(self.ranges.capacity().saturating_mul(range))
+    }
+
     /// Starts a polyline at `p` (finish it with [`end`](Self::end)).
     pub(crate) fn begin(&mut self, p: FxPoint) {
         let n = self.points.len() as u32;

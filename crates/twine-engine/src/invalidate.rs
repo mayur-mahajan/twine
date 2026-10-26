@@ -102,7 +102,7 @@ impl Engine {
                 area,
                 reason
             );
-            self.add_dirty(d, area, reason);
+            self.add_dirty_from(d, area, reason, Some(id));
         }
     }
 
@@ -123,7 +123,7 @@ impl Engine {
             };
             let part = vis.intersection(&area);
             if let Some(a) = part {
-                self.add_dirty(d, a, reason);
+                self.add_dirty_from(d, a, reason, Some(id));
             }
         }
     }
@@ -169,6 +169,19 @@ impl Engine {
     }
 
     pub(crate) fn add_dirty(&mut self, d: usize, area: Rect, reason: InvalidateReason) {
+        self.add_dirty_from(d, area, reason, None);
+    }
+
+    /// [`add_dirty`](Self::add_dirty) of a change that `origin` made (`None`: unknown, which
+    /// the layer cache treats as a change of everything below).
+    pub(crate) fn add_dirty_from(
+        &mut self,
+        d: usize,
+        area: Rect,
+        reason: InvalidateReason,
+        origin: Option<NodeId>,
+    ) {
+        self.layer_cache_change(d, area, origin, reason);
         let max = self.config.max_dirty_areas;
         if let Some(disp) = self.displays.get_mut(d) {
             disp.refresher.add_dirty(area, max);
